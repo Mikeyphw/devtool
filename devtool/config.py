@@ -4,6 +4,7 @@ import copy
 import difflib
 import os
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -22,7 +23,7 @@ from .workflow_config import (
     workflow_steps_as_strings,
 )
 from .toolchains import normalize_toolchain_manager
-from .execution_environments import normalize_execution_environment
+from .execution_environments import EXECUTION_ENVIRONMENTS, normalize_execution_environment
 from .features import FEATURE_DEFAULTS, FeatureFlags, resolve_feature_flags
 from .ui_core.preferences import UIPreferencesError, resolve_ui_preferences, validate_ui_config
 
@@ -354,6 +355,66 @@ def minimal_global_config_template() -> str:
     return "\n".join(lines)
 
 
+_CLI_BOOL_KEYS = {
+    ("output", "copy"),
+    ("output", "no_clipboard"),
+    ("apply", "validate"),
+    ("apply", "manifest_check"),
+    ("apply", "ignore_checksum"),
+    ("apply", "keep_artifact"),
+    ("apply", "delete_artifact_on_failure"),
+    ("apply", "rollback_on_failure"),
+    ("apply", "apply_notification"),
+    ("apply", "artifact_script"),
+    ("environment", "no_auto_chroot"),
+}
+_CLI_ENUM_KEYS: dict[tuple[str, str], set[str]] = {
+    ("output", "stdout_payload"): {"auto", "summary", "raw"},
+    ("output", "copy_via"): {"auto", "socket", "fifo", "termux", "x11", "wayland"},
+    ("output", "theme"): {"auto", "plain"},
+    ("environment", "execution_environment"): set(EXECUTION_ENVIRONMENTS),
+}
+
+
+def _doctor_bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"true", "false", "1", "0", "yes", "no", "on", "off", "enabled", "disabled"}:
+        return True
+    return False
+
+
+def _validate_global_cli_doctor(cli: Any, entries: list[tuple[str, str]]) -> dict[str, Any]:
+    if cli is None:
+        return {}
+    if not isinstance(cli, dict):
+        entries.append(("cli", f"invalid: [cli] must be a table, got {type(cli).__name__}"))
+        return {}
+    for section_name, section_value in sorted(cli.items()):
+        if section_name in {"output", "hud", "apply", "environment", "validation"}:
+            if not isinstance(section_value, dict):
+                entries.append((f"cli.{section_name}", f"invalid: [cli.{section_name}] must be a table, got {type(section_value).__name__}"))
+                continue
+        elif isinstance(section_value, dict):
+            entries.append((f"cli.{section_name}", "unknown CLI preference section"))
+    for section_name, key in sorted(_CLI_BOOL_KEYS):
+        section_value = cli.get(section_name, {}) if isinstance(cli.get(section_name, {}), dict) else {}
+        if key in section_value and not _doctor_bool_value(section_value.get(key)):
+            entries.append((f"cli.{section_name}.{key}", "invalid: expected a TOML boolean true/false"))
+    for (section_name, key), choices in sorted(_CLI_ENUM_KEYS.items()):
+        section_value = cli.get(section_name, {}) if isinstance(cli.get(section_name, {}), dict) else {}
+        if key not in section_value:
+            continue
+        text = str(section_value.get(key) or "").strip()
+        if text and text not in choices:
+            entries.append((f"cli.{section_name}.{key}", f"invalid: expected one of {', '.join(sorted(choices))}"))
+    hud = cli.get("hud", {}) if isinstance(cli.get("hud", {}), dict) else {}
+    for key in ("auto_hud", "overlay"):
+        if key in hud and not (str(hud.get(key)).strip().lower() == "auto" or _doctor_bool_value(hud.get(key))):
+            entries.append((f"cli.hud.{key}", "invalid: expected auto or a TOML boolean true/false"))
+    return cli
+
+
 def global_config_doctor_entries(config: dict[str, Any]) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     for section in sorted(config):
@@ -361,7 +422,7 @@ def global_config_doctor_entries(config: dict[str, Any]) -> list[tuple[str, str]
             entries.append((f"{section}", "repo-scoped; keep this in .devtool.toml"))
         elif section not in GLOBAL_SAFE_TOP_LEVEL_SECTIONS:
             entries.append((f"{section}", "unknown global section"))
-    cli = config.get("cli", {}) if isinstance(config.get("cli", {}), dict) else {}
+    cli = _validate_global_cli_doctor(config.get("cli", {}), entries)
     validation = cli.get("validation", {}) if isinstance(cli.get("validation", {}), dict) else {}
     for key in sorted(validation):
         if ("validation", str(key)) in GLOBAL_COMMAND_SCOPED_CLI_KEYS:
@@ -400,6 +461,7 @@ PROJECT_ENV_PREFIX = "DEVTOOL_PROJECT_"
 RUNTIME_ENV_PREFIX = "DEVTOOL_ENV_"
 _IGNORED_DOTNET_DIRS = {
     ".git",
+    ".devtool",
     ".hg",
     ".svn",
     ".cache",
@@ -421,6 +483,63 @@ _IGNORED_DOTNET_DIRS = {
     "vendor",
     "venv",
 }
+_TARGET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_ANDROID_PLUGIN_IDS = {
+    "com.android.application",
+    "com.android.library",
+    "com.android.test",
+    "com.android.dynamic-feature",
+}
+
+
+def _validate_workspace_identifier(kind: str, name: str) -> None:
+    if not _TARGET_NAME_RE.fullmatch(name):
+        raise SystemExit(
+            f"Invalid {kind} name {name!r}. Use letters, numbers, '.', '_' or '-', "
+            "start with a letter/number, and do not include @, group:, '/', or '*'."
+        )
+    if name.startswith("group:") or name.startswith("@") or name == "*":
+        raise SystemExit(f"Invalid {kind} name {name!r}; names cannot be group references or wildcards.")
+
+
+def _marker_roots(repo_root: Path, markers: tuple[str, ...]) -> list[Path]:
+    root = repo_root.expanduser().resolve()
+    roots: set[Path] = set()
+    marker_set = {marker.lower() for marker in markers}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name.lower() not in _IGNORED_DOTNET_DIRS]
+        lower_files = {filename.lower() for filename in filenames}
+        if marker_set.intersection(lower_files):
+            roots.add(Path(dirpath).resolve())
+    return sorted(roots, key=lambda path: str(path))
+
+
+def discover_node_roots(repo_root: Path) -> list[Path]:
+    return _marker_roots(repo_root, ("package.json",))
+
+
+def discover_rust_roots(repo_root: Path) -> list[Path]:
+    return _marker_roots(repo_root, ("Cargo.toml",))
+
+
+def discover_go_roots(repo_root: Path) -> list[Path]:
+    return _marker_roots(repo_root, ("go.mod", "go.work"))
+
+
+def discover_maven_roots(repo_root: Path) -> list[Path]:
+    return _marker_roots(repo_root, ("pom.xml", "mvnw"))
+
+
+def discover_cmake_roots(repo_root: Path) -> list[Path]:
+    return _marker_roots(repo_root, ("CMakeLists.txt",))
+
+
+def discover_meson_roots(repo_root: Path) -> list[Path]:
+    return _marker_roots(repo_root, ("meson.build",))
+
+
+def discover_make_roots(repo_root: Path) -> list[Path]:
+    return _marker_roots(repo_root, ("Makefile", "makefile", "GNUmakefile"))
 
 
 def find_config(repo_root: Path, config_path_arg: str | None) -> Path | None:
@@ -552,6 +671,8 @@ def load_project_config(
     repo_loaded = dict(loaded)
 
     global_loaded, global_path = load_global_config()
+    source_label = config_path or global_path or repo_root / CONFIG_NAME
+    repo_source_label = config_path or repo_root / CONFIG_NAME
     global_defaults = _global_project_defaults(global_loaded)
     if global_defaults:
         loaded = _deep_merge_defaults(global_defaults, loaded)
@@ -570,8 +691,6 @@ def load_project_config(
     except UIPreferencesError as exc:
         raise SystemExit(f"Invalid UI configuration: {exc}") from exc
 
-    source_label = config_path or global_path
-    repo_source_label = config_path or repo_root / CONFIG_NAME
     repo_project_raw = _require_table(repo_loaded, "project", source=repo_source_label)
     repo_execution_section = _require_table(repo_loaded, "execution", source=repo_source_label)
     project_raw = _require_table(loaded, "project", source=source_label)
@@ -652,6 +771,7 @@ def load_project_config(
             f"Named targets: {named}."
         )
     selected_variant_name = (variant_name.strip() or str(project_section.get("variant", "")).strip())
+    variant_from_cli = bool(str(variant_name or "").strip())
     explicit_solution = solution_override.strip()
     explicit_project = project_override.strip()
     config_solution = str(project_section.get("solution", "")).strip()
@@ -745,6 +865,9 @@ def load_project_config(
         for key, value in selected_target.options.items():
             runner_options[key] = _merge_option_value(runner_options.get(key), value)
         if selected_variant_name:
+            if selected_target.variants and selected_variant_name not in selected_target.variants:
+                available = ", ".join(sorted(selected_target.variants)) or "<none>"
+                raise SystemExit(f"Unknown variant '{selected_variant_name}' for target '{selected_target.name}'. Available variants: {available}")
             variant_options = selected_target.variants.get(selected_variant_name)
             if isinstance(variant_options, dict):
                 for key, value in variant_options.items():
@@ -752,8 +875,16 @@ def load_project_config(
                         effective_env.update({str(k): str(v) for k, v in value.items()})
                     else:
                         runner_options[key] = _merge_option_value(runner_options.get(key), value)
+            elif variant_from_cli and selected_target.variants:
+                raise SystemExit(f"Unknown variant '{selected_variant_name}' for target '{selected_target.name}'.")
     elif selected_variant_name:
-        top_variants = loaded.get("variants", {}) if isinstance(loaded.get("variants", {}), dict) else {}
+        raw_top_variants = loaded.get("variants", {})
+        if raw_top_variants is not None and not isinstance(raw_top_variants, dict):
+            raise SystemExit("[variants] must be a TOML table")
+        top_variants = raw_top_variants if isinstance(raw_top_variants, dict) else {}
+        if top_variants and selected_variant_name not in top_variants:
+            available = ", ".join(sorted(str(key) for key in top_variants)) or "<none>"
+            raise SystemExit(f"Unknown variant '{selected_variant_name}'. Available variants: {available}")
         variant_options = top_variants.get(selected_variant_name) if isinstance(top_variants, dict) else None
         if isinstance(variant_options, dict):
             for key, value in variant_options.items():
@@ -761,6 +892,8 @@ def load_project_config(
                     effective_env.update({str(k): str(v) for k, v in value.items()})
                 elif isinstance(value, dict):
                     runner_options[key] = _merge_option_value(runner_options.get(key), value)
+                else:
+                    raise SystemExit(f"[variants.{selected_variant_name}.{key}] must be a TOML table")
 
     chroots_options = runner_options.get("chroots", {})
     selected_chroot_profile = (
@@ -939,31 +1072,38 @@ def detect_project_kind_details(repo_root: Path) -> dict[str, Any]:
     plain_gradle_markers = [root for root in gradle_markers if root not in android_marker_set]
     from .python_support import discover_python_roots
     python_roots = discover_python_roots(repo_root)
+    node_roots = discover_node_roots(repo_root)
+    rust_roots = discover_rust_roots(repo_root)
+    go_roots = discover_go_roots(repo_root)
+    maven_roots = discover_maven_roots(repo_root)
+    cmake_roots = discover_cmake_roots(repo_root)
+    meson_roots = discover_meson_roots(repo_root)
+    make_roots = discover_make_roots(repo_root)
     markers = {
         "dotnet": bool(dotnet_candidates),
         "android": bool(android_markers),
         "gradle": bool(plain_gradle_markers),
         "python": bool(python_roots),
-        "node": (repo_root / "package.json").is_file(),
-        "rust": (repo_root / "Cargo.toml").is_file(),
-        "go": (repo_root / "go.mod").is_file() or (repo_root / "go.work").is_file(),
-        "maven": (repo_root / "pom.xml").is_file() or (repo_root / "mvnw").is_file(),
-        "cmake": (repo_root / "CMakeLists.txt").is_file(),
-        "meson": (repo_root / "meson.build").is_file(),
-        "make": any((repo_root / name).is_file() for name in ("Makefile", "makefile", "GNUmakefile")),
+        "node": bool(node_roots),
+        "rust": bool(rust_roots),
+        "go": bool(go_roots),
+        "maven": bool(maven_roots),
+        "cmake": bool(cmake_roots),
+        "meson": bool(meson_roots),
+        "make": bool(make_roots),
     }
     root_markers = {
         "dotnet": any(path.parent.resolve() == repo_root for path in dotnet_candidates),
         "android": repo_root in android_markers,
         "gradle": repo_root in plain_gradle_markers,
         "python": repo_root in python_roots,
-        "node": markers["node"],
-        "rust": markers["rust"],
-        "go": markers["go"],
-        "maven": markers["maven"],
-        "cmake": markers["cmake"],
-        "meson": markers["meson"],
-        "make": markers["make"],
+        "node": repo_root in node_roots,
+        "rust": repo_root in rust_roots,
+        "go": repo_root in go_roots,
+        "maven": repo_root in maven_roots,
+        "cmake": repo_root in cmake_roots,
+        "meson": repo_root in meson_roots,
+        "make": repo_root in make_roots,
     }
     order = (
         "dotnet", "android", "gradle", "python", "node", "rust", "go",
@@ -1018,12 +1158,51 @@ def detect_project_kind(repo_root: Path) -> str:
     return selected
 
 
+def _version_catalog_android_aliases(root: Path) -> set[str]:
+    aliases: set[str] = set()
+    catalog_dir = root / "gradle"
+    if not catalog_dir.is_dir():
+        return aliases
+    for path in sorted(catalog_dir.glob("*.versions.toml")):
+        try:
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        plugins = data.get("plugins", {}) if isinstance(data, dict) else {}
+        if not isinstance(plugins, dict):
+            continue
+        for alias, raw in plugins.items():
+            plugin_id = ""
+            if isinstance(raw, str):
+                plugin_id = raw
+            elif isinstance(raw, dict):
+                plugin_id = str(raw.get("id") or "")
+            if plugin_id.strip() in _ANDROID_PLUGIN_IDS:
+                aliases.add(str(alias).replace("-", "."))
+    return aliases
+
+
+def _script_declares_android_plugin(text: str, aliases: set[str]) -> bool:
+    if any(plugin_id in text for plugin_id in _ANDROID_PLUGIN_IDS):
+        return True
+    compact = text.replace(" ", "")
+    for alias in aliases:
+        dotted = alias.replace("-", ".")
+        if f"alias(libs.plugins.{dotted})" in compact:
+            return True
+        accessor = "libs.plugins." + ".".join(dotted.split("."))
+        if accessor in text:
+            return True
+    return False
+
+
 def _gradle_root_is_android(root: Path) -> bool:
     """Return whether *this Gradle root itself* declares Android capability.
 
-    A nested Android build must not turn an unrelated repository-root JVM
-    Gradle project into Android.  Module/build discovery is handled separately
-    and selected targets can still declare ``type = "android"`` explicitly.
+    Direct plugin ids and Gradle version-catalog aliases both count. A nested
+    Android build must not turn an unrelated repository-root JVM Gradle project
+    into Android. Module/build discovery is handled separately and selected
+    targets can still declare ``type = "android"`` explicitly.
     """
 
     scripts = (
@@ -1032,6 +1211,7 @@ def _gradle_root_is_android(root: Path) -> bool:
         root / "settings.gradle",
         root / "settings.gradle.kts",
     )
+    aliases = _version_catalog_android_aliases(root)
     for path in scripts:
         if not path.is_file():
             continue
@@ -1039,47 +1219,44 @@ def _gradle_root_is_android(root: Path) -> bool:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if "com.android.application" in text or "com.android.library" in text:
+        if _script_declares_android_plugin(text, aliases):
             return True
     return (root / "src" / "main" / "AndroidManifest.xml").is_file()
 
 def discover_gradle_roots(repo_root: Path, *, android_only: bool = False) -> list[Path]:
-    """Discover top-level Gradle builds anywhere below ``repo_root``.
+    """Discover independent Gradle builds anywhere below ``repo_root``.
 
-    A prior implementation only inspected the repository root and its direct
-    children, which missed common layouts such as ``app/XDM.Android``.  The
-    recursive walk stops descending once it finds a Gradle root so module build
-    files are not reported as independent projects.
+    Settings files and wrappers establish independent Gradle roots even when an
+    ancestor also has Gradle metadata.  Plain module ``build.gradle`` files under
+    an existing root are not emitted as separate projects.
     """
 
     candidates: list[Path] = []
-    markers = {
-        "settings.gradle",
-        "settings.gradle.kts",
-        "build.gradle",
-        "build.gradle.kts",
-        "gradlew",
-    }
-    for dirpath, dirnames, filenames in os.walk(repo_root):
-        dirnames[:] = [
-            name for name in dirnames
-            if name.lower() not in _IGNORED_DOTNET_DIRS
-        ]
-        if not markers.intersection(filenames):
-            continue
+    strong_markers = {"settings.gradle", "settings.gradle.kts", "gradlew"}
+    build_markers = {"build.gradle", "build.gradle.kts"}
 
+    discovered_roots: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [name for name in dirnames if name.lower() not in _IGNORED_DOTNET_DIRS]
         root = Path(dirpath).resolve()
+        file_set = set(filenames)
+        has_strong_marker = bool(strong_markers.intersection(file_set))
+        has_build_script = bool(build_markers.intersection(file_set))
+        if not has_strong_marker and not has_build_script:
+            continue
+        inside_existing_root = any(
+            existing != root and root.is_relative_to(existing)
+            for existing in discovered_roots
+        )
+        independent = has_strong_marker or not inside_existing_root
+        if not independent:
+            continue
+        discovered_roots.append(root)
         is_android = _gradle_root_is_android(root)
         if not android_only or is_android:
             candidates.append(root)
 
-        # A settings/build/wrapper marker establishes this project root.  Its
-        # module build files belong to the same Gradle build and must not be
-        # returned as separate targets.
-        dirnames[:] = []
-
     return sorted(set(candidates), key=lambda path: str(path))
-
 
 def discover_dotnet_candidates(repo_root: Path) -> list[Path]:
     """Discover .NET entry points without letting nested files steal root identity."""
@@ -1123,18 +1300,22 @@ def _default_build_target(repo_root: Path, kind: str, section: dict[str, Any]) -
             if (root / "setup.py").exists():
                 return str((root / "setup.py").resolve())
             return str(root.resolve())
-    marker_by_kind = {
-        "node": "package.json",
-        "rust": "Cargo.toml",
-        "go": "go.mod" if (repo_root / "go.mod").exists() else "go.work",
-        "maven": "pom.xml",
-        "cmake": "CMakeLists.txt",
-        "meson": "meson.build",
-        "make": next((name for name in ("Makefile", "makefile", "GNUmakefile") if (repo_root / name).exists()), ""),
+    roots_by_kind = {
+        "node": discover_node_roots,
+        "rust": discover_rust_roots,
+        "go": discover_go_roots,
+        "maven": discover_maven_roots,
+        "cmake": discover_cmake_roots,
+        "meson": discover_meson_roots,
+        "make": discover_make_roots,
     }
-    marker = marker_by_kind.get(kind, "")
-    if marker and (repo_root / marker).exists():
-        return str(repo_root.resolve())
+    discover = roots_by_kind.get(kind)
+    if discover is not None:
+        roots = discover(repo_root)
+        if len(roots) == 1:
+            return str(roots[0].resolve())
+        if repo_root.resolve() in roots:
+            return str(repo_root.resolve())
     return ""
 
 
@@ -1147,22 +1328,31 @@ def _merge_option_value(current: Any, incoming: Any) -> Any:
     return incoming
 
 
-def _load_target_variants(raw_value: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def _load_target_variants(raw_value: dict[str, Any], *, target_name: str = "") -> dict[str, dict[str, Any]]:
     raw_variants = raw_value.get("variants", {})
-    if not isinstance(raw_variants, dict):
+    if raw_variants is None:
         return {}
+    if not isinstance(raw_variants, dict):
+        raise SystemExit(f"[targets.{target_name}.variants] must be a TOML table")
     variants: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
     for raw_name, raw_options in raw_variants.items():
         if not isinstance(raw_name, str) or not isinstance(raw_options, dict):
-            continue
+            raise SystemExit(f"[targets.{target_name}.variants.{raw_name}] must be a TOML table")
         name = raw_name.strip()
         if not name:
-            continue
+            raise SystemExit(f"[targets.{target_name}.variants] contains an empty variant name")
+        if name in seen:
+            raise SystemExit(f"[targets.{target_name}.variants] contains a duplicate variant after trimming: {name!r}")
+        seen.add(name)
         options: dict[str, Any] = {}
         for option_name in (*RUNNER_OPTION_SECTIONS, "env"):
+            if option_name not in raw_options:
+                continue
             option_value = raw_options.get(option_name, {})
-            if isinstance(option_value, dict):
-                options[option_name] = dict(option_value)
+            if not isinstance(option_value, dict):
+                raise SystemExit(f"[targets.{target_name}.variants.{name}.{option_name}] must be a TOML table")
+            options[option_name] = dict(option_value)
         variants[name] = options
     return variants
 
@@ -1182,12 +1372,17 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
         raise SystemExit("[targets] must be a TOML table")
 
     targets: dict[str, TargetConfig] = {}
+    seen_names: set[str] = set()
     for raw_name, raw_value in section.items():
         if not isinstance(raw_name, str) or not isinstance(raw_value, dict):
             raise SystemExit(f"Target {raw_name!r} must be a TOML table")
         name = raw_name.strip()
         if not name:
-            continue
+            raise SystemExit("target names cannot be empty")
+        _validate_workspace_identifier("target", name)
+        if name in seen_names:
+            raise SystemExit(f"Duplicate target name after trimming: {name!r}")
+        seen_names.add(name)
         solution = _resolve_optional_path(repo_root, raw_value.get("solution", ""))
         restore_target = _resolve_optional_path(repo_root, raw_value.get("restore_target", ""))
         build_target = _resolve_optional_path(repo_root, raw_value.get("build_target", ""))
@@ -1201,7 +1396,10 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
         package_command = str(raw_value.get("package_command", "")).strip()
         run_command = str(raw_value.get("run_command", "")).strip()
         target_env = dict(base_env)
-        for key, value in raw_value.get("env", {}).items() if isinstance(raw_value.get("env", {}), dict) else []:
+        raw_env = raw_value.get("env", {})
+        if raw_env is not None and not isinstance(raw_env, dict):
+            raise SystemExit(f"[targets.{name}.env] must be a TOML table")
+        for key, value in raw_env.items() if isinstance(raw_env, dict) else []:
             target_env[str(key)] = str(value)
         canonical_runner = normalize_runner_name(raw_value.get("runner", ""))
         legacy_runner = normalize_runner_name(raw_value.get("type", raw_value.get("kind", "")))
@@ -1211,6 +1409,8 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
                 "Use one runner identity."
             )
         target_runner = canonical_runner or legacy_runner
+        if target_runner in {"auto", "unknown"}:
+            raise SystemExit(f"Target '{name}' must declare a concrete runner; auto/unknown is only valid at [project].")
         if target_runner and target_runner not in SUPPORTED_RUNNERS:
             raise SystemExit(f"Target '{name}' declares unsupported runner '{target_runner}'.")
         target_platform = normalize_platform_name(
@@ -1233,9 +1433,12 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             return tuple(items)
         options: dict[str, Any] = {}
         for option_name in RUNNER_OPTION_SECTIONS:
+            if option_name not in raw_value:
+                continue
             option_value = raw_value.get(option_name, {})
-            if isinstance(option_value, dict):
-                options[option_name] = dict(option_value)
+            if not isinstance(option_value, dict):
+                raise SystemExit(f"[targets.{name}.{option_name}] must be a TOML table")
+            options[option_name] = dict(option_value)
         targets[name] = TargetConfig(
             name=name,
             runner=target_runner,
@@ -1258,7 +1461,7 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             chroot_name=str(raw_value.get("chroot_name", "")).strip(),
             device_serial=str(raw_value.get("device_serial", "")).strip(),
             options=options,
-            variants=_load_target_variants(raw_value),
+            variants=_load_target_variants(raw_value, target_name=name),
             inputs=target_paths("inputs"),
             outputs=target_paths("outputs"),
             metadata=dict(metadata_raw) if isinstance(metadata_raw, dict) else {},

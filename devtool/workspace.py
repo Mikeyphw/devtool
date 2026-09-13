@@ -9,6 +9,7 @@ cycles/unknown members before execution starts.
 """
 
 from dataclasses import dataclass
+import re
 from typing import Iterable, Mapping
 
 from .models import TargetConfig, TargetGroup, WorkflowSchedulerConfig, WorkspaceConfig
@@ -16,6 +17,19 @@ from .models import TargetConfig, TargetGroup, WorkflowSchedulerConfig, Workspac
 
 class WorkspaceConfigError(ValueError):
     """Raised when workspace/group configuration is invalid."""
+
+
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _validate_group_name(name: str) -> None:
+    if not _NAME_RE.fullmatch(name):
+        raise WorkspaceConfigError(
+            f"Invalid workspace group name {name!r}. Use letters, numbers, '.', '_' or '-', "
+            "start with a letter/number, and do not include @, group:, '/', or '*'."
+        )
+    if name.startswith("group:") or name.startswith("@") or name == "*":
+        raise WorkspaceConfigError(f"Invalid workspace group name {name!r}; names cannot be references or wildcards.")
 
 
 def _normalize_members(value: object, *, group: str) -> tuple[str, ...]:
@@ -65,10 +79,17 @@ def load_workspace_config(
         raise WorkspaceConfigError("[workspace.groups] must be a TOML table")
 
     groups: dict[str, TargetGroup] = {}
+    seen_group_names: set[str] = set()
     for raw_name, raw_members in raw_groups.items():
-        name = str(raw_name or "").strip()
+        if not isinstance(raw_name, str):
+            raise WorkspaceConfigError(f"workspace group name {raw_name!r} must be a string")
+        name = raw_name.strip()
         if not name:
             raise WorkspaceConfigError("workspace group names cannot be empty")
+        _validate_group_name(name)
+        if name in seen_group_names:
+            raise WorkspaceConfigError(f"Duplicate workspace group name after trimming: {name!r}")
+        seen_group_names.add(name)
         if name in targets:
             raise WorkspaceConfigError(
                 f"workspace group '{name}' conflicts with a target of the same name; choose a distinct group name"

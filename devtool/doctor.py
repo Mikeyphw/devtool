@@ -129,7 +129,7 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
 
 def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
     checks = collect_doctor_checks(config)
-    features = resolve_feature_flags(config.repo_root)
+    features = resolve_feature_flags(config.repo_root, config_path=config.config_path)
     return {
         "schema_version": 1,
         "repository": str(config.repo_root),

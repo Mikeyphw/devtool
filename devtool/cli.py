@@ -276,15 +276,25 @@ GLOBAL_OPTIONS_WITH_VALUE = {
     "--config",
     "--target",
     "--variant",
+    "--group",
     "--solution",
     "--project",
     "--project-type",
     "--runner",
+    "--affected-base",
+    "--affected-head",
+    "--log-dir",
     "--performance-file",
     "--machine-file",
     "--copy-via",
     "--theme",
     "--stdout-payload",
+    "--ui-profile",
+    "--ui-theme",
+    "--ui-density",
+    "--ui-icons",
+    "--ui-motion",
+    "--ui-verbosity",
     "--hud-mode",
     "--chroot",
     "--ssh",
@@ -298,6 +308,29 @@ GLOBAL_OPTIONS_WITH_VALUE = {
     "--ssh-mode",
     "--ssh-stage-dir",
     "--execution-environment",
+    "--proot-distro",
+    "--proot-user",
+    "--proot-cwd",
+    "--proot-repo-mount",
+    "--proot-bind",
+    "--proot-env",
+    "--proot-stage-dir",
+    "--termux-resource-profile",
+    "--shared-storage-policy",
+    "--artifact-export",
+    "--bootstrap-downloads",
+    "--toolchain-profile",
+    "--android-sdk-root",
+    "--android-sdk-provider",
+    "--gradle-command",
+    "--gradle-provider",
+    "--java-home",
+    "--java-provider",
+    "--gradle-user-home",
+    "--native-provider",
+    "--native-cache",
+    "--android-build-tools-provider",
+    "--aapt2-provider",
 }
 
 
@@ -3088,7 +3121,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             solution_override=solution,
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
-            allow_ambiguous_target=args.command in {"targets", "tg", "groups", "gr", "jobs", "jb", "workflows", "wf", "plan", "pl", "affected", "aff", "preflight", "pf", "doctor", "dr"} or allow_bundle_bootstrap or workspace_selection,
+            allow_ambiguous_target=args.command in {"targets", "tg", "groups", "gr", "jobs", "jb", "workflows", "wf", "plan", "pl", "affected", "aff", "preflight", "pf", "doctor", "dr", "completion-state"} or allow_bundle_bootstrap or workspace_selection,
         )
     except SystemExit as exc:
         # An overlay may introduce both the named target and .devtool.toml. Allow
@@ -10278,6 +10311,28 @@ def _raw_flag_present(raw_argv: list[str], *flags: str) -> bool:
     return False
 
 
+_TRUE_CONFIG_VALUES = {"1", "true", "yes", "on", "enabled"}
+_FALSE_CONFIG_VALUES = {"0", "false", "no", "off", "disabled"}
+
+
+def _config_bool(value: object, *, default: bool | None = None) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _TRUE_CONFIG_VALUES:
+            return True
+        if text in _FALSE_CONFIG_VALUES:
+            return False
+        if text == "":
+            return default
+    return default
+
+
 def _apply_global_cli_defaults(args: argparse.Namespace, raw_argv: list[str]) -> None:
     cli = _devtool_global_cli_config()
     if not cli:
@@ -10291,9 +10346,9 @@ def _apply_global_cli_defaults(args: argparse.Namespace, raw_argv: list[str]) ->
         value = str(output.get("machine_file") or "").strip()
         if value:
             args.machine_file = value
-    if bool(output.get("copy", False)) and not _raw_flag_present(raw_argv, "-p", "--copy", "--no-clipboard"):
+    if _config_bool(output.get("copy"), default=False) is True and not _raw_flag_present(raw_argv, "-p", "--copy", "--no-clipboard"):
         args.copy = True
-    if bool(output.get("no_clipboard", False)) and not _raw_flag_present(raw_argv, "--no-clipboard", "-p", "--copy"):
+    if _config_bool(output.get("no_clipboard"), default=False) is True and not _raw_flag_present(raw_argv, "--no-clipboard", "-p", "--copy"):
         args.no_clipboard = True
     if "copy_via" in output and not _raw_flag_present(raw_argv, "--copy-via"):
         value = str(output.get("copy_via") or "auto")
@@ -10306,21 +10361,17 @@ def _apply_global_cli_defaults(args: argparse.Namespace, raw_argv: list[str]) ->
 
     hud = cli.get("hud", {}) if isinstance(cli.get("hud", {}), dict) else {}
     if "auto_hud" in hud and not _raw_flag_present(raw_argv, "--auto-hud", "--hud-auto", "--no-hud"):
-        value = hud.get("auto_hud")
-        if isinstance(value, bool):
-            args.auto_hud = value
-        elif str(value).strip().lower() in {"true", "yes", "on", "1"}:
-            args.auto_hud = True
-        elif str(value).strip().lower() in {"false", "no", "off", "0"}:
-            args.auto_hud = False
+        parsed = _config_bool(hud.get("auto_hud"), default=None)
+        if parsed is not None:
+            args.auto_hud = parsed
     if "mode" in hud and not _raw_flag_present(raw_argv, "--hud-mode"):
         value = str(hud.get("mode") or "").strip()
         if value:
             args.hud_mode = value
-    overlay_value = str(hud.get("overlay", "auto") or "auto").strip().lower()
-    if overlay_value in {"true", "yes", "on", "1"} and not _raw_flag_present(raw_argv, "--hud-overlay", "--hud-no-overlay"):
+    overlay_value = _config_bool(hud.get("overlay", "auto"), default=None)
+    if overlay_value is True and not _raw_flag_present(raw_argv, "--hud-overlay", "--hud-no-overlay"):
         args.hud_overlay = True
-    elif overlay_value in {"false", "no", "off", "0"} and not _raw_flag_present(raw_argv, "--hud-overlay", "--hud-no-overlay"):
+    elif overlay_value is False and not _raw_flag_present(raw_argv, "--hud-overlay", "--hud-no-overlay"):
         args.hud_no_overlay = True
 
     env = cli.get("environment", {}) if isinstance(cli.get("environment", {}), dict) else {}
@@ -10328,28 +10379,27 @@ def _apply_global_cli_defaults(args: argparse.Namespace, raw_argv: list[str]) ->
         value = str(env.get("execution_environment") or EXECUTION_AUTO).strip()
         if value in EXECUTION_ENVIRONMENTS:
             args.execution_environment = value
-    if bool(env.get("no_auto_chroot", False)) and not _raw_flag_present(raw_argv, "--no-auto-chroot", "--chroot"):
+    if _config_bool(env.get("no_auto_chroot"), default=False) is True and not _raw_flag_present(raw_argv, "--no-auto-chroot", "--chroot"):
         args.no_auto_chroot = True
 
     apply = cli.get("apply", {}) if isinstance(cli.get("apply", {}), dict) else {}
     if str(getattr(args, "command", "") or "") in LEGACY_APPLY_VALIDATE_COMMANDS:
-        if bool(apply.get("validate", False)) and not _raw_flag_present(raw_argv, "--validate", "--no-validate"):
+        if _config_bool(apply.get("validate"), default=False) is True and not _raw_flag_present(raw_argv, "--validate", "--no-validate"):
             args.validate = True
-        if bool(apply.get("manifest_check", True)) is False and not _raw_flag_present(raw_argv, "--no-manifest-check"):
+        if _config_bool(apply.get("manifest_check"), default=True) is False and not _raw_flag_present(raw_argv, "--no-manifest-check"):
             args.no_manifest_check = True
-        if bool(apply.get("ignore_checksum", False)) and not _raw_flag_present(raw_argv, "--ignore-checksum"):
+        if _config_bool(apply.get("ignore_checksum"), default=False) is True and not _raw_flag_present(raw_argv, "--ignore-checksum"):
             args.ignore_checksum = True
-        if bool(apply.get("keep_artifact", False)) and not _raw_flag_present(raw_argv, "--keep-artifact"):
+        if _config_bool(apply.get("keep_artifact"), default=False) is True and not _raw_flag_present(raw_argv, "--keep-artifact"):
             args.keep_artifact = True
-        if bool(apply.get("delete_artifact_on_failure", False)) and not _raw_flag_present(raw_argv, "--delete-artifact-on-failure"):
+        if _config_bool(apply.get("delete_artifact_on_failure"), default=False) is True and not _raw_flag_present(raw_argv, "--delete-artifact-on-failure"):
             args.delete_artifact_on_failure = True
-        if bool(apply.get("rollback_on_failure", True)) is False and not _raw_flag_present(raw_argv, "--no-rollback-on-failure"):
+        if _config_bool(apply.get("rollback_on_failure"), default=True) is False and not _raw_flag_present(raw_argv, "--no-rollback-on-failure"):
             args.no_rollback_on_failure = True
-        if bool(apply.get("apply_notification", True)) is False and not _raw_flag_present(raw_argv, "--no-apply-notification"):
+        if _config_bool(apply.get("apply_notification"), default=True) is False and not _raw_flag_present(raw_argv, "--no-apply-notification"):
             args.no_apply_notification = True
-        if bool(apply.get("artifact_script", True)) is False and not _raw_flag_present(raw_argv, "--no-artifact-script"):
+        if _config_bool(apply.get("artifact_script"), default=True) is False and not _raw_flag_present(raw_argv, "--no-artifact-script"):
             args.no_artifact_script = True
-
 
 def _resolve_config_editor(requested: str = "") -> list[str]:
     global_config, _ = load_global_config()

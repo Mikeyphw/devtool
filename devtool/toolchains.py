@@ -40,7 +40,7 @@ def configured_toolchain_manager(
     config: ProjectConfig,
     env: Mapping[str, str] | None = None,
 ) -> str:
-    env = env or os.environ
+    env = os.environ if env is None else env
     override = str(env.get("DEVTOOL_TOOLCHAIN", "")).strip()
     if override:
         return normalize_toolchain_manager(override)
@@ -63,7 +63,7 @@ def should_use_mise(
     cwd: str | None = None,
     env: Mapping[str, str] | None = None,
 ) -> bool:
-    env = env or os.environ
+    env = os.environ if env is None else env
     manager = configured_toolchain_manager(config, env)
     if manager == "none":
         return False
@@ -137,7 +137,7 @@ def apply_destination_toolchain_wrapper(
     executable.
     """
 
-    env = env or os.environ
+    env = os.environ if env is None else env
     manager = configured_toolchain_manager(config, env)
     wrapped: list[CommandSpec] = []
     for spec in specs:
@@ -165,19 +165,24 @@ def toolchain_doctor_rows(
     config: ProjectConfig,
     env: Mapping[str, str] | None = None,
 ) -> list[tuple[str, str]]:
-    env = env or os.environ
+    env = os.environ if env is None else env
     manager = configured_toolchain_manager(config, env)
     mise = shutil.which("mise", path=str(env.get("PATH", "")))
     root = Path(config.project_root or config.repo_root)
     if not root.is_absolute():
         root = config.repo_root / root
     marker = has_mise_marker(root.resolve(), stop_at=config.repo_root)
-    active = should_use_mise(config, cwd=str(root), env=env)
+    active_error = ""
+    try:
+        active = should_use_mise(config, cwd=str(root), env=env)
+    except SystemExit as exc:
+        active = False
+        active_error = str(exc)
     rows = [
         ("toolchain", manager),
         ("mise", mise or "MISSING"),
         ("mise_marker", "yes" if marker else "no"),
-        ("toolchain_active", "yes" if active else "no"),
+        ("toolchain_active", f"error: {active_error}" if active_error else ("yes" if active else "no")),
     ]
     runtime = detect_runtime_identity(env)
     if runtime.is_termux:

@@ -72,10 +72,24 @@ def _running_under_termux() -> bool:
         return prefix.startswith("/data/data/com.termux/")
 
 
+def _termux_expected_arch() -> str:
+    for key in ("TERMUX_ARCH", "ANDROID_CPU_ABI", "ANDROID_ABI", "DEVTOOL_TERMUX_ARCH"):
+        raw = str(os.environ.get(key) or "").strip()
+        if raw:
+            normalized = normalize_machine(raw)
+            if normalized in {"arm64", "amd64"}:
+                return normalized
+    # Native Termux most commonly runs on Android arm64.  Do not let a host
+    # Python/PRoot shim reporting x86_64 make the Termux bootstrap receipt
+    # claim linux-amd64 architecture.
+    host_arch = normalize_machine()
+    return host_arch if host_arch not in {"amd64"} else "arm64"
+
+
 def current_destination() -> BootstrapDestination:
     arch = normalize_machine()
     if _running_under_termux():
-        return BootstrapDestination("termux", "termux", expected_arch=arch)
+        return BootstrapDestination("termux", "termux", expected_arch=_termux_expected_arch())
     if arch == "arm64":
         return BootstrapDestination("linux-arm64", "linux", expected_arch="arm64")
     if arch == "amd64":
@@ -129,7 +143,13 @@ def load_receipt(destination: BootstrapDestination | str) -> dict[str, Any] | No
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return None
-    if not isinstance(payload, dict) or int(payload.get("schema") or 0) != BOOTSTRAP_RECEIPT_SCHEMA:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        schema = int(payload.get("schema") or 0)
+    except (TypeError, ValueError):
+        return None
+    if schema != BOOTSTRAP_RECEIPT_SCHEMA:
         return None
     return payload
 

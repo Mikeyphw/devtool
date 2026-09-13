@@ -7,9 +7,27 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .config import discover_dotnet_candidates, discover_gradle_roots, detect_project_kind, detect_project_kind_details, find_config
+from .config import (
+    discover_cmake_roots,
+    discover_dotnet_candidates,
+    discover_go_roots,
+    discover_gradle_roots,
+    discover_make_roots,
+    discover_maven_roots,
+    discover_meson_roots,
+    discover_node_roots,
+    discover_rust_roots,
+    detect_project_kind,
+    detect_project_kind_details,
+    find_config,
+)
+from .python_support import discover_python_roots
 
-IGNORED_DIRS = {".git", ".devtool", "bin", "obj", "node_modules", "venv", ".venv", "dist", "build", "__pycache__"}
+IGNORED_DIRS = {
+    ".git", ".devtool", ".hg", ".svn", ".cache", ".idea", ".pytest_cache", ".tox",
+    "bin", "obj", "node_modules", "venv", ".venv", "dist", "build", "__pycache__",
+    "artifacts", "out", "target", "tmp", "temp", "vendor",
+}
 
 
 def _collect(repo_root: Path, suffixes: tuple[str, ...]) -> list[Path]:
@@ -59,16 +77,25 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
     repo_root = repo_root.expanduser().resolve()
     slns = _collect(repo_root, (".sln",))
     csprojs = _collect(repo_root, (".csproj",))
-    pyprojects = [repo_root / "pyproject.toml"] if (repo_root / "pyproject.toml").exists() else []
-    node_manifest = repo_root / "package.json"
-    rust_manifest = repo_root / "Cargo.toml"
-    go_manifest = repo_root / ("go.work" if (repo_root / "go.work").exists() else "go.mod")
-    maven_manifest = repo_root / "pom.xml"
-    cmake_manifest = repo_root / "CMakeLists.txt"
-    meson_manifest = repo_root / "meson.build"
-    make_manifest = next((repo_root / name for name in ("Makefile", "makefile", "GNUmakefile") if (repo_root / name).exists()), repo_root / "Makefile")
+    python_roots = discover_python_roots(repo_root)
+    pyprojects = [root / "pyproject.toml" for root in python_roots if (root / "pyproject.toml").is_file()]
+    node_roots = discover_node_roots(repo_root)
+    rust_roots = discover_rust_roots(repo_root)
+    go_roots = discover_go_roots(repo_root)
+    maven_roots = discover_maven_roots(repo_root)
+    cmake_roots = discover_cmake_roots(repo_root)
+    meson_roots = discover_meson_roots(repo_root)
+    make_roots = discover_make_roots(repo_root)
     gradle_roots = discover_gradle_roots(repo_root, android_only=False)
     android_roots = discover_gradle_roots(repo_root, android_only=True)
+
+    def _manifest(roots: list[Path], *names: str) -> str:
+        for root in roots:
+            for name in names:
+                candidate = root / name
+                if candidate.is_file():
+                    return _rel(repo_root, candidate)
+        return ""
     package_scripts = [p for p in [repo_root / "scripts" / "package-release.sh", repo_root / "build.sh", repo_root / "package.sh"] if p.exists()]
     docs = [
         p for p in [
@@ -120,13 +147,13 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
             "pyproject": [_rel(repo_root, p) for p in pyprojects],
             "pytest": (repo_root / "tests").exists() or (repo_root / "pytest.ini").exists(),
         },
-        "node": {"manifest": _rel(repo_root, node_manifest) if node_manifest.exists() else ""},
-        "rust": {"manifest": _rel(repo_root, rust_manifest) if rust_manifest.exists() else ""},
-        "go": {"manifest": _rel(repo_root, go_manifest) if go_manifest.exists() else ""},
-        "maven": {"manifest": _rel(repo_root, maven_manifest) if maven_manifest.exists() else ""},
-        "cmake": {"manifest": _rel(repo_root, cmake_manifest) if cmake_manifest.exists() else ""},
-        "meson": {"manifest": _rel(repo_root, meson_manifest) if meson_manifest.exists() else ""},
-        "make": {"manifest": _rel(repo_root, make_manifest) if make_manifest.exists() else ""},
+        "node": {"manifest": _manifest(node_roots, "package.json"), "roots": [_rel(repo_root, p) for p in node_roots], "root_count": len(node_roots)},
+        "rust": {"manifest": _manifest(rust_roots, "Cargo.toml"), "roots": [_rel(repo_root, p) for p in rust_roots], "root_count": len(rust_roots)},
+        "go": {"manifest": _manifest(go_roots, "go.work", "go.mod"), "roots": [_rel(repo_root, p) for p in go_roots], "root_count": len(go_roots)},
+        "maven": {"manifest": _manifest(maven_roots, "pom.xml", "mvnw"), "roots": [_rel(repo_root, p) for p in maven_roots], "root_count": len(maven_roots)},
+        "cmake": {"manifest": _manifest(cmake_roots, "CMakeLists.txt"), "roots": [_rel(repo_root, p) for p in cmake_roots], "root_count": len(cmake_roots)},
+        "meson": {"manifest": _manifest(meson_roots, "meson.build"), "roots": [_rel(repo_root, p) for p in meson_roots], "root_count": len(meson_roots)},
+        "make": {"manifest": _manifest(make_roots, "Makefile", "makefile", "GNUmakefile"), "roots": [_rel(repo_root, p) for p in make_roots], "root_count": len(make_roots)},
         "packaging": [_rel(repo_root, p) for p in package_scripts],
         "docs": [_rel(repo_root, p) for p in docs],
         "tools": {

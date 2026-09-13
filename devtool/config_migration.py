@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import json
 import re
 import tomllib
 from typing import Any
@@ -44,8 +45,28 @@ def _sections(lines: list[str]) -> list[tuple[int, int, str]]:
 
 
 def _line_value(line: str, key: str) -> str | None:
-    match = re.match(rf'^\s*{re.escape(key)}\s*=\s*["\']([^"\']*)["\']', line)
-    return match.group(1).strip() if match else None
+    """Parse one TOML scalar assignment without losing quotes/apostrophes.
+
+    The migration logic uses this for legacy string values such as
+    ``default_target``.  Regex extraction corrupted valid TOML strings like
+    ``"Josh's app"`` or values containing escaped quotes.  Let tomllib parse
+    the right-hand side so the migrated value is byte-for-byte semantic TOML,
+    and return ``None`` when the current line is not a simple assignment for
+    *key*.
+    """
+
+    match = re.match(rf"^\s*{re.escape(key)}\s*=\s*(?P<value>.+?)\s*(?:#.*)?$", line)
+    if not match:
+        return None
+    try:
+        value = tomllib.loads(f"value = {match.group('value')}\n").get("value")
+    except tomllib.TOMLDecodeError:
+        return None
+    return str(value).strip() if isinstance(value, str) else None
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 def _bool_value(line: str, key: str) -> bool | None:
@@ -211,7 +232,7 @@ def migrate_config_text(text: str) -> tuple[str, list[ConfigMigrationFinding]]:
     if default_finding is not None:
         current = _table_value("".join(lines), "workspace", "default_target")
         if not current:
-            _set_table_key(lines, "workspace", "default_target", repr(default_finding.value).replace("'", '"'), overwrite=False, comment="# moved by devtool config migrate")
+            _set_table_key(lines, "workspace", "default_target", _toml_string(default_finding.value), overwrite=False, comment="# moved by devtool config migrate")
         _remove_table_key(lines, "project", "default_target")
 
     destructive = next((f for f in findings if f.compatibility_id == "config.ui.confirm_destructive"), None)

@@ -12,14 +12,65 @@ from .core.events import collect_json_events
 from .ui_core.machine import IPC_PROTOCOL_VERSION, MACHINE_SCHEMA_VERSION, machine_state_from_runtime
 
 
+_ROOT_OPTIONS_WITH_VALUE = {
+    "-r", "--repo", "-c", "--config", "--target", "--variant", "--group",
+    "--solution", "--project", "--project-type", "--runner", "--affected-base",
+    "--affected-head", "--log-dir", "--performance-file", "--machine-file",
+    "--copy-via", "--theme", "--stdout-payload", "--ui-profile", "--ui-theme",
+    "--ui-density", "--ui-icons", "--ui-motion", "--ui-verbosity", "--hud-mode",
+    "--chroot", "--ssh", "--ssh-host", "--ssh-port", "--ssh-user",
+    "--ssh-identity", "--ssh-session", "--ssh-cwd", "--ssh-tool", "--ssh-mode",
+    "--ssh-stage-dir", "--execution-environment", "--proot-distro", "--proot-user",
+    "--proot-cwd", "--proot-repo-mount", "--proot-bind", "--proot-env",
+    "--proot-stage-dir", "--termux-resource-profile", "--shared-storage-policy",
+    "--artifact-export", "--bootstrap-downloads", "--toolchain-profile",
+    "--android-sdk-root", "--android-sdk-provider", "--gradle-command",
+    "--gradle-provider", "--java-home", "--java-provider", "--gradle-user-home",
+    "--native-provider", "--native-cache", "--android-build-tools-provider",
+    "--aapt2-provider",
+}
+
+
 def extract_universal_json_flag(argv: list[str]) -> tuple[list[str], bool]:
+    """Strip only the root-level universal --json flag.
+
+    Command-specific --json flags are preserved once the first subcommand has
+    been reached.  This lets native APIs such as ``artifact verify --json`` keep
+    their documented parser behavior while still supporting ``devtool --json``
+    envelopes at the root.
+    """
+
     stripped: list[str] = []
     requested = False
-    for item in argv:
-        if item == "--json":
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--json":
             requested = True
+            index += 1
             continue
-        stripped.append(item)
+        stripped.append(token)
+        if token == "--":
+            stripped.extend(argv[index + 1 :])
+            break
+        if token in _ROOT_OPTIONS_WITH_VALUE:
+            if index + 1 < len(argv):
+                stripped.append(argv[index + 1])
+                index += 2
+            else:
+                index += 1
+            continue
+        if any(token.startswith(option + "=") for option in _ROOT_OPTIONS_WITH_VALUE if option.startswith("--")):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        remainder = argv[index + 1 :]
+        if "--json" in remainder:
+            requested = True
+        stripped.extend(remainder)
+        break
     return stripped, requested
 
 

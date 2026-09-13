@@ -52,8 +52,11 @@ def _coerce(name: str, value: Any) -> bool:
     raise ValueError(f"Invalid boolean for feature {name!r}: {value!r}")
 
 
-def _project_feature_values(repo_root: Path) -> Mapping[str, Any]:
-    path = repo_root / ".devtool.toml"
+def _project_feature_values(repo_root: Path, config_path: str | Path | None = None) -> Mapping[str, Any]:
+    path = Path(config_path).expanduser() if config_path is not None else repo_root / ".devtool.toml"
+    if not path.is_absolute():
+        path = repo_root / path
+    path = path.resolve(strict=False)
     if not path.is_file():
         return {}
     try:
@@ -64,11 +67,16 @@ def _project_feature_values(repo_root: Path) -> Mapping[str, Any]:
     return values if isinstance(values, dict) else {}
 
 
-def resolve_feature_flags(repo_root: str | Path | None = None, *, environ: Mapping[str, str] | None = None) -> FeatureFlags:
+def resolve_feature_flags(
+    repo_root: str | Path | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+    config_path: str | Path | None = None,
+) -> FeatureFlags:
     root = Path(repo_root or Path.cwd()).expanduser().resolve(strict=False)
     env = environ if environ is not None else os.environ
     values = dict(FEATURE_DEFAULTS)
-    for name, value in _project_feature_values(root).items():
+    for name, value in _project_feature_values(root, config_path=config_path).items():
         key = str(name).strip().lower().replace("-", "_")
         if key in values:
             values[key] = _coerce(key, value)

@@ -17,6 +17,7 @@ from .execution_environments import (
 )
 from .models import CommandSpec, ProjectConfig, TargetConfig
 from .project_runners import DEFAULT_RUNNER_REGISTRY
+from .toolchains import apply_destination_toolchain_wrapper
 from .workflow_runtime import WorkflowRuntimeError, build_workspace_specs, plan_workspace_targets
 
 
@@ -154,7 +155,15 @@ def _executable_status(
         normalized = str(path)
         if not path.exists() and planned_executables and normalized in planned_executables:
             return executable, "planned", f"will be provisioned by an earlier workflow step: {path}"
-        return executable, ("ready" if path.exists() else "missing"), str(path)
+        if not path.exists():
+            return executable, "missing", str(path)
+        if path.is_dir():
+            return executable, "incompatible", f"{path} is a directory, not an executable file"
+        if not path.is_file():
+            return executable, "incompatible", f"{path} is not a regular executable file"
+        if not os.access(path, os.X_OK):
+            return executable, "incompatible", f"{path} is not executable"
+        return executable, "ready", str(path)
     env = dict(os.environ)
     env.update({str(k): str(v) for k, v in spec.env.items()})
     found = shutil.which(executable, path=env.get("PATH"))
@@ -345,6 +354,7 @@ def analyze_toolchain_requirements(
             checks.append(RequirementCheck("workflow", f"{target_name}:{action}", "error", str(exc), target=target_name, workflow=action))
             continue
 
+        specs = apply_destination_toolchain_wrapper(config, specs, env=os.environ)
         planned_executables = _planned_executables(specs)
         for spec in specs:
             spec_key = (spec.name, tuple(spec.argv), str(spec.cwd or ""), str(spec.metadata.get("workflow_node_key") or ""))
