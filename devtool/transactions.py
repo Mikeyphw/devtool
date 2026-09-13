@@ -106,7 +106,10 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Invalid transaction JSON: {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise RuntimeError(f"Invalid transaction JSON: {path}")
     return data
@@ -270,6 +273,79 @@ def _path_identity(path: Path) -> dict[str, Any]:
                 digest.update(b"\0")
         identity["tree_modes_sha256"] = digest.hexdigest()
     return identity
+
+
+def _created_parent_dirs(repo_root: Path, rel: Path) -> list[str]:
+    """Return missing ancestors that this transaction may create, deepest first."""
+    repo_root = repo_root.resolve()
+    created: list[str] = []
+    current = (repo_root / rel).parent
+    while current != repo_root and repo_root in (current, *current.parents):
+        if not current.exists() and not current.is_symlink():
+            created.append(current.relative_to(repo_root).as_posix())
+        current = current.parent
+    return created
+
+
+def _cleanup_created_parent_dirs(repo_root: Path, entries: list[dict[str, Any]]) -> list[str]:
+    candidates: set[str] = set()
+    for entry in entries:
+        for raw in entry.get("created_parent_dirs", []) or []:
+            if isinstance(raw, str) and raw.strip():
+                candidates.add(_safe_rel(raw).as_posix())
+    removed: list[str] = []
+    for raw in sorted(candidates, key=lambda item: item.count("/"), reverse=True):
+        path = repo_root / _safe_rel(raw)
+        try:
+            path.rmdir()
+        except OSError:
+            continue
+        removed.append(raw)
+    return removed
+
+
+def checkpoint_transaction_applied(transaction_path: str | Path | None) -> None:
+    """Record post-apply identities before validation can be deferred.
+
+    A later rollback must prove that the live target still matches what Devtool
+    wrote.  Without this checkpoint, a validation-time rollback could clobber
+    user edits made after a successful apply but before recovery/rollback.
+    """
+    if not transaction_path:
+        return
+    path = Path(transaction_path)
+    if not path.exists():
+        return
+    tx = _read_json(path)
+    repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
+    for entry in tx.get("affected_paths", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        rel = _safe_rel(str(entry.get("path") or ""))
+        entry["applied_identity"] = _path_identity(repo_root / rel)
+    tx["applied_checkpoint_at"] = _utc_now()
+    tx["updated_at"] = _utc_now()
+    _atomic_write_json(path, tx)
+    _write_transaction_active_marker(path, tx)
+
+
+def _preflight_live_target_guards(repo_root: Path, entries: list[dict[str, Any]]) -> None:
+    conflicts: list[str] = []
+    for entry in entries:
+        if bool(entry.get("verified")):
+            continue
+        expected = entry.get("applied_identity")
+        if not isinstance(expected, dict):
+            continue
+        rel = _safe_rel(str(entry.get("path") or ""))
+        current = _path_identity(repo_root / rel)
+        if current != expected:
+            conflicts.append(rel.as_posix())
+    if conflicts:
+        raise RuntimeError(
+            "Refusing rollback because target paths changed after Devtool applied the artifact: "
+            + ", ".join(conflicts[:20])
+        )
 
 
 def _resolve_git_index_path(repo_root: Path) -> Path:
@@ -690,6 +766,7 @@ def create_apply_transaction(
             "staged_path": "",
             "displaced_path": "",
             "error": "",
+            "created_parent_dirs": _created_parent_dirs(repo_root, rel),
         }
         if existed:
             existing.append(str(rel))
@@ -728,6 +805,7 @@ def create_apply_transaction(
                 continue
             backup_path = backup_dir / _safe_rel(str(entry.get("path") or ""))
             entry["backup_sha256"] = _hash_path(backup_path)
+            entry["backup_identity"] = _path_identity(backup_path)
     tx["status"] = "backup-ready"
     tx["updated_at"] = _utc_now()
     _atomic_write_json(_transaction_file(tx_dir), tx)
@@ -765,9 +843,9 @@ def register_transaction_paths(
             except ValueError as exc:
                 raise RuntimeError(f"Transaction path escapes repository: {raw}") from exc
         rel = _safe_rel(str(candidate))
-        target_path = (repo_root / rel).resolve(strict=False)
+        target_path = repo_root / rel
         try:
-            target_path.relative_to(repo_root)
+            target_path.parent.resolve(strict=False).relative_to(repo_root)
         except ValueError as exc:
             raise RuntimeError(f"Transaction path escapes repository: {raw}") from exc
         rel_text = str(rel)
@@ -810,6 +888,7 @@ def register_transaction_paths(
                 "staged_path": "",
                 "displaced_path": "",
                 "error": "",
+                "created_parent_dirs": _created_parent_dirs(repo_root, rel),
             }
             if existed:
                 backup = backup_dir / rel
@@ -854,10 +933,10 @@ def find_active_transactions(repo_root: Path, *, include_live: bool = False) -> 
             if path not in found:
                 found.append(path)
         except Exception:
-            if marker == legacy:
-                found.append(marker)
-            else:
-                marker.unlink(missing_ok=True)
+            # Malformed legacy markers do not contain enough trustworthy metadata
+            # to identify a transaction safely.  Remove the broken pointer instead
+            # of surfacing it as a resumable rollback target that later crashes.
+            marker.unlink(missing_ok=True)
     return found
 
 
@@ -1035,6 +1114,8 @@ def rollback_transaction(
 
         # All refusal checks happen before any target/index/HEAD mutation.
         _preflight_git_restore(repo_root, tx)
+        if previous_status != "rollback-failed":
+            _preflight_live_target_guards(repo_root, entries)
         if previous_status == "rollback-failed":
             _preflight_resume_guards(repo_root, entries)
         else:
@@ -1202,6 +1283,11 @@ def rollback_transaction(
         if unverified:
             raise RuntimeError("Rollback journal contains unverified paths: " + ", ".join(unverified[:20]))
 
+        removed_parent_dirs = _cleanup_created_parent_dirs(repo_root, entries)
+        if removed_parent_dirs:
+            tx["removed_created_parent_dirs"] = removed_parent_dirs
+            persist()
+
         git_restore_status = _restore_git_state(repo_root, tx)
         persist()
 
@@ -1222,6 +1308,7 @@ def rollback_transaction(
             f"transaction: {_relative_to_repo(repo_root, path)}\n"
             f"restored: {len(restored)}\n"
             f"removed_added_paths: {len(removed)}\n"
+            f"removed_created_parent_dirs: {len(tx.get('removed_created_parent_dirs') or [])}\n"
             f"verified_paths: {len(entries)}\n"
             f"git_state: {git_restore_status}\n"
             "backup_cleanup: removed"

@@ -15,7 +15,7 @@ import zipfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 from .console_utils import resolve_cli_path
@@ -369,12 +369,23 @@ def artifact_cleanup_paths(artifact: str | Path) -> list[Path]:
 
 
 def is_artifact_metadata_member(name: str) -> bool:
-    """Return True for archive-side devtool metadata that is protected by default."""
-    path = Path(name)
-    return (
-        path.name in ARTIFACT_METADATA_NAMES
-        or bool(path.parts and path.parts[0] in {ARTIFACT_METADATA_DIRECTORY, ".devtool"})
-    )
+    """Return True for archive-side devtool metadata protected by default.
+
+    Root-level manifests and root-level ``.devtool-delete`` are metadata.  Files
+    merely named ``.devtool-delete`` in normal subdirectories are payload, not
+    destructive manifests.  The reserved metadata directories remain protected
+    at every depth under their root names.
+    """
+    try:
+        path = _safe_rel(name)
+    except RuntimeError:
+        return False
+    parts = path.parts
+    if not parts:
+        return False
+    if len(parts) == 1 and parts[0] in ARTIFACT_METADATA_NAMES:
+        return True
+    return parts[0] in {ARTIFACT_METADATA_DIRECTORY, ".devtool"}
 
 
 
@@ -449,6 +460,7 @@ class ArchiveMember:
     name: str
     is_dir: bool = False
     data: bytes | None = None
+    mode: int | None = None
 
 
 @dataclass(slots=True)
@@ -519,10 +531,40 @@ def _is_sha256(value: str) -> bool:
 
 
 def _safe_rel(name: str) -> Path:
-    rel = Path(name)
-    if rel.is_absolute() or ".." in rel.parts:
+    """Return a canonical repository-relative archive path or fail closed.
+
+    Archive names are POSIX-style regardless of host OS.  Normalize harmless
+    ``.`` segments, but reject traversal, absolute paths, Windows drive prefixes,
+    backslashes, NUL bytes, and the repository Git control directory.  Returning
+    a canonical path lets validation detect duplicate spellings like
+    ``./a.txt`` and ``a.txt`` before extraction mutates the working tree.
+    """
+    raw = str(name or "").strip()
+    if not raw:
+        raise RuntimeError("Unsafe archive path: empty path")
+    if "\x00" in raw or "\\" in raw:
         raise RuntimeError(f"Unsafe archive path: {name}")
-    return rel
+    rel = PurePosixPath(raw)
+    if rel.is_absolute():
+        raise RuntimeError(f"Unsafe archive path: {name}")
+    parts: list[str] = []
+    for part in rel.parts:
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            raise RuntimeError(f"Unsafe archive path: {name}")
+        if not parts and (part.endswith(":") or re.fullmatch(r"[A-Za-z]:.*", part)):
+            raise RuntimeError(f"Unsafe archive path: {name}")
+        parts.append(part)
+    if not parts:
+        raise RuntimeError("Unsafe archive path: empty path")
+    if parts[0] == ".git":
+        raise RuntimeError(f"Unsafe archive path: {name}")
+    return Path(*parts)
+
+
+def _canonical_archive_path(name: str) -> str:
+    return _safe_rel(name).as_posix()
 
 
 def _manifest_repository(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -642,7 +684,12 @@ def artifact_validation_policy(manifest: dict[str, Any]) -> dict[str, Any]:
     policy["minimum_phase"] = "package" if minimum_phase == "artifact-check" else minimum_phase
     policy.setdefault("test_profile", "")
     policy.setdefault("execution_environment", "")
-    tasks = _validation_tasks_from_mapping(policy)
+    try:
+        tasks = _validation_tasks_from_mapping(policy)
+    except ValueError:
+        # Keep policy accessors total; static validation reports the precise
+        # task-shape error without letting helper accessors crash callers.
+        tasks = []
     if tasks:
         policy["tasks"] = tasks
     for key in ("pytest_tests", "pytest_markers", "pytest_args"):
@@ -697,6 +744,8 @@ def _artifact_hook_write_paths(manifest: dict[str, Any], kind: str) -> list[str]
         text = item.strip().replace("\\", "/")
         if not text:
             raise ValueError(f"{kind}.write_paths entries must not be empty.")
+        if text == ".git" or text.startswith(".git/"):
+            raise ValueError(f"{kind}.write_paths may not target Git metadata: {text}")
         try:
             rel = _safe_rel(text)
         except RuntimeError as exc:
@@ -1299,33 +1348,59 @@ def write_archive_entries(output: str | Path, entries: dict[str, bytes]) -> Path
     return output_path
 
 
+def _member_collision_guard(
+    seen: dict[str, bool],
+    name: str,
+    *,
+    is_dir: bool,
+) -> None:
+    if name in seen:
+        if not (seen[name] and is_dir):
+            raise RuntimeError(f"Duplicate normalized archive path: {name}")
+        return
+    for existing, existing_is_dir in seen.items():
+        if name.startswith(existing + "/") and not existing_is_dir:
+            raise RuntimeError(f"Archive contains file/child path collision: {existing} and {name}")
+        if existing.startswith(name + "/") and not is_dir:
+            raise RuntimeError(f"Archive contains file/child path collision: {name} and {existing}")
+    seen[name] = is_dir
+
+
 def list_archive_members(artifact: str | Path, *, include_data: bool = False) -> list[ArchiveMember]:
     path = resolve_artifact_path(artifact)
     members: list[ArchiveMember] = []
+    seen: dict[str, bool] = {}
     suffix = archive_suffix(path)
     if suffix == ".zip":
         with zipfile.ZipFile(path) as zf:
             for info in zf.infolist():
-                _safe_rel(info.filename)
-                mode = (info.external_attr >> 16) & 0o170000
-                if mode == 0o120000:
+                normalized = _canonical_archive_path(info.filename.rstrip("/"))
+                mode_type = (info.external_attr >> 16) & 0o170000
+                if mode_type == 0o120000:
                     raise RuntimeError(f"Unsafe zip symlink member: {info.filename}")
-                data = None if info.is_dir() or not include_data else zf.read(info.filename)
-                members.append(ArchiveMember(info.filename.rstrip("/"), info.is_dir(), data))
+                is_dir = info.is_dir()
+                _member_collision_guard(seen, normalized, is_dir=is_dir)
+                data = None if is_dir or not include_data else zf.read(info.filename)
+                mode = (info.external_attr >> 16) & 0o7777
+                members.append(ArchiveMember(normalized, is_dir, data, mode or None))
         return members
     if suffix and suffix != ".zip":
         with open_tar_archive(path) as tf:
             for member in tf.getmembers():
-                _safe_rel(member.name)
+                normalized = _canonical_archive_path(member.name.rstrip("/"))
                 if member.islnk() or member.issym() or member.isdev():
                     raise RuntimeError(f"Unsafe tar member: {member.name}")
+                is_dir = member.isdir()
+                if not is_dir and not member.isfile():
+                    raise RuntimeError(f"Unsupported tar member type: {member.name}")
+                _member_collision_guard(seen, normalized, is_dir=is_dir)
                 data = None
                 if member.isfile() and include_data:
                     fh = tf.extractfile(member)
                     if fh is not None:
                         with fh:
                             data = fh.read()
-                members.append(ArchiveMember(member.name.rstrip("/"), member.isdir(), data))
+                members.append(ArchiveMember(normalized, is_dir, data, member.mode & 0o7777))
         return members
     raise RuntimeError(f"Unsupported artifact type: {path}")
 
@@ -1361,8 +1436,7 @@ def resolve_artifact_manifest(artifact: str | Path) -> ArtifactManifestResolutio
         for member in list_archive_members(artifact_path, include_data=True):
             if member.data is None:
                 continue
-            basename = Path(member.name).name
-            if basename in (MANIFEST_NAMES | BUNDLE_MANIFEST_NAMES):
+            if member.name in (MANIFEST_NAMES | BUNDLE_MANIFEST_NAMES):
                 candidates.append((member.name, member.data))
     except Exception as exc:
         return ArtifactManifestResolution({}, False, False, error=str(exc))
@@ -1474,8 +1548,17 @@ def _bundle_overlay_spec_from_item(item: Any, index: int) -> BundleOverlaySpec:
         if not isinstance(required_value, bool):
             raise RuntimeError(f"Overlay bundle item #{index} required must be a boolean.")
         required = required_value
-        after = tuple(str(value).strip() for value in item.get("after", []) if str(value).strip()) if isinstance(item.get("after"), list) else ()
-        requires = tuple(str(value).strip() for value in item.get("requires", []) if str(value).strip()) if isinstance(item.get("requires", []), list) else ()
+        def _dependency_list(field: str) -> tuple[str, ...]:
+            value = item.get(field, [])
+            if not isinstance(value, list):
+                raise RuntimeError(f"Overlay bundle item #{index} {field} must be a list of strings.")
+            bad = [position for position, dependency in enumerate(value, 1) if not isinstance(dependency, str)]
+            if bad:
+                raise RuntimeError(f"Overlay bundle item #{index} {field} list must contain only strings.")
+            return tuple(dependency.strip() for dependency in value if dependency.strip())
+
+        after = _dependency_list("after")
+        requires = _dependency_list("requires")
         entry_validation = item.get("validation") if isinstance(item.get("validation"), dict) else {}
         validation_tasks_declared, declared_tasks = validation_tasks_declaration(item)
         if not validation_tasks_declared:
@@ -1786,7 +1869,10 @@ def validate_overlay_bundle(
     if missing:
         ok = False
         messages.append("Bundle apply_order lists missing overlays: " + ", ".join(missing[:10]))
-    if schema_version == 2 and not bool(manifest.get("implicit", False)):
+    if "implicit" in manifest and not isinstance(manifest.get("implicit"), bool):
+        ok = False
+        messages.append("Bundle implicit must be a boolean.")
+    if schema_version == 2 and manifest.get("implicit") is not True:
         for spec in specs:
             if not spec.sha256:
                 ok = False
@@ -1948,19 +2034,21 @@ def preview_overlay_bundle(repo_root: Path, bundle: str | Path) -> dict[str, Any
                 if entry.label:
                     updated["label"] = entry.label
                 changes.append(updated)
-    known_paths = {str(change.get("path") or "") for change in changes}
+    def record_bundle_declared_write(write_path: str, kind: str) -> None:
+        rel = _canonical_archive_path(write_path)
+        for change in changes:
+            if str(change.get("path") or "") == rel:
+                if str(change.get("kind") or "") == "unchanged":
+                    change["kind"] = kind
+                return
+        changes.append({"kind": kind, "path": rel, "overlay": "<bundle>"})
+
     for write_path in artifact_preflight_write_paths(manifest):
-        if write_path not in known_paths:
-            changes.append({"kind": "preflight-write", "path": write_path, "overlay": "<bundle>"})
-            known_paths.add(write_path)
+        record_bundle_declared_write(write_path, "preflight-write")
     for write_path in artifact_validation_write_paths(manifest):
-        if write_path not in known_paths:
-            changes.append({"kind": "validation-write", "path": write_path, "overlay": "<bundle>"})
-            known_paths.add(write_path)
+        record_bundle_declared_write(write_path, "validation-write")
     for write_path in artifact_finalize_write_paths(manifest):
-        if write_path not in known_paths:
-            changes.append({"kind": "finalize-write", "path": write_path, "overlay": "<bundle>"})
-            known_paths.add(write_path)
+        record_bundle_declared_write(write_path, "finalize-write")
     return {
         "artifact": str(resolve_artifact_path(bundle)),
         "snapshot": False,
@@ -2239,7 +2327,14 @@ def _validate_inventory(
         messages.append(f"Unsupported inventory format: {format_version}.")
         return False
 
-    inventory_paths = {str(entry.get("path") or "").strip() for entry in entries}
+    inventory_paths: set[str] = set()
+    for entry in entries:
+        value = entry.get("path") if isinstance(entry, dict) else None
+        if isinstance(value, str) and value.strip():
+            try:
+                inventory_paths.add(_canonical_archive_path(value))
+            except RuntimeError:
+                inventory_paths.add(value.strip())
     allowed_metadata_payloads = {
         path for path in inventory_paths if path and is_allowed_artifact_metadata_payload_member(path)
     }
@@ -2258,7 +2353,8 @@ def _validate_inventory(
     conflict_policy = str(apply.get("conflict_policy") or "fail").strip().lower()
 
     for index, entry in enumerate(entries, 1):
-        path = str(entry.get("path") or "").strip()
+        raw_path = entry.get("path")
+        path = raw_path.strip() if isinstance(raw_path, str) else ""
         action = str(entry.get("action") or "").strip().lower()
         if not path:
             ok = False
@@ -2266,6 +2362,7 @@ def _validate_inventory(
             continue
         try:
             rel = _safe_rel(path)
+            path = rel.as_posix()
         except RuntimeError as exc:
             ok = False
             messages.append(str(exc))
@@ -2374,15 +2471,7 @@ def validate_artifact(
     ok = True
 
     try:
-        members = list_archive_members(
-            artifact,
-            include_data=bool(
-                artifact_inventory_entries(manifest)
-                or artifact_validation_script(manifest)
-                or artifact_preflight_script(manifest)
-                or artifact_finalize_script(manifest)
-            ),
-        )
+        members = list_archive_members(artifact, include_data=True)
     except Exception as exc:
         return ArtifactValidation(False, [str(exc)], manifest)
 
@@ -2402,6 +2491,36 @@ def validate_artifact(
         ok = False
     if not _validate_finalize_policy(manifest, messages):
         ok = False
+
+    try:
+        delete_manifest_paths = _delete_manifest_entries_from_members(manifest, members)
+    except Exception as exc:
+        ok = False
+        delete_manifest_paths = []
+        messages.append(str(exc))
+
+    payload_paths = {
+        member.name
+        for member in members
+        if not member.is_dir
+        and not _is_skipped_artifact_payload_member(
+            member.name,
+            allowed_metadata_payloads=artifact_inventory_metadata_payload_paths(manifest),
+        )
+    }
+    payload_delete_conflicts = sorted(payload_paths.intersection(delete_manifest_paths))
+    if payload_delete_conflicts:
+        ok = False
+        messages.append(
+            "Artifact payload conflicts with .devtool-delete for path(s): "
+            + ", ".join(payload_delete_conflicts[:10])
+        )
+    if check_source_state:
+        for payload_path in sorted(payload_paths):
+            target = repo_root / _safe_rel(payload_path)
+            if target.is_dir() and not target.is_symlink():
+                ok = False
+                messages.append(f"Archive payload would replace existing directory: {payload_path}")
 
     expected_type = str(manifest.get("type") or manifest.get("artifact_type") or "").strip().lower()
     if expected_type and expected_type not in {artifact_type, "patch" if artifact_type == "overlay" else artifact_type}:
@@ -2550,39 +2669,51 @@ def validate_artifact(
 
 
 
-def read_delete_manifest(artifact: str | Path) -> list[str]:
-    """Read overlay deletion entries from .devtool-delete without treating it as payload."""
+def _delete_manifest_entries_from_members(
+    manifest: dict[str, Any],
+    members: list[ArchiveMember],
+) -> list[str]:
     entries: list[str] = []
-    manifest = read_artifact_manifest(artifact)
     for item in artifact_inventory_entries(manifest):
         if str(item.get("action") or "").strip().lower() == "delete":
-            path = str(item.get("path") or "").strip()
+            path_value = item.get("path")
+            if not isinstance(path_value, str):
+                raise RuntimeError("Inventory delete entry path must be a string.")
+            path = _canonical_archive_path(path_value)
             if path:
                 entries.append(path)
-    try:
-        for member in list_archive_members(artifact, include_data=True):
-            if Path(member.name).name != DELETE_MANIFEST_NAME or member.data is None:
+
+    for member in members:
+        if member.name != DELETE_MANIFEST_NAME or member.data is None or member.is_dir:
+            continue
+        text = member.data.decode("utf-8").strip()
+        if not text:
+            continue
+        # Allow either a JSON string list or simple newline-delimited paths.
+        if text.startswith("["):
+            try:
+                data = json.loads(text)
+            except Exception as exc:
+                raise RuntimeError(f"Invalid JSON in .devtool-delete: {exc}") from exc
+            if not isinstance(data, list) or any(not isinstance(item, str) for item in data):
+                raise RuntimeError(".devtool-delete JSON must be a list of strings.")
+            entries.extend(_canonical_archive_path(item) for item in data if item.strip())
+            continue
+        if text.startswith("{"):
+            raise RuntimeError(".devtool-delete JSON must be a list of strings.")
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
                 continue
-            text = member.data.decode("utf-8").strip()
-            if not text:
-                continue
-            # Allow either a JSON string list or simple newline-delimited paths.
-            if text.startswith("["):
-                try:
-                    data = json.loads(text)
-                    if isinstance(data, list):
-                        entries.extend(str(item).strip() for item in data if str(item).strip())
-                        continue
-                except Exception:
-                    pass
-            for raw_line in text.splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                entries.append(line)
-    except Exception:
-        return []
+            entries.append(_canonical_archive_path(line))
     return list(dict.fromkeys(entries))
+
+
+def read_delete_manifest(artifact: str | Path) -> list[str]:
+    """Read root-level overlay deletion entries from ``.devtool-delete``."""
+    manifest = read_artifact_manifest(artifact)
+    members = list_archive_members(artifact, include_data=True)
+    return _delete_manifest_entries_from_members(manifest, members)
 
 def _bytes_sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -2603,6 +2734,15 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
             allowed_metadata_payloads=allowed_metadata_payloads,
         )
     }
+    incoming_dirs = {
+        Path(m.name)
+        for m in members
+        if m.is_dir
+        and not _is_skipped_artifact_payload_member(
+            m.name,
+            allowed_metadata_payloads=allowed_metadata_payloads,
+        )
+    }
     changes: list[dict[str, str]] = []
 
     if snapshot:
@@ -2618,9 +2758,15 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
         for delete_path in read_delete_manifest(artifact):
             changes.append({"kind": "delete", "path": delete_path})
 
+    for rel in sorted(incoming_dirs, key=str):
+        target = repo_root / rel
+        if target.exists() or target.is_symlink():
+            continue
+        changes.append({"kind": "add-dir", "path": str(rel)})
+
     for rel, member in sorted(incoming_files.items(), key=lambda item: str(item[0])):
         target = repo_root / rel
-        if not target.exists():
+        if not target.exists() and not target.is_symlink():
             changes.append({"kind": "add", "path": str(rel)})
             continue
         if target.is_dir():
@@ -2633,21 +2779,26 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
         else:
             changes.append({"kind": "unchanged", "path": str(rel)})
 
-    known_paths = {str(change.get("path") or "") for change in changes}
+    def record_declared_write(write_path: str, kind: str) -> None:
+        rel = _canonical_archive_path(write_path)
+        for change in changes:
+            if str(change.get("path") or "") == rel:
+                # A hook write needs rollback protection even when the payload
+                # member is byte-for-byte unchanged.  Upgrade the preview kind so
+                # transaction planning does not discard it as harmless.
+                if str(change.get("kind") or "") == "unchanged":
+                    change["kind"] = kind
+                return
+        changes.append({"kind": kind, "path": rel})
+
     for write_path in artifact_preflight_write_paths(manifest):
-        if write_path not in known_paths:
-            changes.append({"kind": "preflight-write", "path": write_path})
-            known_paths.add(write_path)
+        record_declared_write(write_path, "preflight-write")
 
     for write_path in artifact_validation_write_paths(manifest):
-        if write_path not in known_paths:
-            changes.append({"kind": "validation-write", "path": write_path})
-            known_paths.add(write_path)
+        record_declared_write(write_path, "validation-write")
 
     for write_path in artifact_finalize_write_paths(manifest):
-        if write_path not in known_paths:
-            changes.append({"kind": "finalize-write", "path": write_path})
-            known_paths.add(write_path)
+        record_declared_write(write_path, "finalize-write")
 
     return {
         "artifact": str(resolve_artifact_path(artifact)),
@@ -2773,6 +2924,7 @@ def diff_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = Fal
 def format_preview(preview: dict[str, Any], *, limit: int = 200) -> str:
     symbols = {
         "add": "+",
+        "add-dir": "+",
         "modify": "~",
         "delete": "-",
         "replace-dir": "!",

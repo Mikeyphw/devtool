@@ -38,6 +38,7 @@ from .artifacts import (
     resolve_artifact_path,
     sha256_file,
     validate_artifact,
+    _safe_rel as _safe_archive_rel,
 )
 from .artifact_validation import run_artifact_preflight_script
 from .config import ensure_artifact_target_config, generate_template
@@ -48,7 +49,7 @@ from .generic_progress import GenericProgressTracker
 from .npm_progress import NpmProgressTracker, npm_progress_plan
 from .gradle_progress import GradleProgressTracker
 from .gradle_reports import collect_report_metadata
-from .transactions import create_apply_transaction, rollback_transaction
+from .transactions import create_apply_transaction, rollback_transaction, checkpoint_transaction_applied
 from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .core.events import TaskFinished, TaskStarted, WarningDetected, publish_event
@@ -3052,6 +3053,7 @@ def apply_overlay_bundle(
             )
             if top_after is not None:
                 preflight_results.append(top_after)
+            checkpoint_transaction_applied(transaction.get("path"))
             output = f"Applied overlay bundle from {artifact_path}"
             output += f"\nTransaction backup: {transaction.get('transaction_id')}"
             if preflight_results:
@@ -3202,6 +3204,7 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
             )
             if after is not None:
                 preflight_results.append(after)
+            checkpoint_transaction_applied(transaction.get("path"))
         # The original artifact is intentionally not deleted here.  Apply is now
         # transactional across extraction plus any later validation/commit steps,
         # so cleanup is deferred until the CLI knows no rollback happened.
@@ -3278,6 +3281,12 @@ def _artifact_sidecars(artifact_path: Path) -> list[Path]:
     ]
 
 def _extract_archive(artifact_path: Path, target: Path) -> int:
+    # Force archive layout validation even when manifest resolution would fall
+    # back to an empty legacy manifest.  Direct extraction must not accept
+    # duplicate normalized names or internal file/child collisions.
+    from .artifacts import list_archive_members
+
+    list_archive_members(artifact_path, include_data=False)
     manifest = read_artifact_manifest(artifact_path)
     allowed_metadata_payloads = artifact_inventory_metadata_payload_paths(manifest)
     suffix = archive_suffix(artifact_path)
@@ -3290,6 +3299,23 @@ def _extract_archive(artifact_path: Path, target: Path) -> int:
     raise RuntimeError(f"Unsupported artifact type: {artifact_path}")
 
 
+def _apply_member_mode(path: Path, mode: int | None) -> None:
+    if not mode:
+        return
+    try:
+        path.chmod(mode & 0o777)
+    except OSError:
+        pass
+
+
+def _prepare_file_destination(path: Path, archive_name: str) -> None:
+    if path.is_dir() and not path.is_symlink():
+        raise RuntimeError(f"Archive payload cannot replace existing directory: {archive_name}")
+    if path.exists() or path.is_symlink():
+        path.unlink()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
 def _safe_extract_zip(
     archive: zipfile.ZipFile,
     target: Path,
@@ -3299,22 +3325,31 @@ def _safe_extract_zip(
     target = target.resolve()
     skipped_metadata = 0
     for member in archive.infolist():
-        mode = (member.external_attr >> 16) & 0o170000
-        if mode == 0o120000:
+        archive_name = _safe_archive_rel(member.filename.rstrip("/")).as_posix()
+        mode_type = (member.external_attr >> 16) & 0o170000
+        if mode_type == 0o120000:
             raise RuntimeError(f"Unsafe zip symlink member: {member.filename}")
         if _is_skipped_artifact_payload_member(
-            member.filename,
+            archive_name,
             allowed_metadata_payloads=allowed_metadata_payloads,
         ):
             skipped_metadata += 1
             continue
-        member_path = _safe_destination_path(target, Path(member.filename))
+        member_path = _safe_destination_path(target, Path(archive_name))
+        mode = (member.external_attr >> 16) & 0o7777
         if member.is_dir():
+            if member_path.exists() and not member_path.is_dir():
+                if member_path.is_symlink():
+                    member_path.unlink()
+                else:
+                    raise RuntimeError(f"Archive directory cannot replace existing file: {archive_name}")
             member_path.mkdir(parents=True, exist_ok=True)
+            _apply_member_mode(member_path, mode)
             continue
-        member_path.parent.mkdir(parents=True, exist_ok=True)
+        _prepare_file_destination(member_path, archive_name)
         with archive.open(member, "r") as source, member_path.open("wb") as dest:
             shutil.copyfileobj(source, dest)
+        _apply_member_mode(member_path, mode)
     return skipped_metadata
 
 
@@ -3327,38 +3362,48 @@ def _safe_extract_tar(
     target = target.resolve()
     skipped_metadata = 0
     for member in archive.getmembers():
+        archive_name = _safe_archive_rel(member.name.rstrip("/")).as_posix()
         if _is_skipped_artifact_payload_member(
-            member.name,
+            archive_name,
             allowed_metadata_payloads=allowed_metadata_payloads,
         ):
             skipped_metadata += 1
             continue
         if member.islnk() or member.issym() or member.isdev():
             raise RuntimeError(f"Unsafe tar member: {member.name}")
-        member_path = _safe_destination_path(target, Path(member.name))
+        member_path = _safe_destination_path(target, Path(archive_name))
+        mode = member.mode & 0o7777
         if member.isdir():
+            if member_path.exists() and not member_path.is_dir():
+                if member_path.is_symlink():
+                    member_path.unlink()
+                else:
+                    raise RuntimeError(f"Archive directory cannot replace existing file: {archive_name}")
             member_path.mkdir(parents=True, exist_ok=True)
+            _apply_member_mode(member_path, mode)
             continue
         if not member.isfile():
             raise RuntimeError(f"Unsupported tar member type: {member.name}")
-        member_path.parent.mkdir(parents=True, exist_ok=True)
+        _prepare_file_destination(member_path, archive_name)
         extracted = archive.extractfile(member)
         if extracted is None:
             raise RuntimeError(f"Failed to extract tar member: {member.name}")
         with extracted, member_path.open("wb") as dest:
             shutil.copyfileobj(extracted, dest)
+        _apply_member_mode(member_path, mode)
     return skipped_metadata
 
 
 def _safe_destination_path(base: Path, member_path: Path) -> Path:
-    if member_path.is_absolute():
-        raise RuntimeError(f"Unsafe archive path: {member_path}")
-    resolved = (base / member_path).resolve()
+    base = base.resolve()
+    rel = _safe_archive_rel(member_path.as_posix())
+    destination = base / rel
     try:
-        resolved.relative_to(base)
+        parent_resolved = destination.parent.resolve(strict=False)
+        parent_resolved.relative_to(base)
     except ValueError as exc:
         raise RuntimeError(f"Unsafe archive path: {member_path}") from exc
-    return resolved
+    return destination
 
 
 
@@ -3378,8 +3423,16 @@ def _apply_delete_manifest(repo_root: Path, artifact_path: Path) -> list[str]:
     return deleted
 
 def _sync_snapshot(snapshot_root: Path, repo_root: Path) -> None:
-    existing = {p.relative_to(repo_root) for p in repo_root.rglob("*") if ".git" not in p.parts}
-    incoming = {p.relative_to(snapshot_root) for p in snapshot_root.rglob("*")}
+    existing = {
+        p.relative_to(repo_root)
+        for p in repo_root.rglob("*")
+        if ".git" not in p.parts and ".devtool" not in p.parts
+    }
+    incoming = {
+        p.relative_to(snapshot_root)
+        for p in snapshot_root.rglob("*")
+        if ".git" not in p.parts and ".devtool" not in p.parts
+    }
     for rel in sorted(existing - incoming, reverse=True):
         target = repo_root / rel
         if target.is_dir():
