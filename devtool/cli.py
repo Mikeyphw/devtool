@@ -117,7 +117,7 @@ from .config import (
     resolve_config_dict,
 )
 from .log_commands import choose_active_log, format_log_entries, list_log_entries, open_log, resolve_log_path, tail_log
-from .logstore import latest_log, new_log_path, redact_sensitive_text, set_log_dir_override, state_dir as log_state_dir, write_log
+from .logstore import latest_log, new_log_path, redact_sensitive_text, redact_sensitive_value, set_log_dir_override, state_dir as log_state_dir, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .project_runners import resolve_validation_plan
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
@@ -1775,17 +1775,8 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     raw_output = redact_sensitive_text(raw_output)
     summary_text = redact_sensitive_text(summary_text)
 
-    def _redact_json_value(value):
-        if isinstance(value, str):
-            return redact_sensitive_text(value)
-        if isinstance(value, list):
-            return [_redact_json_value(item) for item in value]
-        if isinstance(value, dict):
-            return {key: _redact_json_value(item) for key, item in value.items()}
-        return value
-
     try:
-        payload = _redact_json_value(json.loads(json_text))
+        payload = redact_sensitive_value(json.loads(json_text))
     except (TypeError, ValueError, json.JSONDecodeError):
         payload = {}
     json_text = json.dumps(payload, indent=2, ensure_ascii=False) if payload else redact_sensitive_text(json_text)
@@ -1854,16 +1845,16 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
         # Pytest fallback, for validating devtool itself.
         pytest_match = _re.search(
-            r"(?:(\d+)\s+failed(?:,\s*)?)?"
-            r"(?:(\d+)\s+passed)"
-            r"(?:,\s*(\d+)\s+skipped)?",
+            r"(?:(?P<failed>\d+)\s+failed(?:,\s*)?)?"
+            r"(?:(?P<passed>\d+)\s+passed(?:,\s*)?)?"
+            r"(?:(?P<skipped>\d+)\s+skipped)?",
             raw_output,
             _re.IGNORECASE,
         )
-        if pytest_match:
-            test_failed = int(pytest_match.group(1) or 0)
-            test_passed = int(pytest_match.group(2) or 0)
-            test_skipped = int(pytest_match.group(3) or 0)
+        if pytest_match and any(pytest_match.group(name) for name in ("failed", "passed", "skipped")):
+            test_failed = int(pytest_match.group("failed") or 0)
+            test_passed = int(pytest_match.group("passed") or 0)
+            test_skipped = int(pytest_match.group("skipped") or 0)
             return (
                 test_passed,
                 test_failed,
@@ -2092,7 +2083,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         lines: list[str] = []
         for raw_line in text.splitlines():
             line = raw_line.strip()
-            if not line or "0 Warning(s)" in line or "warnings=0" in line:
+            if not line or "0 warning(s)" in line.casefold() or "warnings=0" in line.casefold():
                 continue
             if line.startswith(
                 "Warning: Unable to set daemon's environment variables to match the client because:"
@@ -7468,8 +7459,9 @@ def _append_run_log_summary(
     results: list[OperationResult] | None = None,
 ) -> None:
     failed = int(totals.get("failed", 0) or 0)
-    code = int(exit_code if exit_code is not None else (1 if failed else 0))
-    status = "failed" if code != 0 or failed else "ok"
+    errors = int(totals.get("errors", 0) or 0)
+    code = int(exit_code if exit_code is not None else (1 if failed or errors else 0))
+    status = "failed" if code != 0 or failed or errors else "ok"
     duration = max(0.0, (finished_at - started_at).total_seconds())
 
     def _first_matching_line(prefix: str) -> str:

@@ -227,16 +227,23 @@ def _active_run_from_payload(state: dict[str, Any], *, fallback_id: str, source_
 
 
 def _merge_active_runs(authoritative: ActiveRun, richer: ActiveRun) -> ActiveRun:
-    """Merge HUD detail into an authoritative lock-backed run record."""
+    """Merge HUD detail without letting it override lock authority.
+
+    The single-run lock decides whether an operation is active and what its
+    terminal status is. HUD JSON is richer but can be stale; it may contribute
+    descriptive fields, never contradict the authoritative status/identity.
+    """
+    authoritative_status = authoritative.status or "running"
+    richer_phase = richer.phase if authoritative_status in {"running", "starting", "pending"} else ""
     return ActiveRun(
         run_id=authoritative.run_id,
         pid=authoritative.pid or richer.pid,
-        command=richer.command or authoritative.command,
-        repo=richer.repo or authoritative.repo,
-        status=richer.status or authoritative.status,
-        phase=richer.phase or authoritative.phase,
-        updated_at=richer.updated_at or authoritative.updated_at,
-        log_path=richer.log_path or authoritative.log_path,
+        command=authoritative.command or richer.command,
+        repo=authoritative.repo or richer.repo,
+        status=authoritative_status,
+        phase=richer_phase or authoritative.phase,
+        updated_at=authoritative.updated_at or richer.updated_at,
+        log_path=authoritative.log_path or richer.log_path,
     )
 
 

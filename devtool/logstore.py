@@ -483,6 +483,39 @@ def redact_sensitive_text(text: str) -> str:
     return "".join(result)
 
 
+
+def redact_sensitive_value(value, *, key: str = ""):
+    """Recursively redact credential-like values before JSON serialization.
+
+    Text redaction alone can miss structured objects where the sensitive
+    meaning lives in the key (for example {"token": "abc"}). This helper
+    preserves primitive types and shapes while replacing secret-bearing leaves.
+    """
+    if isinstance(value, dict):
+        redacted = {}
+        for raw_key, raw_item in value.items():
+            item_key = str(raw_key)
+            redacted[item_key] = redact_sensitive_value(raw_item, key=item_key)
+        return redacted
+    if isinstance(value, (list, tuple)):
+        redacted_items = []
+        redact_next = False
+        for item in value:
+            if redact_next and isinstance(item, str):
+                redacted_items.append("<redacted>" if item else item)
+                redact_next = False
+                continue
+            redacted = redact_sensitive_value(item, key=key)
+            redacted_items.append(redacted)
+            if isinstance(item, str) and item.strip().split("=", 1)[0].lower() in _CLI_SECRET_FLAGS and "=" not in item:
+                redact_next = True
+        return redacted_items
+    if isinstance(value, str):
+        if key and _secret_identifier(key):
+            return "<redacted>" if value else value
+        return redact_sensitive_text(value)
+    return value
+
 class StreamingLogRedactor:
     """Stateful redactor for line/chunk-oriented live subprocess output.
 

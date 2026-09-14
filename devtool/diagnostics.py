@@ -7,8 +7,10 @@ from pathlib import Path
 from .models import Issue
 
 _DOTNET_DIAGNOSTIC = re.compile(
-    r"^(?P<file>/.+?)\((?P<line>\d+),(?P<col>\d+)(?:,\d+,\d+)?\): "
-    r"(?P<severity>warning|error) (?P<code>[A-Za-z]+\d+): (?P<message>.+?)(?: \[.*\])?$"
+    r"^(?P<file>(?:[A-Za-z]:\\|/|\.\.?[/\\]|[^:\s][^:]*?)[^()]*?)"
+    r"\((?P<line>\d+),(?P<col>\d+)(?:,\d+,\d+)?\): "
+    r"(?P<severity>warning|error) (?P<code>[A-Za-z]+\d+): (?P<message>.+?)(?: \[.*\])?$",
+    re.IGNORECASE,
 )
 
 
@@ -355,11 +357,13 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
         if match and index + 1 < len(lines):
             location = _RUFF_LOCATION.match(lines[index + 1].strip())
             if location:
+                code = match.group("code").upper()
+                severity = "error" if code.startswith("F") or code.startswith("E9") else "warning"
                 issues.append(Issue(
-                    "warning",
+                    severity,
                     command_name,
                     relative_path(location.group("file")),
-                    match.group("code").upper(),
+                    code,
                     match.group("message").strip(),
                     line=int(location.group("line")),
                 ))
@@ -813,9 +817,12 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
         match = _GENERIC_WARN_ERR.search(stripped)
         if match and command_name in {"build", "test", "restore", "package", "lint"}:
             message = match.group("message").strip()
+            message_lower = message.lower()
             if (
                 message not in _GENERIC_BUILD_NOISE_MESSAGES
                 and stripped.strip().lower() not in {"error message:", "warning message:", "stack trace:"}
+                and not re.search(r"\b(?:0|no)\s+(?:warning|error)s?\b", message_lower)
+                and not re.search(r"\b(?:success|succeeded|successful|up[- ]to[- ]date|done|completed)\b", message_lower)
             ):
                 issues.append(Issue(
                     match.group("severity").lower(),
@@ -935,11 +942,12 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return ""
     text = output.lower()
     name = command_name.lower()
-    if returncode == 130 or any(marker in text for marker in (
+    if returncode == 130 or returncode in {-2, -15, 143} or any(marker in text for marker in (
         "interrupted by user",
         "cancelled from devtool control center",
         "canceled from devtool control center",
         "devtool validation supervisor stopped process: interrupted:",
+        "child process was terminated",
     )):
         return "interrupted"
     if any(marker in text for marker in (
@@ -977,9 +985,12 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
     if "outofmemoryerror: metaspace" in text or "running out of jvm metaspace" in text:
         return "metaspace_oom"
     if (
-        "emergency memory guard stopped gradle after" in text
+        returncode in {137, -9}
+        or "emergency memory guard stopped gradle after" in text
         or "devtool stopped validation after hard emergency floor" in text
         or "devtool stopped validation after corroborated sustained memory pressure" in text
+        or "out of memory" in text
+        or "no space left on device" in text
     ):
         return "resource_interrupted"
     if (

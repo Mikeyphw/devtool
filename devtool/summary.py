@@ -17,7 +17,7 @@ from rich.pretty import Pretty
 
 from .console_utils import create_console, is_narrow_console
 from .models import Issue, OperationResult
-from .logstore import redact_sensitive_text
+from .logstore import redact_sensitive_text, redact_sensitive_value
 from .rich_progress import compact_display_target
 from .repair_policy import build_repair_report, repair_summary_lines_from_results, applied_repair_findings_from_results
 from .ui_core.machine import MACHINE_SCHEMA_VERSION, machine_state_from_runtime
@@ -34,7 +34,7 @@ def _status_text(result: OperationResult) -> Text:
 
 
 def _severity_text(issue: Issue) -> Text:
-    style = "yellow" if issue.severity == "warning" else "bold red"
+    style = "yellow" if _norm_severity(issue.severity) == "warning" else "bold red"
     return Text(issue.severity, style=style)
 
 
@@ -132,7 +132,7 @@ def _shorten_output(text: str, *, max_lines: int = 12, max_chars: int = 3000) ->
 
 
 def _root_cause_issue(result: OperationResult) -> Issue | None:
-    errors = [issue for issue in result.issues if issue.severity == "error"]
+    errors = [issue for issue in result.issues if _norm_severity(issue.severity) == "error"]
     if not errors:
         return None
     primary = [
@@ -226,7 +226,7 @@ def _render_failed_output_details(results: list[OperationResult], target_console
                 table.add_row("rerun", Text(rerun, overflow="fold", style="cyan"))
         python_test_issues = [
             issue for issue in result.issues
-            if issue.severity == "error" and str(issue.code or "").upper() in {
+            if _norm_severity(issue.severity) == "error" and str(issue.code or "").upper() in {
                 "PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT",
             }
         ]
@@ -257,11 +257,55 @@ def _format_issue_location(issue: Issue) -> str:
     return f"{issue.file}:{issue.line}"
 
 
+def _norm_severity(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _strict_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(value)
+    return False
+
+
+def _result_has_error_issue(result: OperationResult) -> bool:
+    return any(_norm_severity(issue.severity) == "error" for issue in result.issues)
+
+
+def _result_failed(result: OperationResult) -> bool:
+    return (not result.skipped) and (int(result.returncode or 0) != 0 or _result_has_error_issue(result))
+
+
+def _result_machine_status(result: OperationResult) -> str:
+    if result.skipped:
+        return "skipped"
+    return "failed" if _result_failed(result) else "ok"
+
+
 def calculate_totals(results: list[OperationResult]) -> dict[str, int]:
+    warning_count = sum(1 for result in results for issue in result.issues if _norm_severity(issue.severity) == "warning")
+    error_count = sum(1 for result in results for issue in result.issues if _norm_severity(issue.severity) == "error")
+    failed_count = sum(1 for result in results if _result_failed(result))
+    # A failed command with no structured diagnostic still represents one
+    # machine-visible error.  Do not let HUD/machine totals report failed with
+    # zero diagnostics.
+    missing_diagnostics = sum(1 for result in results if _result_failed(result) and not _result_has_error_issue(result))
     return {
-        "warnings": sum(1 for result in results for issue in result.issues if issue.severity == "warning"),
-        "errors": sum(1 for result in results for issue in result.issues if issue.severity == "error"),
-        "failed": sum(1 for result in results if result.returncode != 0),
+        "warnings": warning_count,
+        "errors": error_count + missing_diagnostics,
+        "failed": failed_count,
         "skipped": sum(1 for result in results if result.skipped),
     }
 
@@ -297,7 +341,9 @@ _VSTEST_SUMMARY_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _PYTEST_SUMMARY_RE = re.compile(
-    r"(?:(\d+)\s+failed(?:,\s*)?)?(?:(\d+)\s+passed)(?:,\s*(\d+)\s+skipped)?",
+    r"(?:(?P<failed>\d+)\s+failed(?:,\s*)?)?"
+    r"(?:(?P<passed>\d+)\s+passed(?:,\s*)?)?"
+    r"(?:(?P<skipped>\d+)\s+skipped)?",
     re.IGNORECASE,
 )
 _COMMIT_PATTERNS = (
@@ -360,10 +406,10 @@ def _extract_test_totals(results: list[OperationResult]) -> tuple[int, int, int,
         if isinstance(result.metadata, dict) and isinstance(result.metadata.get("tests"), dict)
     ]
     if structured:
-        passed = sum(int(item.get("passed") or 0) for item in structured)
-        failed = sum(int(item.get("failed") or 0) for item in structured)
-        skipped = sum(int(item.get("skipped") or 0) for item in structured)
-        total = sum(int(item.get("total") or 0) for item in structured)
+        passed = sum(_safe_int(item.get("passed")) for item in structured)
+        failed = sum(_safe_int(item.get("failed")) for item in structured)
+        skipped = sum(_safe_int(item.get("skipped")) for item in structured)
+        total = sum(_safe_int(item.get("total")) for item in structured)
         return passed, failed, skipped, total
 
     output = "\n".join(result.output or "" for result in results if "test" in result.name.lower())
@@ -387,10 +433,10 @@ def _extract_test_totals(results: list[OperationResult]) -> tuple[int, int, int,
         return passed, failed, skipped, total
 
     pytest_match = _PYTEST_SUMMARY_RE.search(output)
-    if pytest_match:
-        failed = int(pytest_match.group(1) or 0)
-        passed = int(pytest_match.group(2) or 0)
-        skipped = int(pytest_match.group(3) or 0)
+    if pytest_match and any(pytest_match.group(name) for name in ("failed", "passed", "skipped")):
+        failed = _safe_int(pytest_match.group("failed"))
+        passed = _safe_int(pytest_match.group("passed"))
+        skipped = _safe_int(pytest_match.group("skipped"))
         return passed, failed, skipped, passed + failed + skipped
     return None
 
@@ -431,7 +477,7 @@ def _extract_commit_hash(results: list[OperationResult]) -> str:
 def _result_status(result: OperationResult) -> tuple[str, str, str]:
     if result.skipped:
         return "–", "Skipped", "yellow"
-    if result.returncode == 0:
+    if not _result_failed(result):
         return "✓", "Done", "green"
     return "✗", "Failed", "bold red"
 
@@ -701,15 +747,15 @@ def _overlay_panel(info: dict[str, object], results: list[OperationResult], targ
         )
 
     issue_items = [issue for result in results for issue in result.issues]
-    issue_items.sort(key=lambda issue: 0 if issue.severity == "error" else 1)
+    issue_items.sort(key=lambda issue: 0 if _norm_severity(issue.severity) == "error" else 1)
     body: list[object] = [metrics, Text(""), actions]
     if issue_items:
         warning_table = Table(box=None, show_header=False, expand=True, padding=(0, 1))
         warning_table.add_column("", width=1)
         warning_table.add_column(ratio=1, overflow="fold")
         for issue in issue_items[:8]:
-            mark = "!" if issue.severity == "warning" else "✗"
-            issue_style = "yellow" if issue.severity == "warning" else "bold red"
+            mark = "!" if _norm_severity(issue.severity) == "warning" else "✗"
+            issue_style = "yellow" if _norm_severity(issue.severity) == "warning" else "bold red"
             location = _format_issue_location(issue)
             message = f"{location}: {issue.message}" if location != "-" else issue.message
             warning_table.add_row(Text(mark, style=issue_style), Text(message, style=issue_style))
@@ -779,8 +825,8 @@ def _result_detail(result: OperationResult) -> Text:
     if result.skipped:
         return Text("Not run", style="dim yellow")
     if result.issues:
-        warnings = sum(issue.severity == "warning" for issue in result.issues)
-        errors = sum(issue.severity == "error" for issue in result.issues)
+        warnings = sum(_norm_severity(issue.severity) == "warning" for issue in result.issues)
+        errors = sum(_norm_severity(issue.severity) == "error" for issue in result.issues)
         pieces = []
         if warnings:
             pieces.append(f"{warnings} warning{'s' if warnings != 1 else ''}")
@@ -860,13 +906,13 @@ def _render_wide_issues(issues: list[Issue], target_console: Console) -> None:
 def _render_compact_issues(issues: list[Issue], target_console: Console) -> None:
     if not issues:
         return
-    warnings = sum(issue.severity == "warning" for issue in issues)
-    errors = sum(issue.severity == "error" for issue in issues)
+    warnings = sum(_norm_severity(issue.severity) == "warning" for issue in issues)
+    errors = sum(_norm_severity(issue.severity) == "error" for issue in issues)
     table = Table.grid(expand=True, padding=(0, 1))
     table.add_column(width=1, no_wrap=True)
     table.add_column(ratio=1, overflow="fold")
     for issue in issues[:10]:
-        is_warning = issue.severity == "warning"
+        is_warning = _norm_severity(issue.severity) == "warning"
         mark = "!" if is_warning else "✗"
         style = "yellow" if is_warning else "bold red"
         location = _format_issue_location(issue)
@@ -944,22 +990,23 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
         "results": [
             {
                 "name": result.name,
-                "argv": result.argv,
+                "argv": redact_sensitive_value(result.argv),
                 "returncode": result.returncode,
+                "status": _result_machine_status(result),
                 "duration_seconds": result.duration_seconds,
                 "log_path": result.log_path,
                 "skipped": result.skipped,
                 "failure_kind": result.failure_kind,
-                "metadata": result.metadata,
-                "output": result.output,
+                "metadata": redact_sensitive_value(result.metadata),
+                "output": redact_sensitive_text(result.output),
                 "issues": [
                     {
-                        "severity": issue.severity,
+                        "severity": _norm_severity(issue.severity),
                         "command": issue.command,
                         "file": issue.file,
                         "line": issue.line,
                         "code": issue.code,
-                        "message": issue.message,
+                        "message": redact_sensitive_text(issue.message),
                     }
                     for issue in result.issues
                 ],
@@ -988,13 +1035,12 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
             if workflow and workflow not in workflows:
                 workflows.append(workflow)
             state = str(metadata.get("workflow_state") or "").strip()
-            if not state:
-                if result.skipped:
-                    state = "skipped"
-                elif result.returncode:
-                    state = "failed"
-                else:
-                    state = "passed"
+            if result.skipped:
+                state = "skipped"
+            elif result.returncode != 0 or _result_has_error_issue(result):
+                state = "failed"
+            elif not state:
+                state = "passed"
             row = node_rows.setdefault(key, {
                 "key": key,
                 "target": target,
@@ -1053,12 +1099,12 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
             )
             registry = run.get("registry") if isinstance(run.get("registry"), dict) else {}
             registry_ids.extend(str(value) for value in registry.get("ids", []) if str(value))
-            verification_requested = verification_requested or bool(run.get("verification_requested"))
+            verification_requested = verification_requested or _strict_bool(run.get("verification_requested"))
         data["artifacts"] = {
             "schema_version": 1,
             "count": len(artifact_items),
-            "valid": sum(1 for item in artifact_items if item.get("valid")),
-            "invalid": sum(1 for item in artifact_items if not item.get("valid")),
+            "valid": sum(1 for item in artifact_items if _strict_bool(item.get("valid"))),
+            "invalid": sum(1 for item in artifact_items if not _strict_bool(item.get("valid"))),
             "verification_requested": verification_requested,
             "registry_ids": registry_ids,
             "items": artifact_items,
@@ -1101,7 +1147,7 @@ def build_runner_json(
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
 ) -> dict:
-    json_summary = build_json_summary(results, repo_root=repo_root)
+    json_summary = redact_sensitive_value(build_json_summary(results, repo_root=repo_root))
     totals = {
         "warnings": json_summary["warnings"],
         "errors": json_summary["errors"],
@@ -1172,12 +1218,12 @@ def build_runner_json(
         "results": [
             {
                 "name": result.name,
-                "status": "skipped" if result.skipped else ("ok" if result.returncode == 0 else "failed"),
+                "status": _result_machine_status(result),
                 "time_s": result.duration_seconds,
                 "exit_code": result.returncode,
                 "log": result.log_path or None,
                 "failure_kind": result.failure_kind or None,
-                "metadata": result.metadata or {},
+                "metadata": redact_sensitive_value(result.metadata or {}),
             }
             for result in results
         ],

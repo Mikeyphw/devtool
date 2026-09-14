@@ -35,6 +35,9 @@ _EVENT_KINDS = {
     "test-suite-finish", "test-start", "test-finish", "build-finish",
 }
 _COUNTER_FIELDS = {"sequence", "current", "completed", "total", "passed", "failed", "skipped", "testsTotal", "durationMs"}
+_BOOLEAN_FIELDS = {"didWork", "upToDate", "fromCache", "noSource", "incremental"}
+_TRUE_STRINGS = {"1", "true", "yes", "y", "on"}
+_FALSE_STRINGS = {"0", "false", "no", "n", "off", ""}
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\a]*(?:\a|\x1b\\)")
 _TASK_LINE_RE = re.compile(r"^>\s*Task\s+(?P<task>\S+)(?:\s+(?P<outcome>[A-Z][A-Z_-]+))?")
 _ACTIONABLE_TASKS_RE = re.compile(r"^(?P<total>\d+)\s+actionable\s+tasks?(?:\s*:.*)?$", re.IGNORECASE)
@@ -47,6 +50,23 @@ _LIFECYCLE_PREFIXES = (
     "BUILD FAILED",
 )
 
+
+
+def _coerce_event_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _TRUE_STRINGS:
+            return True
+        if lowered in _FALSE_STRINGS:
+            return False
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(value)
+    if value is None:
+        return None
+    return None
 
 class GradleTaskCountColumn(ProgressColumn):
     """Render an explicit completed/total task count, including discovery state."""
@@ -223,6 +243,15 @@ class GradleProgressTracker:
             if number < 0:
                 return None
             payload[key] = number
+        for key in _BOOLEAN_FIELDS:
+            if key not in payload or payload.get(key) is None:
+                continue
+            coerced = _coerce_event_bool(payload.get(key))
+            if coerced is None:
+                return None
+            payload[key] = coerced
+        if "outcome" in payload and payload.get("outcome") is not None:
+            payload["outcome"] = str(payload.get("outcome") or "").strip().lower().replace("_", "-")
         total = payload.get("total")
         completed = payload.get("completed")
         if total is not None and completed is not None and completed > total:
@@ -283,7 +312,7 @@ class GradleProgressTracker:
             self._merge_completed(event.get("completed"))
             self._merge_total(event.get("total"))
             self._update_requested_dependency_counts()
-            outcome = str(event.get("outcome") or "complete")
+            outcome = str(event.get("outcome") or "complete").strip().lower().replace("_", "-")
             if self.current_task:
                 self.task_outcomes[self.current_task] = outcome
             self.detail = f"{self.current_task or 'Gradle task'}: {outcome}"

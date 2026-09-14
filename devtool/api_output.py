@@ -10,6 +10,7 @@ from typing import Any, Callable
 from .core.results import CommandResult
 from .core.events import collect_json_events
 from .ui_core.machine import IPC_PROTOCOL_VERSION, MACHINE_SCHEMA_VERSION, machine_state_from_runtime
+from .logstore import redact_sensitive_text, redact_sensitive_value
 
 
 _ROOT_OPTIONS_WITH_VALUE = {
@@ -103,8 +104,10 @@ def _native_machine_envelope(value: Any) -> bool:
     )
 
 def invocation_envelope(*, command: str, repo: str, exit_code: int, stdout: str, stderr: str, started_at: datetime, duration_seconds: float, events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    data = _parsed_stdout(stdout)
-    result = CommandResult(success=exit_code == 0, exit_code=exit_code, stdout="" if data is not None else stdout, stderr=stderr, duration=duration_seconds, metadata={"command": command, "repo": repo})
+    safe_stdout = redact_sensitive_text(stdout)
+    safe_stderr = redact_sensitive_text(stderr)
+    data = redact_sensitive_value(_parsed_stdout(stdout))
+    result = CommandResult(success=exit_code == 0, exit_code=exit_code, stdout="" if data is not None else safe_stdout, stderr=safe_stderr, duration=duration_seconds, metadata={"command": command, "repo": repo})
     machine = machine_state_from_runtime({
         "producer": "devtool",
         "status": "ok" if exit_code == 0 else "failed",
@@ -113,7 +116,7 @@ def invocation_envelope(*, command: str, repo: str, exit_code: int, stdout: str,
         "repo_name": repo.rstrip("/").rsplit("/", 1)[-1],
         "started_at": started_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "message": stderr if exit_code else "",
+        "message": safe_stderr if exit_code else "",
     }).as_dict()
     return {
         "schema_version": 1,
@@ -127,10 +130,10 @@ def invocation_envelope(*, command: str, repo: str, exit_code: int, stdout: str,
         "duration_seconds": duration_seconds,
         "exit_code": exit_code,
         "data": data,
-        "stdout": "" if data is not None else stdout,
-        "stderr": stderr,
-        "result": result.to_dict(),
-        "events": list(events or []),
+        "stdout": "" if data is not None else safe_stdout,
+        "stderr": safe_stderr,
+        "result": redact_sensitive_value(result.to_dict()),
+        "events": redact_sensitive_value(list(events or [])),
     }
 
 

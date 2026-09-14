@@ -24,6 +24,7 @@ from .ipc import IpcPublisher, ensure_ipc_server
 
 from .console_utils import resolve_cli_path
 from .models import OperationResult
+from .logstore import redact_sensitive_text, redact_sensitive_value
 from .ui_core.viewmodels import runtime_state_to_ui_snapshot
 from .ui_core.machine import TASKER_SCHEMA_VERSION, machine_state_from_runtime, tasker_fields
 
@@ -458,19 +459,23 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
         _append_hud_log(f"failed to start auto-HUD: {exc}")
         return False
 
+def _issue_severity(issue) -> str:
+    return str(getattr(issue, "severity", "") or "").strip().lower()
+
+
 def _result_status(result: OperationResult) -> str:
     if result.skipped:
         return "skipped"
-    return "ok" if result.returncode == 0 else "failed"
+    return "failed" if result.returncode != 0 or any(_issue_severity(issue) == "error" for issue in result.issues) else "ok"
 
 
 def _result_to_json(result: OperationResult) -> dict[str, Any]:
     diagnostics = []
     for issue in result.issues:
         diagnostics.append({
-            "severity": issue.severity,
+            "severity": _issue_severity(issue),
             "code": issue.code or "",
-            "message": issue.message,
+            "message": redact_sensitive_text(issue.message),
             "file": issue.file or "",
             "line": issue.line,
             "phase": result.name,
@@ -486,12 +491,19 @@ def _result_to_json(result: OperationResult) -> dict[str, Any]:
         "duration_s": result.duration_seconds,
         "log_path": result.log_path or None,
         "failure_kind": result.failure_kind or None,
-        "metadata": result.metadata or {},
+        "metadata": redact_sensitive_value(result.metadata or {}),
         "diagnostics": diagnostics,
-        "warnings": sum(1 for issue in result.issues if issue.severity == "warning"),
-        "errors": sum(1 for issue in result.issues if issue.severity == "error"),
+        "warnings": sum(1 for issue in result.issues if _issue_severity(issue) == "warning"),
+        "errors": sum(1 for issue in result.issues if _issue_severity(issue) == "error"),
     }
 
+
+
+def _safe_test_int(value: object) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 def _completion_test_totals(results: list[OperationResult]) -> dict[str, int]:
     """Aggregate authoritative structured reports before console fallbacks."""
@@ -504,10 +516,10 @@ def _completion_test_totals(results: list[OperationResult]) -> dict[str, int]:
     ]
     if structured:
         return {
-            "failed": sum(int(item.get("failed") or 0) for item in structured),
-            "passed": sum(int(item.get("passed") or 0) for item in structured),
-            "skipped": sum(int(item.get("skipped") or 0) for item in structured),
-            "total": sum(int(item.get("total") or 0) for item in structured),
+            "failed": sum(_safe_test_int(item.get("failed")) for item in structured),
+            "passed": sum(_safe_test_int(item.get("passed")) for item in structured),
+            "skipped": sum(_safe_test_int(item.get("skipped")) for item in structured),
+            "total": sum(_safe_test_int(item.get("total")) for item in structured),
         }
 
     text = "\n".join(result.output or "" for result in results if result.name in {"test", "tests", "wine-test"})
@@ -525,14 +537,16 @@ def _completion_test_totals(results: list[OperationResult]) -> dict[str, int]:
         }
 
     pytest_match = re.search(
-        r"(?:(\d+)\s+failed(?:,\s*)?)?(?:(\d+)\s+passed)(?:,\s*(\d+)\s+skipped)?",
+        r"(?:(?P<failed>\d+)\s+failed(?:,\s*)?)?"
+        r"(?:(?P<passed>\d+)\s+passed(?:,\s*)?)?"
+        r"(?:(?P<skipped>\d+)\s+skipped)?",
         text,
         re.IGNORECASE,
     )
-    if pytest_match:
-        failed = int(pytest_match.group(1) or 0)
-        passed = int(pytest_match.group(2) or 0)
-        skipped = int(pytest_match.group(3) or 0)
+    if pytest_match and any(pytest_match.group(name) for name in ("failed", "passed", "skipped")):
+        failed = _safe_test_int(pytest_match.group("failed"))
+        passed = _safe_test_int(pytest_match.group("passed"))
+        skipped = _safe_test_int(pytest_match.group("skipped"))
         return {"passed": passed, "failed": failed, "skipped": skipped, "total": passed + failed + skipped}
     return {}
 
@@ -614,9 +628,9 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
                 continue
             seen.add(key)
             diagnostics.append({
-                "severity": issue.severity,
+                "severity": _issue_severity(issue),
                 "code": issue.code or "",
-                "message": issue.message,
+                "message": redact_sensitive_text(issue.message),
                 "file": issue.file or "",
                 "line": issue.line,
                 "phase": result.name,
@@ -626,7 +640,7 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
                 "technical_details": f"{result.name} exited {result.returncode}" if result.returncode else detail,
                 "evidence": {"exit_code": result.returncode, "failure_kind": result.failure_kind or ""},
             })
-            if issue.severity == "warning":
+            if _issue_severity(issue) == "warning":
                 warning_details.append(detail)
 
     rollback_results = [result for result in results if result.name == "apply-rollback"]
