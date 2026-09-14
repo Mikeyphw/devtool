@@ -4,10 +4,14 @@ import io
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 from contextlib import redirect_stdout
 from pathlib import Path
 
 from devtool.cli import main
+from devtool.config import load_project_config
+from devtool.runners import build_validation_specs
+from devtool.validation_profiles import apply_profile
 from devtool.final_seal import final_seal_report
 from devtool.target_seal import TARGET_SEAL_SCHEMA_VERSION, target_seal_report
 
@@ -49,6 +53,37 @@ class Rem15AndroidHudTargetFinalSealTests(unittest.TestCase):
         self.assertGreaterEqual(payload["summary"]["roadmap_reports"], 33)
         self.assertGreaterEqual(payload["summary"]["roadmap_test_files"], 37)
 
+    def test_final_seal_profile_plans_android_target_command(self) -> None:
+        config = load_project_config(str(ROOT), str(ROOT / ".devtool.toml"), target_name="android_hud")
+        args = SimpleNamespace(
+            validation_workflow_profile="final-seal",
+            validation_resource_profile="automatic",
+            skip_restore=True,
+            skip_build=True,
+            skip_test=True,
+        )
+        apply_profile(config, args)
+        specs = build_validation_specs(
+            config,
+            skip_restore=args.skip_restore,
+            skip_build=args.skip_build,
+            skip_test=args.skip_test,
+        )
+        final_specs = [spec for spec in specs if spec.name == "android-final-seal"]
+        self.assertEqual(len(final_specs), 1, [spec.name for spec in specs])
+        argv = final_specs[0].argv
+        self.assertIn("final-seal", argv)
+        self.assertIn("--strict", argv)
+        self.assertEqual(argv[-2:], ["--target", "android_hud"])
+        self.assertTrue(final_specs[0].metadata["final_seal_contract"])
+
+    def test_android_hud_declares_explicit_seal_tasks(self) -> None:
+        text = (ROOT / ".devtool.toml").read_text(encoding="utf-8")
+        self.assertIn("seal", text)
+        self.assertIn(":app:assembleDebug", text)
+        self.assertIn(":app:testDebugUnitTest", text)
+        self.assertIn(":app:lintDebug", text)
+
     def test_android_target_seal_fails_when_required_manifest_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -69,6 +104,12 @@ class Rem15AndroidHudTargetFinalSealTests(unittest.TestCase):
         self.assertEqual(payload["deduped_findings_total"], 308)
         self.assertEqual(payload["assigned_findings_closed_by_overlays_1_to_14"], 308)
         self.assertEqual({item["target"] for item in payload["overlay_15_target_overlays"]}, {"devtool", "android_hud"})
+        self.assertEqual(payload["schema_version"], 2)
+        assignments = payload["finding_assignments"]
+        self.assertEqual(len(assignments), 308)
+        self.assertEqual(len({item["id"] for item in assignments}), 308)
+        self.assertTrue(all(1 <= int(item["overlay"]) <= 14 for item in assignments))
+        self.assertEqual(sum(int(value) for value in payload["overlay_counts"].values()), 308)
 
 
 if __name__ == "__main__":

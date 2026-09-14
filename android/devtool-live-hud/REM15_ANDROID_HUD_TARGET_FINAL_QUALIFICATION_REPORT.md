@@ -26,3 +26,19 @@ The `android_hud` target final gate is satisfied when all of these pass in the s
 ## Local evidence
 
 The generated overlay was checked with Python compilation and focused pytest coverage for Android target-seal contracts plus the repository-wide final-seal target-split and coverage checks. Android Gradle tasks are wired into the apply command for the user’s Termux repository because the sandbox does not provide the Android SDK/device environment.
+
+## Hotfix v2 Android seal correction
+
+The post-seal promise audit found that the previous Android target seal used a side-effect-free target report plus explicit apply-command Gradle tasks, but the `final-seal` validation profile did not append a runnable Android final-seal validation step. Hotfix v2 corrects that.
+
+The Android HUD target now has all three layers:
+
+1. `.devtool.toml` declares `[targets.android_hud.tasks].seal` as `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug`.
+2. The Android runner appends an `android-final-seal` `CommandSpec` when `final_seal_contracts=true`.
+3. The target report continues to require this command:
+
+```bash
+devtool final-seal --target android_hud --strict
+```
+
+Device instrumentation remains governed by the existing `when-device-present` validation policy: a present device enables the instrumentation gate, and no-device environments produce documented skip evidence instead of a fake pass.

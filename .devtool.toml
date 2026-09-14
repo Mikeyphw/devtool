@@ -53,6 +53,7 @@ args = [
 build = [":app:assembleDebug"]
 test = [":app:testDebugUnitTest"]
 lint = [":app:lintDebug"]
+seal = [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"]
 instrumentation = [":app:connectedDebugAndroidTest"]
 clean = [":app:clean"]
 

@@ -1174,6 +1174,7 @@ class AndroidGradleRunner(ProjectRunner):
 
         if phase_enabled("finalize"):
             specs.append(internal_phase("finalize", "Finalizing validation evidence and session state"))
+        _append_final_seal_contract_spec(config, specs, kind=self.kind, root=project_root)
         if not specs:
             raise SystemExit("Validation would run no Android/Gradle commands. Clear a skip flag.")
         total = len(specs)
@@ -1431,6 +1432,7 @@ class AndroidGradleRunner(ProjectRunner):
                 else:
                     config.runner_options["test_selection"] = original
 
+        _append_final_seal_contract_spec(config, specs, kind=self.kind, root=android_project_root(config))
         if not specs:
             raise SystemExit("Validation would run no Android/Gradle commands. Clear a skip flag.")
         total = len(specs)

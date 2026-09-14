@@ -38,6 +38,7 @@ class TargetSealExpectation:
     required_paths: tuple[str, ...]
     test_files: tuple[str, ...]
     validation_keys: tuple[str, ...] = ()
+    seal_tasks: tuple[str, ...] = ()
     apply_command_target: str = ""
 
 
@@ -83,6 +84,7 @@ TARGET_SEAL_EXPECTATIONS: dict[str, TargetSealExpectation] = {
         ),
         test_files=("tests/test_rem15_android_hud_target_final_seal.py",),
         validation_keys=("android_safe", "split_gradle", "max_workers", "gradle_heap_mb", "memory_guard_mb"),
+        seal_tasks=(":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"),
         apply_command_target="android_hud",
     ),
 }
@@ -149,6 +151,14 @@ def _nested_mapping(value: object, *keys: str) -> dict[str, Any]:
     return current if isinstance(current, dict) else {}
 
 
+def _task_values(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return tuple(item.strip() for item in value.replace(",", " ").split() if item.strip())
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    return ()
+
+
 def target_seal_report(repo_root: Path, target_name: str) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     target_name = str(target_name or "").strip()
@@ -201,6 +211,26 @@ def target_seal_report(repo_root: Path, target_name: str) -> dict[str, Any]:
             not expectation.validation_keys or not missing_validation,
             "target validation policy declares the sealed keys",
             [f"missing:{key}" for key in missing_validation],
+        ))
+
+        tasks = _nested_mapping(target_cfg, "tasks")
+        actual_seal_tasks = set(_task_values(tasks.get("seal")))
+        expected_seal_tasks = set(expectation.seal_tasks)
+        checks.append(_check(
+            "target.validation-seal-tasks",
+            not expected_seal_tasks or expected_seal_tasks.issubset(actual_seal_tasks),
+            "target declares its own final-seal validation task set when runner-specific work is required",
+            [f"missing:{task}" for task in sorted(expected_seal_tasks - actual_seal_tasks)],
+        ))
+
+        expected_command = f"devtool final-seal --target {expectation.target} --strict"
+        report_path = repo_root / expectation.report
+        report_text = report_path.read_text(encoding="utf-8", errors="replace") if report_path.is_file() else ""
+        checks.append(_check(
+            "target.validation-seal-command",
+            expected_command in report_text,
+            "target report names the runnable final-seal command, not only the side-effect-free report file",
+            [expected_command] if expected_command not in report_text else [],
         ))
 
         report_errors = _markdown_errors(repo_root, (expectation.report,), min_bytes=160)
