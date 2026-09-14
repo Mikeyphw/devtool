@@ -1183,15 +1183,18 @@ def _version_catalog_android_aliases(root: Path) -> set[str]:
 
 
 def _script_declares_android_plugin(text: str, aliases: set[str]) -> bool:
-    if any(plugin_id in text for plugin_id in _ANDROID_PLUGIN_IDS):
-        return True
-    compact = text.replace(" ", "")
+    active = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    active = re.sub(r"(?m)//.*$", "", active)
+    for plugin_id in _ANDROID_PLUGIN_IDS:
+        if re.search(rf"(?:id\s*\(?\s*['\"]|plugin\s*\(?\s*['\"]){re.escape(plugin_id)}['\"]", active):
+            return True
+    compact = re.sub(r"\s+", "", active)
     for alias in aliases:
         dotted = alias.replace("-", ".")
         if f"alias(libs.plugins.{dotted})" in compact:
             return True
         accessor = "libs.plugins." + ".".join(dotted.split("."))
-        if accessor in text:
+        if re.search(rf"(?:alias\s*\(\s*)?{re.escape(accessor)}", active):
             return True
     return False
 

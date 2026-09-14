@@ -108,6 +108,53 @@ DEFAULT_ANDROID_SPACE_TARGET_FREE_MB = 6144
 DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION = 2
 
 
+
+_BOOL_TRUE_VALUES = {"1", "true", "yes", "on", "enabled"}
+_BOOL_FALSE_VALUES = {"0", "false", "no", "off", "disabled", "none"}
+
+
+def strict_bool(value: object, *, default: bool = False) -> bool:
+    """Parse user/config booleans without treating non-empty strings as true."""
+
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in _BOOL_TRUE_VALUES:
+        return True
+    if normalized in _BOOL_FALSE_VALUES:
+        return False
+    return default
+
+
+def env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        warn(f"Ignoring invalid integer environment value for {name}: {raw!r}; using {default}")
+        return default
+
+
+def normalize_component_override(value: object, *, default: str = "auto") -> str:
+    """Normalize auto/none component toggles while preserving version strings."""
+
+    text = str(value if value is not None else default).strip()
+    if not text:
+        return default
+    lowered = text.lower()
+    if lowered in {"auto", "none"}:
+        return lowered
+    return text
+
+
+def _is_gradle_prerelease(value: str | None) -> bool:
+    text = str(value or "").strip().lower()
+    return bool(re.search(r"(?:^|[.\-_])(rc|milestone|m|alpha|beta|preview|snapshot|nightly)(?:\d+)?(?:$|[.\-_])", text))
+
 @dataclass(frozen=True)
 class SpaceReclaimCandidate:
     path: Path
@@ -1350,10 +1397,12 @@ def download(
                     f"{format_transfer_size(downloaded)} "
                     f"({format_transfer_size(int(downloaded / elapsed))}/s)"
                 )
-            elif downloaded < total:
-                warn(
+            elif downloaded != total:
+                temporary.unlink(missing_ok=True)
+                fail(
                     "Download server reported "
-                    f"{format_transfer_size(total)}, but received {format_transfer_size(downloaded)}"
+                    f"{format_transfer_size(total)}, but received {format_transfer_size(downloaded)}. "
+                    "The partial download was discarded."
                 )
     except (OSError, urllib.error.URLError) as exc:
         temporary.unlink(missing_ok=True)
@@ -1944,13 +1993,14 @@ def connected_android_devices(
         # A successful adb invocation is authoritative. Don't fall through
         # to another adb binary just because there are zero devices.
         value = (usable, str(adb), states)
-        if cache_enabled:
+        # Cache only positive device observations. A no-device result can change
+        # immediately when the user authorizes or connects a phone, so keeping
+        # it in process hides newly connected devices during the same run.
+        if cache_enabled and usable:
             _CONNECTED_ANDROID_DEVICE_PROBE_CACHE[cache_key] = (list(value[0]), value[1], dict(value[2]))
         return value
 
     value = ([], last_adb, last_states)
-    if cache_enabled:
-        _CONNECTED_ANDROID_DEVICE_PROBE_CACHE[cache_key] = (list(value[0]), value[1], dict(value[2]))
     return value
 
 
@@ -5491,14 +5541,75 @@ def slugify_name(value: str) -> str:
     return value.lower() or "gradle-project"
 
 
+
+def _iter_android_source_manifests(root: Path) -> Iterable[Path]:
+    ignored = {
+        ".git", ".gradle", ".devtool", ".idea", ".venv", "venv",
+        "build", "out", "dist", "target", "bin", "obj", "node_modules",
+    }
+    for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
+        dirs[:] = sorted(
+            name for name in dirs
+            if name not in ignored and not name.startswith(".tmp-")
+        )
+        if "AndroidManifest.xml" in files and Path(current).as_posix().endswith("src/main"):
+            yield Path(current) / "AndroidManifest.xml"
+
+
+def _android_plugin_identity(active_gradle_text: str, *, has_manifest: bool = False) -> tuple[bool, bool]:
+    """Return (application, library) from active Gradle syntax only.
+
+    Version catalogs and comments may mention Android plugins without applying
+    them. Count literal plugin ids in Gradle files; count version-catalog plugin
+    aliases only when the project also contains an Android source manifest.
+    """
+
+    text = active_gradle_text
+    app_literal = bool(re.search(r"(?:id\s*\(?\s*['\"]|plugin\s*\(?\s*['\"])com\.android\.application['\"]", text))
+    lib_literal = bool(re.search(r"(?:id\s*\(?\s*['\"]|plugin\s*\(?\s*['\"])com\.android\.library['\"]", text))
+    if has_manifest:
+        app_literal = app_literal or bool(re.search(r"alias\s*\(\s*libs\.plugins\.[A-Za-z0-9_.-]*android[A-Za-z0-9_.-]*application", text, re.IGNORECASE))
+        lib_literal = lib_literal or bool(re.search(r"alias\s*\(\s*libs\.plugins\.[A-Za-z0-9_.-]*android[A-Za-z0-9_.-]*library", text, re.IGNORECASE))
+    return app_literal, lib_literal
+
+
+def _agp_version_from_active_config(root: Path, active_gradle_text: str, project_text: str) -> str | None:
+    for pattern in (
+        r"com\.android\.tools\.build:gradle:([0-9]+(?:\.[0-9]+){1,2})",
+        r"(?:id\s*\(?\s*['\"]com\.android\.(?:application|library)['\"][^\n]*?version\s*(?:=\s*)?['\"])([0-9]+(?:\.[0-9]+){1,2})",
+        r"\bagp\s*=\s*['\"]([0-9]+(?:\.[0-9]+){1,2})",
+        r"androidGradlePlugin\s*=\s*['\"]([0-9]+(?:\.[0-9]+){1,2})",
+    ):
+        match = re.search(pattern, active_gradle_text)
+        if match:
+            return match.group(1)
+    # Preserve version-catalog version resolution, but only for version values;
+    # never let plugin aliases in the catalog establish Android identity.
+    catalog = version_catalog_values(root)
+    for key in ("agp", "androidgradleplugin"):
+        value = catalog.get(key)
+        if value and re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,2}", value):
+            return value
+    for pattern in (
+        r"\bagp\s*=\s*['\"]([0-9]+(?:\.[0-9]+){1,2})",
+        r"androidGradlePlugin\s*=\s*['\"]([0-9]+(?:\.[0-9]+){1,2})",
+    ):
+        match = re.search(pattern, project_text)
+        if match:
+            return match.group(1)
+    return None
+
 def inspect_project(root: Path) -> ProjectInfo:
     text = read_project_text(root)
     toolchains = _termux_toolchains_runtime_module()
     active_gradle_text = toolchains.active_gradle_config_text(root)
     name = project_display_name(root, text)
-    android_application = bool(re.search(r"com\.android\.application|id\s*\(?\s*['\"]com\.android\.application", text))
-    android_library = bool(re.search(r"com\.android\.library|id\s*\(?\s*['\"]com\.android\.library", text))
-    android = android_application or android_library or any(root.rglob("src/main/AndroidManifest.xml"))
+    has_manifest = any(_iter_android_source_manifests(root))
+    android_application, android_library = _android_plugin_identity(
+        active_gradle_text,
+        has_manifest=has_manifest,
+    )
+    android = android_application or android_library or has_manifest
     compile_sdk = first_int(
         [
             r"\bcompileSdk(?:Version)?\s*(?:=|\s)\s*['\"]?(\d+)",
@@ -5528,17 +5639,7 @@ def inspect_project(root: Path) -> ProjectInfo:
         build_tools = resolve_catalog_string_reference(
             root, active_gradle_text, "buildToolsVersion"
         )
-    agp_version = None
-    for pattern in (
-        r"com\.android\.tools\.build:gradle:([0-9]+(?:\.[0-9]+){1,2})",
-        r"com\.android\.(?:application|library)[^\n]*?version\s*(?:=\s*)?['\"]([0-9]+(?:\.[0-9]+){1,2})",
-        r"\bagp\s*=\s*['\"]([0-9]+(?:\.[0-9]+){1,2})",
-        r"androidGradlePlugin\s*=\s*['\"]([0-9]+(?:\.[0-9]+){1,2})",
-    ):
-        match = re.search(pattern, text)
-        if match:
-            agp_version = match.group(1)
-            break
+    agp_version = _agp_version_from_active_config(root, active_gradle_text, text)
     agp_major = int(agp_version.split(".", 1)[0]) if agp_version else first_int(
         [r"com\.android\.tools\.build:gradle:([0-9]+)"], text
     )
@@ -5580,7 +5681,7 @@ def infer_java_requirement(project: ProjectInfo) -> JavaRequirement:
         elif project.agp_major >= 7:
             baseline = 11
 
-    text = read_project_text(project.root)
+    text = _termux_toolchains_runtime_module().active_gradle_config_text(project.root)
     minimum = baseline
     exact_versions: list[int] = []
 
@@ -5616,7 +5717,10 @@ def infer_java_requirement(project: ProjectInfo) -> JavaRequirement:
 
 
 def java_major(java: Path) -> int | None:
-    result = subprocess.run([str(java), "-version"], text=True, capture_output=True, check=False)
+    try:
+        result = subprocess.run([str(java), "-version"], text=True, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
     text = f"{result.stdout}\n{result.stderr}"
     match = re.search(r'(?:version\s+"|openjdk\s+)(\d+)(?:\.(\d+))?', text, re.IGNORECASE)
     if not match:
@@ -6405,11 +6509,25 @@ def normalize_sdk_build_tools_locations(sdk_root: Path, *, dry_run: bool) -> Non
 
 def ndk_is_ready(sdk_root: Path, version: str) -> bool:
     directory = sdk_root / "ndk" / version
-    return (
-        source_properties_revision(directory) == version
-        and (directory / "toolchains" / "llvm" / "prebuilt").is_dir()
-        and (directory / "build" / "cmake" / "android.toolchain.cmake").is_file()
-    )
+    prebuilt_root = directory / "toolchains" / "llvm" / "prebuilt"
+    if source_properties_revision(directory) != version:
+        return False
+    if not (directory / "build" / "cmake" / "android.toolchain.cmake").is_file():
+        return False
+    if not prebuilt_root.is_dir():
+        return False
+    for host_dir in prebuilt_root.iterdir():
+        if not host_dir.is_dir() or host_dir.is_symlink():
+            continue
+        bin_dir = host_dir / "bin"
+        has_clangxx = (bin_dir / "clang++").is_file()
+        has_clang = (bin_dir / "clang").is_file()
+        has_legacy_host_payload = (bin_dir / "llvm-ar").is_file() and (
+            (bin_dir / "ld.lld").exists() or (bin_dir / "lld").is_file()
+        )
+        if has_clangxx and (has_clang or has_legacy_host_payload):
+            return True
+    return False
 
 
 def executable_runs(executable: Path, *args: str) -> bool:
@@ -6500,15 +6618,44 @@ def remove_path(path: Path, *, dry_run: bool) -> None:
         path.unlink(missing_ok=True)
 
 
+def _download_cache_is_safe_to_clear(path: Path) -> bool:
+    """Return whether an SDK download/temp cache appears inactive."""
+
+    if not path.exists():
+        return False
+    # sdkmanager and unzip workers can leave active locks/pid markers. If a
+    # marker references a live pid, or if the tree was modified very recently,
+    # keep it for the active installer.
+    for marker in (".devtool-active", ".sdkmanager.lock", ".lock", "lock"):
+        candidate = path / marker
+        if candidate.exists():
+            try:
+                raw = candidate.read_text(encoding="utf-8", errors="ignore").strip()
+                if raw.isdigit() and _pid_is_alive(int(raw)):
+                    return False
+            except OSError:
+                return False
+    try:
+        if time.time() - path.stat().st_mtime < 300:
+            return False
+    except OSError:
+        return False
+    return True
+
+
 def clear_android_download_debris(sdk_root: Path, *, dry_run: bool) -> None:
     candidates = [sdk_root / ".temp", Path.home() / ".android" / "cache"]
     for candidate in candidates:
-        if candidate.exists():
-            if dry_run:
-                info(f"Would clear Android download cache: {candidate}")
-            else:
-                shutil.rmtree(candidate, ignore_errors=True)
-                info(f"Cleared Android download cache: {candidate}")
+        if not candidate.exists():
+            continue
+        if not _download_cache_is_safe_to_clear(candidate):
+            warn(f"Skipping active Android download cache: {candidate}")
+            continue
+        if dry_run:
+            info(f"Would clear Android download cache: {candidate}")
+        else:
+            shutil.rmtree(candidate, ignore_errors=True)
+            info(f"Cleared Android download cache: {candidate}")
 
 
 def _nearest_existing_path(path: Path) -> Path:
@@ -6938,6 +7085,9 @@ def clear_abandoned_android_provider_staging(cache_root: Path, *, dry_run: bool)
         if not provider_root.is_dir():
             continue
         for candidate in provider_root.glob(".sdk-*.tmp"):
+            if not _staging_is_abandoned(candidate):
+                warn(f"Skipping active Android SDK provider staging: {candidate}")
+                continue
             if dry_run:
                 info(f"Would clear abandoned Android SDK provider staging: {candidate}")
             else:
@@ -7202,7 +7352,7 @@ def install_sdk_packages_with_repair(
         )
 
 
-def update_local_properties(project_root: Path, sdk_root: Path) -> None:
+def update_local_properties(project_root: Path, sdk_root: Path, *, dry_run: bool = False) -> None:
     target = project_root / "local.properties"
     lines: list[str] = []
     if target.is_file():
@@ -7226,8 +7376,11 @@ def update_local_properties(project_root: Path, sdk_root: Path) -> None:
         output.append(replacement)
         changed = True
     if changed or not target.exists():
-        target.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
-        info(f"Updated {target}")
+        if dry_run:
+            info(f"Would update {target}")
+        else:
+            target.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+            info(f"Updated {target}")
     else:
         info(f"Reusing SDK path from {target}")
 
@@ -7273,6 +7426,10 @@ def ensure_android_sdk(
 ) -> tuple[Path, str | None, str | None, str | None, str | None]:
     if not project.android:
         fail("Internal error: ensure_android_sdk called for a non-Android project")
+    platform_override = normalize_component_override(platform_override)
+    build_tools_override = normalize_component_override(build_tools_override)
+    ndk_override = normalize_component_override(ndk_override)
+    cmake_override = normalize_component_override(cmake_override)
     if sdk_root is None:
         if skip_install:
             fail("Android SDK not found and --skip-sdk-install was used. Set ANDROID_HOME/ANDROID_SDK_ROOT or pass --sdk-root.")
@@ -7555,7 +7712,7 @@ def ensure_android_sdk(
         force=force_setup,
         dry_run=dry_run,
     )
-    update_local_properties(project.root, sdk_root)
+    update_local_properties(project.root, sdk_root, dry_run=dry_run)
     return sdk_root, platform_id, build_tools, ndk_version, cmake_version
 
 
@@ -7614,6 +7771,11 @@ def managed_gradle(
         actual = gradle_version(launcher)
         if str(data.get("version") or "") == version and gradle_version_matches(actual, version):
             recorded = str(data.get("archive_sha256") or "").lower()
+            # Offline reuse must not require the original archive or checksum
+            # sidecar: a verified installed tree plus Devtool provenance is the
+            # usable cache. Online runs still verify the archive when present.
+            if offline:
+                return ensure_executable(launcher, "Gradle launcher")
             if re.fullmatch(r"[0-9a-f]{64}", recorded) and archive.is_file():
                 actual_archive = sha256(archive)
                 official = expected_checksum()
@@ -7723,13 +7885,14 @@ def gradle_meets_agp_minimum(actual: str | None, project: ProjectInfo | None) ->
 
 
 def gradle_version_matches(actual: str | None, requested: str) -> bool:
-    """Require the requested Gradle feature version, allowing patch releases.
+    """Require the requested stable Gradle feature version, allowing patches."""
 
-    For example, requested 8.13 accepts 8.13 and 8.13.1, but rejects 8.6 and
-    8.14. This is intentionally conservative for Android Gradle Plugin builds.
-    """
-    actual_key = version_key(actual)
-    requested_key = version_key(requested)
+    actual_text = str(actual or "").strip()
+    requested_text = str(requested or "").strip()
+    if _is_gradle_prerelease(actual_text) or _is_gradle_prerelease(requested_text):
+        return False
+    actual_key = version_key(actual_text)
+    requested_key = version_key(requested_text)
     if not actual_key or not requested_key:
         return False
     width = len(requested_key)
@@ -7760,8 +7923,16 @@ def gradle_wrapper_distribution_cached(
             text = ""
         match = re.search(r"distributionPath\s*=\s*(.+)$", text, re.MULTILINE)
         distribution_path = match.group(1).strip() if match else ""
-        if distribution_path and (project_root / distribution_path).exists():
-            return True
+        # Gradle's distributionPath is a base directory such as GRADLE_USER_HOME,
+        # not proof that the requested distribution has been unpacked. Older
+        # Devtool treated distributionPath=. as a cache hit even with no
+        # gradle-<version>/bin/gradle underneath. Only accept it when the
+        # requested launcher is present and reports the requested version.
+        if distribution_path and distribution_path not in {".", "./"}:
+            base = (project_root / distribution_path).expanduser()
+            for candidate in base.glob(f"**/gradle-{version}/bin/gradle"):
+                if candidate.is_file() and gradle_version_matches(gradle_version(candidate), version):
+                    return True
     return False
 
 
@@ -7810,7 +7981,8 @@ def select_gradle(
     wrapper = project_root / "gradlew"
     wrapper_state = gradle_wrapper_state(project_root)
     wrapper_version = wrapper_distribution_version(project_root)
-    pinned_version = version or wrapper_version
+    wrapper_required_version = wrapper_version or version
+    pinned_version = wrapper_required_version if wrapper_state.complete else version
     requested = pinned_version or DEFAULT_GRADLE_VERSION
     if pinned_version and not gradle_meets_agp_minimum(pinned_version, project):
         minimum = minimum_gradle_for_agp(project.agp_version if project else None)
@@ -7865,6 +8037,12 @@ def select_gradle(
         if not wrapper_state.complete:
             fail(broken_wrapper_message(project_root, wrapper_state))
         _warn_wrapper_version_override()
+        if wrapper_required_version and not gradle_meets_agp_minimum(wrapper_required_version, project):
+            minimum = minimum_gradle_for_agp(project.agp_version if project else None)
+            fail(
+                f"Project Gradle wrapper {wrapper_required_version} is incompatible with Android Gradle Plugin "
+                f"{project.agp_version if project else 'unknown'}; documented minimum is {minimum or 'unknown/fail-closed'}."
+            )
         if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
             if wrapper_version and gradle_wrapper_distribution_cached(
                 project_root, wrapper_version, gradle_user_home=gradle_user_home
@@ -8515,31 +8693,31 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--space-min-free-mb",
         type=int,
-        default=int(os.environ.get("DEVTOOL_ANDROID_MIN_FREE_MB", DEFAULT_ANDROID_SPACE_MIN_FREE_MB)),
+        default=env_int("DEVTOOL_ANDROID_MIN_FREE_MB", DEFAULT_ANDROID_SPACE_MIN_FREE_MB),
         help="Trigger safe automatic cleanup below this free-space threshold",
     )
     parser.add_argument(
         "--space-target-free-mb",
         type=int,
-        default=int(os.environ.get("DEVTOOL_ANDROID_TARGET_FREE_MB", DEFAULT_ANDROID_SPACE_TARGET_FREE_MB)),
+        default=env_int("DEVTOOL_ANDROID_TARGET_FREE_MB", DEFAULT_ANDROID_SPACE_TARGET_FREE_MB),
         help="Stop automatic cleanup after reaching this free-space target",
     )
     parser.add_argument(
         "--managed-gradle-retention",
         type=int,
-        default=int(os.environ.get("DEVTOOL_ANDROID_MANAGED_GRADLE_RETENTION", DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION)),
+        default=env_int("DEVTOOL_ANDROID_MANAGED_GRADLE_RETENTION", DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION),
         help="Number of newest Devtool-managed Gradle distributions to retain during space cleanup",
     )
     parser.add_argument(
         "--manage-gradle-user-cache",
         action="store_true",
-        default=os.environ.get("DEVTOOL_ANDROID_MANAGE_GRADLE_USER_CACHE", "").strip().lower() in {"1", "true", "yes", "on"},
+        default=strict_bool(os.environ.get("DEVTOOL_ANDROID_MANAGE_GRADLE_USER_CACHE"), default=False),
         help="Allow low-space cleanup to prune old version-specific GRADLE_USER_HOME caches and build-cache-1; modules and wrapper distributions are preserved",
     )
     parser.add_argument(
         "--keep-provider-downloads",
         action="store_true",
-        default=os.environ.get("DEVTOOL_ANDROID_KEEP_PROVIDER_DOWNLOADS", "").strip().lower() in {"1", "true", "yes", "on"},
+        default=strict_bool(os.environ.get("DEVTOOL_ANDROID_KEEP_PROVIDER_DOWNLOADS"), default=False),
         help="Keep TermuxVoid/HomuHomu provider release archives after an installed SDK is usable",
     )
     parser.add_argument(
@@ -8586,7 +8764,7 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--gradle-lock-timeout-ms",
         type=int,
-        default=int(os.environ.get("DEVTOOL_GRADLE_LOCK_TIMEOUT_MS", "600000") or "600000"),
+        default=env_int("DEVTOOL_GRADLE_LOCK_TIMEOUT_MS", 600000),
         help="Gradle cache/file-lock timeout in milliseconds",
     )
     parser.add_argument(
@@ -8644,6 +8822,10 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--daemon-idle-timeout-ms cannot be negative")
     if args.gradle_lock_timeout_ms < 0:
         parser.error("--gradle-lock-timeout-ms cannot be negative")
+    args.android_platform = normalize_component_override(args.android_platform)
+    args.build_tools = normalize_component_override(args.build_tools)
+    args.ndk_version = normalize_component_override(args.ndk_version)
+    args.cmake_version = normalize_component_override(args.cmake_version)
     args.toolchain_downloads = normalize_bootstrap_downloads(args.toolchain_downloads)
     args.bootstrap_network = normalize_bootstrap_network(args.bootstrap_network)
     if args.offline:
@@ -8653,7 +8835,23 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def gradle_process_pids() -> list[int]:
+def _process_cwd(pid: int) -> Path | None:
+    proc_cwd = Path("/proc") / str(pid) / "cwd"
+    try:
+        return proc_cwd.resolve(strict=True)
+    except OSError:
+        return None
+
+
+def _path_within(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve(strict=False).relative_to(parent.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def gradle_process_pids(project_root: Path | None = None) -> list[int]:
     try:
         result = subprocess.run(
             ["ps", "-eo", "pid=,uid=,args="],
@@ -8671,6 +8869,7 @@ def gradle_process_pids() -> list[int]:
         "org.gradle.wrapper.GradleWrapperMain",
         "org.gradle.launcher.GradleMain",
     )
+    root = project_root.expanduser().resolve(strict=False) if project_root is not None else None
     for line in result.stdout.splitlines():
         parts = line.strip().split(None, 2)
         if len(parts) < 3:
@@ -8681,8 +8880,14 @@ def gradle_process_pids() -> list[int]:
             continue
         if pid in protected or (uid is not None and process_uid != uid):
             continue
-        if any(signature in parts[2] for signature in signatures):
-            pids.append(pid)
+        command = parts[2]
+        if not any(signature in command for signature in signatures):
+            continue
+        if root is not None:
+            cwd = _process_cwd(pid)
+            if cwd is None or not _path_within(cwd, root):
+                continue
+        pids.append(pid)
     return pids
 
 
@@ -8697,16 +8902,16 @@ def stop_gradle_processes(
     run([gradle, "--stop"], cwd=project_root, env=env, check=False, dry_run=dry_run)
     if dry_run:
         return
-    pids = gradle_process_pids()
+    pids = gradle_process_pids(project_root)
     for pid in pids:
         try:
             os.kill(pid, 15)
         except (ProcessLookupError, PermissionError):
             pass
     deadline = time.time() + 2.0
-    while time.time() < deadline and gradle_process_pids():
+    while time.time() < deadline and gradle_process_pids(project_root):
         time.sleep(0.1)
-    remaining = gradle_process_pids()
+    remaining = gradle_process_pids(project_root)
     for pid in remaining:
         try:
             os.kill(pid, 9)
@@ -8735,7 +8940,7 @@ def gradle_jvmargs(args: argparse.Namespace) -> str | None:
     if not args.constrained and explicit_heap <= 0 and explicit_metaspace <= 0 and explicit_cpu <= 0:
         return None
 
-    heap = explicit_heap or int(os.environ.get("DEVTOOL_GRADLE_JVM_HEAP_MB", "") or "0") or 1024
+    heap = explicit_heap or env_int("DEVTOOL_GRADLE_JVM_HEAP_MB", 0) or 1024
     # ``memory_guard_mb`` is a system-pressure warning threshold, not a JVM
     # heap budget.  Comparing the two silently changed an explicitly requested
     # 768 MiB heap into 512 MiB and caused D8/R8 to fail while plenty of system
@@ -8743,7 +8948,7 @@ def gradle_jvmargs(args: argparse.Namespace) -> str | None:
     # adaptive watchdog, worker cap, CPU cap and low-priority scheduling.
     metaspace = 0 if args.no_gradle_metaspace_cap else (
         explicit_metaspace
-        or int(os.environ.get("DEVTOOL_GRADLE_METASPACE_MB", "") or "0")
+        or env_int("DEVTOOL_GRADLE_METASPACE_MB", 0)
         or (max(256, int(heap * 0.75)) if args.constrained else 0)
     )
     cpu_limit = explicit_cpu or int(

@@ -26,6 +26,20 @@ from .models import CommandSpec, ProjectConfig
 from .termux_toolchains import detect_runtime_identity, normalize_native_cache_provider, normalize_native_provider, termux_cmake_probe, termux_ninja_probe, termux_ccache_probe, termux_native_provider
 
 
+def _bool_option(value: object, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "disabled", "none"}:
+        return False
+    return default
+
+
+
 @dataclass(frozen=True, slots=True)
 class RunnerCapabilities:
     """Features currently implemented by a project runner.
@@ -1449,10 +1463,10 @@ def _jvm_gradle_launcher(
             explicit=None,
             version=configured_version,
             cache_root=cache_root,
-            offline=bool(gradle.get("offline", False)),
+            offline=_bool_option(gradle.get("offline"), False),
             force=False,
             bootstrap_downloads="missing",
-            bootstrap_network="deny" if bool(gradle.get("offline", False)) else "allow",
+            bootstrap_network="deny" if _bool_option(gradle.get("offline"), False) else "allow",
             gradle_user_home=gradle_user_home,
             provider="download",
             project=None,
@@ -1511,14 +1525,14 @@ def _configured_gradle_cli_args(options: dict[str, object]) -> list[str]:
         workers = 0
     if workers > 0:
         argv.append(f"--max-workers={workers}")
-    if bool(options.get("offline", False)):
+    if _bool_option(options.get("offline"), False):
         argv.append("--offline")
-    if bool(options.get("no_daemon", False)):
+    if _bool_option(options.get("no_daemon"), False):
         argv.append("--no-daemon")
-    if bool(options.get("parallel", False)):
+    if _bool_option(options.get("parallel"), False):
         argv.append("--parallel")
     if "build_cache" in options:
-        if options.get("build_cache") is not False:
+        if _bool_option(options.get("build_cache"), True):
             argv.append("--build-cache")
         else:
             argv.append("--no-build-cache")
@@ -1586,7 +1600,7 @@ class JvmGradleRunner(ProjectRunner):
                 config, root, options=gradle_options
             )
             argv = [gradle, *tasks, *_configured_gradle_cli_args(gradle_options)]
-            structured_events = bool(gradle_options.get("structured_events", True))
+            structured_events = _bool_option(gradle_options.get("structured_events"), True)
             if structured_events:
                 # Plain JVM Gradle participates in the same exact-output
                 # provenance contract as Android builds.  The generic Gradle
@@ -2226,7 +2240,7 @@ class PythonRunner(ProjectRunner):
                 groups=groups,
                 extras=extras,
                 locked=bool(options.get("locked", True)),
-                offline=bool(options.get("offline", False)),
+                offline=_bool_option(options.get("offline"), False),
                 install_project=bool(options.get("install_project", True)),
                 constraints=str(options.get("constraints") or ""),
             )
@@ -2462,7 +2476,7 @@ class PythonRunner(ProjectRunner):
             version_text = str(version).removeprefix("python")
             if info.manager == "uv" and shutil.which("uv"):
                 argv = ["uv", "run", "--no-python-downloads"]
-                if bool(options.get("offline", False)):
+                if _bool_option(options.get("offline"), False):
                     argv.append("--offline")
                 argv.extend(["--python", version_text, "python", "-m", "pytest"])
             else:
@@ -2510,7 +2524,7 @@ class PythonRunner(ProjectRunner):
                 # PyPA `build` package to be declared in the project
                 # environment, which is not a runtime/project dependency.
                 argv = ["uv", "build", "--out-dir", str(outdir)]
-                if bool(options.get("offline", False)):
+                if _bool_option(options.get("offline"), False):
                     argv.append("--offline")
             else:
                 argv = self._module(config, "build", "--outdir", str(outdir))

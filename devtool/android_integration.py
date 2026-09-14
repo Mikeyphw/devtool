@@ -41,6 +41,20 @@ def _dict_option(config: ProjectConfig, name: str) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+
+
+def _bool_option(value: Any, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "disabled", "none"}:
+        return False
+    return default
+
 def _list_option(value: Any) -> list[str]:
     if value is None:
         return []
@@ -738,9 +752,9 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--space-min-free-mb", storage_options.get("min_free_mb", android_build.DEFAULT_ANDROID_SPACE_MIN_FREE_MB))
     _append_option(argv, "--space-target-free-mb", storage_options.get("target_free_mb", android_build.DEFAULT_ANDROID_SPACE_TARGET_FREE_MB))
     _append_option(argv, "--managed-gradle-retention", storage_options.get("managed_gradle_retention", android_build.DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION))
-    if bool(storage_options.get("manage_gradle_user_cache", False)):
+    if _bool_option(storage_options.get("manage_gradle_user_cache"), False):
         argv.append("--manage-gradle-user-cache")
-    if bool(storage_options.get("keep_provider_downloads", False)):
+    if _bool_option(storage_options.get("keep_provider_downloads"), False):
         argv.append("--keep-provider-downloads")
     if storage_options.get("cleanup_after_build", True) is False:
         argv.append("--no-post-build-space-cleanup")
@@ -850,13 +864,13 @@ def android_builder_arguments_for_tasks(
         if validation_policy.low_priority:
             argv.append("--low-priority")
 
-    if bool(android.get("skip_sdk_install", False)):
+    if _bool_option(android.get("skip_sdk_install"), False):
         argv.append("--skip-sdk-install")
-    elif bool(android.get("auto_sdk", False)):
+    elif _bool_option(android.get("auto_sdk"), False):
         argv.append("--auto-sdk")
-    if bool(android.get("offline", gradle.get("offline", False))):
+    if _bool_option(android.get("offline", gradle.get("offline", False)), False):
         argv.append("--offline")
-    if bool(android.get("force_setup", False)):
+    if _bool_option(android.get("force_setup"), False):
         argv.append("--force-setup")
     if validation_policy is not None and not validation_policy.enabled:
         validation_options = _dict_option(config, "validation")
@@ -873,8 +887,8 @@ def android_builder_arguments_for_tasks(
         if heap_record is not None:
             _append_option(argv, "--gradle-jvm-heap-mb", int(heap_record.get("value") or 0))
 
-    no_daemon = bool(gradle.get("no_daemon", False))
-    parallel = bool(gradle.get("parallel", config.kind == "android"))
+    no_daemon = _bool_option(gradle.get("no_daemon"), False)
+    parallel = _bool_option(gradle.get("parallel"), config.kind == "android")
     if validation_policy is not None and validation_policy.enabled:
         validation_options = _dict_option(config, "validation")
         no_daemon = validation_policy.no_daemon
@@ -883,13 +897,13 @@ def android_builder_arguments_for_tasks(
         argv.append("--no-daemon")
     if parallel:
         argv.append("--parallel")
-    if bool(gradle.get("build_cache", True)):
+    if _bool_option(gradle.get("build_cache"), True):
         argv.append("--build-cache")
     if validation_policy is not None:
         resolution_phase = validation_phase or "validation"
         termux_options = _dict_option(config, "termux")
         termux_profile = str(termux_options.get("resource_profile") or "balanced")
-        termux_applied = bool(termux_options.get("_resource_profile_applied", False))
+        termux_applied = _bool_option(termux_options.get("_resource_profile_applied"), False)
         _append_option(
             argv,
             "--resource-resolution",
@@ -930,7 +944,7 @@ def android_builder_arguments_for_tasks(
         _append_option(argv, "--output-dir", output_dir)
         _append_option(argv, "--output-name", output_name)
         _append_non_default_option(argv, "--artifact-collision", artifacts.get("collision", "unique"))
-        if bool(artifacts.get("scan", True)) is False:
+        if _bool_option(artifacts.get("scan"), True) is False:
             argv.append("--no-artifact-scan")
 
     # The builder treats arguments after ``--`` as direct Gradle arguments.
@@ -944,7 +958,7 @@ def android_builder_arguments_for_tasks(
     signing_env = dict(os.environ)
     signing_env.update({str(k): str(v) for k, v in config.env.items()})
     gradle_args.extend(signing_gradle_args_for_tasks(config, list(seen_tasks), env=signing_env))
-    structured_events = bool(gradle.get("structured_events", True))
+    structured_events = _bool_option(gradle.get("structured_events"), True)
     if structured_events:
         gradle_args.extend([
             "--init-script",
@@ -952,7 +966,7 @@ def android_builder_arguments_for_tasks(
         ])
 
     configured_gradle_args = _list_option(gradle.get("args"))
-    disable_configuration_cache = bool(validation or structured_events)
+    disable_configuration_cache = _bool_option(validation, False) or structured_events
     if disable_configuration_cache:
         # Android validation may provision or repair the managed SDK immediately
         # before Gradle starts. A configuration-cache entry that fingerprints
@@ -989,7 +1003,7 @@ def _android_execution_mode(config: ProjectConfig) -> str:
         return "chroot"
     if current == NATIVE_TERMUX:
         android = _dict_option(config, "android")
-        if bool(android.get("prefer_native_termux", False)):
+        if _bool_option(android.get("prefer_native_termux"), False):
             return "native-termux"
         return "chroot" if should_prefer_android_chroot(config) else "native-termux"
     return "host"
@@ -1054,11 +1068,11 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ("minimum_java", str(requirement.minimum) + (" exact toolchain" if requirement.exact else "")),
         ("compile_sdk", str(project.compile_sdk) if project.compile_sdk else "auto/unknown"),
         ("android_gradle_plugin", str(project.agp_major) if project.agp_major else "unknown"),
-        ("sdk_install", "manual" if bool(android.get("skip_sdk_install", False)) else "auto"),
+        ("sdk_install", "manual" if _bool_option(android.get("skip_sdk_install"), False) else "auto"),
         ("bootstrap_downloads", downloads),
         ("bootstrap_network", network),
         ("toolchain_profile", str(config.runner_options.get("toolchain_profile") or config.chroot_name or "")),
-        ("auto_sdk", "yes" if bool(android.get("auto_sdk", False)) else "no"),
+        ("auto_sdk", "yes" if _bool_option(android.get("auto_sdk"), False) else "no"),
         ("sdk_source", sdk_source or "missing"),
         ("sdk_root", str(sdk_root) if sdk_root else "missing"),
         ("native_build", "yes" if project.native_build else "no"),
@@ -1158,11 +1172,11 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
             ),
         ),
         ("gradle", str(gradle_path) if gradle_path else "missing wrapper/Gradle"),
-        ("sdk_install", "manual" if bool(android.get("skip_sdk_install", False)) else "auto"),
+        ("sdk_install", "manual" if _bool_option(android.get("skip_sdk_install"), False) else "auto"),
         ("bootstrap_downloads", downloads),
         ("bootstrap_network", network),
         ("toolchain_profile", str(config.runner_options.get("toolchain_profile") or config.chroot_name or "")),
-        ("auto_sdk", "yes" if bool(android.get("auto_sdk", False)) else "no"),
+        ("auto_sdk", "yes" if _bool_option(android.get("auto_sdk"), False) else "no"),
         ("android_sdk", str(sdk) if sdk else "missing"),
         ("android_sdk_source", sdk_source or "missing"),
         ("sdkmanager", str(sdkmanager) if sdkmanager else "missing/repairable"),
@@ -1205,6 +1219,6 @@ def should_prefer_android_chroot(config: ProjectConfig) -> bool:
     if "all" not in allowed and config.kind not in allowed:
         return False
     android = _dict_option(config, "android")
-    if config.kind in {"android", "gradle"} and bool(android.get("prefer_native_termux", False)):
+    if config.kind in {"android", "gradle"} and _bool_option(android.get("prefer_native_termux"), False):
         return False
     return bool(shutil.which(os.environ.get("DEVTOOL_CHROOTCTL", "chrootctl")))
