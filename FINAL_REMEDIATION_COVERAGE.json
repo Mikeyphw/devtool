@@ -1,13 +1,1559 @@
 {
   "assigned_findings_closed_by_overlays_1_to_14": 308,
   "deduped_findings_total": 308,
+  "exact_assignment_source": "audit/DEVTOOL_FINAL_REMEDIATION_ROADMAP_20260913.md from the handoff archive",
+  "finding_assignments": [
+    {
+      "id": "S05-R2-01",
+      "overlay": 1,
+      "overlay_title": "Trust-boundary emergency seal"
+    },
+    {
+      "id": "S09-03",
+      "overlay": 1,
+      "overlay_title": "Trust-boundary emergency seal"
+    },
+    {
+      "id": "S09-R2-01",
+      "overlay": 1,
+      "overlay_title": "Trust-boundary emergency seal"
+    },
+    {
+      "id": "S09-R2-03",
+      "overlay": 1,
+      "overlay_title": "Trust-boundary emergency seal"
+    },
+    {
+      "id": "S12-R2-03",
+      "overlay": 1,
+      "overlay_title": "Trust-boundary emergency seal"
+    },
+    {
+      "id": "S16-08",
+      "overlay": 1,
+      "overlay_title": "Trust-boundary emergency seal"
+    },
+    {
+      "id": "S16-09",
+      "overlay": 1,
+      "overlay_title": "Trust-boundary emergency seal"
+    },
+    {
+      "id": "S16-01",
+      "overlay": 2,
+      "overlay_title": "Release verifier and final-seal integrity"
+    },
+    {
+      "id": "S16-02",
+      "overlay": 2,
+      "overlay_title": "Release verifier and final-seal integrity"
+    },
+    {
+      "id": "S16-04",
+      "overlay": 2,
+      "overlay_title": "Release verifier and final-seal integrity"
+    },
+    {
+      "id": "S16-05",
+      "overlay": 2,
+      "overlay_title": "Release verifier and final-seal integrity"
+    },
+    {
+      "id": "S16-10",
+      "overlay": 2,
+      "overlay_title": "Release verifier and final-seal integrity"
+    },
+    {
+      "id": "S16-R2-01",
+      "overlay": 2,
+      "overlay_title": "Release verifier and final-seal integrity"
+    },
+    {
+      "id": "S16-R2-02",
+      "overlay": 2,
+      "overlay_title": "Release verifier and final-seal integrity"
+    },
+    {
+      "id": "S01-01",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S01-02",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S01-03",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S01-04",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S01-05",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S01-06",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S01-OBS-01",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S01-R2-01",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S01-R2-02",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S01-R2-03",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-01",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-02",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-03",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-04",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-05",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-06",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-07",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-08",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-09",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-10",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-11",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-12",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-R2-01",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-R2-02",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-R2-03",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S02-R2-04",
+      "overlay": 3,
+      "overlay_title": "CLI, typed configuration, workspace and target discovery"
+    },
+    {
+      "id": "S03-01",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-02",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-03",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-04",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-05",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-06",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-07",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-08",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-09",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-10",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-R2-01",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-R2-02",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-R2-03",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-R2-04",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-R2-05",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S03-R2-06",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-01",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-02",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-03",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-04",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-05",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-06",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-07",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-08",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-09",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-R2-01",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-R2-02",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-R2-03",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-R2-04",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-R2-05",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S04-R2-06",
+      "overlay": 4,
+      "overlay_title": "Execution environments, cancellation and scheduler correctness"
+    },
+    {
+      "id": "S05-01",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-02",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-03",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-04",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-05",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-06",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-07",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-08",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-09",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-10",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-11",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-R2-02",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-R2-03",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-R2-04",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-R2-05",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-R2-06",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S05-R2-07",
+      "overlay": 5,
+      "overlay_title": "Transactions, overlays, archive semantics and rollback"
+    },
+    {
+      "id": "S06-01",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-02",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-03",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-04",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-05",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-06",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-07",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-08",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-09",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-10",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-R2-01",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-R2-02",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-R2-03",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-R2-04",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-R2-05",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-R2-06",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-R2-07",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S06-R2-08",
+      "overlay": 6,
+      "overlay_title": "Artifact lifecycle, verification and registry correctness"
+    },
+    {
+      "id": "S07-01",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-02",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-03",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-04",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-05",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-06",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-07",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-08",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-09",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-10",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-11",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-R2-01",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-R2-02",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-R2-03",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-R2-04",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-R2-05",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-R2-06",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-R2-07",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S07-R2-08",
+      "overlay": 7,
+      "overlay_title": "Validation truth, sessions, checkpoints and changed-test scope"
+    },
+    {
+      "id": "S08-01",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-02",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-03",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-04",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-05",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-06",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-07",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-08",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-09",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-10",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-11",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-12",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-R2-01",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-R2-02",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-R2-03",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-R2-04",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-R2-05",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-R2-06",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-R2-07",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S08-R2-08",
+      "overlay": 8,
+      "overlay_title": "Diagnostics, redaction, summaries, logs and reporting truth"
+    },
+    {
+      "id": "S09-01",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-02",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-04",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-05",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-06",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-07",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-08",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-09",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-10",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-11",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-12",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-13",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-R2-02",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-R2-04",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-R2-05",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-R2-06",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-R2-07",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-R2-08",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S09-R2-09",
+      "overlay": 9,
+      "overlay_title": "Core runtime, events, IPC, plugins and hooks"
+    },
+    {
+      "id": "S10-01",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-02",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-03",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-04",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-05",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-06",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-07",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-08",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-09",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-10",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-11",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-12",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-R2-01",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-R2-02",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-R2-03",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-R2-04",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-R2-05",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-R2-06",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-R2-07",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-R2-08",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-R2-09",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S10-R2-10",
+      "overlay": 10,
+      "overlay_title": "Android Gradle, SDK, NDK and toolchain resolution"
+    },
+    {
+      "id": "S11-01",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-02",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-03",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-04",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-05",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-06",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-07",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-08",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-09",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-10",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-11",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-12",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-13",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-14",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-15",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-16",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-01",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-02",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-03",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-04",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-05",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-06",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-07",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-08",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-09",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-10",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-11",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S11-R2-12",
+      "overlay": 11,
+      "overlay_title": "Android devices, ADB, instrumentation, signing and release gates"
+    },
+    {
+      "id": "S12-01",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-02",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-03",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-04",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-05",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-06",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-07",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-08",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-09",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-10",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-11",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-12",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-13",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-14",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-R2-01",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-R2-02",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-R2-04",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-R2-05",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-R2-06",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-R2-07",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-R2-08",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-R2-09",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S12-R2-10",
+      "overlay": 12,
+      "overlay_title": "Android Live HUD bridge, run-store and root/Termux execution truth"
+    },
+    {
+      "id": "S13-01",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-02",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-03",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-04",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-05",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-06",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-07",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-08",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-09",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-10",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-11",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-12",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-13",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-14",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-R2-01",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-R2-02",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-R2-03",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-R2-04",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S13-R2-05",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-01",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-02",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-03",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-04",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-05",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-06",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-07",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-08",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-09",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-10",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-11",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-12",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-13",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-14",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-15",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-16",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-R2-01",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-R2-02",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S14-R2-03",
+      "overlay": 13,
+      "overlay_title": "Shared UI/TUI and Desktop GTK truth, actions and IPC presentation"
+    },
+    {
+      "id": "S15-01",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-02",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-03",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-04",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-05",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-06",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-07",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-08",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-09",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-10",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-11",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-12",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-13",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-14",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-R2-01",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-R2-02",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S15-R2-03",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-03",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-06",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-07",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-11",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-12",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-13",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-14",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-15",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-16",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-17",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-18",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-R2-03",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-R2-04",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-R2-05",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-R2-06",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    },
+    {
+      "id": "S16-R2-07",
+      "overlay": 14,
+      "overlay_title": "Language runners, selector exactness, packaging, install/root/repo integration"
+    }
+  ],
+  "finding_inventory_source": "audit/AUDIT_FINDINGS_DEDUPED.json from the handoff archive",
   "notes": [
-    "Overlay 15 has no new findings; it is split by the configured Devtool targets for final qualification.",
-    "Repository-wide closure requires both target overlays plus devtool final-seal --strict."
+    "Overlay 15 has no new findings; it is split by configured Devtool targets for final qualification.",
+    "Schema v2 records every finding ID exactly once so the final seal checks more than aggregate counts.",
+    "Hotfix v2 adds runnable target final-seal validation specs instead of only side-effect-free report checks."
   ],
   "overlay_15_target_overlays": [
     {
       "artifact": "devtool_rem15a_devtool_target_final_qualification_v1.tar.gz",
+      "hotfix_artifact": "devtool_rem15a_devtool_target_final_qualification_hotfix_v2.tar.gz",
       "platform": "server",
       "report": "REM15_DEVTOOL_TARGET_FINAL_QUALIFICATION_REPORT.md",
       "runner": "python",
@@ -15,12 +1561,29 @@
     },
     {
       "artifact": "devtool_rem15b_android_hud_target_final_qualification_v1.tar.gz",
+      "hotfix_artifact": "devtool_rem15b_android_hud_target_final_qualification_hotfix_v2.tar.gz",
       "platform": "android",
       "report": "android/devtool-live-hud/REM15_ANDROID_HUD_TARGET_FINAL_QUALIFICATION_REPORT.md",
       "runner": "android",
       "target": "android_hud"
     }
   ],
+  "overlay_counts": {
+    "1": 7,
+    "10": 22,
+    "11": 28,
+    "12": 23,
+    "13": 38,
+    "14": 33,
+    "2": 7,
+    "3": 26,
+    "4": 31,
+    "5": 17,
+    "6": 18,
+    "7": 19,
+    "8": 20,
+    "9": 19
+  },
   "roadmap_total_overlays": 15,
-  "schema_version": 1
+  "schema_version": 2
 }

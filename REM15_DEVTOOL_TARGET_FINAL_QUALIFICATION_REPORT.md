@@ -26,3 +26,15 @@ The `devtool` target final gate is satisfied when all of these pass in the same 
 ## Local evidence
 
 The generated overlay was checked with Python compilation and focused pytest coverage for the new target-seal module, the CLI target option, and the unchanged FS03 repository seal compatibility.
+
+## Hotfix v2 promise recheck
+
+The post-seal promise audit found that `final_seal_contracts` was declarative but not yet converted into a runnable validation `CommandSpec`. This target report is revised by hotfix v2: the Python/root `devtool` target now plans a `python-final-seal` step whenever the `final-seal` validation profile is active.
+
+Expected command evidence remains:
+
+```bash
+devtool final-seal --target devtool --strict
+```
+
+The repository-wide coverage manifest is also upgraded to schema v2 so every one of the 308 finding IDs is listed exactly once, not only summarized by total count.

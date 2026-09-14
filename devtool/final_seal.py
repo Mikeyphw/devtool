@@ -69,6 +69,7 @@ _REQUIRED_REPORTS = (
     "PYTEST_REVITALIZATION_REPORT.md",
     "GRADLE_ANDROID_TASK_OPTIMIZATION_REPORT.md",
     "ROADMAP_DELIVERY_AUDIT_REPORT.md",
+    "ROADMAP_PROMISE_RECHECK_REPORT.md",
 )
 
 _REQUIRED_TARGET_SEAL_REPORTS = (
@@ -263,7 +264,8 @@ def _final_remediation_coverage_errors(repo_root: Path, configured_targets: set[
     except Exception as exc:
         return [f"invalid:{_FINAL_REMEDIATION_COVERAGE}:{exc}"]
     errors: list[str] = []
-    if payload.get("schema_version") != 1:
+    schema_version = int(payload.get("schema_version") or 0)
+    if schema_version not in {1, 2}:
         errors.append("schema_version")
     if int(payload.get("roadmap_total_overlays") or 0) != 15:
         errors.append("roadmap_total_overlays")
@@ -271,6 +273,26 @@ def _final_remediation_coverage_errors(repo_root: Path, configured_targets: set[
         errors.append("deduped_findings_total")
     if int(payload.get("assigned_findings_closed_by_overlays_1_to_14") or 0) != 308:
         errors.append("assigned_findings_closed_by_overlays_1_to_14")
+    if schema_version >= 2:
+        assignments = payload.get("finding_assignments")
+        if not isinstance(assignments, list) or len(assignments) != 308:
+            errors.append("finding_assignments_count")
+        else:
+            ids = [str(item.get("id") or "").strip() for item in assignments if isinstance(item, dict)]
+            overlays = [int(item.get("overlay") or 0) for item in assignments if isinstance(item, dict)]
+            if len(ids) != 308 or len(set(ids)) != 308 or any(not item for item in ids):
+                errors.append("finding_assignments_unique_ids")
+            if any(overlay < 1 or overlay > 14 for overlay in overlays) or len(overlays) != 308:
+                errors.append("finding_assignments_overlay_range")
+            overlay_counts = payload.get("overlay_counts")
+            if isinstance(overlay_counts, dict):
+                try:
+                    if sum(int(value) for value in overlay_counts.values()) != 308:
+                        errors.append("overlay_counts_total")
+                except (TypeError, ValueError):
+                    errors.append("overlay_counts_invalid")
+            else:
+                errors.append("overlay_counts")
     target_overlays = payload.get("overlay_15_target_overlays")
     target_names = {
         str(item.get("target") or "").strip()

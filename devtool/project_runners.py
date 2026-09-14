@@ -198,6 +198,47 @@ def _tool_metadata(kind: str, root: Path, **extra: object) -> dict[str, object]:
     return metadata
 
 
+def _final_seal_contract_enabled(config: ProjectConfig) -> bool:
+    validation = config.runner_options.get("validation", {})
+    validation = dict(validation) if isinstance(validation, dict) else {}
+    return _bool_option(validation.get("final_seal_contracts"), False)
+
+
+def _final_seal_contract_spec(config: ProjectConfig, *, kind: str, root: Path) -> CommandSpec:
+    target = str(config.selected_target or "").strip()
+    argv = [
+        sys.executable,
+        "-m",
+        "devtool",
+        "--repo",
+        str(Path(config.repo_root).resolve()),
+        "final-seal",
+        "--strict",
+    ]
+    if target:
+        argv.extend(["--target", target])
+    return CommandSpec(
+        f"{kind}-final-seal",
+        argv,
+        env=optimized_validation_env(config, kind),
+        cwd=str(Path(config.repo_root).resolve()),
+        metadata=_tool_metadata(
+            kind,
+            root,
+            validation_component="final-seal",
+            final_seal_contract=True,
+            final_seal_target=target or "repository",
+            report_parser="final-seal",
+        ),
+    )
+
+
+def _append_final_seal_contract_spec(config: ProjectConfig, specs: list[CommandSpec], *, kind: str, root: Path) -> list[CommandSpec]:
+    if _final_seal_contract_enabled(config):
+        specs.append(_final_seal_contract_spec(config, kind=kind, root=root))
+    return specs
+
+
 class ProjectRunner(ABC):
     """Language-neutral project command planner."""
 
@@ -259,6 +300,7 @@ class ProjectRunner(ABC):
             )
             specs.extend(test_specs)
 
+        _append_final_seal_contract_spec(config, specs, kind=self.kind, root=_project_root(config))
         if not specs:
             raise SystemExit("Validation would run no commands. Clear at least one skip flag.")
         total = len(specs)
@@ -2666,6 +2708,7 @@ class PythonRunner(ProjectRunner):
         if scope.scope in {"python-docs-only", "python-unaffected", "python-non-code"}:
             message = "; ".join(scope.reasons) or scope.scope
             specs.append(CommandSpec("python-validation-scope", [sys.executable, "-c", f"print({message!r})"], env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="scope")))
+            _append_final_seal_contract_spec(config, specs, kind=self.kind, root=self._root(config))
             return _validation_metadata(specs, scope.scope)
 
         if not skip_restore:
@@ -2741,6 +2784,7 @@ class PythonRunner(ProjectRunner):
             reproducible = self._reproducible_spec(config)
             if reproducible is not None:
                 specs.append(reproducible)
+        _append_final_seal_contract_spec(config, specs, kind=self.kind, root=self._root(config))
         if not specs:
             raise SystemExit("Validation would run no Python commands. Clear a skip flag.")
         for spec in specs:

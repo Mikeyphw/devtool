@@ -55,3 +55,9 @@ The target reports are side-effect-free. They verify that the selected target ex
 ## Final remediation coverage manifest
 
 The repository-wide final seal also reads `FINAL_REMEDIATION_COVERAGE.json`. That manifest records the 15-overlay roadmap, confirms that Overlays 1–14 closed all 308 deduped findings, and lists the two Overlay 15 target artifacts: `devtool` and `android_hud`. The repository-wide seal fails if `.devtool.toml` contains a configured target without a matching final target seal.
+
+## Hotfix v2 runnable final-seal profile
+
+The `final-seal` validation profile now does more than set `final_seal_contracts=true`: every runner validation plan appends a target-scoped final-seal `CommandSpec` when that flag is active. The root target plans `python-final-seal`, and the Android HUD target plans `android-final-seal`.
+
+`FINAL_REMEDIATION_COVERAGE.json` uses schema v2 and lists all 308 assigned finding IDs exactly once. The release seal rejects missing, duplicated, or out-of-range assignment evidence.
