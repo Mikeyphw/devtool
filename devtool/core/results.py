@@ -25,8 +25,14 @@ class CommandResult:
     def from_operation(cls, operation: Any) -> "CommandResult":
         issues = list(getattr(operation, "issues", []) or [])
         warnings = [str(getattr(item, "message", item)) for item in issues if str(getattr(item, "severity", "")).lower() == "warning"]
-        errors = [str(getattr(item, "message", item)) for item in issues if str(getattr(item, "severity", "")).lower() == "error"]
+        errors = [
+            str(getattr(item, "message", item))
+            for item in issues
+            if str(getattr(item, "severity", "")).lower() in {"error", "fatal"}
+        ]
         returncode = int(getattr(operation, "returncode", 1) or 0)
+        if errors and returncode == 0:
+            returncode = 1
         metadata = dict(getattr(operation, "metadata", {}) or {})
         metadata.setdefault("name", str(getattr(operation, "name", "") or ""))
         metadata.setdefault("argv", list(getattr(operation, "argv", []) or []))

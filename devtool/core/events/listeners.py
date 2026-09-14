@@ -3,14 +3,36 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import asdict, is_dataclass
 import json
+from pathlib import Path
 from typing import Any
 
 from .events import DevtoolEvent
 from ..logging import get_logger
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.hex()
+    if isinstance(value, dict):
+        safe: dict[str, Any] = {}
+        for key, item in value.items():
+            safe[str(key)] = _json_safe(item)
+        return safe
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe(item) for item in value]
+    return str(value)
+
+
 def event_to_dict(event: DevtoolEvent) -> dict[str, Any]:
     payload = asdict(event) if is_dataclass(event) else {"value": str(event)}
+    payload = _json_safe(payload)
     return {"type": type(event).__name__, **payload}
 
 

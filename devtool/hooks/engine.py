@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import queue
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -27,7 +29,7 @@ from ..models import Issue, OperationResult
 from .capabilities import capability_report, normalize_hook_capabilities
 from .isolation import RepositoryMutationSnapshot
 from .models import HookExecutionContext, HookExecutionRequest, HookExecutionResult
-from .payload import build_hook_payload
+from .payload import build_hook_payload, json_safe
 from .result import load_structured_hook_result
 
 _ALLOWED_RUNNERS = {"bash", "sh", "python3"}
@@ -69,6 +71,7 @@ def _run_live(
             stdin=subprocess.PIPE if stdin_text is not None else None,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
     except OSError as exc:
         return 127, str(exc)
@@ -101,17 +104,19 @@ def _run_live(
         now = time.monotonic()
         if timeout_seconds > 0 and (now - started) >= timeout_seconds and proc.poll() is None:
             append(f"\n{script_label} script timed out after {timeout_seconds} seconds.\n")
-            try:
+            with contextlib.suppress(Exception):
+                os.killpg(proc.pid, signal.SIGTERM)
+            with contextlib.suppress(Exception):
                 proc.terminate()
-            except Exception:
-                pass
             try:
                 proc.wait(timeout=2.0)
             except Exception:
-                try:
+                with contextlib.suppress(Exception):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                with contextlib.suppress(Exception):
                     proc.kill()
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    proc.wait(timeout=1.0)
             return 124, "".join(output_parts)
         try:
             item = lines.get(timeout=0.1)
@@ -137,10 +142,10 @@ def _run_live(
     try:
         rc = proc.wait(timeout=1.0)
     except subprocess.TimeoutExpired:
-        try:
+        with contextlib.suppress(Exception):
+            os.killpg(proc.pid, signal.SIGKILL)
+        with contextlib.suppress(Exception):
             proc.kill()
-        except Exception:
-            pass
         rc = 124
     reader.join(timeout=0.25)
     return rc, "".join(output_parts)
@@ -163,6 +168,20 @@ def _safe_script_path(raw: str, *, label: str) -> Path:
     if not path.parts or path.parts[0] != ARTIFACT_METADATA_DIRECTORY:
         raise RuntimeError(f"{label} scripts must live under .devtool-artifact/.")
     return path
+
+
+def _strict_bool(value: Any, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return default
 
 
 def _safe_repo_relative_path(repo_root: Path, raw: str, *, label: str) -> Path:
@@ -216,13 +235,13 @@ def _python_command(
         command.extend(["--extra", str(extra)])
     for dependency in python_spec.get("dependencies", []) if isinstance(python_spec.get("dependencies"), list) else []:
         command.extend(["--dependency", str(dependency)])
-    if bool(python_spec.get("sync_dependencies", False)):
+    if _strict_bool(python_spec.get("sync_dependencies", False)):
         command.append("--sync-dependencies")
-    if python_spec.get("install_project") is False:
+    if _strict_bool(python_spec.get("install_project", True), default=True) is False:
         command.append("--no-install-project")
-    if bool(python_spec.get("unlocked", False)):
+    if _strict_bool(python_spec.get("unlocked", False)):
         command.append("--unlocked")
-    if bool(python_spec.get("offline", False)):
+    if _strict_bool(python_spec.get("offline", False)):
         command.append("--offline")
     return command
 
@@ -380,7 +399,7 @@ class EmbeddedHookEngine:
                     declared_writes=list(request.declared_writes),
                     context=request.payload_context,
                 )
-                stdin_text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+                stdin_text = json.dumps(json_safe(payload), sort_keys=True, separators=(",", ":"), allow_nan=False)
                 payload_path = tmpdir / "hook-payload.json"
                 payload_path.write_text(stdin_text + "\n", encoding="utf-8")
                 payload_path.chmod(0o600)

@@ -123,7 +123,7 @@ def repo_file_states(repo_root: Path) -> dict[str, State]:
             continue
         if ".git" in rel_path.parts:
             continue
-        if path.is_file() or path.is_symlink():
+        if path.is_file() or path.is_symlink() or path.is_dir():
             rel = rel_path.as_posix()
             states[rel] = path_state(repo_root, rel)
     return states
@@ -152,18 +152,24 @@ class RepositoryMutationSnapshot:
             states = repo_file_states(repo_root)
             backups = {path: _path_backup(repo_root, path) for path in states} if backup_dirty else {}
             return cls(None, {}, states, backups)
-        backups = {path: _path_backup(repo_root, path) for path in changed} if backup_dirty else {}
-        return cls(changed, {path: path_state(repo_root, path) for path in changed}, None, backups)
+        fallback = repo_file_states(repo_root)
+        backups = {path: _path_backup(repo_root, path) for path in set(changed) | set(fallback)} if backup_dirty else {}
+        return cls(changed, {path: path_state(repo_root, path) for path in changed}, fallback, backups)
 
     def changes(self, repo_root: Path) -> list[str]:
         if self.fallback_states is not None:
             after = repo_file_states(repo_root)
             candidates = set(self.fallback_states) | set(after)
-            return sorted(
+            fallback_changed = {
                 path for path in candidates
                 if self.fallback_states.get(path, ("missing", 0, ""))
                 != after.get(path, ("missing", 0, ""))
-            )
+            }
+            if self.git_paths is not None:
+                after_paths = git_changed_paths(repo_root)
+                if after_paths is not None:
+                    fallback_changed |= set(self.git_paths or set()) | set(after_paths)
+            return sorted(fallback_changed)
         after_paths = git_changed_paths(repo_root)
         if after_paths is None:
             after = repo_file_states(repo_root)

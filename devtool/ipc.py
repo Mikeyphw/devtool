@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -29,8 +30,26 @@ def default_ipc_socket_path() -> Path:
     return state_dir() / "control-center.sock"
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.hex()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe(item) for item in value]
+    return str(value)
+
+
 def _json_line(payload: dict[str, Any]) -> bytes:
-    return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    safe_payload = _json_safe(payload)
+    return (json.dumps(safe_payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
 
 def _terminal_status(state: dict[str, Any]) -> bool:
@@ -39,7 +58,10 @@ def _terminal_status(state: dict[str, Any]) -> bool:
 
 def _state_sequence(state: dict[str, Any]) -> int:
     try:
-        sequence = int(state.get("sequence") or 0)
+        sequence_raw = state.get("sequence")
+        if isinstance(sequence_raw, bool):
+            return 0
+        sequence = int(sequence_raw or 0)
     except (TypeError, ValueError):
         sequence = 0
     if sequence > 0:
@@ -51,18 +73,48 @@ def _state_sequence(state: dict[str, Any]) -> int:
         return 0
 
 
+def _parse_state_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _state_is_newer(candidate: dict[str, Any], current: dict[str, Any] | None) -> bool:
     if not current:
         return True
+    if _terminal_status(current) and not _terminal_status(candidate):
+        return False
     candidate_sequence = _state_sequence(candidate)
     current_sequence = _state_sequence(current)
-    if candidate_sequence and current_sequence and candidate_sequence != current_sequence:
-        return candidate_sequence > current_sequence
+    if candidate_sequence or current_sequence:
+        if candidate_sequence != current_sequence:
+            return candidate_sequence > current_sequence
+        # Equal sequence is not newer. This prevents stale replay from replacing
+        # an authoritative state with the same monotonic identity.
+        return False
+    candidate_time = _parse_state_time(candidate.get("updated_at"))
+    current_time = _parse_state_time(current.get("updated_at"))
+    if candidate_time and current_time:
+        return candidate_time > current_time
     candidate_updated = str(candidate.get("updated_at") or "")
     current_updated = str(current.get("updated_at") or "")
     if candidate_updated and current_updated:
-        return candidate_updated >= current_updated
-    return True
+        return candidate_updated > current_updated
+    return False
+
+
+def _state_run_id_conflict(state: dict[str, Any], run_id: str) -> bool:
+    embedded = str(state.get("run_id") or "").strip()
+    return bool(embedded and embedded != run_id)
 
 
 def _with_machine_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -227,17 +279,22 @@ class IpcBroker:
         if kind == "register":
             run_id = str(message.get("run_id") or "").strip()
             if not run_id:
-                peer.send({"type": "error", "message": "register requires run_id"})
+                peer.send({"type": "error", "message": "register requires run_id", **_ipc_meta()})
                 return
+            state = message.get("state")
+            if isinstance(state, dict) and _state_run_id_conflict(state, run_id):
+                peer.send({"type": "error", "code": "run_id_mismatch", "message": "registered run_id and state.run_id must match", "run_id": run_id, **_ipc_meta()})
+                return
+            if isinstance(state, dict):
+                state = dict(state)
+                state["run_id"] = run_id
+                state = _with_machine_state(state)
             previous = self.producers.get(run_id)
             if previous is not None and previous is not peer:
                 previous.role = "superseded"
             peer.role = "producer"
             peer.run_id = run_id
             self.producers[run_id] = peer
-            state = message.get("state")
-            if isinstance(state, dict):
-                state = _with_machine_state(state)
             if isinstance(state, dict) and _state_is_newer(state, self.runs.get(run_id)):
                 self.runs[run_id] = state
                 self._broadcast({"type": "run_update", "run": state, **_ipc_meta()})
@@ -247,12 +304,16 @@ class IpcBroker:
             state = message.get("state") or message.get("run")
             if not isinstance(state, dict):
                 return
-            run_id = str(state.get("run_id") or message.get("run_id") or peer.run_id or "").strip()
+            run_id = str(message.get("run_id") or peer.run_id or state.get("run_id") or "").strip()
             if not run_id:
                 return
             if not self._peer_owns_run(peer, run_id):
                 self._reject_peer_mutation(peer, kind=kind, run_id=run_id)
                 return
+            if _state_run_id_conflict(state, run_id):
+                peer.send({"type": "error", "code": "run_id_mismatch", "message": "published run_id and state.run_id must match", "run_id": run_id, **_ipc_meta()})
+                return
+            state = dict(state)
             state["run_id"] = run_id
             state = _with_machine_state(state)
             if not _state_is_newer(state, self.runs.get(run_id)):
@@ -350,6 +411,19 @@ class IpcPublisher:
         self.stop_event = threading.Event()
         self.listener: threading.Thread | None = None
         self.buffer = bytearray()
+        self._next_sequence = 0
+
+    def _prepare_state(self, state: dict[str, Any] | None) -> dict[str, Any]:
+        prepared = dict(state or {})
+        prepared["run_id"] = self.run_id
+        if "sequence" not in prepared and "event_id" not in prepared:
+            self._next_sequence += 1
+            prepared["sequence"] = self._next_sequence
+        else:
+            sequence = _state_sequence(prepared)
+            if sequence > self._next_sequence:
+                self._next_sequence = sequence
+        return prepared
 
     def connect(self, state: dict[str, Any] | None = None) -> bool:
         if self.sock is not None:
@@ -363,7 +437,8 @@ class IpcPublisher:
             return False
         sock.settimeout(None)
         self.sock = sock
-        self._send({"type": "register", "run_id": self.run_id, "pid": os.getpid(), "state": _with_machine_state(state or {}), **_ipc_meta()})
+        initial_state = self._prepare_state(state)
+        self._send({"type": "register", "run_id": self.run_id, "pid": os.getpid(), "state": _with_machine_state(initial_state), **_ipc_meta()})
         self.listener = threading.Thread(target=self._listen, name=f"devtool-ipc-{self.run_id[:8]}", daemon=True)
         self.listener.start()
         return True
@@ -381,9 +456,10 @@ class IpcPublisher:
             return False
 
     def publish(self, state: dict[str, Any]) -> bool:
-        if self.sock is None and not self.connect(state):
+        publish_state = self._prepare_state(state)
+        if self.sock is None and not self.connect(publish_state):
             return False
-        return self._send({"type": "publish", "run_id": self.run_id, "state": _with_machine_state(state), **_ipc_meta()})
+        return self._send({"type": "publish", "run_id": self.run_id, "state": _with_machine_state(publish_state), **_ipc_meta()})
 
     def _listen(self) -> None:
         sock = self.sock
@@ -501,12 +577,25 @@ def request_run_cancel(run_id: str, *, reason: str = "UI request", socket_path: 
 def broker_is_running(socket_path: Path | None = None) -> bool:
     path = socket_path or default_ipc_socket_path()
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(0.1)
+    sock.settimeout(0.2)
     try:
         sock.connect(str(path))
-        sock.sendall(_json_line({"type": "ping"}))
-        return True
-    except OSError:
+        sock.sendall(_json_line({"type": "ping", **_ipc_meta()}))
+        buffer = bytearray()
+        while b"\n" not in buffer and len(buffer) < 65536:
+            chunk = sock.recv(8192)
+            if not chunk:
+                break
+            buffer.extend(chunk)
+        line = bytes(buffer).split(b"\n", 1)[0]
+        response = json.loads(line.decode("utf-8")) if line else {}
+        return bool(
+            isinstance(response, dict)
+            and response.get("type") == "pong"
+            and int(response.get("protocol_version") or 0) == IPC_PROTOCOL_VERSION
+            and int(response.get("machine_schema_version") or 0) == MACHINE_SCHEMA_VERSION
+        )
+    except (OSError, ValueError, json.JSONDecodeError):
         return False
     finally:
         sock.close()

@@ -2,10 +2,32 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import math
 import os
 import subprocess
 from pathlib import Path
 from typing import Any
+
+
+def json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else str(value)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.hex()
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [json_safe(item) for item in value]
+    return str(value)
 
 
 def _devtool_version() -> str:
@@ -60,10 +82,10 @@ def build_hook_payload(
         data = artifact_source.read_bytes()
         artifact_sha = hashlib.sha256(data).hexdigest()
         artifact_size = len(data)
-    extra = dict(context or {})
-    validation = extra.pop("validation", {})
-    commit = extra.pop("commit", {})
-    execution = extra.pop("execution", {})
+    extra = json_safe(dict(context or {}))
+    validation = extra.pop("validation", {}) if isinstance(extra, dict) else {}
+    commit = extra.pop("commit", {}) if isinstance(extra, dict) else {}
+    execution = extra.pop("execution", {}) if isinstance(extra, dict) else {}
     event_name = {"preflight": "artifact_preflight", "validation": "artifact_validation", "finalize": "artifact_finalize"}.get(kind, f"artifact_{kind}")
     return {
         "schema_version": 1,
@@ -107,7 +129,7 @@ def build_hook_payload(
         "validation": validation if isinstance(validation, dict) else {},
         "commit": commit if isinstance(commit, dict) else {},
         "execution": execution if isinstance(execution, dict) else {},
-        "capabilities": capabilities,
+        "capabilities": json_safe(capabilities),
         "declared_writes": list(declared_writes),
-        "context": extra,
+        "context": extra if isinstance(extra, dict) else {},
     }

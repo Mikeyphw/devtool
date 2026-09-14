@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Callable, DefaultDict, Type
 
+from ..logging import get_logger
 from .events import DevtoolEvent
 
 Listener = Callable[[DevtoolEvent], None]
@@ -29,8 +30,19 @@ class EventBus:
         if listener in self._all_listeners:
             self._all_listeners.remove(listener)
 
+    def _safe_notify(self, listener: Listener, event: DevtoolEvent) -> None:
+        try:
+            listener(event)
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            get_logger("EVENT").warning(
+                "Devtool event listener %r failed for %s: %s",
+                listener,
+                type(event).__name__,
+                exc,
+            )
+
     def publish(self, event: DevtoolEvent) -> None:
         for listener in tuple(self._listeners[type(event)]):
-            listener(event)
+            self._safe_notify(listener, event)
         for listener in tuple(self._all_listeners):
-            listener(event)
+            self._safe_notify(listener, event)

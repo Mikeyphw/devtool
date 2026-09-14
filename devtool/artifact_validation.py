@@ -40,6 +40,11 @@ def run_artifact_validation_script(
     spec = artifact_validation_script(manifest)
     if not spec:
         return None
+    payload_context = {"validation": {"requested": True, "status": "running"}}
+    manifest_validation = manifest.get("validation") if isinstance(manifest.get("validation"), dict) else {}
+    extra_payload = manifest_validation.get("payload_context") if isinstance(manifest_validation, dict) else None
+    if isinstance(extra_payload, dict):
+        payload_context.update(extra_payload)
     return _ENGINE.execute(
         HookExecutionRequest(
             repo_root=repo_root,
@@ -69,7 +74,7 @@ def run_artifact_validation_script(
             # into write_paths; otherwise preserve the established validator behavior.
             enforce_write_boundary=bool(artifact_validation_write_paths(manifest)),
             extra_env={"DEVTOOL_VALIDATION_PHASE": "validate"},
-            payload_context={"validation": {"requested": True, "status": "running"}},
+            payload_context=payload_context,
         )
     )
 
