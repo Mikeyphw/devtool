@@ -9,7 +9,10 @@ Run:
 devtool final-seal
 devtool final-seal --json
 devtool final-seal --strict
+devtool final-seal --target devtool --strict
 ```
+
+`--target <name>` emits the deterministic final seal for one configured workspace target, which lets the last remediation step be shipped as one overlay per target while keeping the repository-wide FS03 gate intact.
 
 `--strict` exits non-zero when any seal check fails. The versioned report verifies canonical repository configuration, compatibility-registry integrity, explicit schema versions, roadmap reports and contract suites, canonical TOML examples, completion synchronization, the `final-seal` validation profile, tracked-backup hygiene, target roots, and release-document discoverability.
 
@@ -34,3 +37,17 @@ A production-ready tree must satisfy all of the following:
 7. `git diff --check`, Python compilation, completion synchronization, documentation/example checks, and final repository status are clean.
 
 FS03 does not remove compatibility aliases. FS01 defined those as deliberate public contracts; the seal verifies they remain inventoried and that new producers emit canonical forms.
+
+## Target-scoped final overlays
+
+Overlay 15 is split by configured Devtool target. The `devtool` target seal owns the Python CLI/runtime, release-qualification scripts, repository-wide seal entry point, docs, and tests. The Android HUD target seal owns the Android companion project and its Gradle/HUD release checks.
+
+Use target-scoped seal commands during final qualification:
+
+```sh
+devtool final-seal --target devtool --strict
+devtool final-seal --target android_hud --strict
+devtool final-seal --strict
+```
+
+The target reports are side-effect-free. They verify that the selected target exists in `.devtool.toml`, matches its sealed runner/platform/root identity, owns the expected files and regression tests, and has a concrete target-specific overlay apply command.

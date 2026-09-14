@@ -901,7 +901,7 @@ New scripts/configuration should prefer `--runner`, `DEVTOOL_PROJECT_RUNNER`, `[
 
 ### FS03: repository-wide final release seal
 
-FS03 closes the MP01–MP10, UI01–UI12, and FS01–FS02 roadmap with a reproducible release audit. `devtool final-seal` (alias `seal`) checks canonical repository configuration, compatibility-registry integrity, public schema versions, roadmap implementation reports and contract suites, canonical examples, completion synchronization, target roots, backup hygiene, and release-document discoverability. Use `devtool final-seal --strict` as the static release gate and `devtool validate --profile final-seal` for the release-oriented validation policy. See [`docs/FINAL_RELEASE_SEAL.md`](docs/FINAL_RELEASE_SEAL.md) and [`FS03_FINAL_RELEASE_SEAL_REPORT.md`](FS03_FINAL_RELEASE_SEAL_REPORT.md).
+FS03 closes the MP01–MP10, UI01–UI12, and FS01–FS02 roadmap with a reproducible release audit. `devtool final-seal` (alias `seal`) checks canonical repository configuration, compatibility-registry integrity, public schema versions, roadmap implementation reports and contract suites, canonical examples, completion synchronization, target roots, backup hygiene, and release-document discoverability. Use `devtool final-seal --strict` as the static release gate, `devtool final-seal --target <name> --strict` for one target-scoped final overlay, and `devtool validate --profile final-seal` for the release-oriented validation policy. See [`docs/FINAL_RELEASE_SEAL.md`](docs/FINAL_RELEASE_SEAL.md) and [`FS03_FINAL_RELEASE_SEAL_REPORT.md`](FS03_FINAL_RELEASE_SEAL_REPORT.md).
 
 ### Android release pipeline (AOPS04)
 

@@ -103,6 +103,7 @@ from .completion import ZSH_COMPLETION
 from .completion_state import build_completion_state, completion_values
 from .compatibility import compatibility_report, render_compatibility_text
 from .final_seal import final_seal_report, render_final_seal_text
+from .target_seal import target_seal_report, render_target_seal_text
 from .config_migration import analyze_config_migration, migrate_config_text, migration_report
 from .config import (
     detect_project_kind,
@@ -936,6 +937,7 @@ def build_parser() -> argparse.ArgumentParser:
     final_seal_cmd = subparsers.add_parser("final-seal", aliases=["seal"], help="Run the FS03 repository-wide final release seal audit")
     final_seal_cmd.add_argument("--json", action="store_true", help="Emit the versioned FS03 seal report as JSON")
     final_seal_cmd.add_argument("--strict", action="store_true", help="Exit non-zero when any final-seal check fails")
+    final_seal_cmd.add_argument("--target", default=argparse.SUPPRESS, help="Emit the final seal for one configured target instead of the whole repository")
 
     pytest_cmd = subparsers.add_parser("pytest", help="Inspect and profile Devtool's pytest suite")
     pytest_sub = pytest_cmd.add_subparsers(dest="pytest_command", required=True)
@@ -11040,11 +11042,17 @@ def _main_after_parse(
 
     if args.command in {"final-seal", "seal"}:
         repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
-        payload = final_seal_report(repo_root)
+        target_name = str(getattr(args, "target", "") or "").strip()
+        if target_name:
+            payload = target_seal_report(repo_root, target_name)
+            renderer = render_target_seal_text
+        else:
+            payload = final_seal_report(repo_root)
+            renderer = render_final_seal_text
         if bool(getattr(args, "json", False)):
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
-            print(render_final_seal_text(payload))
+            print(renderer(payload))
         if bool(getattr(args, "strict", False)) and payload.get("status") != "pass":
             return 1
         return 0
