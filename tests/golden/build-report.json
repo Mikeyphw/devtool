@@ -31,7 +31,8 @@
           "name": "build",
           "output": "ok\n",
           "returncode": 0,
-          "skipped": false
+          "skipped": false,
+          "status": "ok"
         }
       ],
       "skipped": 0,
@@ -61,7 +62,9 @@
         "intent": "rerun",
         "label": "Run again",
         "notification_label": "Run again",
-        "payload": {},
+        "payload": {
+          "has_uncommitted_mutation": false
+        },
         "requires_confirmation": false,
         "short_label": "Run again",
         "shortcut": "",
@@ -81,7 +84,9 @@
         "intent": "copy-summary",
         "label": "Copy summary",
         "notification_label": "Copy summary",
-        "payload": {},
+        "payload": {
+          "has_uncommitted_mutation": false
+        },
         "requires_confirmation": false,
         "short_label": "Copy",
         "shortcut": "",

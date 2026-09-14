@@ -84,6 +84,9 @@ def tree_hash(root: Path) -> str:
     for path, relative in iter_source_files(root):
         digest.update(_safe_relative_path(relative).encode("utf-8"))
         digest.update(b"\0")
+        permissions = path.stat().st_mode & 0o777
+        digest.update(oct(permissions).encode("ascii"))
+        digest.update(b"\0")
         digest.update(sha256_file(path).encode("ascii"))
         digest.update(b"\0")
     return digest.hexdigest()
@@ -106,6 +109,8 @@ def atomic_write_text(path: Path, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
+        if os.name == "posix":
+            os.chmod(temporary, 0o644)
         os.replace(temporary, path)
         try:
             dir_fd = os.open(path.parent, os.O_RDONLY)

@@ -193,6 +193,26 @@ def _tracked_backup_paths(repo_root: Path) -> list[str]:
     return sorted(bad)
 
 
+def _workspace_backup_paths(repo_root: Path) -> list[str]:
+    """Return transient backup/reject files even when Git metadata is absent.
+
+    FS03 originally proved that no backup-like files were tracked by Git.  That
+    misses exported snapshots, unpacked release candidates, and user-provided
+    handoff folders where ``.git`` may be absent.  Reuse the cleanup scanner so
+    the final seal reports the same files that ``devtool cleanup`` can archive.
+    """
+    try:
+        from .repository_cleanup import discover_backup_candidates
+
+        return [
+            str(path.relative_to(repo_root))
+            for path in discover_backup_candidates(repo_root)
+            if not any(fnmatch.fnmatch(str(path.relative_to(repo_root)), pattern) for pattern in _ALLOWED_BACKUP_PATTERNS)
+        ]
+    except Exception as exc:
+        return [f"backup-scan-error:{exc}"]
+
+
 def final_seal_report(repo_root: Path) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     checks: list[SealCheck] = []
@@ -338,8 +358,8 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
     except Exception as exc:
         checks.append(_check("artifacts.archive-formats", False, "archive-format audit failed to execute", [str(exc)]))
 
-    backups = _tracked_backup_paths(repo_root)
-    checks.append(_check("repository.backup-hygiene", not backups, "no transient backup/reject files are tracked", backups))
+    backups = sorted(set(_tracked_backup_paths(repo_root) + _workspace_backup_paths(repo_root)))
+    checks.append(_check("repository.backup-hygiene", not backups, "no transient backup/reject files exist in the workspace", backups))
 
     readme = (repo_root / "README.md").read_text(encoding="utf-8") if (repo_root / "README.md").is_file() else ""
     seal_doc = repo_root / "docs" / "FINAL_RELEASE_SEAL.md"

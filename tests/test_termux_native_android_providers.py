@@ -567,6 +567,7 @@ class IntegrationConfigTests(unittest.TestCase):
             (root / "CMakeLists.txt").write_text("project(x)", encoding="utf-8")
             build = root / ".devtool" / "build" / "cmake"
             build.mkdir(parents=True)
+            (build / "CMakeFiles").mkdir()
             (build / "CMakeCache.txt").write_text("configured", encoding="utf-8")
             for tool in ("cmake", "ctest", "cpack"):
                 _exe(prefix / "bin" / tool, "1.0")
@@ -597,6 +598,7 @@ class IntegrationConfigTests(unittest.TestCase):
             (root / "CMakeLists.txt").write_text("project(x)", encoding="utf-8")
             build = root / ".devtool" / "build" / "cmake"
             build.mkdir(parents=True)
+            (build / "CMakeFiles").mkdir()
             (build / "CMakeCache.txt").write_text("configured", encoding="utf-8")
             _exe(prefix / "bin" / "cmake", "cmake version 4.4.2")
             ctest = prefix / "bin" / "ctest"

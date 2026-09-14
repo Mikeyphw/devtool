@@ -34,9 +34,32 @@ def _bool_option(value: object, default: bool = False) -> bool:
     normalized = str(value).strip().lower()
     if normalized in {"1", "true", "yes", "on", "enabled"}:
         return True
-    if normalized in {"0", "false", "no", "off", "disabled", "none"}:
+    if normalized in {"0", "false", "no", "off", "disabled", "none", "null"}:
         return False
     return default
+
+
+def _int_option(value: object, default: int, *, name: str, minimum: int | None = None) -> int:
+    if value is None or value == "":
+        result = default
+    else:
+        try:
+            result = int(str(value).strip())
+        except (TypeError, ValueError) as exc:
+            raise SystemExit(f"Invalid integer value for {name}: {value!r}") from exc
+    if minimum is not None and result < minimum:
+        raise SystemExit(f"Invalid integer value for {name}: {result}; expected >= {minimum}")
+    return result
+
+
+def _shell_split_option(value: object, *, name: str) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    try:
+        return shlex.split(text)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid shell-style command for {name}: {exc}") from exc
 
 
 
@@ -272,7 +295,7 @@ def _maybe_explicit(command_name: str, text: str, env: dict[str, str] | None = N
     return [
         CommandSpec(
             command_name,
-            shlex.split(text),
+            _shell_split_option(text, name=command_name),
             env=env or {},
             metadata={"explicit": True},
         )
@@ -512,7 +535,7 @@ class DotnetRunner(ProjectRunner):
         if action == "package":
             if config.package_command:
                 spec = CommandSpec(
-                    "package", shlex.split(config.package_command), env=env, cwd=str(config.repo_root),
+                    "package", _shell_split_option(config.package_command, name="config.package_command"), env=env, cwd=str(config.repo_root),
                     metadata=_tool_metadata(self.kind, config.repo_root, collect_artifacts=True, verify_artifacts=True, artifact_required=True, explicit=True),
                 )
                 return [spec]
@@ -554,8 +577,8 @@ class DotnetRunner(ProjectRunner):
         skip_test: bool = False,
     ) -> list[CommandSpec]:
         options = self._dotnet_options(config)
-        explicit_restore = bool(options.get("explicit_restore", False))
-        coalesce = bool(options.get("coalesce_validation", True))
+        explicit_restore = _bool_option(options.get("explicit_restore"), False)
+        coalesce = _bool_option(options.get("coalesce_validation"), True)
         has_explicit_commands = any((config.restore_command, config.build_command, config.test_command))
 
         # Preserve custom command ordering and side effects. Direct dotnet
@@ -1773,7 +1796,7 @@ class PythonRunner(ProjectRunner):
             if plan.environment_root:
                 env.setdefault("UV_PROJECT_ENVIRONMENT", plan.environment_root)
         options = self._options(config)
-        if isolated or bool(options.get("isolation", False)):
+        if isolated or _bool_option(options.get("isolation"), False):
             project_root = self._root(config)
             execution = str(config.execution_environment or "auto").strip().lower().replace("_", "-")
             current = detect_current_environment()
@@ -1842,12 +1865,12 @@ class PythonRunner(ProjectRunner):
                 "LANG": str(options.get("locale") or "C.UTF-8"),
                 "PYTHONUTF8": "1",
                 "PYTHONHASHSEED": str(options.get("hash_seed") or "random"),
-                "DEVTOOL_NETWORK_DISABLED": "1" if bool(options.get("disable_network", False)) else "0",
+                "DEVTOOL_NETWORK_DISABLED": "1" if _bool_option(options.get("disable_network"), False) else "0",
             })
         return env
 
     def _network_wrap(self, config: ProjectConfig, argv: list[str]) -> list[str]:
-        if not bool(self._options(config).get("disable_network", False)):
+        if not _bool_option(self._options(config).get("disable_network"), False):
             return argv
         unshare = shutil.which("unshare")
         if not unshare:
@@ -1977,7 +2000,7 @@ class PythonRunner(ProjectRunner):
             minimum = coverage.get("minimum_total")
             if minimum is not None:
                 argv.append(f"--cov-fail-under={minimum}")
-        retries = int(options.get("flaky_retries") or 0)
+        retries = _int_option(options.get("flaky_retries"), 0, name="python.flaky_retries", minimum=0)
         if retries > 0:
             argv.extend(["--reruns", str(retries)])
         argv = self._network_wrap(config, argv)
@@ -2052,7 +2075,7 @@ class PythonRunner(ProjectRunner):
             argv = self._executable(config, "nox")
             if values:
                 argv.extend(["-s", *[str(item) for item in values]])
-            if bool(self._options(config).get("nox_reuse", True)):
+            if _bool_option(self._options(config).get("nox_reuse"), True):
                 argv.append("--reuse-existing-virtualenvs")
             argv = self._network_wrap(config, argv)
             return [CommandSpec("test", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), test_framework="nox"))]
@@ -2110,11 +2133,11 @@ class PythonRunner(ProjectRunner):
         root = self._root(config)
         target_values = list(dict.fromkeys(str(item) for item in targets if str(item))) or ["."]
         plan = self._plan(config)
-        format_fix = bool(self._options(config).get("format_fix", False))
+        format_fix = _bool_option(self._options(config).get("format_fix"), False)
         specs: list[CommandSpec] = []
 
         for configured_tool in self._lint_tools(config):
-            tool, *configured_args = shlex.split(configured_tool)
+            tool, *configured_args = _shell_split_option(configured_tool, name="python lint tool")
 
             if tool == "ruff":
                 fix_args = (
@@ -2233,7 +2256,7 @@ class PythonRunner(ProjectRunner):
         compatibility = self._runtime_python_compatibility_spec(config)
         prefix = [compatibility] if compatibility is not None else []
         if config.restore_command:
-            return [*prefix, CommandSpec("restore", shlex.split(config.restore_command), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), explicit=True))]
+            return [*prefix, CommandSpec("restore", _shell_split_option(config.restore_command, name="config.restore_command"), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), explicit=True))]
         info = self._info(config)
         plan = self._plan(config)
         options = self._options(config)
@@ -2244,9 +2267,9 @@ class PythonRunner(ProjectRunner):
                 info, plan,
                 groups=groups,
                 extras=extras,
-                locked=bool(options.get("locked", True)),
+                locked=_bool_option(options.get("locked"), True),
                 offline=_bool_option(options.get("offline"), False),
-                install_project=bool(options.get("install_project", True)),
+                install_project=_bool_option(options.get("install_project"), True),
                 constraints=str(options.get("constraints") or ""),
             )
         except PythonProjectError as exc:
@@ -2280,7 +2303,7 @@ class PythonRunner(ProjectRunner):
     def _support_command_specs(self, config: ProjectConfig, option: str, name: str) -> list[CommandSpec]:
         value = self._options(config).get(option)
         commands = [value] if isinstance(value, str) else list(value or []) if isinstance(value, (list, tuple)) else []
-        return [CommandSpec(f"{name}:{index}", shlex.split(str(command)), env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component=name)) for index, command in enumerate(commands, 1) if str(command).strip()]
+        return [CommandSpec(f"{name}:{index}", _shell_split_option(str(command), name="runner command"), env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component=name)) for index, command in enumerate(commands, 1) if str(command).strip()]
 
     def _precommit_spec(self, config: ProjectConfig, targets: Iterable[str]) -> CommandSpec | None:
         options = self._options(config)
@@ -2296,7 +2319,7 @@ class PythonRunner(ProjectRunner):
         return CommandSpec("pre-commit", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="pre-commit"))
 
     def _import_isolation_specs(self, config: ProjectConfig) -> list[CommandSpec]:
-        if not bool(self._options(config).get("source_import_isolation", False)):
+        if not _bool_option(self._options(config).get("source_import_isolation"), False):
             return []
         plan = self._plan(config)
         specs: list[CommandSpec] = []
@@ -2306,7 +2329,7 @@ class PythonRunner(ProjectRunner):
         return specs
 
     def _cli_contract_specs(self, config: ProjectConfig) -> list[CommandSpec]:
-        if not bool(self._options(config).get("cli_contract", False)):
+        if not _bool_option(self._options(config).get("cli_contract"), False):
             return []
         specs: list[CommandSpec] = []
         for script in self._info(config).console_script_map:
@@ -2348,7 +2371,7 @@ class PythonRunner(ProjectRunner):
         options = self._options(config)
         security = options.get("security", {})
         security = dict(security) if isinstance(security, dict) else {}
-        if not bool(options.get("sbom", False) or security.get("sbom", False)):
+        if not (_bool_option(options.get("sbom"), False) or _bool_option(security.get("sbom"), False)):
             return None
         info = self._info(config)
         plan = self._plan(config)
@@ -2362,7 +2385,7 @@ class PythonRunner(ProjectRunner):
     def _reproducible_spec(self, config: ProjectConfig) -> CommandSpec | None:
         package = self._options(config).get("package", {})
         package = dict(package) if isinstance(package, dict) else {}
-        if not bool(package.get("reproducible", False)):
+        if not _bool_option(package.get("reproducible"), False):
             return None
         info = self._info(config)
         plan = self._plan(config)
@@ -2387,7 +2410,7 @@ class PythonRunner(ProjectRunner):
         ]
         for notebook in info.notebooks:
             argv.extend(["--notebook", notebook])
-        if bool(notebook_options.get("execute", False)):
+        if _bool_option(notebook_options.get("execute"), False):
             argv.append("--execute")
         return CommandSpec("python-notebooks", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="notebooks"))
 
@@ -2395,19 +2418,20 @@ class PythonRunner(ProjectRunner):
         service = self._options(config).get("service", {})
         service = dict(service) if isinstance(service, dict) else {}
         start = str(service.get("start") or "").strip()
-        if not start or service.get("enabled", True) is False:
+        if not start or not _bool_option(service.get("enabled"), True):
             return None
         argv = [
             *self._python_support_prefix(config), "service-check",
             str(self._root(config)), "--start", start,
-            "--timeout", str(int(service.get("timeout") or 60)),
+            "--timeout", str(_int_option(service.get("timeout"), 60, name="python.service.timeout", minimum=1)),
         ]
         for key, flag in (("url", "--url"), ("host", "--host"), ("check", "--check")):
             value = str(service.get(key) or "").strip()
             if value:
                 argv.extend([flag, value])
-        if int(service.get("port") or 0) > 0:
-            argv.extend(["--port", str(int(service["port"]))])
+        service_port = _int_option(service.get("port"), 0, name="python.service.port", minimum=0)
+        if service_port > 0:
+            argv.extend(["--port", str(service_port)])
         return CommandSpec("python-service-lifecycle", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="service-lifecycle"))
 
     def _dependency_check_spec(self, config: ProjectConfig) -> CommandSpec:
@@ -2435,7 +2459,7 @@ class PythonRunner(ProjectRunner):
             return []
         commands = database.get("commands")
         if isinstance(commands, (list, tuple)):
-            return [CommandSpec(f"database:{index}", shlex.split(str(command)), env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="database")) for index, command in enumerate(commands, 1) if str(command).strip()]
+            return [CommandSpec(f"database:{index}", _shell_split_option(str(command), name="runner command"), env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="database")) for index, command in enumerate(commands, 1) if str(command).strip()]
         specs: list[CommandSpec] = []
         root = self._root(config)
         if (root / "alembic.ini").is_file():
@@ -2449,7 +2473,7 @@ class PythonRunner(ProjectRunner):
         security = options.get("security", {})
         if security is True:
             tools = ["pip_audit", "bandit"]
-        elif isinstance(security, dict) and bool(security.get("enabled", False)):
+        elif isinstance(security, dict) and _bool_option(security.get("enabled"), False):
             tools = [str(value) for value in security.get("tools", ["pip_audit", "bandit"])]
         else:
             return []
@@ -2505,10 +2529,10 @@ class PythonRunner(ProjectRunner):
             return self._restore_specs(config)
         if action == "build":
             if config.build_command:
-                return [CommandSpec("build", shlex.split(config.build_command), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=True, verify_artifacts=True))]
+                return [CommandSpec("build", _shell_split_option(config.build_command, name="config.build_command"), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=True, verify_artifacts=True))]
             outdir = root / "dist"
             specs: list[CommandSpec] = []
-            if bool(options.get("fresh_dist", True)):
+            if _bool_option(options.get("fresh_dist"), True):
                 specs.append(CommandSpec(
                     "prepare-dist",
                     [*self._python_support_prefix(config), "prepare-dist", str(root)],
@@ -2537,7 +2561,7 @@ class PythonRunner(ProjectRunner):
             return specs
         if action in {"test", "wine-test"}:
             if config.test_command:
-                custom_argv = self._network_wrap(config, shlex.split(config.test_command))
+                custom_argv = self._network_wrap(config, _shell_split_option(config.test_command, name="config.test_command"))
                 adapter = str(options.get("test_adapter") or "custom").lower()
                 spec = CommandSpec("test", custom_argv, env=self._env(config, isolated=True), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True, test_framework=adapter))
                 from .test_selection import apply_test_selection, resolve_test_selection
@@ -2573,9 +2597,9 @@ class PythonRunner(ProjectRunner):
                 "offline": ("--offline", False),
             }
             for key, (flag, default) in flags.items():
-                if bool(package.get(key, options.get(key, default))):
+                if _bool_option(package.get(key, options.get(key, default)), default):
                     argv.append(flag)
-            if package.get("verify_all_wheels", True) is False:
+            if not _bool_option(package.get("verify_all_wheels", True), True):
                 argv.append("--first-wheel-only")
             for module in package.get("import_modules", []) if isinstance(package.get("import_modules"), list) else []:
                 argv.extend(["--import-module", str(module)])
@@ -2596,7 +2620,7 @@ class PythonRunner(ProjectRunner):
             return [CommandSpec("clean", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root))]
         if action == "run":
             if config.run_command:
-                return [CommandSpec("run", shlex.split(config.run_command), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+                return [CommandSpec("run", _shell_split_option(config.run_command, name="config.run_command"), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
             if config.run_module:
                 return [CommandSpec("run", self._module(config, config.run_module), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root))]
             if config.run_target:
@@ -2605,7 +2629,7 @@ class PythonRunner(ProjectRunner):
         if action == "package":
             if config.package_command:
                 return [CommandSpec(
-                    "package", shlex.split(config.package_command), env=self._env(config), cwd=str(root),
+                    "package", _shell_split_option(config.package_command, name="config.package_command"), env=self._env(config), cwd=str(root),
                     metadata=_tool_metadata(
                         self.kind, root, explicit=True, collect_artifacts=True,
                         verify_artifacts=True, artifact_required=True,
@@ -2692,7 +2716,7 @@ class PythonRunner(ProjectRunner):
 
                 if missing_build_frontend_dependency(info, plan):
                     install_args = ["install"]
-                    if bool(self._options(config).get("offline", False)):
+                    if _bool_option(self._options(config).get("offline"), False):
                         install_args.append("--no-index")
                     install_args.append("build")
                     specs.append(CommandSpec(
@@ -2825,7 +2849,7 @@ class NodeRunner(ProjectRunner):
         }.get(action, "")
         if explicit:
             spec = CommandSpec(
-                action, shlex.split(explicit), env=env, cwd=str(root),
+                action, _shell_split_option(explicit, name="explicit command"), env=env, cwd=str(root),
                 metadata=self._metadata(
                     config, root, explicit=True,
                     collect_artifacts=action == "package", verify_artifacts=action == "package",
@@ -2838,7 +2862,7 @@ class NodeRunner(ProjectRunner):
             return [spec]
         if action == "restore":
             if manager == "npm":
-                clean = bool(options.get("clean_install", False)) and (root / "package-lock.json").exists()
+                clean = _bool_option(options.get("clean_install"), False) and (root / "package-lock.json").exists()
                 argv = ["npm", "ci" if clean else "install", "--prefer-offline", "--no-audit", "--no-fund"]
             elif manager == "pnpm":
                 argv = ["pnpm", "install", "--prefer-offline"]
@@ -2940,7 +2964,7 @@ class RustRunner(ProjectRunner):
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
         if explicit:
             return [CommandSpec(
-                action, shlex.split(explicit), env=env, cwd=str(root),
+                action, _shell_split_option(explicit, name="explicit command"), env=env, cwd=str(root),
                 metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
             )]
         base = self._base(config)
@@ -2976,7 +3000,7 @@ class RustRunner(ProjectRunner):
         if explicit:
             return super().build_validation_specs(config, wine=wine, skip_restore=skip_restore, skip_build=skip_build, skip_test=skip_test)
         specs: list[CommandSpec] = []
-        if not skip_test and (not skip_build and bool(options.get("coalesce_validation", True))):
+        if not skip_test and (not skip_build and _bool_option(options.get("coalesce_validation"), True)):
             spec = self.build_specs(config, "test")[0]
             spec.name = "cargo-validation"
             spec.metadata.update({"validation_components": ["restore", "build", "test"], "contains_build": True, "contains_tests": True})
@@ -2988,7 +3012,7 @@ class RustRunner(ProjectRunner):
                 specs.extend(self.build_specs(config, "restore"))
             if not skip_test:
                 specs.extend(self.build_specs(config, "test"))
-        if bool(options.get("lint", False)):
+        if _bool_option(options.get("lint"), False):
             specs.extend(self.build_specs(config, "lint"))
         if not specs:
             raise SystemExit("Validation would run no Rust commands. Clear a skip flag.")
@@ -3358,7 +3382,7 @@ done < "$plan"
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
         if explicit:
             return [CommandSpec(
-                action, shlex.split(explicit), env=env, cwd=str(root),
+                action, _shell_split_option(explicit, name="explicit command"), env=env, cwd=str(root),
                 metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
             )]
         packages = self._packages(config)
@@ -3426,7 +3450,7 @@ done < "$plan"
             specs.extend(self.build_specs(config, "build"))
         if not skip_test:
             specs.extend(self.build_specs(config, "test"))
-        if bool(options.get("vet", True)):
+        if _bool_option(options.get("vet"), True):
             specs.extend(self.build_specs(config, "lint"))
         if not specs:
             raise SystemExit("Validation would run no Go commands. Clear a skip flag.")
@@ -3479,7 +3503,7 @@ class MavenRunner(ProjectRunner):
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "package": config.package_command}.get(action, "")
         if explicit:
             return [CommandSpec(
-                action, shlex.split(explicit), env=env, cwd=str(root),
+                action, _shell_split_option(explicit, name="explicit command"), env=env, cwd=str(root),
                 metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
             )]
         goals = {
@@ -3504,7 +3528,7 @@ class MavenRunner(ProjectRunner):
         if explicit:
             return super().build_validation_specs(config, wine=wine, skip_restore=skip_restore, skip_build=skip_build, skip_test=skip_test)
         specs: list[CommandSpec] = []
-        if not skip_build and not skip_test and bool(options.get("coalesce_validation", True)):
+        if not skip_build and not skip_test and _bool_option(options.get("coalesce_validation"), True):
             spec = self.build_specs(config, "verify")[0]
             spec.name = "maven-validation"
             spec.metadata.update({"validation_components": ["restore", "build", "test"], "contains_build": True, "contains_tests": True})
@@ -3610,17 +3634,38 @@ class CMakeRunner(ProjectRunner):
             clang = native_probe.path
             clangxx = clang.with_name("clang++")
             argv.extend([f"-DCMAKE_C_COMPILER={clang}", f"-DCMAKE_CXX_COMPILER={clangxx}"])
-        cache_provider = normalize_native_cache_provider(str(options.get("cache") or ("auto" if bool(options.get("ccache", True)) else "off")))
+        cache_provider = normalize_native_cache_provider(str(options.get("cache") or ("auto" if _bool_option(options.get("ccache"), True) else "off")))
         if cache_provider == "ccache" and not ccache_command:
             raise SystemExit("ccache provider requested but ccache is unavailable in the selected execution environment")
         if cache_provider != "off" and native_tool_detection and ccache_command:
             argv.extend([f"-DCMAKE_C_COMPILER_LAUNCHER={ccache_command}", f"-DCMAKE_CXX_COMPILER_LAUNCHER={ccache_command}"])
         extra = options.get("configure_args", [])
         if isinstance(extra, str):
-            argv.extend(shlex.split(extra))
+            argv.extend(_shell_split_option(extra, name="cmake.configure_args"))
         elif isinstance(extra, (list, tuple)):
             argv.extend(str(item) for item in extra)
         return CommandSpec("configure", argv, env=_optimized_env(config, self.kind), cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))
+
+    def _configured(self, config: ProjectConfig) -> bool:
+        root = self._root(config)
+        build_dir = self._build_dir(config)
+        cache = build_dir / "CMakeCache.txt"
+        if not cache.is_file() or not (build_dir / "CMakeFiles").exists():
+            return False
+        try:
+            cache_mtime = cache.stat().st_mtime_ns
+        except OSError:
+            return False
+        for pattern in ("CMakeLists.txt", "**/CMakeLists.txt", "cmake/**/*.cmake"):
+            for source in root.glob(pattern):
+                if not source.is_file():
+                    continue
+                try:
+                    if source.stat().st_mtime_ns > cache_mtime:
+                        return False
+                except OSError:
+                    return False
+        return True
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
         root = self._root(config)
@@ -3630,10 +3675,10 @@ class CMakeRunner(ProjectRunner):
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "package": config.package_command}.get(action, "")
         if explicit:
             return [CommandSpec(
-                action, shlex.split(explicit), env=env, cwd=str(root),
+                action, _shell_split_option(explicit, name="explicit command"), env=env, cwd=str(root),
                 metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
             )]
-        configured = (build_dir / "CMakeCache.txt").exists()
+        configured = self._configured(config)
         if action == "restore":
             return [self._configure_spec(config)]
         if action == "build":
@@ -3666,7 +3711,7 @@ class CMakeRunner(ProjectRunner):
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
         specs: list[CommandSpec] = []
-        configured = (self._build_dir(config) / "CMakeCache.txt").exists()
+        configured = self._configured(config)
         if not configured and (not skip_restore or not skip_build or not skip_test):
             specs.append(self._configure_spec(config))
         if not skip_build:
@@ -3706,7 +3751,24 @@ class MesonRunner(ProjectRunner):
 
     def _configured(self, config: ProjectConfig) -> bool:
         build_dir = self._build_dir(config)
-        return (build_dir / "build.ninja").exists() or (build_dir / "meson-private" / "coredata.dat").exists()
+        stamp = build_dir / "meson-private" / "coredata.dat"
+        if not ((build_dir / "build.ninja").is_file() and stamp.is_file()):
+            return False
+        try:
+            stamp_mtime = stamp.stat().st_mtime_ns
+        except OSError:
+            return False
+        root = self._root(config)
+        for pattern in ("meson.build", "**/meson.build", "meson_options.txt", "**/meson_options.txt"):
+            for source in root.glob(pattern):
+                if not source.is_file():
+                    continue
+                try:
+                    if source.stat().st_mtime_ns > stamp_mtime:
+                        return False
+                except OSError:
+                    return False
+        return True
 
     def _setup(self, config: ProjectConfig) -> CommandSpec:
         root = self._root(config)
@@ -3724,7 +3786,7 @@ class MesonRunner(ProjectRunner):
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "package": config.package_command}.get(action, "")
         if explicit:
             return [CommandSpec(
-                action, shlex.split(explicit), env=env, cwd=str(root),
+                action, _shell_split_option(explicit, name="explicit command"), env=env, cwd=str(root),
                 metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
             )]
         if action == "restore":
@@ -3808,7 +3870,7 @@ class MakeRunner(ProjectRunner):
         workers = resolve_build_policy(config, self.kind).max_workers
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
         if explicit:
-            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+            return [CommandSpec(action, _shell_split_option(explicit, name="explicit command"), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
         targets = self._targets(config)
         target = ""
         if action == "build":
@@ -3816,6 +3878,15 @@ class MakeRunner(ProjectRunner):
         elif action in {"test", "wine-test"}:
             from .test_selection import resolve_test_selection
             selected = resolve_test_selection(config)
+            unsupported_selection = any((
+                selected.selectors, selected.ids, selected.tags, selected.exclude_tags,
+                selected.paths, selected.classes, selected.methods, selected.native_filter,
+            ))
+            if unsupported_selection:
+                raise SystemExit(
+                    "Make test selection supports only Make targets through test_selection.tasks; "
+                    "generic selectors cannot be translated safely."
+                )
             requested_targets = selected.tasks or ["test"]
             specs: list[CommandSpec] = []
             for requested_target in requested_targets:
@@ -3891,7 +3962,7 @@ class GenericCommandRunner(ProjectRunner):
             raise SystemExit(f"No command configured for action '{action}'")
         return [CommandSpec(
             action,
-            shlex.split(text),
+            _shell_split_option(text, name="command"),
             env=_optimized_env(config, "command"),
             cwd=str(_project_root(config)),
             metadata={"explicit": True, "runner": "command", "project_type": "command", "progress_parser": "generic"},

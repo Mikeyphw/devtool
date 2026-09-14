@@ -71,6 +71,7 @@ try:
             raise SystemExit(f"Corrupt member in generated root module: {bad}")
     os.replace(temp, out)
     if os.name == "posix":
+        os.chmod(out, 0o644)
         directory_fd = os.open(out.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(directory_fd)

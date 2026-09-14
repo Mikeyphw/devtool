@@ -248,6 +248,18 @@ if [[ "$APP_MODE" == auto ]]; then
   fi
 fi
 
+# Validate impossible native-app choices before printing an installation plan or
+# touching the system.  This keeps unsupported options such as
+# --with-clipboard-service on Android from looking like a partial install.
+if [[ "$ROOT_MODULE_CHOICE" == yes && "$APP_MODE" != android ]]; then
+  printf 'error: the root bridge module can be installed only on Android/Termux.\n' >&2
+  exit 2
+fi
+if [[ "$CLIPBOARD_CHOICE" == yes && "$APP_MODE" != desktop ]]; then
+  printf 'error: the clipboard monitor service is available only for the desktop Control Center.\n' >&2
+  exit 2
+fi
+
 ask_yes_no() {
   local prompt=$1 default=${2:-no} answer
   if "$ASSUME_YES"; then return 0; fi
@@ -275,7 +287,7 @@ SKIP_DIRS = {
     "obj",
 }
 SKIP_SUFFIXES = {
-    ".apk", ".aab", ".aar", ".class", ".deb", ".dex", ".jar",
+    ".apk", ".aab", ".aar", ".class", ".deb", ".dex",
     ".o", ".obj", ".pyc", ".so", ".zip",
 }
 
@@ -299,7 +311,10 @@ for raw in sys.argv[1:]:
         files.append((f"{root.name}/{rel.as_posix()}", path))
 
 for label, path in sorted(files, key=lambda item: item[0]):
+    mode = path.stat().st_mode & 0o777
     hasher.update(label.encode("utf-8", "surrogateescape"))
+    hasher.update(b"\0")
+    hasher.update(oct(mode).encode("ascii"))
     hasher.update(b"\0")
     hasher.update(path.read_bytes())
     hasher.update(b"\0")
@@ -752,7 +767,11 @@ if [[ "$APP_MODE" == desktop && "$CLIPBOARD_CHOICE" == yes ]]; then
 fi
 
 printf '\nInstallation complete.\n'
-printf '  CLI: %s/devtool\n' "$BIN_DIR"
+if "$INSTALL_CORE"; then
+  printf '  CLI: %s/devtool\n' "$BIN_DIR"
+else
+  printf '  CLI: skipped (--skip-core)\n'
+fi
 if [[ "$APP_MODE" == android && -f "$android_apk" ]]; then
   printf '  Tracked APK: %s\n' "$android_apk"
 fi

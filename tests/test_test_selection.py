@@ -141,7 +141,7 @@ class ValidationTestSelectionCliAndRunnerTests(unittest.TestCase):
             )
             spec = build_specs(config, "test")[0]
         self.assertIn("-run", spec.argv)
-        self.assertEqual(spec.argv[spec.argv.index("-run") + 1], "TestParser")
+        self.assertEqual(spec.argv[spec.argv.index("-run") + 1], "^(?:TestParser)$")
 
     def test_cmake_validation_selector_translates_to_ctest_regex(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -153,4 +153,4 @@ class ValidationTestSelectionCliAndRunnerTests(unittest.TestCase):
             )
             spec = build_specs(config, "test")[0]
         self.assertIn("-R", spec.argv)
-        self.assertEqual(spec.argv[spec.argv.index("-R") + 1], "parser")
+        self.assertEqual(spec.argv[spec.argv.index("-R") + 1], "^(?:parser)$")

@@ -59,13 +59,31 @@ if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
 fi
 export SOURCE_DATE_EPOCH
 
+resolve_python_build_frontend() {
+  if [[ -n ${DEVTOOL_PYTHON_BUILD_CMD:-} ]]; then
+    read -r -a python_build <<<"$DEVTOOL_PYTHON_BUILD_CMD"
+    return
+  fi
+  if python3 - <<'PY' >/dev/null 2>&1
+import build.__main__  # noqa: F401
+PY
+  then
+    python_build=(python3 -m build)
+    return
+  fi
+  printf 'error: Python build frontend is missing. Install it with: python3 -m pip install build\n' >&2
+  printf 'error: or set DEVTOOL_PYTHON_BUILD_CMD to a compatible build frontend command.\n' >&2
+  exit 2
+}
+resolve_python_build_frontend
+
 qualify=(python3 "$root/tools/release-qualify.py" --root "$root" --output "$out_dir/qualification.json" --final)
 $core_only && qualify+=(--core-only)
 $require_native && qualify+=(--require-desktop --require-android)
 "${qualify[@]}"
 
 # Build distributable Python artifacts before the final manifest is sealed.
-python3 -m build --outdir "$out_dir" "$root"
+"${python_build[@]}" --outdir "$out_dir" "$root"
 "$root/build-root-bridge-module.sh" "$out_dir/devtool-root-bridge-module.zip"
 
 if $build_desktop; then

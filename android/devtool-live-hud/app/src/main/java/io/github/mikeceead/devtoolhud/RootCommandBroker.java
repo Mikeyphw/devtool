@@ -530,9 +530,15 @@ final class RootCommandBroker {
                 + "marked_pids() { pids=''; for env in /proc/[0-9]*/environ; do [ -r \"$env\" ] || continue; "
                 + "if tr '\\0' '\\n' < \"$env\" 2>/dev/null | grep -Fqx \"DEVTOOL_ANDROID_OPERATION_ID=$marker\"; then "
                 + "pid=${env#/proc/}; pid=${pid%/environ}; [ \"$pid\" = 1 ] || pids=\"$pids $pid\"; fi; done; printf '%s' \"$pids\"; }; "
-                + "pids=$(marked_pids); [ -n \"$pids\" ] || exit 0; kill -TERM $pids 2>/dev/null || true; "
-                + "for attempt in 1 2 3; do sleep 1; pids=$(marked_pids); [ -z \"$pids\" ] && exit 0; done; "
-                + "kill -KILL $pids 2>/dev/null || true; sleep 1; remaining=$(marked_pids); [ -z \"$remaining\" ]";
+                + "marked_pgids() { pgids=''; for pid in $(marked_pids); do "
+                + "pgid=$(awk '{print $5}' \"/proc/$pid/stat\" 2>/dev/null || true); "
+                + "case \"$pgid\" in ''|1) continue ;; esac; "
+                + "case \" $pgids \" in *\" $pgid \"*) ;; *) pgids=\"$pgids $pgid\" ;; esac; "
+                + "done; printf '%s' \"$pgids\"; }; "
+                + "pids=$(marked_pids); [ -n \"$pids\" ] || exit 0; pgids=$(marked_pgids); "
+                + "for pgid in $pgids; do kill -TERM \"-$pgid\" 2>/dev/null || true; done; kill -TERM $pids 2>/dev/null || true; "
+                + "for attempt in 1 2 3; do sleep 1; pids=$(marked_pids); [ -z \"$pids\" ] && exit 0; done; pgids=$(marked_pgids); "
+                + "for pgid in $pgids; do kill -KILL \"-$pgid\" 2>/dev/null || true; done; kill -KILL $pids 2>/dev/null || true; sleep 1; remaining=$(marked_pids); [ -z \"$remaining\" ]";
         CommandResult result = new RootCommandBroker(context).executeRoot(script, 16L);
         if (result.exitCode != 0 || result.timedOut) return false;
         return operationProcessState(marker) == OperationProcessState.ABSENT;

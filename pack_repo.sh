@@ -185,7 +185,7 @@ tar_args=(
   --sort=name
   --mtime="@${SOURCE_DATE_EPOCH}"
   --owner=0 --group=0 --numeric-owner
-  --mode=go-w
+  --mode=u+rw,go+rX,go-w
   -cf "$output_path"
 )
 case "$compression" in
@@ -202,9 +202,11 @@ if [[ -n "$manifest_path" ]]; then
       sha256sum -- "$path"
     done < "$list_file"
   ) > "$manifest_path"
+  chmod 0644 "$manifest_path"
 fi
 
 sha256sum "$output_path" > "$output_path.sha256"
+chmod 0644 "$output_path.sha256"
 echo "created $output_path"
 echo "checksum $output_path.sha256"
 [[ -z "$manifest_path" ]] || echo "manifest $manifest_path"

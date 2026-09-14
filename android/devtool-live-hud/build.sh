@@ -183,6 +183,12 @@ printf 'Platform:     %s\n' "$ANDROID_PLATFORM"
 printf 'Build tools:  %s\n' "$ANDROID_BUILD_TOOLS"
 printf 'Gradle task:  %s\n' "$GRADLE_ASSEMBLE_TASK"
 
+# Validate the requested app tree before mutating host packages, SDK folders,
+# licenses, Gradle caches, or tracked APK outputs.
+[[ -d "$APP_DIR" ]] || { echo "App directory not found: $APP_DIR" >&2; exit 2; }
+[[ -x "$APP_DIR/gradlew" || -f "$APP_DIR/gradlew" ]] || { echo "Gradle wrapper is missing: $APP_DIR/gradlew" >&2; exit 2; }
+[[ -f "$APP_DIR/settings.gradle" || -f "$APP_DIR/settings.gradle.kts" ]] || { echo "Gradle settings file is missing under: $APP_DIR" >&2; exit 2; }
+
 if ! "$SKIP_SYSTEM_DEPS"; then
   prefix=()
   [[ -z "$SUDO_COMMAND" ]] || read -r -a prefix <<<"$SUDO_COMMAND"
@@ -221,7 +227,6 @@ if ! "$SKIP_SDK_INSTALL"; then
     "build-tools;$ANDROID_BUILD_TOOLS"
 fi
 
-[[ -d "$APP_DIR" ]] || { echo "App directory not found: $APP_DIR" >&2; exit 2; }
 cd "$APP_DIR"
 run chmod +x ./gradlew
 "$STOP_GRADLE" && { run ./gradlew --stop || true; }
@@ -241,9 +246,9 @@ if ! "$DRY_RUN"; then
   cp -f -- "$APK_PATH" "$TRACKED_APK_PATH"
   sha256sum "$TRACKED_APK_PATH" > "$TRACKED_APK_PATH.sha256"
 fi
-printf '
-BUILD SUCCESS
-Gradle APK: %s
-Tracked APK: %s
-Checksum: %s.sha256
-' "$APK_PATH" "$TRACKED_APK_PATH" "$TRACKED_APK_PATH"
+if "$DRY_RUN"; then
+  printf '\nDRY RUN COMPLETE - no APK was built or copied.\n'
+  printf 'Planned Gradle APK: %s\nPlanned tracked APK: %s\nPlanned checksum: %s.sha256\n' "$APK_PATH" "$TRACKED_APK_PATH" "$TRACKED_APK_PATH"
+else
+  printf '\nBUILD SUCCESS\nGradle APK: %s\nTracked APK: %s\nChecksum: %s.sha256\n' "$APK_PATH" "$TRACKED_APK_PATH" "$TRACKED_APK_PATH"
+fi

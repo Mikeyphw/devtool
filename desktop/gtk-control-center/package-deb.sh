@@ -100,7 +100,9 @@ mkdir -p "$stage/DEBIAN" \
 
 cp -a "$repo/devtool" "$stage/usr/lib/python3/dist-packages/devtool"
 find "$stage/usr/lib/python3/dist-packages/devtool" -type d -name '__pycache__' -prune -exec "$rm_bin" -rf {} +
-find "$stage/usr/lib/python3/dist-packages/devtool" -type f -name '*.pyc' -delete
+find "$stage/usr/lib/python3/dist-packages/devtool" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+find "$stage/usr/lib/python3/dist-packages/devtool" -type d -exec chmod 0755 {} +
+find "$stage/usr/lib/python3/dist-packages/devtool" -type f -exec chmod 0644 {} +
 
 cat > "$stage/usr/bin/devtool-control-center" <<'EOF'
 #!/usr/bin/python3
@@ -133,7 +135,13 @@ sed \
 install -m 0755 "$root/packaging/debian/postinst" "$stage/DEBIAN/postinst"
 install -m 0755 "$root/packaging/debian/postrm" "$stage/DEBIAN/postrm"
 
-"$python_bin" -m compileall -q "$stage/usr/lib/python3/dist-packages/devtool"
+# Do not precompile package bytecode into the Debian payload. Build-host
+# __pycache__ trees make packages non-reproducible and can be unreadable when
+# the source tree came from a restrictive archive.
+find "$stage/usr/lib/python3/dist-packages/devtool" -type d -name '__pycache__' -prune -exec "$rm_bin" -rf {} +
+find "$stage/usr/lib/python3/dist-packages/devtool" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+find "$stage" -type d -exec chmod 0755 {} +
+find "$stage" -type f ! -path '*/DEBIAN/postinst' ! -path '*/DEBIAN/postrm' ! -path '*/usr/bin/*' -exec chmod 0644 {} +
 find "$stage" -print0 | xargs -0 touch -h -d "@$source_date_epoch"
 dpkg-deb --root-owner-group --uniform-compression -Zxz --build "$stage" "$deb_path"
 sha256sum "$deb_path" > "$deb_path.sha256"
@@ -148,6 +156,11 @@ if "$verify_package"; then
   [[ "$contents" != *"./usr/bin/devtool-gtk-hud"* ]] || { echo "error: obsolete devtool-gtk-hud alias must not be packaged" >&2; exit 1; }
   [[ "$contents" == *"./usr/lib/python3/dist-packages/devtool/desktop/gtk_control_center.py"* ]] || { echo "error: GTK Control Center module missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/lib/python3/dist-packages/devtool/desktop/gtk_hud.py"* ]] || { echo "error: GTK HUD module missing from package" >&2; exit 1; }
+  [[ "$contents" != *"__pycache__"* && "$contents" != *".pyc"* && "$contents" != *".pyo"* ]] || { echo "error: package must not ship build-host Python bytecode" >&2; exit 1; }
+  if dpkg-deb --fsys-tarfile "$deb_path" | tar -tvf - | awk '$1 ~ /^-.{7}---/ {bad=1} END {exit bad?0:1}'; then
+    echo "error: package payload contains files unreadable by group/others" >&2
+    exit 1
+  fi
   [[ "$contents" == *"./usr/share/applications/io.github.mikeceead.DevtoolControlCenter.desktop"* ]] || { echo "error: desktop entry missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/share/metainfo/io.github.mikeceead.DevtoolControlCenter.metainfo.xml"* ]] || { echo "error: metainfo missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/share/icons/hicolor/128x128/apps/io.github.mikeceead.DevtoolControlCenter.png"* ]] || { echo "error: raster icon missing from package" >&2; exit 1; }

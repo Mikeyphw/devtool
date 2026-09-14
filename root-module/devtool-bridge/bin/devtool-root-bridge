@@ -199,18 +199,25 @@ cmd_run() {
   esac
   log="$LOGS_DIR/$run_id.log"
   pid_file="$RUNS_DIR/$run_id.pid"
+  output_tmp="$RUNS_DIR/$run_id.output.$$"
   umask 077
-  printf '%s\n' "$$" > "$pid_file"
-  trap 'rm -f "$pid_file"' EXIT INT TERM HUP
+  trap 'rm -f "$pid_file" "$output_tmp"' EXIT INT TERM HUP
   export DEVTOOL_RUN_ID="$run_id"
   export DEVTOOL_ANDROID_HUD_TOKEN="$token"
   export DEVTOOL_HUD_OVERLAY="$overlay"
   export DEVTOOL_ANDROID_HUD_AUTOSTART=1
   export DEVTOOL_ROOT_BRIDGE=1
+  export DEVTOOL_ANDROID_OPERATION_ID="$run_id"
   quoted_workdir=$(printf "'%s'" "$(printf '%s' "$workdir" | sed "s/'/'\\''/g")")
-  payload="export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX TMPDIR=$TERMUX_PREFIX/tmp; export PATH=$TERMUX_HOME/.local/bin:$TERMUX_PREFIX/bin:/system/bin:/system/xbin; cd $quoted_workdir && exec $command"
+  payload="export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX TMPDIR=$TERMUX_PREFIX/tmp; export DEVTOOL_ANDROID_OPERATION_ID=$run_id; export PATH=$TERMUX_HOME/.local/bin:$TERMUX_PREFIX/bin:/system/bin:/system/xbin; cd $quoted_workdir && exec $command"
   echo "DEVTOOL_ROOT_BRIDGE_STARTED $run_id"
-  run_as_termux "$payload" 2>&1 | tee -a "$log"
+  run_as_termux "$payload" > "$output_tmp" 2>&1 &
+  child_pid=$!
+  printf '%s\n' "$child_pid" > "$pid_file"
+  wait "$child_pid"
+  status=$?
+  cat "$output_tmp" | tee -a "$log"
+  exit "$status"
 }
 
 case "${1:-status}" in

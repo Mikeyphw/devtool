@@ -596,8 +596,11 @@ def select_catalog(catalog: Iterable[TestDescriptor], selection: TestSelection) 
             return False
         items = [item for item in items if path_matches(item)]
     if selection.ids:
+        # Explicit IDs are exact identities.  Substring matching made a request
+        # for ``FooTest.case`` also select ``FooTest.caseSlow`` and could
+        # silently broaden a supposedly exact run.
         wanted = set(selection.ids)
-        items = [item for item in items if item.id in wanted or any(token in item.id for token in wanted)]
+        items = [item for item in items if item.id in wanted]
     if selection.classes:
         items = [item for item in items if any(token in item.suite for token in selection.classes)]
     if selection.methods:
@@ -643,6 +646,57 @@ def _native_test_values(selection: TestSelection) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
 
 
+
+
+def _regex_union_exact(values: Iterable[str]) -> str:
+    escaped = [re.escape(str(value)) for value in dict.fromkeys(values) if str(value)]
+    if not escaped:
+        return ""
+    return "^(?:" + "|".join(escaped) + ")$"
+
+
+def _shlex_filter(value: str, *, context: str) -> list[str]:
+    try:
+        return shlex.split(value)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid shell-style test filter for {context}: {exc}") from exc
+
+
+def _safe_dotnet_filter_value(value: str, *, context: str) -> str:
+    text = str(value).strip()
+    if not text:
+        raise SystemExit(f"Empty .NET test selector for {context}")
+    if any(ch in text for ch in ('|', '&', '!', '(', ')')):
+        raise SystemExit(f"Unsafe .NET test selector for {context}: {text!r}; use native filter for complex expressions")
+    return text
+
+
+def _maven_exact_test_value(value: str) -> str:
+    text = str(value).strip()
+    if not text:
+        return ""
+    allowed = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$.]*(?:#[A-Za-z_$][A-Za-z0-9_$]*(?:\[[^,*!?]+\])?)?$")
+    if not allowed.match(text):
+        raise SystemExit(
+            f"Maven test selector {text!r} cannot be translated as an exact Surefire test. "
+            "Use class names, Class#method syntax, tags/groups, tasks, or a native filter."
+        )
+    return text
+
+
+def _maven_group_value(value: str, *, context: str) -> str:
+    text = str(value).strip()
+    if not text or any(ch in text for ch in ",*!?"):
+        raise SystemExit(f"Unsafe Maven {context} selector: {text!r}; use a native filter for complex expressions")
+    return text
+
+
+def _unsupported_generic_selection(selection: TestSelection) -> bool:
+    return any((
+        selection.selectors, selection.ids, selection.tags, selection.exclude_tags,
+        selection.paths, selection.classes, selection.methods, selection.native_filter,
+    ))
+
 def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpec:
     selection = resolve_test_selection(config)
     contains_tests = bool(spec.metadata.get("contains_tests", False))
@@ -666,17 +720,17 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
     if config.kind == "dotnet":
         positive: list[str] = []
         negative: list[str] = []
-        positive.extend(f"FullyQualifiedName~{value}" for value in selection.ids)
-        positive.extend(f"FullyQualifiedName~{value}" for value in selection.classes)
-        positive.extend(f"FullyQualifiedName~{value}" for value in selection.methods)
+        positive.extend(f"FullyQualifiedName={_safe_dotnet_filter_value(value, context='id')}" for value in selection.ids)
+        positive.extend(f"FullyQualifiedName~{_safe_dotnet_filter_value(value, context='class')}" for value in selection.classes)
+        positive.extend(f"FullyQualifiedName~{_safe_dotnet_filter_value(value, context='method')}" for value in selection.methods)
         for value in selection.selectors:
             if value.lower() in {"unit", "integration", "smoke", "ui", "instrumentation"}:
-                positive.append(f"Category={value}")
+                positive.append(f"Category={_safe_dotnet_filter_value(value, context='category')}")
             else:
-                positive.append(f"FullyQualifiedName~{value}")
-        positive.extend(f"Category={value}" for value in selection.tags)
-        negative.extend(f"Category!={value}" for value in selection.exclude_tags)
-        positive.extend(f"FullyQualifiedName~{Path(value).stem}" for value in selection.paths if not value.endswith((".csproj", ".sln")))
+                positive.append(f"FullyQualifiedName~{_safe_dotnet_filter_value(value, context='selector')}")
+        positive.extend(f"Category={_safe_dotnet_filter_value(value, context='tag')}" for value in selection.tags)
+        negative.extend(f"Category!={_safe_dotnet_filter_value(value, context='exclude_tag')}" for value in selection.exclude_tags)
+        positive.extend(f"FullyQualifiedName~{_safe_dotnet_filter_value(Path(value).stem, context='path')}" for value in selection.paths if not value.endswith((".csproj", ".sln")))
         native = selection.native_filter
         if not native:
             positive_group = "|".join(positive)
@@ -758,12 +812,17 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
             )
     elif config.kind == "node":
         values = _native_test_values(selection)
-        if values:
-            argv.extend(["--", *values])
+        if selection.native_filter:
+            argv.extend(["--", *_shlex_filter(selection.native_filter, context="node")])
+        elif values:
+            raise SystemExit(
+                "Node test selection cannot safely translate generic selectors to package-manager script arguments. "
+                "Use test_selection.tasks for package.json scripts or test_selection.filter for native runner args."
+            )
     elif config.kind == "rust":
         values = _native_test_values(selection)
         if selection.native_filter:
-            values = shlex.split(selection.native_filter)
+            values = _shlex_filter(selection.native_filter, context="rust")
         if values:
             try:
                 separator = argv.index("--")
@@ -772,7 +831,7 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
             argv[separator:separator] = values
     elif config.kind == "go":
         values = _native_test_values(selection)
-        pattern = selection.native_filter or "|".join(values)
+        pattern = selection.native_filter or _regex_union_exact(values)
         if pattern:
             try:
                 index = argv.index("test")
@@ -781,21 +840,32 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
             if "-run" not in argv:
                 argv[index + 1:index + 1] = ["-run", pattern]
     elif config.kind == "maven":
-        values = _native_test_values(selection)
-        pattern = selection.native_filter or ",".join(values)
-        if pattern:
-            argv.append(f"-Dtest={pattern}")
+        if selection.native_filter:
+            argv.append(f"-Dtest={selection.native_filter}")
+        else:
+            test_values = [*selection.ids, *selection.classes, *selection.methods, *selection.selectors]
+            path_values = [Path(value).stem for value in selection.paths if not str(value).endswith(("pom.xml", ".xml"))]
+            exact_tests = [_maven_exact_test_value(value) for value in [*test_values, *path_values]]
+            exact_tests = [value for value in dict.fromkeys(exact_tests) if value]
+            if exact_tests:
+                argv.append("-Dtest=" + ",".join(exact_tests))
+            if selection.tags:
+                groups = [_maven_group_value(value, context="tag") for value in selection.tags]
+                argv.append("-Dgroups=" + ",".join(dict.fromkeys(groups)))
+            if selection.exclude_tags:
+                groups = [_maven_group_value(value, context="exclude_tag") for value in selection.exclude_tags]
+                argv.append("-DexcludedGroups=" + ",".join(dict.fromkeys(groups)))
     elif config.kind == "cmake":
         values = _native_test_values(selection)
-        pattern = selection.native_filter or "|".join(values)
+        pattern = selection.native_filter or _regex_union_exact(values)
         if pattern:
             argv.extend(["-R", pattern])
         if selection.exclude_tags:
-            argv.extend(["-E", "|".join(selection.exclude_tags)])
+            argv.extend(["-E", _regex_union_exact(selection.exclude_tags)])
     elif config.kind == "meson":
         values = _native_test_values(selection)
         if selection.native_filter:
-            values.extend(shlex.split(selection.native_filter))
+            values.extend(_shlex_filter(selection.native_filter, context="meson"))
         argv.extend(dict.fromkeys(values))
 
     return CommandSpec(
