@@ -17,7 +17,16 @@ def _paths(value: Any) -> Iterable[str]:
         yield value
     elif isinstance(value, dict):
         for key, item in value.items():
-            if key in {"report_files", "path", "report_path", "log_path"}:
+            if key in {
+                "report_files",
+                "path",
+                "report_path",
+                "log_path",
+                "log_file",
+                "payload_file",
+                "metadata_file",
+                "evidence_log_file",
+            }:
                 yield from _paths(item)
             elif isinstance(item, (dict, list, tuple)):
                 yield from _paths(item)

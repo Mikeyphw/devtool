@@ -12,6 +12,7 @@ import pytest
 from devtool.clipboard import ClipboardResult, prepare_clipboard_text
 from devtool.cli import (
     _emit_summary,
+    _maybe_copy,
     _output_debug_setting,
     _perform_clipboard_copy,
     build_parser,
@@ -241,3 +242,155 @@ def test_old_copy_debug_names_are_not_accepted() -> None:
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["--copy-debug", "validate"])
+
+
+def test_output_debug_preserves_referenced_log_and_indexes_evidence_json(tmp_path: Path) -> None:
+    args = _args(output_debug=True, quiet=True)
+    log_path = tmp_path / "logs" / "run.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text("run header\n", encoding="utf-8")
+
+    with (
+        patch("devtool.cli.log_state_dir", return_value=tmp_path / "state"),
+        patch.dict(os.environ, {"DEVTOOL_RUN_ID": "output-debug-run"}, clear=False),
+    ):
+        _emit_summary(
+            [_result()],
+            None,
+            as_json=False,
+            output_debug_args=args,
+            output_debug_log_path=log_path,
+        )
+
+    root = tmp_path / "state" / "evidence" / "output-debug-run"
+    metadata = json.loads((root / "output-debug" / "terminal-summary-0001.json").read_text(encoding="utf-8"))
+    evidence_log = Path(str(metadata["evidence_log_file"]))
+    evidence_index = json.loads((root / "evidence.json").read_text(encoding="utf-8"))
+
+    assert metadata["log_preserved"] is True
+    assert evidence_log == root / "logs" / "run.log"
+    copied_log = evidence_log.read_text(encoding="utf-8")
+    assert "run header" in copied_log
+    assert "Output debug capture:" in copied_log
+    assert "output_id: terminal-summary-0001" in copied_log
+    assert metadata["evidence_log_bytes"] == len(evidence_log.read_bytes())
+    assert metadata["evidence_log_sha256"] == hashlib.sha256(evidence_log.read_bytes()).hexdigest()
+    assert evidence_index["output_debug"]["captures"][0]["output_id"] == "terminal-summary-0001"
+    assert evidence_index["output_debug"]["captures"][0]["log_preserved"] is True
+    assert evidence_index["output_debug"]["preserved_logs"][0]["evidence_log_file"] == str(evidence_log)
+
+
+def test_output_debug_preserves_log_for_clipboard_payload_too(tmp_path: Path) -> None:
+    args = _args(output_debug=True, quiet=True)
+    log_path = tmp_path / "logs" / "run.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text("run header\n", encoding="utf-8")
+    result = ClipboardResult(True, backend="termux-clipboard-set")
+
+    with (
+        patch("devtool.cli.log_state_dir", return_value=tmp_path / "state"),
+        patch("devtool.cli.copy_text", return_value=result),
+        patch.dict(os.environ, {"DEVTOOL_RUN_ID": "output-debug-run"}, clear=False),
+    ):
+        _emit_summary(
+            [_result()],
+            None,
+            as_json=False,
+            output_debug_args=args,
+            output_debug_log_path=log_path,
+        )
+        _perform_clipboard_copy(
+            "clipboard payload",
+            "Successful run summary",
+            args,
+            log_path=log_path,
+            source="--copy",
+        )
+
+    root = tmp_path / "state" / "evidence" / "output-debug-run"
+    metadata = json.loads((root / "output-debug" / "clipboard-0002.json").read_text(encoding="utf-8"))
+    evidence_log = root / "logs" / "run.log"
+    index = json.loads((root / "evidence.json").read_text(encoding="utf-8"))
+    output_ids = [item["output_id"] for item in index["output_debug"]["captures"]]
+
+    assert metadata["log_preserved"] is True
+    assert metadata["evidence_log_file"] == str(evidence_log)
+    assert "output_id: clipboard-0002" in evidence_log.read_text(encoding="utf-8")
+    assert output_ids == ["terminal-summary-0001", "clipboard-0002"]
+
+
+def test_success_clipboard_headline_distinguishes_success_with_warnings(tmp_path: Path) -> None:
+    args = _args(output_debug=False, quiet=True)
+    copied: list[str] = []
+    warning_result = OperationResult(
+        name="validation",
+        argv=["pytest"],
+        returncode=0,
+        duration_seconds=0.25,
+        output="1 warning reported",
+        issues=[],
+        metadata={},
+    )
+    json_text = json.dumps({
+        "ok": True,
+        "warnings": 1,
+        "errors": 0,
+        "failed": 0,
+        "skipped": 0,
+        "results": [{"name": "validation", "status": "ok", "issues": []}],
+    })
+
+    with patch("devtool.cli._perform_clipboard_copy", side_effect=lambda text, label, args, **kwargs: copied.append(text)):
+        _maybe_copy(
+            warning_result.output,
+            "validation: ok exit=0 time=0.25s",
+            json_text,
+            args,
+            log_path=tmp_path / "run.log",
+        )
+
+    assert copied
+    assert copied[0].splitlines()[0] == "Devtool completed with warnings."
+
+
+def test_failure_evidence_path_discovery_includes_output_debug_link_fields(tmp_path: Path) -> None:
+    from devtool.validation_evidence import preserve_validation_evidence
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    log = tmp_path / "state" / "logs" / "run.log"
+    payload = tmp_path / "state" / "evidence" / "run" / "output-debug" / "clipboard-0001.txt"
+    metadata = payload.with_suffix(".json")
+    evidence_log = tmp_path / "state" / "evidence" / "run" / "logs" / "run.log"
+    for path, text in (
+        (log, "main log\n"),
+        (payload, "clipboard\n"),
+        (metadata, "{}\n"),
+        (evidence_log, "preserved log\n"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    failed = OperationResult(
+        name="validation",
+        argv=["pytest"],
+        returncode=1,
+        duration_seconds=0.1,
+        output="failed",
+        issues=[],
+        log_path=str(log),
+        metadata={
+            "output_debug": {
+                "log_file": str(log),
+                "payload_file": str(payload),
+                "metadata_file": str(metadata),
+                "evidence_log_file": str(evidence_log),
+            }
+        },
+    )
+
+    destination = preserve_validation_evidence(repo, [failed], run_id="failure-run")
+    assert destination is not None
+    copied = json.loads((destination / "evidence.json").read_text(encoding="utf-8"))["copied"]
+    copied_names = {Path(item["source"]).name for item in copied}
+    assert {"run.log", "clipboard-0001.txt", "clipboard-0001.json"}.issubset(copied_names)

@@ -1540,6 +1540,84 @@ def _write_private_text(path: Path, text: str) -> None:
         pass
 
 
+def _sha256_file(path: Path) -> tuple[int, str]:
+    data = path.read_bytes()
+    return len(data), hashlib.sha256(data).hexdigest()
+
+
+def _preserve_output_debug_log(run_id: str, log_path: Path | str | None) -> dict[str, object]:
+    if not log_path:
+        return {"log_preserved": False, "log_preserve_reason": "no-log-path"}
+    source = Path(str(log_path)).expanduser()
+    if not source.is_absolute():
+        source = (Path.cwd() / source).resolve()
+    if not source.is_file():
+        return {
+            "log_preserved": False,
+            "log_preserve_reason": "log-not-found",
+            "log_file": str(source),
+        }
+
+    root = log_state_dir() / "evidence" / run_id
+    logs_dir = root / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        logs_dir.chmod(0o700)
+    except OSError:
+        pass
+    target = logs_dir / source.name
+    shutil.copy2(source, target)
+    try:
+        target.chmod(0o600)
+    except OSError:
+        pass
+    byte_count, digest = _sha256_file(target)
+    return {
+        "log_preserved": True,
+        "log_file": str(source),
+        "evidence_log_file": str(target),
+        "evidence_log_bytes": byte_count,
+        "evidence_log_sha256": digest,
+    }
+
+
+def _merge_output_debug_evidence_index(root: Path, capture: dict[str, object], log_record: dict[str, object]) -> None:
+    index_path = root / "evidence.json"
+    try:
+        existing = json.loads(index_path.read_text(encoding="utf-8")) if index_path.is_file() else {}
+    except (OSError, json.JSONDecodeError):
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+
+    output_debug = existing.get("output_debug") if isinstance(existing.get("output_debug"), dict) else {}
+    captures = output_debug.get("captures") if isinstance(output_debug.get("captures"), list) else []
+    preserved_logs = output_debug.get("preserved_logs") if isinstance(output_debug.get("preserved_logs"), list) else []
+
+    output_id = str(capture.get("output_id") or "")
+    captures = [item for item in captures if not (isinstance(item, dict) and str(item.get("output_id") or "") == output_id)]
+    captures.append(capture)
+
+    if log_record.get("log_preserved"):
+        evidence_log_file = str(log_record.get("evidence_log_file") or "")
+        preserved_logs = [
+            item for item in preserved_logs
+            if not (isinstance(item, dict) and str(item.get("evidence_log_file") or "") == evidence_log_file)
+        ]
+        preserved_logs.append(log_record)
+
+    existing.setdefault("run_id", capture.get("run_id") or root.name)
+    existing.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+    existing["updated_at"] = datetime.now(timezone.utc).isoformat()
+    existing["output_debug"] = {
+        "schema_version": 1,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "captures": captures,
+        "preserved_logs": preserved_logs,
+    }
+    _write_private_text(index_path, json.dumps(existing, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+
+
 def _append_private_jsonl(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -1607,28 +1685,6 @@ def _record_output_debug_payload(
         metadata["matches_terminal_summary"] = bool(terminal_hash and terminal_hash == digest)
         metadata["terminal_summary_output_id"] = str(terminal_metadata.get("output_id") or "")
 
-    try:
-        _write_private_text(payload_path, payload)
-        _write_private_text(metadata_path, json.dumps(metadata, indent=2, ensure_ascii=False) + "\n")
-        _append_private_jsonl(root / "timeline.jsonl", {
-            "timestamp": timestamp,
-            "run_id": run_id,
-            "output_id": output_id,
-            "kind": kind,
-            "source": source,
-            "payload_bytes": len(encoded),
-            "payload_sha256": digest,
-            "matches_terminal_summary": metadata.get("matches_terminal_summary"),
-        })
-    except OSError as exc:
-        if not bool(getattr(args, "quiet", False)):
-            console.print(f"[yellow]Output debug evidence could not be saved: {exc}[/yellow]")
-        _append_run_log(log_path, f"Output debug capture failed: run={run_id} kind={kind} error={exc}")
-        return None
-
-    if kind == "terminal-summary":
-        args._devtool_output_debug_terminal_summary = metadata
-
     marker_lines = [
         "Output debug capture:",
         f"  run_id: {run_id}",
@@ -1646,7 +1702,48 @@ def _record_output_debug_payload(
         marker_lines.append(
             f"  matches_terminal_summary: {'yes' if metadata['matches_terminal_summary'] else 'no'}"
         )
-    _append_run_log(log_path, "\n".join(marker_lines))
+
+    try:
+        _write_private_text(payload_path, payload)
+        _append_run_log(log_path, "\n".join(marker_lines))
+        log_record = _preserve_output_debug_log(run_id, log_path)
+        metadata.update(log_record)
+        _write_private_text(metadata_path, json.dumps(metadata, indent=2, ensure_ascii=False) + "\n")
+        timeline_event = {
+            "timestamp": timestamp,
+            "run_id": run_id,
+            "output_id": output_id,
+            "kind": kind,
+            "source": source,
+            "payload_bytes": len(encoded),
+            "payload_sha256": digest,
+            "matches_terminal_summary": metadata.get("matches_terminal_summary"),
+            "log_preserved": metadata.get("log_preserved"),
+            "evidence_log_file": metadata.get("evidence_log_file"),
+        }
+        _append_private_jsonl(root / "timeline.jsonl", timeline_event)
+        capture_record = {
+            "output_id": output_id,
+            "kind": kind,
+            "source": source,
+            "label": label,
+            "payload_file": str(payload_path),
+            "metadata_file": str(metadata_path),
+            "payload_bytes": len(encoded),
+            "payload_sha256": digest,
+            "log_file": str(metadata.get("log_file") or ""),
+            "log_preserved": bool(metadata.get("log_preserved")),
+            "evidence_log_file": str(metadata.get("evidence_log_file") or ""),
+        }
+        _merge_output_debug_evidence_index(root.parent, capture_record, log_record)
+    except OSError as exc:
+        if not bool(getattr(args, "quiet", False)):
+            console.print(f"[yellow]Output debug evidence could not be saved: {exc}[/yellow]")
+        _append_run_log(log_path, f"Output debug capture failed: run={run_id} kind={kind} error={exc}")
+        return None
+
+    if kind == "terminal-summary":
+        args._devtool_output_debug_terminal_summary = metadata
 
     if not bool(getattr(args, "quiet", False)):
         title = "Terminal summary output debug" if kind == "terminal-summary" else "Clipboard output debug"
@@ -2252,7 +2349,8 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         return trace
 
     overlay_summaries = payload.get("overlays") if isinstance(payload, dict) else None
-    success_lines = ["Devtool completed successfully."]
+    success_headline = "Devtool completed with warnings." if effective_warning_count > 0 else "Devtool completed successfully."
+    success_lines = [success_headline]
     success_lines.extend(_traceability_lines())
     success_lines.append("")
 
