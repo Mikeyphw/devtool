@@ -4437,12 +4437,18 @@ def _exclusive_android_validation_specs(
     if config.kind not in {"android", "gradle"}:
         return _exclusive_cross_project_validation_specs(config, tasks, parser)
 
-    from .android_integration import android_builder_arguments_for_tasks, plan_android_command
+    from .android_integration import android_builder_arguments_for_tasks, android_gradle_task_execution_plan, plan_android_command
     from .build_optimization import optimized_validation_env, resolve_android_validation_phase_policy
     from .test_selection import apply_test_selection
 
     plan = plan_android_command(config, "test")
     policy = resolve_android_validation_phase_policy(config, "explicit-tasks")
+    task_execution = android_gradle_task_execution_plan(
+        config,
+        tasks,
+        validation=True,
+        validation_phase="explicit-tasks",
+    )
     lowered = [task.lower() for task in tasks]
     contains_tests = any("test" in task or "androidtest" in task for task in lowered)
     contains_lint = any("lint" in task for task in lowered)
@@ -4469,7 +4475,10 @@ def _exclusive_android_validation_specs(
         metadata={
             "runner": config.kind,
             "project_type": config.kind,
-            "gradle_tasks": list(tasks),
+            "gradle_tasks": list(task_execution.optimized),
+            "requested_gradle_tasks": list(tasks),
+            "gradle_workload_tasks": list(task_execution.workload_tasks),
+            "gradle_task_optimization": task_execution.as_dict(),
             "explicit_validation_tasks": list(tasks),
             "android_builder": str(plan.builder),
             "project_root": str(plan.project_root),

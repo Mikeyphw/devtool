@@ -14,7 +14,9 @@ from devtool.android.tasks import (
     plan_gradle_task_list,
 )
 from devtool.models import ProjectConfig
-from devtool.android_integration import android_builder_arguments_for_tasks
+from devtool.android_integration import android_builder_arguments_for_tasks, android_gradle_task_execution_plan
+from devtool.config import load_project_config
+from devtool.runners import build_validation_specs
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -220,3 +222,108 @@ def test_android_hud_gradle_verification_tasks_are_incremental_and_aggregated() 
     assert "releaseSigningStamp" in app_build
     assert "releaseApkVerificationReport" in app_build
     assert "devtoolReleaseValidation" in app_build
+
+
+
+def _task_values_from_argv(argv: list[str]) -> list[str]:
+    return [argv[index + 1] for index, value in enumerate(argv) if value == "--task"]
+
+
+def _alias_config(root: Path) -> ProjectConfig:
+    return ProjectConfig(
+        repo_root=root,
+        kind="android",
+        runner="android",
+        project_root=str(root),
+        selected_target="app",
+        variant="debug",
+        runner_options={
+            "android": {"variant": "debug", "platform": "none"},
+            "validation": {"android_safe": False},
+            "gradle": {
+                "structured_events": False,
+                "task_aliases": {
+                    "debug_validation": {
+                        "tasks": [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
+                        "replacement": "devtoolDebugValidation",
+                    }
+                },
+            },
+        },
+    )
+
+
+def test_configured_gradle_task_alias_coalesces_validation_graph(tmp_path: Path) -> None:
+    config = _alias_config(tmp_path)
+    plan = android_gradle_task_execution_plan(
+        config,
+        [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
+        validation=True,
+    )
+
+    assert list(plan.planned) == [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"]
+    assert list(plan.optimized) == ["devtoolDebugValidation"]
+    assert list(plan.workload_tasks) == [
+        ":app:assembleDebug",
+        ":app:testDebugUnitTest",
+        ":app:lintDebug",
+        "devtoolDebugValidation",
+    ]
+    assert [item.as_dict() for item in plan.alias_applications] == [{
+        "name": "debug_validation",
+        "replacement": "devtoolDebugValidation",
+        "removed": [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
+    }]
+
+    argv = android_builder_arguments_for_tasks(
+        config,
+        [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
+        scan_artifacts=True,
+        validation=True,
+    )
+    assert _task_values_from_argv(argv) == ["devtoolDebugValidation"]
+
+
+def test_explicit_gradle_tasks_do_not_use_configured_alias(tmp_path: Path) -> None:
+    config = _alias_config(tmp_path)
+    argv = android_builder_arguments_for_tasks(
+        config,
+        [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
+        scan_artifacts=False,
+        validation=True,
+        validation_phase="explicit-tasks",
+    )
+
+    assert _task_values_from_argv(argv) == [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"]
+
+
+def test_android_hud_target_uses_single_debug_validation_task_for_seal() -> None:
+    config = load_project_config(str(ROOT), None, target_name="android_hud")
+    seal_tasks = config.runner_options.get("tasks", {}).get("seal")
+    assert seal_tasks == ["devtoolDebugValidation"]
+
+    plan = android_gradle_task_execution_plan(
+        config,
+        [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
+        validation=True,
+    )
+    assert list(plan.optimized) == ["devtoolDebugValidation"]
+
+
+def test_android_hud_normal_validation_metadata_reports_executed_aggregate_task() -> None:
+    config = load_project_config(str(ROOT), None, target_name="android_hud")
+    specs = build_validation_specs(config)
+    coalesced = next(spec for spec in specs if spec.name == "android-validation")
+
+    assert coalesced.metadata["gradle_tasks"] == ["devtoolDebugValidation"]
+    assert coalesced.metadata["requested_gradle_tasks"] == [
+        ":app:assembleDebug",
+        ":app:testDebugUnitTest",
+        ":app:lintDebug",
+    ]
+    assert coalesced.metadata["gradle_task_optimization"]["alias_applications"] == [{
+        "name": "debug_validation",
+        "replacement": "devtoolDebugValidation",
+        "removed": [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
+    }]
+    assert _task_values_from_argv(coalesced.argv) == ["devtoolDebugValidation"]

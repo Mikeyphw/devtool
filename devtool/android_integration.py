@@ -36,6 +36,59 @@ class AndroidCommandPlan:
     default_tasks: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class GradleTaskAliasApplication:
+    """Record one configured Gradle task coalescing decision."""
+
+    name: str
+    replacement: str
+    removed: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "replacement": self.replacement,
+            "removed": list(self.removed),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AndroidGradleTaskExecutionPlan:
+    """Execution-facing Gradle task plan after safe Devtool optimization."""
+
+    requested: tuple[str, ...]
+    planned: tuple[str, ...]
+    optimized: tuple[str, ...]
+    component_removed: tuple[dict[str, object], ...]
+    alias_applications: tuple[GradleTaskAliasApplication, ...]
+
+    @property
+    def changed(self) -> bool:
+        return self.planned != self.optimized or bool(self.component_removed)
+
+    @property
+    def workload_tasks(self) -> tuple[str, ...]:
+        # Resource and signing policy must reason over both the compact task that
+        # Gradle will run and the concrete tasks it replaces.  Otherwise an
+        # aggregate such as devtoolDebugValidation could hide package/test/lint
+        # work from Devtool's memory/metaspace/signing heuristics.
+        values: list[str] = []
+        for task in (*self.planned, *self.optimized):
+            if task not in values:
+                values.append(task)
+        return tuple(values)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "requested": list(self.requested),
+            "planned": list(self.planned),
+            "optimized": list(self.optimized),
+            "changed": self.changed,
+            "component_removed": list(self.component_removed),
+            "alias_applications": [item.as_dict() for item in self.alias_applications],
+        }
+
+
 def _dict_option(config: ProjectConfig, name: str) -> dict[str, Any]:
     value = config.runner_options.get(name, {})
     return dict(value) if isinstance(value, dict) else {}
@@ -270,6 +323,140 @@ def _task_values(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(item).strip() for item in value if str(item).strip()]
     return []
+
+
+def _gradle_task_key(task: str) -> str:
+    return str(task or "").strip().lstrip(":")
+
+
+def _ordered_unique_tasks(tasks: Iterable[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in tasks:
+        task = str(raw or "").strip()
+        if not task:
+            continue
+        key = _gradle_task_key(task)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(task)
+    return result
+
+
+def _configured_gradle_task_aliases(config: ProjectConfig) -> list[tuple[str, tuple[str, ...], str, tuple[str, ...]]]:
+    """Return configured task coalescing aliases.
+
+    ``[gradle.task_aliases.<name>]`` entries let a target replace a known safe
+    task set with a project-provided aggregate task, for example replacing
+    assemble/test/lint with ``devtoolDebugValidation``.  Aliases are opt-in so
+    Devtool never invents Gradle task names for arbitrary Android projects.
+    """
+
+    gradle = _dict_option(config, "gradle")
+    raw_aliases = gradle.get("task_aliases") or gradle.get("task_coalescing")
+    entries: list[tuple[str, Any]] = []
+    if isinstance(raw_aliases, dict):
+        entries = [(str(name), value) for name, value in raw_aliases.items()]
+    elif isinstance(raw_aliases, (list, tuple)):
+        entries = [(str(index), value) for index, value in enumerate(raw_aliases, start=1)]
+
+    aliases: list[tuple[str, tuple[str, ...], str, tuple[str, ...]]] = []
+    for name, value in entries:
+        if not isinstance(value, dict):
+            continue
+        sources = tuple(_ordered_unique_tasks(_task_values(value.get("tasks") or value.get("source") or value.get("sources"))))
+        replacement = str(value.get("replacement") or value.get("task") or value.get("alias") or "").strip()
+        phases = tuple(item.lower().replace("_", "-") for item in _task_values(value.get("phases") or value.get("phase")))
+        if len(sources) < 2 or not replacement:
+            continue
+        aliases.append((name, sources, replacement, phases))
+    return aliases
+
+
+def _phase_allows_gradle_task_alias(phases: tuple[str, ...], validation_phase: str) -> bool:
+    if not phases:
+        return True
+    phase = str(validation_phase or "validation").strip().lower().replace("_", "-") or "validation"
+    return phase in phases or "*" in phases or (phase == "validation" and "coalesced" in phases)
+
+
+def _apply_configured_gradle_task_aliases(
+    config: ProjectConfig,
+    tasks: Iterable[str],
+    *,
+    validation_phase: str = "",
+) -> tuple[list[str], list[GradleTaskAliasApplication]]:
+    optimized = _ordered_unique_tasks(tasks)
+    applications: list[GradleTaskAliasApplication] = []
+
+    for alias_name, sources, replacement, phases in _configured_gradle_task_aliases(config):
+        if not _phase_allows_gradle_task_alias(phases, validation_phase):
+            continue
+        source_keys = {_gradle_task_key(task) for task in sources}
+        if len(source_keys) < 2:
+            continue
+        current_keys = [_gradle_task_key(task) for task in optimized]
+        present = {key for key in current_keys if key}
+        replacement_key = _gradle_task_key(replacement)
+
+        if not source_keys.issubset(present):
+            continue
+
+        insertion_index = min(index for index, key in enumerate(current_keys) if key in source_keys)
+        removed = [task for task in optimized if _gradle_task_key(task) in source_keys]
+        next_tasks: list[str] = []
+        inserted = False
+        replacement_already_present = replacement_key in present
+        for index, task in enumerate(optimized):
+            key = _gradle_task_key(task)
+            if key in source_keys:
+                if not inserted and not replacement_already_present and index == insertion_index:
+                    next_tasks.append(replacement)
+                    inserted = True
+                continue
+            next_tasks.append(task)
+        if replacement_already_present:
+            next_tasks = _ordered_unique_tasks(next_tasks)
+        elif not inserted:
+            next_tasks.insert(insertion_index, replacement)
+            next_tasks = _ordered_unique_tasks(next_tasks)
+
+        optimized = next_tasks
+        applications.append(GradleTaskAliasApplication(
+            name=alias_name,
+            replacement=replacement,
+            removed=tuple(removed),
+        ))
+
+    return optimized, applications
+
+
+def android_gradle_task_execution_plan(
+    config: ProjectConfig,
+    tasks: Iterable[str],
+    *,
+    validation: bool = False,
+    validation_phase: str = "",
+) -> AndroidGradleTaskExecutionPlan:
+    base = android_build.plan_gradle_task_list(list(tasks))
+    planned = list(base.optimized)
+    aliases: list[GradleTaskAliasApplication] = []
+    # Explicit --task means the caller asked for the native task identities; keep
+    # those exact identities after the existing conservative component pruning.
+    if validation and validation_phase != "explicit-tasks":
+        planned, aliases = _apply_configured_gradle_task_aliases(
+            config,
+            planned,
+            validation_phase=validation_phase,
+        )
+    return AndroidGradleTaskExecutionPlan(
+        requested=tuple(base.requested),
+        planned=tuple(base.optimized),
+        optimized=tuple(planned),
+        component_removed=tuple(entry.__dict__ for entry in base.removed),
+        alias_applications=tuple(aliases),
+    )
 
 
 def configured_tasks(config: ProjectConfig, action: str) -> list[str]:
@@ -691,8 +878,13 @@ def android_builder_arguments_for_tasks(
             project_info = None
 
     argv = [str(root), "--no-chroot"]
-    task_plan = android_build.plan_gradle_task_list(list(tasks))
-    seen_tasks: set[str] = set(task_plan.optimized)
+    task_plan = android_gradle_task_execution_plan(
+        config,
+        list(tasks),
+        validation=validation,
+        validation_phase=validation_phase,
+    )
+    seen_tasks: set[str] = set(task_plan.workload_tasks)
     for task in task_plan.optimized:
         argv.extend(["--task", task])
 

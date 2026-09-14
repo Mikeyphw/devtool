@@ -84,7 +84,7 @@ TARGET_SEAL_EXPECTATIONS: dict[str, TargetSealExpectation] = {
         ),
         test_files=("tests/test_rem15_android_hud_target_final_seal.py",),
         validation_keys=("android_safe", "split_gradle", "max_workers", "gradle_heap_mb", "memory_guard_mb"),
-        seal_tasks=(":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"),
+        seal_tasks=("devtoolDebugValidation",),
         apply_command_target="android_hud",
     ),
 }

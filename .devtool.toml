@@ -49,11 +49,16 @@ args = [
   "-Dorg.gradle.vfs.watch=false",
 ]
 
+[targets.android_hud.gradle.task_aliases.debug_validation]
+tasks = [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"]
+replacement = "devtoolDebugValidation"
+phases = ["validation"]
+
 [targets.android_hud.tasks]
 build = [":app:assembleDebug"]
 test = [":app:testDebugUnitTest"]
 lint = [":app:lintDebug"]
-seal = [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"]
+seal = ["devtoolDebugValidation"]
 instrumentation = [":app:connectedDebugAndroidTest"]
 clean = [":app:clean"]
 

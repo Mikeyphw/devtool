@@ -1199,6 +1199,7 @@ class AndroidGradleRunner(ProjectRunner):
     ) -> list[CommandSpec]:
         from .android_integration import (
             android_builder_arguments_for_tasks,
+            android_gradle_task_execution_plan,
             android_project_root,
             android_validation_lint_tasks,
             configured_tasks,
@@ -1332,6 +1333,15 @@ class AndroidGradleRunner(ProjectRunner):
                 unique_tasks = list(dict.fromkeys(task for task in tasks if task))
                 if not unique_tasks:
                     continue
+                task_execution = android_gradle_task_execution_plan(
+                    config,
+                    unique_tasks,
+                    validation=True,
+                    validation_phase=validation_phase,
+                )
+                execution_tasks = list(task_execution.optimized)
+                if not execution_tasks:
+                    continue
                 plan_action = "build" if "build" in components else components[0]
                 plan = plan_android_command(config, plan_action)
                 phase_policy = (
@@ -1350,7 +1360,10 @@ class AndroidGradleRunner(ProjectRunner):
                 metadata = {
                     "runner": self.kind,
                     "project_type": self.kind,
-                    "gradle_tasks": unique_tasks,
+                    "gradle_tasks": execution_tasks,
+                    "requested_gradle_tasks": unique_tasks,
+                    "gradle_workload_tasks": list(task_execution.workload_tasks),
+                    "gradle_task_optimization": task_execution.as_dict(),
                     "android_builder": str(plan.builder),
                     "project_root": str(android_project_root(config)),
                     "collect_artifacts": "build" in components or validation_phase == "package",
@@ -1452,8 +1465,9 @@ class AndroidGradleRunner(ProjectRunner):
                 "lint_modules": metadata.get("lint_modules", list(lint_modules)),
             })
             planned_tasks = [str(item) for item in metadata.get("gradle_tasks", []) or []]
+            workload_tasks = [str(item) for item in metadata.get("gradle_workload_tasks", []) or []]
             if planned_tasks:
-                metadata.update(_android_signing_metadata(config, planned_tasks, validation=True))
+                metadata.update(_android_signing_metadata(config, workload_tasks or planned_tasks, validation=True))
             spec.metadata = metadata
         return specs
 
