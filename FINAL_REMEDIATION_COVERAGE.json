@@ -1,0 +1,26 @@
+{
+  "assigned_findings_closed_by_overlays_1_to_14": 308,
+  "deduped_findings_total": 308,
+  "notes": [
+    "Overlay 15 has no new findings; it is split by the configured Devtool targets for final qualification.",
+    "Repository-wide closure requires both target overlays plus devtool final-seal --strict."
+  ],
+  "overlay_15_target_overlays": [
+    {
+      "artifact": "devtool_rem15a_devtool_target_final_qualification_v1.tar.gz",
+      "platform": "server",
+      "report": "REM15_DEVTOOL_TARGET_FINAL_QUALIFICATION_REPORT.md",
+      "runner": "python",
+      "target": "devtool"
+    },
+    {
+      "artifact": "devtool_rem15b_android_hud_target_final_qualification_v1.tar.gz",
+      "platform": "android",
+      "report": "android/devtool-live-hud/REM15_ANDROID_HUD_TARGET_FINAL_QUALIFICATION_REPORT.md",
+      "runner": "android",
+      "target": "android_hud"
+    }
+  ],
+  "roadmap_total_overlays": 15,
+  "schema_version": 1
+}

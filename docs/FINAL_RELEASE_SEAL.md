@@ -51,3 +51,7 @@ devtool final-seal --strict
 ```
 
 The target reports are side-effect-free. They verify that the selected target exists in `.devtool.toml`, matches its sealed runner/platform/root identity, owns the expected files and regression tests, and has a concrete target-specific overlay apply command.
+
+## Final remediation coverage manifest
+
+The repository-wide final seal also reads `FINAL_REMEDIATION_COVERAGE.json`. That manifest records the 15-overlay roadmap, confirms that Overlays 1–14 closed all 308 deduped findings, and lists the two Overlay 15 target artifacts: `devtool` and `android_hud`. The repository-wide seal fails if `.devtool.toml` contains a configured target without a matching final target seal.

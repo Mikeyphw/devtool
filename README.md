@@ -931,3 +931,8 @@ The command runs pytest with Devtool slow-test reporting enabled, preserves the 
 ### Roadmap delivery audit
 
 `devtool final-seal --strict` now also checks the post-AOPS modernization promises: pytest revitalization, Gradle/Android task optimization, roadmap-delivery audit coverage, and ZIP/tar artifact-format discoverability.
+
+
+### Overlay 15 target split
+
+The final remediation seal is split by configured Devtool target. Apply the Python `devtool` target final overlay with `--target devtool`, then apply the Android HUD target final overlay with `--target android_hud`. The repository-wide `devtool final-seal --strict` requires both target seals and `FINAL_REMEDIATION_COVERAGE.json` before the campaign is complete.

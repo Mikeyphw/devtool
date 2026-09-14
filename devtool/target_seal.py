@@ -61,6 +61,30 @@ TARGET_SEAL_EXPECTATIONS: dict[str, TargetSealExpectation] = {
         validation_keys=("python_safe", "memory_guard_mb"),
         apply_command_target="devtool",
     ),
+    "android_hud": TargetSealExpectation(
+        target="android_hud",
+        runner="android",
+        platform="android",
+        root="android/devtool-live-hud",
+        report="android/devtool-live-hud/REM15_ANDROID_HUD_TARGET_FINAL_QUALIFICATION_REPORT.md",
+        required_paths=(
+            "android/devtool-live-hud/settings.gradle",
+            "android/devtool-live-hud/build.gradle",
+            "android/devtool-live-hud/app/build.gradle",
+            "android/devtool-live-hud/build.sh",
+            "android/devtool-live-hud/app/src/main/AndroidManifest.xml",
+            "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java",
+            "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootCommandBroker.java",
+            "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RunStore.java",
+            "android/devtool-live-hud/app/src/test/java/io/github/mikeceead/devtoolhud/ReleaseModelTest.java",
+            "android/devtool-live-hud/app/src/test/java/io/github/mikeceead/devtoolhud/RootBridgeSecurityTest.java",
+            "android/devtool-live-hud/docs/FINAL_TARGET_SEAL.md",
+            "tests/test_rem15_android_hud_target_final_seal.py",
+        ),
+        test_files=("tests/test_rem15_android_hud_target_final_seal.py",),
+        validation_keys=("android_safe", "split_gradle", "max_workers", "gradle_heap_mb", "memory_guard_mb"),
+        apply_command_target="android_hud",
+    ),
 }
 
 

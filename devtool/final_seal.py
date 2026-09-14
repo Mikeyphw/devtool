@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 import fnmatch
 import ast
+import json
 import tomllib
 
 from .compatibility import COMPATIBILITY_ENTRIES, compatibility_report
@@ -35,6 +36,20 @@ class SealCheck:
 
 
 _REQUIRED_REPORTS = (
+    "TRUST_BOUNDARY_EMERGENCY_SEAL_REPORT.md",
+    "RELEASE_VERIFIER_FINAL_SEAL_INTEGRITY_REPORT.md",
+    "CLI_CONFIG_WORKSPACE_DISCOVERY_REPORT.md",
+    "EXECUTION_SCHEDULER_CORRECTNESS_REPORT.md",
+    "TRANSACTIONS_ARCHIVES_ROLLBACK_REPORT.md",
+    "ARTIFACT_LIFECYCLE_REGISTRY_REPORT.md",
+    "VALIDATION_TRUTH_SESSION_CHECKPOINT_REPORT.md",
+    "DIAGNOSTICS_REDACTION_REPORTING_REPORT.md",
+    "CORE_RUNTIME_IPC_HOOKS_REPORT.md",
+    "ANDROID_TOOLCHAIN_RESOLUTION_REPORT.md",
+    "ANDROID_DEVICE_SIGNING_RELEASE_GATES_REPORT.md",
+    "ANDROID_LIVE_HUD_RUNSTORE_TRUTH_REPORT.md",
+    "UI_DESKTOP_TRUTH_ACTIONS_REPORT.md",
+    "LANGUAGE_RUNNERS_PACKAGING_INSTALL_REPO_REPORT.md",
     "MP01_MP02_POLYGLOT_TARGETS_WORKFLOWS_REPORT.md",
     "MP03_MP04_WORKFLOW_DAG_CROSS_RUNNER_REPORT.md",
     "MP05_MP06_CROSS_TARGET_WORKSPACE_GROUPS_REPORT.md",
@@ -55,6 +70,14 @@ _REQUIRED_REPORTS = (
     "GRADLE_ANDROID_TASK_OPTIMIZATION_REPORT.md",
     "ROADMAP_DELIVERY_AUDIT_REPORT.md",
 )
+
+_REQUIRED_TARGET_SEAL_REPORTS = (
+    "REM15_DEVTOOL_TARGET_FINAL_QUALIFICATION_REPORT.md",
+    "android/devtool-live-hud/REM15_ANDROID_HUD_TARGET_FINAL_QUALIFICATION_REPORT.md",
+)
+
+_FINAL_REMEDIATION_COVERAGE = "FINAL_REMEDIATION_COVERAGE.json"
+
 
 _REQUIRED_DOCS = (
     "docs/BACKWARD_COMPATIBILITY.md",
@@ -78,6 +101,22 @@ _REQUIRED_EXAMPLES = (
 )
 
 _REQUIRED_TESTS = (
+    "tests/test_trust_boundary_emergency_seal.py",
+    "tests/test_release_verifier_final_integrity.py",
+    "tests/test_rem03_cli_config_discovery.py",
+    "tests/test_rem04_execution_scheduler.py",
+    "tests/test_rem05_transactions_archives_rollback.py",
+    "tests/test_rem06_artifact_lifecycle_registry.py",
+    "tests/test_rem07_validation_truth_sessions.py",
+    "tests/test_rem08_diagnostics_reporting.py",
+    "tests/test_rem09_core_runtime_ipc_hooks.py",
+    "tests/test_rem10_android_toolchain_resolution.py",
+    "tests/test_rem11_android_devices_release_gates.py",
+    "tests/test_rem12_android_hud_runstore_truth.py",
+    "tests/test_rem13_ui_desktop_truth_actions.py",
+    "tests/test_rem14_language_packaging_repo.py",
+    "tests/test_rem15_devtool_target_final_seal.py",
+    "tests/test_rem15_android_hud_target_final_seal.py",
     "tests/test_mp01_mp02_target_job_workflow_contracts.py",
     "tests/test_mp03_mp04_workflow_graph_runtime.py",
     "tests/test_mp05_mp06_cross_target_workspace_groups.py",
@@ -100,6 +139,7 @@ _REQUIRED_TESTS = (
     "tests/test_gradle_android_task_optimization.py",
     "tests/test_roadmap_delivery_audit.py",
 )
+
 
 _ALLOWED_BACKUP_PATTERNS = (
     ".devtool/**",
@@ -213,6 +253,52 @@ def _workspace_backup_paths(repo_root: Path) -> list[str]:
         return [f"backup-scan-error:{exc}"]
 
 
+
+def _final_remediation_coverage_errors(repo_root: Path, configured_targets: set[str]) -> list[str]:
+    path = repo_root / _FINAL_REMEDIATION_COVERAGE
+    if not path.is_file():
+        return [f"missing:{_FINAL_REMEDIATION_COVERAGE}"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return [f"invalid:{_FINAL_REMEDIATION_COVERAGE}:{exc}"]
+    errors: list[str] = []
+    if payload.get("schema_version") != 1:
+        errors.append("schema_version")
+    if int(payload.get("roadmap_total_overlays") or 0) != 15:
+        errors.append("roadmap_total_overlays")
+    if int(payload.get("deduped_findings_total") or 0) != 308:
+        errors.append("deduped_findings_total")
+    if int(payload.get("assigned_findings_closed_by_overlays_1_to_14") or 0) != 308:
+        errors.append("assigned_findings_closed_by_overlays_1_to_14")
+    target_overlays = payload.get("overlay_15_target_overlays")
+    target_names = {
+        str(item.get("target") or "").strip()
+        for item in target_overlays
+        if isinstance(item, dict) and str(item.get("target") or "").strip()
+    } if isinstance(target_overlays, list) else set()
+    if target_names != configured_targets:
+        errors.append(f"target_overlay_mismatch: coverage={sorted(target_names)} configured={sorted(configured_targets)}")
+    return errors
+
+
+def _target_final_seal_errors(repo_root: Path, configured_targets: set[str]) -> list[str]:
+    try:
+        from .target_seal import TARGET_SEAL_EXPECTATIONS, target_seal_report
+    except Exception as exc:
+        return [f"target-seal-import:{exc}"]
+    expected_targets = set(TARGET_SEAL_EXPECTATIONS)
+    errors: list[str] = []
+    if configured_targets != expected_targets:
+        errors.append(f"configured_target_mismatch: configured={sorted(configured_targets)} expected={sorted(expected_targets)}")
+    errors.extend(_markdown_content_errors(repo_root, _REQUIRED_TARGET_SEAL_REPORTS, min_bytes=160))
+    for target in sorted(expected_targets):
+        payload = target_seal_report(repo_root, target)
+        if payload.get("status") != "pass":
+            failed = [str(item.get("id")) for item in payload.get("checks", []) if isinstance(item, dict) and item.get("status") == "fail"]
+            errors.append(f"{target}:" + ",".join(failed))
+    return errors
+
 def final_seal_report(repo_root: Path) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     checks: list[SealCheck] = []
@@ -253,6 +339,26 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
     else:
         parsed_cfg = {}
         checks.append(_check("config.canonical", False, "repository .devtool.toml is missing"))
+
+    configured_targets = set()
+    if isinstance(parsed_cfg, dict):
+        raw_targets = parsed_cfg.get("targets")
+        if isinstance(raw_targets, dict):
+            configured_targets = {str(name) for name in raw_targets}
+    target_errors = _target_final_seal_errors(repo_root, configured_targets)
+    checks.append(_check(
+        "targets.final-seal-overlays",
+        not target_errors,
+        "every configured Devtool target has its own passing Overlay 15 final-seal artifact",
+        target_errors,
+    ))
+    coverage_errors = _final_remediation_coverage_errors(repo_root, configured_targets)
+    checks.append(_check(
+        "coverage.final-remediation",
+        not coverage_errors,
+        "308/308 deduped findings and all target-split final overlays are accounted for",
+        coverage_errors,
+    ))
 
     compat = compatibility_report(cfg_path if cfg_path.exists() else None)
     compat_ids = [entry.id for entry in COMPATIBILITY_ENTRIES]
@@ -382,6 +488,8 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
             "compatibility_entries": len(COMPATIBILITY_ENTRIES),
             "roadmap_reports": len(_REQUIRED_REPORTS),
             "roadmap_test_files": len(_REQUIRED_TESTS),
+            "target_final_reports": len(_REQUIRED_TARGET_SEAL_REPORTS),
+            "configured_targets": len(configured_targets),
         },
         "checks": [item.as_dict() for item in checks],
         "compatibility": compat.get("summary", {}),
