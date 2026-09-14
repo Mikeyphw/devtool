@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import contextlib
 import json
+import math
 import os
 import shutil
 import shlex
@@ -212,6 +213,14 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         handle.flush()
         os.fsync(handle.fileno())
 
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
 
 def _progress_current_total(progress: dict[str, Any] | None) -> tuple[Any, Any]:
     progress = progress or {}
@@ -1098,8 +1107,9 @@ class TaskerProgressSink:
             current["total"] = total
         if percent is None and completed is not None and total:
             percent = max(0.0, min(100.0, completed / total * 100.0))
-        if percent is not None:
-            current["percent"] = max(0.0, min(100.0, float(percent)))
+        percent_value = _finite_float(percent)
+        if percent_value is not None:
+            current["percent"] = max(0.0, min(100.0, percent_value))
         if warnings is not None:
             current["warnings"] = max(0, int(warnings))
         if errors is not None:
@@ -1213,8 +1223,9 @@ class TaskerProgressSink:
         self._last_update_at = now
         if percent is None and completed is not None and total:
             percent = max(0.0, min(100.0, completed / total * 100.0))
+        percent_value = _finite_float(percent)
         payload = {
-            "percent": percent,
+            "percent": percent_value,
             "current": completed,
             "completed": completed,
             "total": total,
@@ -1232,7 +1243,7 @@ class TaskerProgressSink:
             detail=detail,
             completed=completed,
             total=total,
-            percent=percent,
+            percent=percent_value,
             warnings=warnings,
             errors=errors,
             metrics=metrics,
@@ -1514,10 +1525,13 @@ class TaskerProgressSink:
         percent = None if not progress else progress.get("percent")
         if current is not None and total is not None:
             progress_text = f"{current}/{total}"
-            if isinstance(percent, (int, float)):
-                progress_text += f" ({percent:.0f}%)"
-        elif isinstance(percent, (int, float)):
-            progress_text = f"{percent:.0f}%"
+            percent_value = _finite_float(percent)
+            if percent_value is not None:
+                progress_text += f" ({percent_value:.0f}%)"
+        else:
+            percent_value = _finite_float(percent)
+            if percent_value is not None:
+                progress_text = f"{percent_value:.0f}%"
 
         detail = _human_detail(message)
         bits = []

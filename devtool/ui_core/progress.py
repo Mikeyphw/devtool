@@ -6,8 +6,10 @@ from typing import Any, Iterable
 from .state import UIOperationState, UIProgressState
 
 PROGRESS_SCHEMA_VERSION = 1
-_TERMINAL = {"ok", "passed", "success", "failed", "skipped", "cancelled", "blocked", "cached"}
-_SUCCESS = {"ok", "passed", "success", "cached"}
+_TERMINAL = {"ok", "passed", "success", "completed", "failed", "rollback-failed", "rollback_failed", "skipped", "cancelled", "interrupted", "blocked", "cached", "warning", "warnings"}
+_SUCCESS = {"ok", "passed", "success", "completed", "cached"}
+_PROBLEM = {"failed", "rollback-failed", "rollback_failed"}
+_CANCELLED = {"cancelled", "interrupted"}
 
 
 @dataclass(slots=True)
@@ -65,20 +67,21 @@ def summarize_progress(nodes: Iterable[UIProgressState]) -> UIProgressSummary:
             summary.completed_nodes += 1
         if status == "running":
             summary.running_nodes += 1
-            summary.active_ids.append(node.id)
+            if node.id not in summary.active_ids:
+                summary.active_ids.append(node.id)
         elif status in {"pending", "ready", "idle", "waiting"}:
             summary.pending_nodes += 1
-        elif status == "failed":
+        elif status in _PROBLEM:
             summary.failed_nodes += 1
         elif status == "blocked":
             summary.blocked_nodes += 1
         elif status == "skipped":
             summary.skipped_nodes += 1
-        elif status == "cancelled":
+        elif status in _CANCELLED:
             summary.cancelled_nodes += 1
         if node.percent is not None:
             weighted.append(max(0, min(100, int(node.percent))))
-        elif status in _SUCCESS or status in {"failed", "skipped", "cancelled", "blocked"}:
+        elif status in _SUCCESS or status in _PROBLEM or status in {"skipped", "cancelled", "interrupted", "blocked", "warning", "warnings"}:
             weighted.append(100)
         else:
             weighted.append(0)
@@ -133,10 +136,13 @@ def build_progress_tree(nodes: Iterable[UIProgressState], operation: UIOperation
     target_nodes: dict[str, UIProgressTreeNode] = {}
     workflow_nodes: dict[tuple[str, str], UIProgressTreeNode] = {}
     explicit: dict[str, UIProgressTreeNode] = {}
+    parent_by_id: dict[str, str] = {}
 
     for item in rows:
         node = _tree_node(item)
         explicit[item.id] = node
+        if item.parent_id:
+            parent_by_id[item.id] = item.parent_id
         if item.parent_id:
             continue
         target = item.target or operation.target
@@ -165,12 +171,22 @@ def build_progress_tree(nodes: Iterable[UIProgressState], operation: UIOperation
         parent.children.append(node)
 
     # Explicit parent links take precedence over synthesized target/workflow parents.
+    def would_cycle(child_id: str, parent_id: str) -> bool:
+        seen = {child_id}
+        cursor = parent_id
+        while cursor:
+            if cursor in seen:
+                return True
+            seen.add(cursor)
+            cursor = parent_by_id.get(cursor, "")
+        return False
+
     for item in rows:
         if not item.parent_id:
             continue
         node = explicit[item.id]
         parent = explicit.get(item.parent_id)
-        if parent is not None:
+        if parent is not None and not would_cycle(item.id, item.parent_id):
             parent.children.append(node)
         else:
             root.children.append(node)
@@ -183,12 +199,16 @@ def build_progress_tree(nodes: Iterable[UIProgressState], operation: UIOperation
             fold(child)
         if node.kind in {"target", "workflow"} and node.children:
             statuses = [child.status for child in node.children]
-            if any(value == "failed" for value in statuses):
+            if any(value in _PROBLEM for value in statuses):
                 node.status, node.token = "failed", "status.failed"
+            elif any(value in _CANCELLED for value in statuses):
+                node.status, node.token = "cancelled", "status.cancelled"
             elif any(value == "running" for value in statuses):
                 node.status, node.token = "running", "status.running"
             elif any(value == "blocked" for value in statuses):
                 node.status, node.token = "blocked", "status.blocked"
+            elif any(value in {"warning", "warnings"} for value in statuses):
+                node.status, node.token = "warning", "status.warning"
             elif all(value in _TERMINAL for value in statuses):
                 node.status, node.token = "ok", "status.success"
             percents = [value.percent for value in node.children if value.percent is not None]

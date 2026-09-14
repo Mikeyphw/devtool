@@ -164,7 +164,7 @@ def capabilities_for_surface(surface: str) -> UICapabilities:
     return UICapabilities(surface=normalized, **values)
 
 
-def negotiate_capabilities(surface: str, requested: Iterable[str] = ()) -> CapabilityNegotiation:
+def negotiate_capabilities(surface: str, requested: Iterable[str] = (), *, strict: bool = True) -> CapabilityNegotiation:
     capabilities = capabilities_for_surface(surface)
     normalized: list[str] = []
     for value in requested:
@@ -172,11 +172,11 @@ def negotiate_capabilities(surface: str, requested: Iterable[str] = ()) -> Capab
         if key and key not in normalized:
             normalized.append(key)
     unknown = [item for item in normalized if item not in CAPABILITY_NAMES]
-    if unknown:
+    if unknown and strict:
         raise ValueError(f"Unknown UI capability: {', '.join(unknown)}")
-    supported = tuple(item for item in normalized if bool(getattr(capabilities, item)))
-    missing = tuple(item for item in normalized if not bool(getattr(capabilities, item)))
-    fallbacks = {item: _CAPABILITY_FALLBACKS[item] for item in missing}
+    supported = tuple(item for item in normalized if item in CAPABILITY_NAMES and bool(getattr(capabilities, item)))
+    missing = tuple(item for item in normalized if item not in CAPABILITY_NAMES or not bool(getattr(capabilities, item)))
+    fallbacks = {item: _CAPABILITY_FALLBACKS.get(item, "unsupported capability ignored") for item in missing}
     return CapabilityNegotiation(
         surface=capabilities.surface,
         requested=tuple(normalized),

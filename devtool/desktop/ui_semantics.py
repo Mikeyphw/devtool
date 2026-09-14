@@ -30,6 +30,7 @@ class DesktopSemanticView:
     actions: list[dict[str, Any]] = field(default_factory=list)
     progress_summary: dict[str, Any] = field(default_factory=dict)
     progress_tree: list[dict[str, Any]] = field(default_factory=list)
+    phase_highlights: list[dict[str, Any]] = field(default_factory=list)
     diagnostic_summary: dict[str, Any] = field(default_factory=dict)
     diagnostics: list[dict[str, Any]] = field(default_factory=list)
     notifications: list[dict[str, Any]] = field(default_factory=list)
@@ -49,6 +50,7 @@ def build_desktop_semantic_view(ui_snapshot: Mapping[str, Any] | None) -> Deskto
     actions = _list_of_mappings(ui.get("actions"))
     progress_summary = _mapping(ui.get("progress_summary"))
     progress_tree = _list_of_mappings(ui.get("progress_tree"))
+    phase_highlights = _list_of_mappings(ui.get("phase_highlights"))
     diagnostic_summary = _mapping(ui.get("diagnostic_summary"))
     diagnostics = _list_of_mappings(ui.get("diagnostic_presentations"))
     notifications = _list_of_mappings(ui.get("notifications"))
@@ -80,6 +82,7 @@ def build_desktop_semantic_view(ui_snapshot: Mapping[str, Any] | None) -> Deskto
         actions=actions,
         progress_summary=progress_summary,
         progress_tree=progress_tree,
+        phase_highlights=phase_highlights,
         diagnostic_summary=diagnostic_summary,
         diagnostics=diagnostics,
         notifications=notifications,

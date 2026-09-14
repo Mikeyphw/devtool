@@ -55,15 +55,35 @@ def normalize_confirmation_policy(value: Mapping[str, Any] | None) -> dict[str, 
     return result
 
 
+def _context_bool(context: Mapping[str, Any], key: str, default: bool = False) -> bool:
+    value = context.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if value is None or value == "":
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _smart_required(policy_key: str, context: Mapping[str, Any]) -> tuple[bool, str]:
     if policy_key == "cancel":
-        risky = bool(context.get("destructive_phase_started") or context.get("has_uncommitted_mutation") or context.get("confirm_cancel"))
+        risky = _context_bool(context, "destructive_phase_started") or _context_bool(context, "has_uncommitted_mutation") or _context_bool(context, "confirm_cancel")
         return risky, "active operation has entered a mutation-sensitive phase" if risky else "graceful cancellation is reversible/safe at the current phase"
     if policy_key in {"apply_artifact", "artifact_manifest"}:
-        risky = bool(context.get("destructive") or context.get("deletes") or context.get("overwrites") or context.get("untrusted") or context.get("manifest_confirmation", True))
+        risky = (
+            _context_bool(context, "destructive")
+            or _context_bool(context, "deletes")
+            or _context_bool(context, "overwrites")
+            or _context_bool(context, "untrusted")
+            or _context_bool(context, "manifest_confirmation", True)
+        )
         return risky, "artifact apply may modify repository state" if risky else "artifact is non-destructive and already validated"
     if policy_key == "dirty_tree":
-        risky = bool(context.get("dirty_tree", True))
+        risky = _context_bool(context, "dirty_tree", True)
         return risky, "repository has uncommitted changes" if risky else "repository is clean"
     if policy_key in {"rollback", "delete_artifact", "snapshot_overwrite"}:
         return True, "operation can replace or remove existing state"
@@ -81,7 +101,7 @@ def confirmation_decision(
     normalized = normalize_confirmation_policy(policy)
     policy_key = _ACTION_POLICY_KEYS.get(action_id, str(ctx.get("policy_key") or action_id).strip().lower().replace(".", "_").replace("-", "_"))
     if policy_key not in normalized:
-        policy_key = "rollback" if bool(ctx.get("destructive")) else "retry"
+        policy_key = "rollback" if _context_bool(ctx, "destructive") else "retry"
     mode = normalized[policy_key]
     if mode == "always":
         required, reason = True, "policy requires confirmation"
@@ -101,7 +121,7 @@ def confirmation_decision(
             "dirty_tree": "Git tree is dirty. Continue?",
             "snapshot_overwrite": "Applying a snapshot may overwrite or delete files. Continue?",
         }.get(policy_key, "Continue?")
-    default = bool(ctx.get("default", policy_key not in {"rollback", "delete_artifact", "snapshot_overwrite"}))
+    default = _context_bool(ctx, "default", policy_key not in {"rollback", "delete_artifact", "snapshot_overwrite"})
     return ConfirmationDecision(action_id, policy_key, mode, required, default, label, reason)
 
 

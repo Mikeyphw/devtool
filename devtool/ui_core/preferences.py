@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import tomllib
 from functools import lru_cache
@@ -128,8 +129,11 @@ def _normalize_value(key: str, value: Any) -> Any:
         return _bool(value, key=key)
     if key in _INT_KEYS:
         try:
-            result = int(value)
-        except (TypeError, ValueError) as exc:
+            number = float(value)
+            if not math.isfinite(number):
+                raise ValueError("non-finite integer")
+            result = int(number)
+        except (TypeError, ValueError, OverflowError) as exc:
             raise UIPreferencesError(f"Invalid UI integer for {key}: {value!r}") from exc
         if result < 0:
             raise UIPreferencesError(f"Invalid UI {key}={value!r}; expected >= 0")
@@ -279,7 +283,7 @@ def resolve_ui_preferences(
 ) -> UIPreferences:
     config = dict(ui_config or {})
     validate_ui_config(config)
-    environment = env or os.environ
+    environment = os.environ if env is None else env
     resolved_surface = normalize_surface(surface)
     cli_overrides = dict(overrides or {})
     requested_profile = str(
@@ -317,7 +321,7 @@ def resolve_ui_preferences(
 
 
 def user_ui_config_path(env: Mapping[str, str] | None = None) -> Path:
-    environment = env or os.environ
+    environment = os.environ if env is None else env
     explicit = str(environment.get("DEVTOOL_GLOBAL_CONFIG", "") or "").strip()
     if explicit:
         return Path(explicit).expanduser()
@@ -348,7 +352,7 @@ def load_user_ui_config(env: Mapping[str, str] | None = None) -> dict[str, Any]:
 
 
 def resolve_user_ui_preferences(*, surface: str = "machine", overrides: Mapping[str, Any] | None = None, env: Mapping[str, str] | None = None) -> UIPreferences:
-    environment = env or os.environ
+    environment = os.environ if env is None else env
     return resolve_ui_preferences(load_user_ui_config(environment), surface=surface, overrides=overrides, env=environment)
 
 def profile_catalog(ui_config: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:

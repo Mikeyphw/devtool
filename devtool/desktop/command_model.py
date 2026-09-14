@@ -20,7 +20,13 @@ def split_extra_arguments(value: str | Iterable[str] | None) -> list[str]:
         text = value.strip()
         if not text:
             return []
-        return shlex.split(text)
+        try:
+            return shlex.split(text)
+        except ValueError:
+            # Keep previews/editing alive for partially typed quotes.  Treat the
+            # whole field as one literal argument; shell_command() will quote it
+            # safely and review_payload() can still surface a runnable argv.
+            return [text]
     return [str(part) for part in value if str(part)]
 
 
@@ -58,6 +64,7 @@ class DevtoolCommandDraft:
     operation: str
     devtool: str = "devtool"
     target: str = ""
+    variant: str = ""
     project_type: str = ""
     execution_environment: str = ""
     artifact: str = ""
@@ -224,6 +231,8 @@ class DevtoolCommandDraft:
         argv.extend(["-r", repo])
         if self.target.strip():
             argv.extend(["--target", self.target.strip()])
+        if self.variant.strip():
+            argv.extend(["--variant", self.variant.strip()])
         argv.extend(self.extra_global_args)
         operation = self.operation_argv()
         if not operation:

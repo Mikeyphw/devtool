@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 import queue
 import re
 import signal
@@ -37,6 +38,20 @@ def _trim_log_line(line: str) -> str:
     return line if len(line) <= MAX_LOG_LINE_CHARS else line[:MAX_LOG_LINE_CHARS] + "…<truncated>"
 
 
+def _line_severity(line: str) -> str:
+    text = str(line or "")
+    lowered = text.casefold()
+    if re.search(r"\b(?:0|zero)\s+(?:failed|failures|errors|exceptions)\b", lowered):
+        return "warning" if _WARNING_RE.search(text) else ""
+    if re.search(r"\b(?:build|tests?|task|operation)\s+(?:successful|succeeded|completed)\b", lowered):
+        return "warning" if _WARNING_RE.search(text) else ""
+    if _ERROR_RE.search(text):
+        return "error"
+    if _WARNING_RE.search(text):
+        return "warning"
+    return ""
+
+
 @dataclass(slots=True)
 class DesktopRunHandle:
     """Runtime identity for a Control Center-launched Devtool process."""
@@ -71,9 +86,13 @@ class DesktopRunHandle:
         elapsed = f" · {self.elapsed_seconds:.1f}s"
         if rc is None:
             return f"{self.run_id} · running{phase}{elapsed}"
+        if self.status == "cancelled":
+            return f"{self.run_id} · cancelled{phase}{elapsed}"
         return f"{self.run_id} · exit {rc}{phase}{elapsed}"
 
     def failure_summary(self) -> str:
+        if self.status == "cancelled":
+            return "Desktop-launched run was cancelled."
         for item in reversed(self.diagnostics):
             if item.get("severity") == "error":
                 return item.get("message") or f"Run exited {self.returncode}"
@@ -106,8 +125,8 @@ class DesktopRunLauncher:
         on_output: OutputCallback | None = None,
         on_exit: ExitCallback | None = None,
     ) -> DesktopRunHandle:
-        clean_argv = [str(part) for part in argv if str(part)]
-        if not clean_argv:
+        clean_argv = [str(part) for part in argv]
+        if not clean_argv or not clean_argv[0]:
             raise ValueError("Cannot launch an empty command argv.")
         run_id = f"desktop-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
         cwd_path = Path(cwd).expanduser().resolve()
@@ -118,7 +137,9 @@ class DesktopRunLauncher:
         env["DEVTOOL_CONTROL_CENTER_ACTIVE"] = "1"
         env["DEVTOOL_DESKTOP_RUN_ID"] = run_id
         log_path = self.state_dir / f"{run_id}.log"
-        with log_path.open("w", encoding="utf-8") as handle:
+        fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.chmod(log_path, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(redact_text("$ " + " ".join(clean_argv)) + "\n")
             handle.write(f"cwd={redact_text(cwd_path)}\nrun_id={run_id}\n\n")
         process = subprocess.Popen(
@@ -170,7 +191,15 @@ class DesktopRunLauncher:
         finished_readers = 0
         try:
             while finished_readers < len(readers):
-                item = output_queue.get()
+                try:
+                    item = output_queue.get(timeout=0.2)
+                except queue.Empty:
+                    if handle.process.poll() is not None:
+                        # The direct child exited; do not let grandchildren that
+                        # inherited stdout/stderr keep the desktop run visually
+                        # stuck forever. Drain whatever has arrived and finish.
+                        break
+                    continue
                 if item is None:
                     finished_readers += 1
                     continue
@@ -180,12 +209,18 @@ class DesktopRunLauncher:
                 self._notify_output(on_output, channel, clean_line)
             handle.returncode = handle.process.wait()
             handle.ended_at = time.time()
-            handle.status = "completed" if handle.returncode == 0 else "failed"
+            if handle.status in {"cancelling", "force-cancelling"}:
+                handle.status = "cancelled"
+            else:
+                handle.status = "completed" if handle.returncode == 0 else "failed"
             with handle.log_path.open("a", encoding="utf-8") as log:
                 log.write(f"\nexit={handle.returncode}\nelapsed_seconds={handle.elapsed_seconds:.3f}\n")
         finally:
             if on_exit is not None:
-                on_exit(handle)
+                try:
+                    on_exit(handle)
+                except Exception as exc:
+                    _bounded_append(handle.diagnostics, {"severity": "warning", "message": f"Desktop exit callback failed: {redact_text(exc)}", "source": "desktop-run"}, MAX_DIAGNOSTICS)
 
     def _record_output(self, handle: DesktopRunHandle, channel: str, line: str) -> None:
         clean_line = _trim_log_line(line)
@@ -198,7 +233,7 @@ class DesktopRunLauncher:
         phase_match = _PHASE_RE.search(clean_line)
         if phase_match:
             handle.current_phase = phase_match.group("name").strip()
-        severity = "error" if _ERROR_RE.search(clean_line) else "warning" if _WARNING_RE.search(clean_line) else ""
+        severity = _line_severity(clean_line)
         if severity:
             diagnostic = {"severity": severity, "message": clean_line[:500], "source": channel}
             if diagnostic not in handle.diagnostics:
@@ -212,7 +247,12 @@ class DesktopRunLauncher:
         try:
             on_output(channel, line)
         except TypeError:
-            on_output(f"[{channel}] {line}")
+            try:
+                on_output(f"[{channel}] {line}")
+            except Exception:
+                return
+        except Exception:
+            return
 
     def get(self, run_id: str) -> DesktopRunHandle | None:
         with self._lock:

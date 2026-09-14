@@ -1607,6 +1607,7 @@ def _render_artifacts(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     artifact_entry.set_placeholder_text("Artifact path, overlay bundle, or manifest")
     repo_entry = Gtk.Entry()
     repo_entry.set_placeholder_text("Repository override")
+    repo_entry.set_text(str(payload.get("repository", {}).get("path") or ""))
     inputs.attach(Gtk.Label(label="Artifact", xalign=0.0), 0, 0, 1, 1)
     inputs.attach(artifact_entry, 1, 0, 1, 1)
     inputs.attach(Gtk.Label(label="Repository", xalign=0.0), 0, 1, 1, 1)
@@ -1632,7 +1633,18 @@ def _render_artifacts(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         query = str(search.get_text() or "")
         prefs.set_filter_value("artifacts", "query", query)
         prefs.save("control-center")
-        visible = [item for item in candidates if isinstance(item, dict) and _matches_search(item, query)]
+        manual_artifact = str(artifact_entry.get_text() or "").strip()
+        manual_repo = str(repo_entry.get_text() or "").strip()
+        manual_candidates: list[dict[str, Any]] = []
+        if manual_artifact:
+            manual_candidates.append({
+                "artifact": Path(manual_artifact).name or manual_artifact,
+                "artifact_path": manual_artifact,
+                "repo_root": manual_repo,
+                "status": "manual-input",
+                "validation": "pending inspection",
+            })
+        visible = [item for item in [*manual_candidates, *candidates] if isinstance(item, dict) and _matches_search(item, query)]
         count_label.set_label(f"{len(visible)} visible")
         if not visible:
             _append_text(Gtk, list_box, "No artifacts match the current filter.")
@@ -1673,14 +1685,19 @@ def _render_artifacts(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             ])
             artifact_path = str(item.get("artifact_path") or item.get("path") or item.get("file") or "")
             sha256 = str(item.get("sha256") or "")
-            _append_button_row(Gtk, item_surface, [
+            buttons = [
                 ("Inspect manifest", _copy_text_callback(Gtk, item_surface, json.dumps(item, ensure_ascii=False, indent=2))),
                 ("Open containing folder", _open_path_callback(artifact_path)),
                 ("Copy SHA-256", _copy_text_callback(Gtk, item_surface, sha256)),
-            ])
+            ]
+            if artifact_path:
+                buttons.append(("Use in Run page", _copy_text_callback(Gtk, item_surface, artifact_path)))
+            _append_button_row(Gtk, item_surface, buttons)
             list_box.append(item_surface)
 
     search.connect("search-changed", render_filtered)
+    artifact_entry.connect("changed", render_filtered)
+    repo_entry.connect("changed", render_filtered)
     render_filtered()
 
 
@@ -2360,7 +2377,10 @@ def _write_desktop_run_hud_failure(payload: dict[str, Any], handle: DesktopRunHa
             },
         }
         _atomic_write_json(directory / "state.json", state)
-        with (directory / "events.jsonl").open("a", encoding="utf-8") as events:
+        events_path = directory / "events.jsonl"
+        fd = os.open(events_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.chmod(events_path, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as events:
             events.write(json.dumps({"run_id": handle.run_id, "event_type": "desktop-run-failed", "status": "failed", "message": state["text"], "diagnostics": diagnostics}, ensure_ascii=False) + "\n")
     except Exception as exc:
         append_gtk_log("control-center", "Failed to publish desktop run failure to HUD", exc)

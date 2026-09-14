@@ -218,6 +218,7 @@ def draft_from_payload(payload: RunWorkflowDraftPayload, *, devtool: str = "devt
         operation=normalize_operation(payload.operation),
         devtool=devtool,
         target=payload.target,
+        variant=payload.variant,
         project_type=payload.project_type,
         execution_environment=payload.execution_environment,
         artifact=payload.artifact,

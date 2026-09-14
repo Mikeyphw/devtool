@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from dataclasses import asdict, dataclass, field
@@ -51,8 +52,11 @@ class DesktopPreferences:
     def from_mapping(cls, data: Mapping[str, Any]) -> "DesktopPreferences":
         def integer(key: str, default: int) -> int:
             try:
-                return int(data.get(key, default))
-            except (TypeError, ValueError):
+                number = float(data.get(key, default))
+                if not math.isfinite(number):
+                    return default
+                return int(number)
+            except (TypeError, ValueError, OverflowError):
                 return default
 
         def boolean(key: str, env_key: str = "") -> bool:

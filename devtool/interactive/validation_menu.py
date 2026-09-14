@@ -1531,7 +1531,10 @@ def _preview_session(catalog: ValidationCatalog) -> str:
 
 
 def _preview_control(catalog: ValidationCatalog, action: str) -> str:
-    return _preview_session(catalog) + f"\n\n## Command shape\n\n```bash\ndevtool validate {action} --session {catalog.session.get('session_id', '')} --if-revision {catalog.revision}\n```"
+    command = f"devtool validate {action} --session {catalog.session.get('session_id', '')}"
+    if action not in {"status", "events", "plan", "report"}:
+        command += f" --if-revision {catalog.revision}"
+    return _preview_session(catalog) + f"\n\n## Command shape\n\n```bash\n{command}\n```"
 
 
 def _preview_run_scope(catalog: ValidationCatalog, scope: str) -> str:

@@ -27,7 +27,17 @@ class DesktopIpcClient:
                 sock.settimeout(self.timeout_s)
                 sock.connect(str(path))
                 sock.sendall(b'{"type":"subscribe"}\n')
-                data = sock.recv(1024 * 512)
+                chunks: list[bytes] = []
+                remaining = 1024 * 512
+                while remaining > 0:
+                    chunk = sock.recv(min(16384, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                    if b"\n" in chunk:
+                        break
+                data = b"".join(chunks)
         except OSError:
             return {"ok": False, "runs": [], "socket": str(path), "error": "ipc unavailable"}
         try:

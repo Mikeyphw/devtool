@@ -48,7 +48,9 @@ def append_gtk_log(app_slug: str, message: str, exc: BaseException | None = None
     parts = [f"[{now}] pid={os.getpid()} {redact_text(message).rstrip()}"]
     if exc is not None:
         parts.append(format_exception(exc).rstrip())
-    with path.open("a", encoding="utf-8") as handle:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.chmod(path, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
         handle.write("\n".join(part for part in parts if part))
         handle.write("\n")
     return path

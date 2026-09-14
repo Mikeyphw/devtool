@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -126,8 +128,8 @@ class DesktopControlCenterModel:
         self.variant = variant
         self.state_dir = Path(state_dir).expanduser()
         self.follow_active = follow_active
-        self.history_limit = max(0, int(history_limit))
-        self.recent_events = max(0, int(recent_events))
+        self.history_limit = _safe_nonnegative_int(history_limit, 25)
+        self.recent_events = _safe_nonnegative_int(recent_events, 8)
         self.ipc_socket = ipc_socket
 
     def load_config(self) -> ProjectConfig:
@@ -146,12 +148,10 @@ class DesktopControlCenterModel:
         hud = load_hud_snapshot(self.state_dir, follow_active=self.follow_active, recent_events=self.recent_events)
         ipc = DesktopIpcClient(socket_path=self.ipc_socket).snapshot()
         raw_state = _read_raw_hud_state(hud.directory) or hud.state
-        if raw_state and not self.follow_active:
-            raw_runs = [dict(raw_state)]
-            diagnostic_runs = [dict(raw_state)]
-        else:
-            raw_runs = _raw_runs_from_ipc_or_hud(ipc, hud.state)
-            diagnostic_runs = _raw_runs_from_ipc_or_hud(ipc, raw_state)
+        # Prefer live IPC when available; local HUD files are fallback/cache.
+        # This prevents a stale state.json from shadowing an active broker run.
+        raw_runs = _raw_runs_from_ipc_or_hud(ipc, raw_state or hud.state)
+        diagnostic_runs = _raw_runs_from_ipc_or_hud(ipc, raw_state or hud.state)
         active_runs = [_run_summary_dict(item) for item in raw_runs]
         diagnostics = _diagnostics_from_runs_and_events(diagnostic_runs, hud.events)
         memberships = workspace_group_memberships(config.workspace, config.targets)
@@ -164,8 +164,9 @@ class DesktopControlCenterModel:
             )
             for name, target in sorted(config.targets.items())
         ]
+        semantic_source = raw_runs[0] if raw_runs else (raw_state or {})
         semantic_ui = runtime_state_to_ui_snapshot(
-            raw_state or {},
+            semantic_source,
             surface="desktop",
             workspace={
                 "name": config.repo_root.name,
@@ -179,6 +180,7 @@ class DesktopControlCenterModel:
             },
             preferences=config.ui_config,
         ).as_dict()
+        semantic_ui = {**semantic_ui, "phase_highlights": hud.phase_highlights}
         return DesktopControlCenterSnapshot(
             repository={**_repository_dict(repo), "state_dir": str(self.state_dir)},
             project={
@@ -220,6 +222,43 @@ class DesktopControlCenterModel:
             ui=semantic_ui,
             desktop_ui=build_desktop_semantic_view(semantic_ui).as_dict(),
         )
+
+
+def _safe_nonnegative_int(value: Any, default: int) -> int:
+    try:
+        number = float(value)
+        if not math.isfinite(number):
+            return default
+        return max(0, int(number))
+    except (TypeError, ValueError, OverflowError):
+        return max(0, int(default))
+
+
+def _timestamp_order(value: Any) -> float:
+    if value is None or value == "":
+        return -1.0
+    try:
+        number = float(value)
+        if math.isfinite(number):
+            return number / 1000.0 if number > 10_000_000_000 else number
+    except (TypeError, ValueError, OverflowError):
+        pass
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError):
+        return -1.0
+
+
+def _run_order(item: dict[str, Any]) -> tuple[int, float]:
+    seq = item.get("sequence", item.get("seq", -1))
+    try:
+        seq_i = int(seq)
+    except (TypeError, ValueError):
+        seq_i = -1
+    return seq_i, _timestamp_order(item.get("updated_at") or item.get("updated_at_ms"))
 
 
 def _read_raw_hud_state(directory: Path) -> dict[str, Any]:
@@ -270,7 +309,9 @@ def _raw_runs_from_ipc_or_hud(ipc: dict[str, Any], hud_state: dict[str, Any]) ->
     raw_runs = ipc.get("runs") if isinstance(ipc.get("runs"), list) else []
     runs = [dict(item) for item in raw_runs if isinstance(item, dict)]
     if runs:
-        return runs
+        if hud_state and str(hud_state.get("run_id") or hud_state.get("id") or "") not in {str(item.get("run_id") or item.get("id") or "") for item in runs}:
+            runs.append(dict(hud_state))
+        return sorted(runs, key=_run_order, reverse=True)
     if hud_state:
         return [dict(hud_state)]
     return []
@@ -294,8 +335,9 @@ def _run_summary_dict(item: dict[str, Any]) -> dict[str, Any]:
     errors, warnings = live_issue_counts(events, state)
     percent = item.get("percent")
     try:
-        percent_value = int(percent) if percent is not None and str(percent) != "" else None
-    except (TypeError, ValueError):
+        number = float(percent) if percent is not None and str(percent) != "" else None
+        percent_value = int(number) if number is not None and math.isfinite(number) else None
+    except (TypeError, ValueError, OverflowError):
         percent_value = None
     if percent_value is None:
         percent_value = state.percent

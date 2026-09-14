@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from typing import Any, Iterable, Mapping
 
@@ -33,9 +34,25 @@ def _integer(value: Any) -> int | None:
     try:
         if value is None or value == "":
             return None
-        return int(round(float(value)))
-    except (TypeError, ValueError):
+        number = float(value)
+        if not math.isfinite(number):
+            return None
+        return int(round(number))
+    except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _flag(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None or value == "":
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _percent(value: Any, current: int | None = None, total: int | None = None) -> int | None:
@@ -106,7 +123,7 @@ def _diagnostics(raw: Mapping[str, Any]) -> list[UIDiagnosticState]:
                 location += f":{line}"
             if column is not None:
                 location += f":{column}"
-        key = (severity, code, location or file_name, re.sub(r"\s+", " ", message).casefold())
+        key = (severity, code, item_phase, location or file_name, re.sub(r"\s+", " ", message).casefold())
         if key in seen:
             return
         seen.add(key)
@@ -168,11 +185,15 @@ def _diagnostics(raw: Mapping[str, Any]) -> list[UIDiagnosticState]:
 
 def _progress_nodes(raw: Mapping[str, Any]) -> list[UIProgressState]:
     result: list[UIProgressState] = []
+    seen_ids: dict[str, int] = {}
     phase_progress = raw.get("phase_progress") if isinstance(raw.get("phase_progress"), list) else []
     for index, item in enumerate(phase_progress):
         if not isinstance(item, Mapping):
             continue
-        phase_id = _text(item.get("phase_id") or item.get("node_id") or item.get("key") or item.get("name") or item.get("command")) or f"step-{index + 1}"
+        base_phase_id = _text(item.get("phase_id") or item.get("node_id") or item.get("key") or item.get("name") or item.get("command")) or f"step-{index + 1}"
+        count = seen_ids.get(base_phase_id, 0) + 1
+        seen_ids[base_phase_id] = count
+        phase_id = base_phase_id if count == 1 else f"{base_phase_id}#{count}"
         current = _integer(item.get("current") if item.get("current") is not None else item.get("completed"))
         total = _integer(item.get("total"))
         percent = _percent(item.get("percent"), current, total)
@@ -186,6 +207,8 @@ def _progress_nodes(raw: Mapping[str, Any]) -> list[UIProgressState]:
         for metric_key in ("tests_passed", "tests_failed", "tests_skipped", "tests_total", "test_assemblies", "unit_label", "command"):
             if metric_key in item:
                 metrics = {**dict(metrics), metric_key: item.get(metric_key)}
+        if phase_id != base_phase_id:
+            metrics = {**dict(metrics), "original_id": base_phase_id}
         blocked_by = item.get("blocked_by") or []
         dependencies = item.get("depends_on") or item.get("dependencies") or []
         if isinstance(blocked_by, str): blocked_by = [blocked_by]
@@ -258,21 +281,35 @@ def runtime_state_to_ui_snapshot(
     workspace_override = workspace or {}
     selection_override = selection or {}
     if isinstance(preferences, UIPreferences):
-        resolved_preferences = preferences
+        try:
+            resolved_preferences = resolve_ui_preferences(preferences.as_dict(), surface=surface, env={})
+        except Exception:
+            resolved_preferences = resolve_ui_preferences({}, surface=surface, env={})
     elif preferences is None:
         resolved_preferences = resolve_user_ui_preferences(surface=surface)
     elif isinstance(preferences, Mapping) and "provenance" in preferences and "surface" in preferences:
         # Live-state producers may carry an already-resolved per-surface
-        # presentation across IPC/files. Rehydrate it rather than treating the
-        # resolved object as raw [ui] configuration.
-        fields = {
-            key: value for key, value in preferences.items()
-            if key in UIPreferences.__dataclass_fields__
+        # presentation across IPC/files.  Treat that payload as untrusted input:
+        # re-normalize public preference fields so stale IPC/state cannot smuggle
+        # NaN/inf numbers or unsupported enum values into renderers.  Bad stale
+        # preference snapshots fall back to safe defaults instead of crashing UI.
+        preference_keys = {
+            "profile", "theme", "density", "icons", "motion", "verbosity",
+            "timestamps", "duration_format", "confirm_destructive",
+            "confirm_cancel", "show_completed_steps", "show_environment",
+            "show_commands", "show_diagnostics", "sidebar", "mouse",
+            "max_steps", "notification_detail",
         }
-        fields["surface"] = surface
-        resolved_preferences = UIPreferences(**fields)
+        config_like = {key: preferences[key] for key in preference_keys if key in preferences}
+        try:
+            resolved_preferences = resolve_ui_preferences(config_like, surface=surface, env={})
+        except Exception:
+            resolved_preferences = resolve_ui_preferences({}, surface=surface, env={})
     else:
-        resolved_preferences = resolve_ui_preferences(preferences, surface=surface)
+        try:
+            resolved_preferences = resolve_ui_preferences(preferences, surface=surface)
+        except Exception:
+            resolved_preferences = resolve_ui_preferences({}, surface=surface, env={})
     raw_targets = state.get("targets") if isinstance(state.get("targets"), list) else []
     targets = _unique([*raw_targets, state.get("target")])
     selected_groups = _unique(selection_override.get("groups", []) if isinstance(selection_override.get("groups"), list) else [])
@@ -308,7 +345,7 @@ def runtime_state_to_ui_snapshot(
     if str(surface or "machine") not in {"machine", "hud"} and "interactive" not in capability_requirements:
         capability_requirements.append("interactive")
     capabilities = capabilities_for_surface(surface)
-    negotiation = negotiate_capabilities(surface, capability_requirements)
+    negotiation = negotiate_capabilities(surface, capability_requirements, strict=False)
     viewport_state = viewport or (state.get("ui_viewport") if isinstance(state.get("ui_viewport"), Mapping) else {}) or {}
     responsive = resolve_responsive_layout(
         surface,
@@ -329,9 +366,10 @@ def runtime_state_to_ui_snapshot(
         has_diagnostics=bool(diagnostics),
         has_artifact=bool(state.get("artifact") or state.get("artifact_path") or state.get("overlay")),
         has_test_selection=bool(state.get("test_selection")),
-        retryable=bool(state.get("retryable", True)),
-        resumable=bool(state.get("resumable") or status == "paused"),
-        cancellable=bool(state.get("cancellable", True)),
+        retryable=_flag(state.get("retryable"), True),
+        resumable=_flag(state.get("resumable"), False) or status == "paused",
+        cancellable=_flag(state.get("cancellable"), True),
+        payload={"has_uncommitted_mutation": _flag(state.get("has_uncommitted_mutation"), False)},
     )
     return UISnapshot(
         workspace=UIWorkspaceState(

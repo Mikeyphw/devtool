@@ -165,10 +165,13 @@ def _semantic_live_panels(snapshot: dict[str, Any], profile: TerminalProfile) ->
     status_icon = resolve_icon(ui.operation.token, mode=icon_mode, surface="tui")
     progress = ui.progress_summary
     progress_text = "-"
-    if progress.get("percent") is not None:
-        progress_text = f"{progress['percent']}%"
-    if progress.get("completed") is not None and progress.get("total"):
-        progress_text += f" · {progress['completed']}/{progress['total']}"
+    overall = progress.get("overall_percent")
+    if overall is not None:
+        progress_text = f"{overall}%"
+    completed = progress.get("completed_nodes")
+    total = progress.get("total_nodes")
+    if completed is not None and total:
+        progress_text += f" · {completed}/{total}"
     rows: list[tuple[str, Any]] = [
         ("Status", f"{status_icon} {copy_text(ui.operation.token, surface='tui') if ui.operation.token in {'status.success','status.running','status.pending','status.failed','status.warning','status.skipped','status.cancelled','status.blocked'} else ui.operation.status}"),
         ("Phase", ui.operation.phase or "-"),
@@ -183,7 +186,8 @@ def _semantic_live_panels(snapshot: dict[str, Any], profile: TerminalProfile) ->
         ])
     panels: list[Any] = [_kv_panel("Live build/test run", rows, profile=profile)]
 
-    visible = [node for node in ui.progress if ui.presentation.show_completed_steps or node.status not in {"ok", "skipped"}]
+    completed_statuses = {"ok", "passed", "success", "completed", "cached", "skipped"}
+    visible = [node for node in ui.progress if ui.presentation.show_completed_steps or node.status not in completed_statuses]
     if ui.presentation.max_steps > 0:
         visible = visible[: ui.presentation.max_steps]
     if visible:

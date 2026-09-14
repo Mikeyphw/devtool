@@ -12,4 +12,7 @@ class DesktopHistoryStore:
         from ..artifacts import load_history
 
         entries = load_history(self.repository)
-        return [dict(entry) for entry in entries[-max(0, limit):]]
+        normalized_limit = max(0, int(limit))
+        if normalized_limit <= 0:
+            return []
+        return [dict(entry) for entry in entries[-normalized_limit:]]

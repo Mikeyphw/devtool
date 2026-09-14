@@ -74,11 +74,15 @@ class ActionContext:
 
     @property
     def terminal(self) -> bool:
-        return self.status in {"ok", "failed", "cancelled", "interrupted", "skipped", "rolled-back", "rolled_back"}
+        return self.status in {
+            "ok", "passed", "success", "completed", "failed", "rollback-failed",
+            "rollback_failed", "cancelled", "interrupted", "skipped", "cached",
+            "rolled-back", "rolled_back", "warning", "warnings", "blocked",
+        }
 
     @property
     def failed(self) -> bool:
-        return self.status in {"failed", "cancelled", "interrupted"}
+        return self.status in {"failed", "rollback-failed", "rollback_failed", "cancelled", "interrupted"}
 
     @property
     def validation(self) -> bool:
@@ -169,6 +173,8 @@ def available_action_ids(context: ActionContext) -> list[str]:
         result.append("summary.copy")
     if context.has_diagnostics:
         result.append("diagnostics.copy")
+    if context.has_artifact:
+        result.append("artifact.apply")
     if context.target:
         result.append("workflow.inspect")
     return result
@@ -180,14 +186,21 @@ def actions_for_context(context: ActionContext, *, confirmation_policy: Mapping[
         "destructive_phase_started": context.running and context.command in {"apply", "apply-overlay", "apply-snapshot", "package"},
         "has_uncommitted_mutation": bool(context.payload.get("has_uncommitted_mutation")),
     }
-    return [
-        action_spec(action_id).present(
+    actions: list[UIActionState] = []
+    for action_id in available_action_ids(context):
+        enabled = True
+        disabled_reason = ""
+        if action_id == "operation.cancel" and not context.run_id:
+            enabled = False
+            disabled_reason = "No active run id is available for cancellation."
+        actions.append(action_spec(action_id).present(
+            enabled=enabled,
+            disabled_reason=disabled_reason,
             payload=payload,
             confirmation_policy=confirmation_policy,
             confirmation_context=confirmation_context,
-        )
-        for action_id in available_action_ids(context)
-    ]
+        ))
+    return actions
 
 
 def action_text(action_id: str, variant: str = "label") -> str:
