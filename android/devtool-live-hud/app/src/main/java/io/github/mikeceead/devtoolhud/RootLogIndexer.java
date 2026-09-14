@@ -28,8 +28,9 @@ final class RootLogIndexer {
     static final String EXTRA_ERROR = "error";
     private static final AtomicBoolean BUSY = new AtomicBoolean(false);
     private static volatile long lastStartedAt;
-    private static final int CHUNK_BYTES = 512 * 1024;
+    private static final int CHUNK_BYTES = 256 * 1024;
     private static final int MAX_CHUNKS_PER_FILE = 8;
+    private static final long MAX_SCAN_BYTES_PER_FILE = (long) CHUNK_BYTES * MAX_CHUNKS_PER_FILE;
     private static final int MAX_FILES_PER_SOURCE = 300;
     private static final Pattern DIAGNOSTIC = Pattern.compile("(?i)\\b([A-Z]{1,6}\\d{3,6})\\b");
     private static final Pattern TEST_TOTALS = Pattern.compile(
@@ -127,7 +128,9 @@ final class RootLogIndexer {
             cursor.modifiedAt = file.modifiedAt;
             cursor.parserType = file.path.endsWith("events.jsonl") ? "jsonl" : "text";
             int chunks = 0;
-            while (cursor.byteOffset < file.size && chunks++ < MAX_CHUNKS_PER_FILE) {
+            long scanStart = cursor.byteOffset;
+            while (cursor.byteOffset < file.size && chunks++ < MAX_CHUNKS_PER_FILE
+                    && cursor.byteOffset - scanStart < MAX_SCAN_BYTES_PER_FILE) {
                 int count = (int) Math.min(CHUNK_BYTES, file.size - cursor.byteOffset);
                 RootCommandBroker.CommandResult read = broker.execute(source.location,
                         readCommand(file.path, cursor.byteOffset, count), 20L);

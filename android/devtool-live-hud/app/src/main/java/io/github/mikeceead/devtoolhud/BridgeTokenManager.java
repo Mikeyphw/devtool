@@ -14,6 +14,7 @@ final class BridgeTokenManager {
 
     private static final String PREFS = "bridge_token_state";
     private static final String KEY_VERIFIED_HASH = "verified_hash";
+    private static final String KEY_VERIFIED_GENERATION = "verified_generation";
     private static final String KEY_BUSY = "busy";
     private static final String KEY_ERROR = "error";
 
@@ -26,7 +27,9 @@ final class BridgeTokenManager {
         if (prefs.getBoolean(KEY_BUSY, false)) return "working";
         String verified = prefs.getString(KEY_VERIFIED_HASH, "");
         if (verified == null || verified.isEmpty()) return "not-installed";
-        return verified.equals(hash(BridgeSecrets.getOrCreateToken(context))) ? "connected" : "outdated";
+        long verifiedGeneration = prefs.getLong(KEY_VERIFIED_GENERATION, 0L);
+        return verified.equals(hash(BridgeSecrets.getOrCreateToken(context)))
+                && verifiedGeneration == BridgeSecrets.generation(context) ? "connected" : "outdated";
     }
 
     static String detail(Context context) {
@@ -119,12 +122,14 @@ final class BridgeTokenManager {
         boolean ok = exitCode == 0 && (error == null || error.trim().isEmpty()) && marker;
         SharedPreferences.Editor edit = prefs(context).edit().putBoolean(KEY_BUSY, false);
         if (ok) {
-            edit.putString(KEY_VERIFIED_HASH, expectedHash).putString(KEY_ERROR, "");
+            edit.putString(KEY_VERIFIED_HASH, expectedHash)
+                    .putLong(KEY_VERIFIED_GENERATION, BridgeSecrets.generation(context))
+                    .putString(KEY_ERROR, "");
         } else {
             String detail = firstNonEmpty(error, stderr,
                     operation.equals(OP_VERIFY) ? "Token verification failed" : "Token installation failed");
             edit.putString(KEY_ERROR, detail);
-            if (operation.equals(OP_VERIFY)) edit.remove(KEY_VERIFIED_HASH);
+            if (operation.equals(OP_VERIFY)) edit.remove(KEY_VERIFIED_HASH).remove(KEY_VERIFIED_GENERATION);
         }
         edit.apply();
         notifyChanged(context);

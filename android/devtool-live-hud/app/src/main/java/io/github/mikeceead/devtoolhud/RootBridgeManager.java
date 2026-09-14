@@ -13,8 +13,10 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -30,7 +32,17 @@ final class RootBridgeManager {
     private static final String BRIDGE = "/data/adb/modules/devtool_bridge/bin/devtool-root-bridge";
     private static final String BRIDGE_UPDATE = "/data/adb/modules_update/devtool_bridge/bin/devtool-root-bridge";
     private static final String BRIDGE_LEGACY = "/data/adb/devtool-bridge/bin/devtool-root-bridge";
-    private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
+    private static final ThreadPoolExecutor EXECUTOR = new ThreadPoolExecutor(
+            1, 3, 30L, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(32),
+            new ThreadFactory() {
+                private final java.util.concurrent.atomic.AtomicInteger ids = new java.util.concurrent.atomic.AtomicInteger();
+                @Override public Thread newThread(Runnable runnable) {
+                    Thread thread = new Thread(runnable, "devtool-root-bridge-" + ids.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                }
+            },
+            new ThreadPoolExecutor.AbortPolicy());
     private static final SecureRandom IDS = new SecureRandom();
     private static volatile Process activeProcess;
     private static volatile String activeRunId = "";
@@ -103,7 +115,7 @@ final class RootBridgeManager {
     static void refresh(Context context) {
         Context app = context.getApplicationContext();
         setState(app, "checking", "", "");
-        EXECUTOR.execute(() -> {
+        if (!submit(app, "Root bridge refresh queue is full", () -> {
             String token = BridgeSecrets.getOrCreateToken(app);
             CommandResult result = rootCommand(bridgeInvocation("status " + shellQuote(token)), SHORT_COMMAND_TIMEOUT_SECONDS);
             if (result.exitCode == 0 && result.output.contains("\"installed\":true")) {
@@ -137,14 +149,14 @@ final class RootBridgeManager {
                     setState(app, "error", compact(result.output, "Unable to query the root bridge"), "");
                 }
             }
-        });
+        })) return;
     }
 
     static void pair(Context context) {
         Context app = context.getApplicationContext();
         setState(app, "checking", "Pairing the root bridge.", "");
         String token = BridgeSecrets.getOrCreateToken(app);
-        EXECUTOR.execute(() -> {
+        if (!submit(app, "Root bridge pairing queue is full", () -> {
             CommandResult result = rootCommand(bridgeInvocation("pair " + shellQuote(token)), SHORT_COMMAND_TIMEOUT_SECONDS);
             if (result.exitCode == 0 && result.output.contains("DEVTOOL_ROOT_BRIDGE_PAIRED")) {
                 refresh(app);
@@ -152,7 +164,7 @@ final class RootBridgeManager {
                 setState(app, result.output.toLowerCase(Locale.ROOT).contains("permission denied") ? "denied" : "error",
                         compact(result.output, "Root bridge pairing failed"), "");
             }
-        });
+        })) return;
     }
 
     static TermuxCommandRunner.LaunchResult run(Context context, String command, String workdir,
@@ -206,7 +218,10 @@ final class RootBridgeManager {
         RunCommandTrace.record(app, RunCommandTrace.ROOT_BRIDGE_DISPATCHED, "RootBridgeManager",
                 runId, "Root bridge execution dispatched",
                 DebugRecorder.details("execution_id", executionId, "overlay", overlay));
-        EXECUTOR.execute(() -> executeRun(app, runId, executionId, shell, overlay, taskerIntent));
+        if (!submit(app, "Root bridge execution queue is full",
+                () -> executeRun(app, runId, executionId, shell, overlay, taskerIntent))) {
+            return new TermuxCommandRunner.LaunchResult(false, executionId, "Root bridge execution queue is full");
+        }
         return new TermuxCommandRunner.LaunchResult(true, executionId, "");
     }
 
@@ -221,11 +236,11 @@ final class RootBridgeManager {
         int executionId = nextExecutionId();
         Context app = context.getApplicationContext();
         String cleanWorkdir = workdir == null || workdir.trim().isEmpty() ? "/" : workdir.trim();
-        EXECUTOR.execute(() -> {
+        if (!submit(app, "Root validation control queue is full", () -> {
             String shell = "cd " + shellQuote(cleanWorkdir) + " && " + cleanCommand;
             CommandResult result = rootCommand(shell, CONTROL_COMMAND_TIMEOUT_SECONDS);
             ValidationController.handleResult(app, operation, result.exitCode, result.output, "", "", "root-bridge");
-        });
+        })) return new TermuxCommandRunner.LaunchResult(false, executionId, "Root validation control queue is full");
         return new TermuxCommandRunner.LaunchResult(true, executionId, "");
     }
 
@@ -238,9 +253,22 @@ final class RootBridgeManager {
             activeRunId = "";
         }
         String token = BridgeSecrets.getOrCreateToken(context);
-        EXECUTOR.execute(() -> rootCommand(bridgeInvocation("cancel " + shellQuote(token) + " " + shellQuote(runId)),
-                SHORT_COMMAND_TIMEOUT_SECONDS));
+        submit(context.getApplicationContext(), "Root cancellation queue is full",
+                () -> rootCommand(bridgeInvocation("cancel " + shellQuote(token) + " " + shellQuote(runId)),
+                        SHORT_COMMAND_TIMEOUT_SECONDS));
         return true;
+    }
+
+    private static boolean submit(Context context, String failureDetail, Runnable task) {
+        try {
+            EXECUTOR.execute(task);
+            return true;
+        } catch (RejectedExecutionException rejected) {
+            setState(context, "error", failureDetail, "");
+            DebugRecorder.error(context, "root_bridge", "ROOT_BRIDGE_EXECUTOR_REJECTED", "RootBridgeManager",
+                    "", "", "", "", failureDetail, DebugRecorder.details("queue_size", EXECUTOR.getQueue().size()));
+            return false;
+        }
     }
 
     private static void executeRun(Context context, String runId, int executionId,
@@ -292,6 +320,22 @@ final class RootBridgeManager {
     }
 
     private static CommandResult rootCommand(String shell, long timeoutSeconds) {
+        CommandResult first = rootCommandOnce(shell, timeoutSeconds);
+        if (isTransientSuFailure(first)) {
+            try { Thread.sleep(150L); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+            return rootCommandOnce(shell, timeoutSeconds);
+        }
+        return first;
+    }
+
+    private static boolean isTransientSuFailure(CommandResult result) {
+        if (result == null || result.exitCode == 0) return false;
+        String lower = result.output.toLowerCase(Locale.ROOT);
+        return lower.contains("device or resource busy") || lower.contains("temporarily unavailable")
+                || lower.contains("connection reset") || lower.contains("broken pipe");
+    }
+
+    private static CommandResult rootCommandOnce(String shell, long timeoutSeconds) {
         Process process = null;
         Thread readerThread = null;
         ByteArrayOutputStream output = new ByteArrayOutputStream();

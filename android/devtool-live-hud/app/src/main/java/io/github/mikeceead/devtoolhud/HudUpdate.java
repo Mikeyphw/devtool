@@ -13,6 +13,7 @@ import org.json.JSONObject;
 final class HudUpdate {
     final String runId;
     final long sequence;
+    final long generation;
     final long updatedAtMs;
     final String status;
     final String task;
@@ -53,7 +54,7 @@ final class HudUpdate {
     final UiSemanticState ui;
 
     private HudUpdate(
-            String runId, long sequence, long updatedAtMs,
+            String runId, long sequence, long generation, long updatedAtMs,
             String status, String task, String artifact, String phase, String detail,
             String repo, String projectType, String executionEnvironment, String target, String workspace, int workspaceIndex, int workspaceTotal, String workspacesJson, int phaseIndex, int phaseTotal,
             String commit, String summary,
@@ -64,6 +65,7 @@ final class HudUpdate {
             String stepsJson, long startedAtMs, long durationMs, boolean overlayRequested, UiSemanticState ui) {
         this.runId = safeRunId(runId);
         this.sequence = Math.max(0L, sequence);
+        this.generation = Math.max(0L, generation);
         this.updatedAtMs = updatedAtMs > 0L ? updatedAtMs : System.currentTimeMillis();
         this.status = normalizeStatus(status);
         this.task = clean(task, humanTask(phase));
@@ -120,6 +122,7 @@ final class HudUpdate {
         return new HudUpdate(
                 intent.getStringExtra("run_id"),
                 intent.getLongExtra("sequence", 0L),
+                intent.getLongExtra("generation", intent.getLongExtra("execution_generation", 0L)),
                 intent.getLongExtra("updated_at_ms", 0L),
                 intent.getStringExtra("status"),
                 intent.getStringExtra("task"),
@@ -154,7 +157,7 @@ final class HudUpdate {
     }
 
     static HudUpdate sample() {
-        return new HudUpdate("setup-test", 7L, System.currentTimeMillis(),
+        return new HudUpdate("setup-test", 7L, 1L, System.currentTimeMillis(),
                 "running", "Applying overlay bundle", "demo_bundle.zip",
                 "Testing", "Running test assembly 2 of 3",
                 "sims3tools", "dotnet", "native-termux", "S3Atelier.Modern.sln", "s3atelier_avalonia", 1, 2, "", 3, 4,
@@ -165,7 +168,7 @@ final class HudUpdate {
 
     static HudUpdate sampleOverlay() {
         HudUpdate sample = sample();
-        return new HudUpdate(sample.runId + "-overlay", sample.sequence, sample.updatedAtMs,
+        return new HudUpdate(sample.runId + "-overlay", sample.sequence, sample.generation, sample.updatedAtMs,
                 sample.status, sample.task, sample.artifact, sample.phase, sample.detail,
                 sample.repo, sample.projectType, sample.executionEnvironment, sample.target, sample.workspace, sample.workspaceIndex, sample.workspaceTotal, sample.workspacesJson, sample.phaseIndex, sample.phaseTotal,
                 sample.commit, sample.summary, sample.progress, sample.phaseProgress,
@@ -211,7 +214,7 @@ final class HudUpdate {
         String summary = session.title() + " validation\n"
                 + session.completedPhases + " of " + total + " phases complete\n"
                 + detail + "\nChanges " + (session.recoveryAvailable ? "and rollback point retained" : "retained");
-        return new HudUpdate("validation:" + session.sessionId, session.revision, session.updatedAtMs,
+        return new HudUpdate("validation:" + session.sessionId, session.revision, session.revision, session.updatedAtMs,
                 status, session.title() + " validation", session.artifact, phase, detail,
                 session.projectRoot, session.projectType, session.executionEnvironment, session.target,
                 session.scopeMode, 0, 0, "", current, total, "", summary,
@@ -231,7 +234,7 @@ final class HudUpdate {
     String validationSessionId() { return validationSession() ? runId.substring("validation:".length()) : ""; }
 
     static HudUpdate commandStarted(String runId, String command, String workdir, boolean overlay) {
-        return new HudUpdate(runId, 0L, System.currentTimeMillis(),
+        return new HudUpdate(runId, 0L, 0L, System.currentTimeMillis(),
                 "waiting", "Starting Devtool", "", "Preparing",
                 "RunCommand request sent to Termux", "Termux", "auto", "native-termux", clean(workdir, "~/"), "", 0, 0, "", 0, 0,
                 "", clean(command, ""), 0, 0, -1, -1, "items", true,
@@ -241,7 +244,7 @@ final class HudUpdate {
     static HudUpdate commandWaiting(String runId, String command, String workdir,
                                     boolean background, boolean overlay, long startedAtMs) {
         String mode = background ? "background" : "foreground";
-        return new HudUpdate(runId, 0L, System.currentTimeMillis(),
+        return new HudUpdate(runId, 0L, 0L, System.currentTimeMillis(),
                 "waiting", "Waiting for live progress", "", "Preparing",
                 "Termux is running in " + mode + " mode; no bridge update received yet",
                 "Termux", "auto", "native-termux", clean(workdir, "~/"), "", 0, 0, "", 0, 0,
@@ -253,7 +256,7 @@ final class HudUpdate {
                                      String error, boolean overlay) {
         boolean ok = exitCode == 0 && clean(error, "").isEmpty();
         String detail = firstUseful(error, stderr, stdout, ok ? "Command completed" : "Command failed");
-        return new HudUpdate(runId, Long.MAX_VALUE, System.currentTimeMillis(),
+        return new HudUpdate(runId, Long.MAX_VALUE, Long.MAX_VALUE, System.currentTimeMillis(),
                 ok ? "ok" : "failed", ok ? "Devtool completed" : "Devtool failed", "", "Termux",
                 detail, "Termux", "auto", "native-termux", "exit " + exitCode, "", 0, 0, "", 0, 0,
                 "", "", 100, 100, -1, -1, "items", false,
@@ -343,12 +346,13 @@ final class HudUpdate {
     }
 
     static List<Step> parseSteps(String value, String phase, String status, int progress) {
+        final int maxStepsForUi = 80;
         List<Step> result = new ArrayList<>();
         String raw = clean(value, "");
         if (!raw.isEmpty()) {
             try {
                 JSONArray array = new JSONArray(raw);
-                for (int i = 0; i < array.length(); i++) {
+                for (int i = 0; i < array.length() && i < maxStepsForUi; i++) {
                     JSONObject item = array.optJSONObject(i);
                     if (item == null) continue;
                     result.add(new Step(

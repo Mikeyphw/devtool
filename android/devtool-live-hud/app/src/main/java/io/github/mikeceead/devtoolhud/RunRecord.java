@@ -29,6 +29,8 @@ final class RunRecord {
     String logSourceId = "";
     int exitCode = -1;
     long lastProgressAtMs = 0L;
+    long generation = 0L;
+    long bridgeSequence = -1L;
     int progress = 0;
     int current = -1;
     int total = -1;
@@ -74,6 +76,8 @@ final class RunRecord {
         value.put("log_source_id", logSourceId);
         value.put("exit_code", exitCode);
         value.put("last_progress_at_ms", lastProgressAtMs);
+        value.put("generation", generation);
+        value.put("bridge_sequence", bridgeSequence);
         value.put("progress", progress);
         value.put("current", current);
         value.put("total", total);
@@ -116,6 +120,8 @@ final class RunRecord {
         record.logSourceId = value.optString("log_source_id", "");
         record.exitCode = value.optInt("exit_code", -1);
         record.lastProgressAtMs = value.optLong("last_progress_at_ms", 0L);
+        record.generation = value.optLong("generation", 0L);
+        record.bridgeSequence = value.optLong("bridge_sequence", -1L);
         record.progress = value.optInt("progress", 0);
         record.current = value.optInt("current", -1);
         record.total = value.optInt("total", -1);

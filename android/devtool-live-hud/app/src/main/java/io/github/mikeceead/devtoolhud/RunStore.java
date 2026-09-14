@@ -43,6 +43,8 @@ final class RunStore {
         record.startedAtMs = System.currentTimeMillis();
         record.updatedAtMs = record.startedAtMs;
         record.lastProgressAtMs = 0L;
+        record.generation = System.currentTimeMillis();
+        record.bridgeSequence = -1L;
         record.launchMode = background ? "background" : "foreground";
         record.launchLog = "";
         linkRepository(context, record, true);
@@ -61,6 +63,7 @@ final class RunStore {
     static synchronized void update(Context context, HudUpdate update) {
         migrateLegacy(context);
         RunRecord record = find(context, update.runId);
+        if (record != null && staleBridgeUpdate(record, update)) return;
         if (record != null && record.terminal() && !update.isTerminal()) return;
         if (record == null) record = new RunRecord();
         String previousPhase = record.phase;
@@ -96,6 +99,8 @@ final class RunStore {
         if (update.sequence > 0L || !effectiveStatus.equals("waiting") || !effectivePhase.equals("Termux")) {
             record.lastProgressAtMs = update.updatedAtMs;
         }
+        if (update.generation > 0L) record.generation = Math.max(record.generation, update.generation);
+        if (update.sequence > 0L) record.bridgeSequence = Math.max(record.bridgeSequence, update.sequence);
         boolean repositoryEvent = !previousPhase.equals(effectivePhase)
                 || !previousStatus.equals(effectiveStatus)
                 || (update.isTerminal() && !terminalStatus(previousStatus));
@@ -341,6 +346,21 @@ final class RunStore {
             DevtoolDatabase.get(context).addRepositoryEvent(repository.repositoryId, record.runId,
                     eventType(record), firstUseful(record.summary, record.detail, record.title), record.updatedAtMs);
         }
+    }
+
+    private static boolean staleBridgeUpdate(RunRecord record, HudUpdate update) {
+        if (record == null || update == null) return false;
+        if (update.generation > 0L && record.generation > 0L) {
+            if (update.generation < record.generation) return true;
+            if (update.generation > record.generation) return false;
+        }
+        if (update.sequence > 0L && record.bridgeSequence > 0L) {
+            if (update.sequence < record.bridgeSequence) return true;
+            if (update.sequence == record.bridgeSequence && update.updatedAtMs <= record.lastProgressAtMs) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean terminalStatus(String status) {

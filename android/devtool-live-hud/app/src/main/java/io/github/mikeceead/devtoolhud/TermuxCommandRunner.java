@@ -17,6 +17,7 @@ final class TermuxCommandRunner {
     static final String RUN_COMMAND_PERMISSION = "com.termux.permission.RUN_COMMAND";
     private static final String SERVICE = "com.termux.app.RunCommandService";
     private static final String ACTION = "com.termux.RUN_COMMAND";
+    static final String ACTION_RESULT = "io.github.mikeceead.devtoolhud.TERMUX_RESULT";
     private static final String EXTRA_PATH = "com.termux.RUN_COMMAND_PATH";
     private static final String EXTRA_ARGUMENTS = "com.termux.RUN_COMMAND_ARGUMENTS";
     private static final String EXTRA_WORKDIR = "com.termux.RUN_COMMAND_WORKDIR";
@@ -94,14 +95,18 @@ final class TermuxCommandRunner {
         int executionId = nextExecutionId();
         String runId = "termux-" + executionId;
         Intent resultIntent = new Intent(context, TermuxResultService.class)
+                .setAction(ACTION_RESULT + "." + executionId)
+                .setPackage(context.getPackageName())
                 .putExtra(TermuxResultService.EXTRA_RUN_ID, runId)
                 .putExtra(TermuxResultService.EXTRA_EXECUTION_ID, executionId)
+                .putExtra(TermuxResultService.EXTRA_GENERATION, executionId)
                 .putExtra(TermuxResultService.EXTRA_TASKER_FIRE_INTENT, taskerFireIntent)
                 .putExtra(TermuxResultService.EXTRA_OVERLAY, overlay)
                 .putExtra(TermuxResultService.EXTRA_BRIDGE_OPERATION, bridgeOperation)
                 .putExtra(TermuxResultService.EXTRA_BRIDGE_EXPECTED_HASH, bridgeExpectedHash);
         int flags = PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_CANCEL_CURRENT;
         flags |= Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0;
+        flags |= PendingIntent.FLAG_UPDATE_CURRENT;
         PendingIntent result = PendingIntent.getService(context, executionId, resultIntent, flags);
 
         String normalizedWorkdir = TermuxPaths.normalizeWorkdir(workdir);

@@ -7,6 +7,7 @@ import android.os.Bundle;
 public final class TermuxResultService extends IntentService {
     static final String EXTRA_EXECUTION_ID = "execution_id";
     static final String EXTRA_RUN_ID = "run_id";
+    static final String EXTRA_GENERATION = "generation";
     static final String EXTRA_TASKER_FIRE_INTENT = "tasker_fire_intent";
     static final String EXTRA_OVERLAY = "overlay";
     static final String EXTRA_BRIDGE_OPERATION = "bridge_operation";
@@ -23,6 +24,14 @@ public final class TermuxResultService extends IntentService {
         int executionId = intent.getIntExtra(EXTRA_EXECUTION_ID, -1);
         String runId = intent.getStringExtra(EXTRA_RUN_ID);
         if (runId == null || runId.trim().isEmpty()) runId = "termux-" + executionId;
+        long generation = intent.getLongExtra(EXTRA_GENERATION, executionId);
+        if (!matchesPendingIntentIdentity(runId, executionId, generation)) {
+            String error = "Rejected stale or mismatched Termux result identity";
+            DebugRecorder.warning(this, "termux", "TERMUX_RESULT_IDENTITY_REJECTED", "TermuxResultService",
+                    runId, "", "", "", error,
+                    DebugRecorder.details("execution_id", executionId, "generation", generation));
+            return;
+        }
         Bundle result = intent.getBundleExtra("result");
         Intent taskerFireIntent = getParcelableIntent(intent, EXTRA_TASKER_FIRE_INTENT);
         String bridgeOperation = intent.getStringExtra(EXTRA_BRIDGE_OPERATION);
@@ -114,6 +123,11 @@ public final class TermuxResultService extends IntentService {
             OverlayHudService.publish(this, completed);
         }
         finishTasker(taskerFireIntent, executionId, exitCode, stdout, stderr, error);
+    }
+
+    private static boolean matchesPendingIntentIdentity(String runId, int executionId, long generation) {
+        if (executionId <= 0 || generation != executionId) return false;
+        return runId != null && runId.equals("termux-" + executionId);
     }
 
     private void finishTasker(Intent fireIntent, int executionId, int exitCode,
