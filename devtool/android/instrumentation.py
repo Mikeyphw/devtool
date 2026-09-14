@@ -24,6 +24,32 @@ from .device_ops import AndroidDeviceOperationError, AndroidDeviceOperations, ca
 from ._standalone import BuildError, normalize_android_device_test_policy
 
 INSTRUMENTATION_POLICIES = {"disabled", "when-device-present", "required"}
+_FALSE_STRINGS = {"", "0", "false", "no", "off", "disabled", "none"}
+_TRUE_STRINGS = {"1", "true", "yes", "on", "enabled"}
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _FALSE_STRINGS:
+            return False
+        if text in _TRUE_STRINGS:
+            return True
+        return default
+    return bool(value)
+
+
+def _coerce_float(value: Any, default: float = 0.0, *, field: str = "value") -> float:
+    if value in {None, ""}:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise InstrumentationError(f"{field} must be a number") from exc
 
 
 class InstrumentationError(RuntimeError):
@@ -143,25 +169,51 @@ def _resolve_gradle(project: Path, configured: str) -> Path | str:
     raise InstrumentationError(f"Gradle executable is unavailable: {configured}")
 
 
+def _module_key_for_apk(project: Path, path: Path) -> tuple[str, ...]:
+    try:
+        rel = path.resolve(strict=False).relative_to(project.resolve(strict=False))
+    except ValueError:
+        rel = path
+    parts = rel.parts
+    lowered = [part.lower() for part in parts]
+    if "build" in lowered:
+        return tuple(parts[:lowered.index("build")])
+    return tuple(parts[:-1])
+
+
 def _find_apks(project: Path, variant: str) -> tuple[Path, Path]:
-    low = variant.lower()
-    app_candidates = sorted(
-        path for path in project.rglob("*.apk")
-        if "/build/outputs/apk/" in path.as_posix()
-        and "androidtest" not in path.as_posix().lower()
-        and low in path.as_posix().lower()
-    )
-    test_candidates = sorted(
-        path for path in project.rglob("*.apk")
-        if "/build/outputs/apk/androidtest/" in path.as_posix().lower()
-        and low in path.as_posix().lower()
-    )
+    low = str(variant or "debug").lower()
+    app_candidates: list[Path] = []
+    test_candidates: list[Path] = []
+    for path in project.rglob("*.apk"):
+        normalized = path.as_posix().lower()
+        if "/build/outputs/apk/" not in normalized or low not in normalized:
+            continue
+        if "/androidtest/" in normalized or "androidtest" in path.name.lower() or path.name.lower().endswith("-test.apk"):
+            test_candidates.append(path)
+        else:
+            app_candidates.append(path)
     if not app_candidates:
         raise InstrumentationError(f"No {variant} application APK was found under build/outputs/apk")
     if not test_candidates:
         raise InstrumentationError(f"No {variant} AndroidTest APK was found under build/outputs/apk/androidTest")
-    return max(app_candidates, key=lambda p: p.stat().st_mtime_ns), max(test_candidates, key=lambda p: p.stat().st_mtime_ns)
-
+    by_module: dict[tuple[str, ...], list[Path]] = {}
+    for app in app_candidates:
+        by_module.setdefault(_module_key_for_apk(project, app), []).append(app)
+    pairs: list[tuple[Path, Path]] = []
+    for test in test_candidates:
+        module = _module_key_for_apk(project, test)
+        candidates = by_module.get(module, [])
+        if candidates:
+            pairs.append((max(candidates, key=lambda p: p.stat().st_mtime_ns), test))
+    if not pairs:
+        app_modules = ", ".join("/".join(key) or "." for key in sorted(by_module))
+        test_modules = ", ".join("/".join(_module_key_for_apk(project, item)) or "." for item in test_candidates)
+        raise InstrumentationError(
+            "No same-module application APK matched the AndroidTest APK "
+            f"for variant {variant!r} (app modules: {app_modules}; test modules: {test_modules})"
+        )
+    return max(pairs, key=lambda pair: max(pair[0].stat().st_mtime_ns, pair[1].stat().st_mtime_ns))
 
 def _parse_runner_list(text: str) -> list[tuple[str, str]]:
     return re.findall(r"instrumentation:([^\s]+)\s+\(target=([^\)]+)\)", text or "")
@@ -169,20 +221,30 @@ def _parse_runner_list(text: str) -> list[tuple[str, str]]:
 
 def _choose_runner(text: str, *, configured: str, target_package: str) -> tuple[str, str]:
     entries = _parse_runner_list(text)
+    configured = str(configured or "").strip()
+    target_package = str(target_package or "").strip()
     if configured:
-        target = target_package or next((target for runner, target in entries if runner == configured), "")
-        return configured, target
+        for runner, target in entries:
+            if runner == configured:
+                if target_package and target != target_package:
+                    raise InstrumentationError(
+                        f"Configured instrumentation runner {configured!r} targets {target!r}, not {target_package!r}"
+                    )
+                return runner, target
+        rendered = ", ".join(f"{runner} -> {target}" for runner, target in entries) or "none"
+        raise InstrumentationError(f"Configured instrumentation runner {configured!r} is not installed. Found: {rendered}")
     if target_package:
         for runner, target in entries:
             if target == target_package:
                 return runner, target
+        rendered = ", ".join(f"{runner} -> {target}" for runner, target in entries) or "none"
+        raise InstrumentationError(f"No installed instrumentation runner targets {target_package!r}. Found: {rendered}")
     if len(entries) == 1:
         return entries[0]
     if not entries:
         raise InstrumentationError("No installed instrumentation runner was reported by package manager")
     rendered = ", ".join(f"{runner} -> {target}" for runner, target in entries)
     raise InstrumentationError(f"Multiple instrumentation runners are installed; configure android.instrumentation.test_runner. Found: {rendered}")
-
 
 def _parse_counts(text: str) -> dict[str, int]:
     numtests = [int(value) for value in re.findall(r"INSTRUMENTATION_STATUS:\s*numtests=(\d+)", text or "")]
@@ -311,6 +373,8 @@ class AndroidInstrumentationOrchestrator:
 
         installed_test_package = ""
         target_package = request.target_package
+        if request.runner and "/" in request.runner:
+            installed_test_package = request.runner.split("/", 1)[0].strip()
         try:
             if not request.skip_build:
                 self._build_with_devtool_builder(request)
@@ -347,9 +411,13 @@ class AndroidInstrumentationOrchestrator:
             output = execution.stdout + "\n" + execution.stderr
             counts = _parse_counts(output)
             failed_ids = _parse_failed_ids(output)
-            failed = execution.returncode != 0 or counts["failed"] > 0
+            zero_required = policy == "required" and counts["total"] <= 0
+            failed = execution.returncode != 0 or counts["failed"] > 0 or zero_required
+            if zero_required:
+                counts["failed"] = max(1, counts["failed"])
             result = InstrumentationResult(
                 status="failed" if failed else "passed",
+                reason="Required instrumentation executed zero tests" if zero_required else "",
                 runner=runner,
                 target_package=target_package,
                 test_package=installed_test_package,
@@ -393,14 +461,30 @@ class AndroidInstrumentationOrchestrator:
             return result
         finally:
             if not request.keep_installed:
+                cleanup_errors: list[str] = []
                 if installed_test_package:
                     try:
-                        self.device_ops.uninstall(installed_test_package, serial=device.serial, policy="serial", check=False)
-                    except Exception:
-                        pass
+                        cleanup = self.device_ops.uninstall(installed_test_package, serial=device.serial, policy="serial", check=False)
+                        if not cleanup.ok:
+                            cleanup_errors.append(cleanup.detail or f"test package cleanup exited {cleanup.returncode}")
+                    except Exception as exc:
+                        cleanup_errors.append(str(exc))
                 if request.cleanup_app and target_package:
                     try:
-                        self.device_ops.uninstall(target_package, serial=device.serial, policy="serial", check=False)
+                        cleanup = self.device_ops.uninstall(target_package, serial=device.serial, policy="serial", check=False)
+                        if not cleanup.ok:
+                            cleanup_errors.append(cleanup.detail or f"app cleanup exited {cleanup.returncode}")
+                    except Exception as exc:
+                        cleanup_errors.append(str(exc))
+                if cleanup_errors:
+                    try:
+                        existing = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
+                        if isinstance(existing, dict):
+                            existing["status"] = "failed"
+                            existing["reason"] = (existing.get("reason") or "") + ("; " if existing.get("reason") else "") + "cleanup failed: " + "; ".join(cleanup_errors)
+                            existing["returncode"] = 1
+                            existing["failed"] = max(1, int(existing.get("failed") or 0))
+                            report_path.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
                     except Exception:
                         pass
 
@@ -417,6 +501,15 @@ def request_from_config(config: ProjectConfig, *, classes: Sequence[str] = (), m
     gradle_args = gradle_options.get("args", [])
     if isinstance(gradle_args, str):
         gradle_args = [gradle_args]
+    raw_runner_args = runner_args if runner_args is not None else ins.get("runner_args", {})
+    if raw_runner_args is None:
+        normalized_runner_args: dict[str, str] = {}
+    elif isinstance(raw_runner_args, Mapping):
+        normalized_runner_args = {str(k): str(v) for k, v in dict(raw_runner_args).items()}
+    else:
+        raise InstrumentationError("android.instrumentation.runner_args must be a table/object of key/value pairs")
+    timeout_default = 30 if resolve_instrumentation_policy(config) == "required" else 0
+    timeout = _coerce_float(ins.get("wait_timeout_seconds", timeout_default), timeout_default, field="android.instrumentation.wait_timeout_seconds")
     return InstrumentationRequest(
         project=project,
         variant=str(config.variant or android.get("variant") or "debug"),
@@ -426,17 +519,17 @@ def request_from_config(config: ProjectConfig, *, classes: Sequence[str] = (), m
         runner=str(ins.get("test_runner") or ""),
         target_package=str(ins.get("target_package") or ""),
         classes=list(classes), methods=list(methods), annotations=list(annotations), not_annotations=list(not_annotations), size=str(size or ins.get("size") or ""),
-        runner_args={str(k): str(v) for k, v in (dict(runner_args) if runner_args is not None else dict(ins.get("runner_args") or {})).items()},
+        runner_args=normalized_runner_args,
         gradle=str(android.get("gradle") if isinstance(android.get("gradle"), str) else "./gradlew"),
         gradle_args=[str(item) for item in gradle_args if str(item).strip()],
         aapt2=str(android.get("aapt2") or ""),
         aapt2_provider=str(android.get("aapt2_provider") or "auto"),
         skip_build=skip_build,
-        wait_timeout_seconds=float(ins.get("wait_timeout_seconds", 30 if resolve_instrumentation_policy(config) == "required" else 0) or 0),
-        cleanup_app=bool(ins.get("cleanup_app", False)),
-        keep_installed=bool(ins.get("keep_installed", False)),
-        capture_logcat_on_failure=bool(ins.get("capture_logcat_on_failure", True)),
-        capture_screenshot_on_failure=bool(ins.get("capture_screenshot_on_failure", True)),
+        wait_timeout_seconds=timeout,
+        cleanup_app=_coerce_bool(ins.get("cleanup_app", False), False),
+        keep_installed=_coerce_bool(ins.get("keep_installed", False), False),
+        capture_logcat_on_failure=_coerce_bool(ins.get("capture_logcat_on_failure", True), True),
+        capture_screenshot_on_failure=_coerce_bool(ins.get("capture_screenshot_on_failure", True), True),
         report=report,
     )
 

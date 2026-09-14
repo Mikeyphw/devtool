@@ -31,6 +31,18 @@ class InstrumentationUnavailable(InstrumentationError):
     """No usable Android instrumentation execution target is available."""
 
 
+def _module_key_for_apk(project: Path, path: Path) -> tuple[str, ...]:
+    try:
+        rel = path.resolve(strict=False).relative_to(project.resolve(strict=False))
+    except ValueError:
+        rel = path
+    parts = rel.parts
+    lowered = [part.lower() for part in parts]
+    if "build" in lowered:
+        return tuple(parts[:lowered.index("build")])
+    return tuple(parts[:-1])
+
+
 def run(argv: Sequence[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     rendered = " ".join(shlex.quote(value) for value in argv)
     try:
@@ -163,14 +175,15 @@ def _instrumentation_aapt2(
 
 
 def _find_apks(project: Path, variant: str) -> tuple[Path, Path]:
-    lower_variant = variant.lower()
+    lower_variant = str(variant or "debug").lower()
     app_candidates: list[Path] = []
     test_candidates: list[Path] = []
     for path in project.glob("**/build/outputs/apk/**/*.apk"):
-        if not path.is_file() or lower_variant not in path.as_posix().lower():
+        normalized = path.as_posix().lower()
+        if not path.is_file() or lower_variant not in normalized:
             continue
         name = path.name.lower()
-        if "androidtest" in name or "-test" in name or "/androidtest/" in path.as_posix().lower():
+        if "androidtest" in name or "-test" in name or "/androidtest/" in normalized:
             test_candidates.append(path.resolve())
         else:
             app_candidates.append(path.resolve())
@@ -178,10 +191,17 @@ def _find_apks(project: Path, variant: str) -> tuple[Path, Path]:
         raise InstrumentationError(f"No {variant} application APK was found under {project}")
     if not test_candidates:
         raise InstrumentationError(f"No {variant} androidTest APK was found under {project}")
-    app = max(app_candidates, key=lambda item: item.stat().st_mtime)
-    test = max(test_candidates, key=lambda item: item.stat().st_mtime)
-    return app, test
-
+    by_module: dict[tuple[str, ...], list[Path]] = {}
+    for app in app_candidates:
+        by_module.setdefault(_module_key_for_apk(project, app), []).append(app)
+    pairs: list[tuple[Path, Path]] = []
+    for test in test_candidates:
+        candidates = by_module.get(_module_key_for_apk(project, test), [])
+        if candidates:
+            pairs.append((max(candidates, key=lambda item: item.stat().st_mtime_ns), test))
+    if not pairs:
+        raise InstrumentationError(f"No same-module {variant} application APK matched the AndroidTest APK")
+    return max(pairs, key=lambda pair: max(pair[0].stat().st_mtime_ns, pair[1].stat().st_mtime_ns))
 
 def _adb_resolution() -> object:
     provider = str(os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER") or "auto").strip() or "auto"
@@ -336,22 +356,30 @@ def _pm_instrumentations(serial: str, *, install_command: str) -> str:
 
 def _choose_runner(text: str, *, configured: str, target_package: str) -> tuple[str, str]:
     entries = re.findall(r"instrumentation:([^\s]+)\s+\(target=([^\)]+)\)", text)
+    configured = str(configured or "").strip()
+    target_package = str(target_package or "").strip()
     if configured:
-        configured_target = target_package
-        if not configured_target:
-            configured_target = next((target for runner, target in entries if runner == configured), "")
-        return configured, configured_target
+        for runner, target in entries:
+            if runner == configured:
+                if target_package and target != target_package:
+                    raise InstrumentationError(
+                        f"Configured instrumentation runner {configured!r} targets {target!r}, not {target_package!r}"
+                    )
+                return runner, target
+        rendered = ", ".join(f"{runner} -> {target}" for runner, target in entries) or "none"
+        raise InstrumentationError(f"Configured instrumentation runner {configured!r} is not installed. Found: {rendered}")
     if target_package:
         for runner, target in entries:
             if target == target_package:
                 return runner, target
+        rendered = ", ".join(f"{runner} -> {target}" for runner, target in entries) or "none"
+        raise InstrumentationError(f"No installed instrumentation runner targets {target_package!r}. Found: {rendered}")
     if len(entries) == 1:
         return entries[0]
     if not entries:
         raise InstrumentationError("No installed instrumentation runner was reported by package manager")
     rendered = ", ".join(f"{runner} -> {target}" for runner, target in entries)
     raise InstrumentationError(f"Multiple instrumentation runners are installed; configure android.test_runner. Found: {rendered}")
-
 
 def _instrument_command(serial: str, *, am_command: str) -> list[str]:
     if serial:
@@ -510,6 +538,17 @@ def _write_skipped_result(
     return 0
 
 
+def _runner_args(values: Sequence[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for raw in values:
+        if "=" not in raw:
+            raise InstrumentationError(f"--runner-arg expects KEY=VALUE, got {raw!r}")
+        key, value = raw.split("=", 1)
+        if not key.strip():
+            raise InstrumentationError("--runner-arg key cannot be empty")
+        result[key.strip()] = value
+    return result
+
 def main(raw_args: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(raw_args)
     project = args.project.expanduser().resolve()
@@ -544,7 +583,7 @@ def main(raw_args: Sequence[str] | None = None) -> int:
                 project=project, variant=args.variant, policy=args.policy, serial=args.device_serial, device_policy=args.device_policy,
                 runner=args.runner, target_package=args.target_package, classes=list(args.classes), methods=list(args.methods),
                 annotations=list(args.annotation), not_annotations=list(args.not_annotation), size=args.size,
-                runner_args={item.split("=", 1)[0]: item.split("=", 1)[1] for item in args.runner_arg if "=" in item},
+                runner_args=_runner_args(args.runner_arg),
                 gradle=args.gradle, gradle_args=list(args.gradle_arg),
                 aapt2=args.aapt2, aapt2_provider=args.aapt2_provider, skip_build=args.skip_build, keep_installed=args.keep_installed,
                 wait_timeout_seconds=args.wait_timeout_seconds, cleanup_app=args.cleanup_app,
@@ -653,7 +692,12 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(f"DEVTOOL_INSTRUMENTATION_RESULT {json.dumps(payload, separators=(',', ':'))}")
-        if result.returncode != 0 or counts["failed"]:
+        if result.returncode != 0 or counts["failed"] or counts.get("executed", 0) <= 0:
+            if counts.get("executed", 0) <= 0:
+                payload["failed"] = max(1, int(payload.get("failed") or 0))
+                payload["returncode"] = 1
+                payload["error"] = "Instrumentation executed zero tests"
+                report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
             return result.returncode or 1
         return 0
     except InstrumentationError as exc:

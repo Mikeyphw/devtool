@@ -89,7 +89,7 @@ class AndroidReleaseEvidenceSession:
 
     @property
     def passed(self) -> bool:
-        return all(g.status == "passed" or (g.status == "skipped" and not g.required) for g in self.gates)
+        return bool(self.gates) and all(g.status == "passed" or (g.status == "skipped" and not g.required) for g in self.gates)
 
     def add_gate(self, name: str, status: str, *, required: bool = True, duration_seconds: float = 0.0, detail: str = "", metadata: Mapping[str, Any] | None = None) -> None:
         self.gates.append(ReleaseGateEvidence(name, status, required, duration_seconds, detail, dict(metadata or {})))

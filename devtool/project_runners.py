@@ -771,14 +771,19 @@ class AndroidGradleRunner(ProjectRunner):
             if size in {"small", "medium", "large"}:
                 argv.extend(["--size", size])
             runner_args = ins_cfg.get("runner_args", {})
-            if isinstance(runner_args, dict):
-                for key, value in sorted(runner_args.items()):
-                    argv.extend(["--runner-arg", f"{key}={value}"])
-            if bool(ins_cfg.get("keep_installed", False)):
+            if runner_args is None:
+                runner_args = {}
+            if not isinstance(runner_args, dict):
+                raise SystemExit("android.instrumentation.runner_args must be a table/object of key/value pairs")
+            for key, value in sorted(runner_args.items()):
+                if not str(key).strip():
+                    raise SystemExit("android.instrumentation.runner_args keys cannot be empty")
+                argv.extend(["--runner-arg", f"{key}={value}"])
+            if _bool_option(ins_cfg.get("keep_installed", False), False):
                 argv.append("--keep-installed")
-            if not bool(ins_cfg.get("capture_logcat_on_failure", True)):
+            if not _bool_option(ins_cfg.get("capture_logcat_on_failure", True), True):
                 argv.append("--no-logcat-on-failure")
-            if not bool(ins_cfg.get("capture_screenshot_on_failure", True)):
+            if not _bool_option(ins_cfg.get("capture_screenshot_on_failure", True), True):
                 argv.append("--no-screenshot-on-failure")
             if selection is not None:
                 for value in selection.classes:

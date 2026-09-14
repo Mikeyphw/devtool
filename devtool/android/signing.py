@@ -34,6 +34,23 @@ _RELEASE_PRODUCER_MARKERS = (
     "assemble", "bundle", "package", "publish", "upload", "release", "distribution",
 )
 _NON_PRODUCER_MARKERS = ("lint", "test", "check", "compile", "process", "generate", "verify")
+_FALSE_STRINGS = {"", "0", "false", "no", "off", "disabled", "none"}
+_TRUE_STRINGS = {"1", "true", "yes", "on", "enabled"}
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _FALSE_STRINGS:
+            return False
+        if text in _TRUE_STRINGS:
+            return True
+        return default
+    return bool(value)
 
 
 class AndroidSigningError(RuntimeError):
@@ -153,7 +170,7 @@ def signing_profile(config: ProjectConfig | None, name: str = "release") -> Sign
     mode = str(raw.get("mode") or "project").strip().lower()
     if mode not in SIGNING_MODES:
         raise AndroidSigningError(f"Unsupported Android signing mode {mode!r}; expected one of {', '.join(sorted(SIGNING_MODES))}")
-    policy = str(raw.get("policy") or ("release-required" if raw.get("require_for_release") is True else "optional")).strip().lower()
+    policy = str(raw.get("policy") or ("release-required" if _coerce_bool(raw.get("require_for_release"), False) else "optional")).strip().lower()
     if policy not in SIGNING_POLICIES:
         raise AndroidSigningError(f"Unsupported Android signing policy {policy!r}; expected one of {', '.join(sorted(SIGNING_POLICIES))}")
 
@@ -186,9 +203,9 @@ def signing_profile(config: ProjectConfig | None, name: str = "release") -> Sign
         key_password_fd=_fd("key_password_fd"),
         store_password_command=str(raw.get("store_password_command") or "").strip(),
         key_password_command=str(raw.get("key_password_command") or "").strip(),
-        store_password_stdin=bool(raw.get("store_password_stdin", False)),
-        key_password_stdin=bool(raw.get("key_password_stdin", False)),
-        allow_prompt=bool(raw.get("allow_prompt", False)),
+        store_password_stdin=_coerce_bool(raw.get("store_password_stdin", False), False),
+        key_password_stdin=_coerce_bool(raw.get("key_password_stdin", False), False),
+        allow_prompt=_coerce_bool(raw.get("allow_prompt", False), False),
     )
 
 
@@ -197,12 +214,12 @@ def task_requires_release_signing(task: str) -> bool:
     low = leaf.lower()
     if not low or "release" not in low:
         return False
-    # A release-named verification/test task should not demand credentials by
-    # itself.  Producers/publishers do.
-    if any(low.startswith(marker) for marker in _NON_PRODUCER_MARKERS) and not any(marker in low for marker in ("assemble", "bundle", "package", "publish")):
+    if any(low.startswith(marker) for marker in _NON_PRODUCER_MARKERS):
         return False
-    return any(marker in low for marker in _RELEASE_PRODUCER_MARKERS)
-
+    producer_prefixes = ("assemble", "bundle", "package", "publish", "upload")
+    if low in {"release", "releasebundle", "releaseapk"}:
+        return True
+    return any(low.startswith(prefix) for prefix in producer_prefixes)
 
 def tasks_require_release_signing(tasks: Sequence[str]) -> bool:
     return any(task_requires_release_signing(task) for task in tasks)
@@ -235,7 +252,10 @@ def _read_fd(fd: int) -> str:
 
 
 def _run_secret_command(command: str, *, env: Mapping[str, str]) -> str:
-    argv = shlex.split(command)
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise AndroidSigningError(f"Signing secret command is malformed: {exc}") from exc
     if not argv:
         raise AndroidSigningError("Signing secret command is empty")
     try:

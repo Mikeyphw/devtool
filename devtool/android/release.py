@@ -12,7 +12,7 @@ from ..models import CommandSpec, OperationResult, ProjectConfig
 from .capabilities import resolve_android_execution_context
 from .device_ops import AndroidDeviceOperationError, AndroidDeviceOperations, SmokeGateResult, capture_failure_evidence
 from .evidence import AndroidReleaseEvidenceSession
-from .signing import AndroidSigningManager, signing_profile
+from .signing import AndroidSigningManager, signing_profile, validate_signing_profile_for_tasks
 
 DEVICE_TEST_POLICIES = frozenset({"disabled", "when-device-present", "required"})
 
@@ -40,8 +40,38 @@ class AndroidReleaseOptions:
 
 def _bool(options: Mapping[str, Any], name: str, default: bool) -> bool:
     value = options.get(name, default)
+    if value is None:
+        return default
     if isinstance(value, str):
-        return value.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+        text = value.strip().lower()
+        if text in {"", "0", "false", "no", "off", "disabled", "none"}:
+            return False
+        if text in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        return default
+    return bool(value)
+
+
+def _has_error_issue(result: OperationResult) -> bool:
+    return any(str(issue.severity).strip().lower() in {"error", "fatal"} for issue in result.issues)
+
+
+def _result_failed(result: OperationResult) -> bool:
+    if result.returncode != 0:
+        return True
+    if _has_error_issue(result):
+        return True
+    metadata = result.metadata if isinstance(result.metadata, dict) else {}
+    return str(metadata.get("status") or "").strip().lower() in {"failed", "error", "fatal"}
+
+
+def _strict_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
     return bool(value)
 
 
@@ -156,7 +186,7 @@ class AndroidReleaseOrchestrator:
     def _release_artifacts(config: ProjectConfig, artifact_payload: Mapping[str, Any]) -> list[tuple[Path, dict[str, Any]]]:
         candidates: list[tuple[Path, dict[str, Any]]] = []
         for raw in artifact_payload.get("items", []) or []:
-            if not isinstance(raw, dict) or not bool(raw.get("valid", False)):
+            if not isinstance(raw, dict) or not _strict_bool(raw.get("valid", False), False):
                 continue
             item = dict(raw)
             kind = str(item.get("type") or "").lower()
@@ -190,7 +220,7 @@ class AndroidReleaseOrchestrator:
         session = AndroidReleaseEvidenceSession(config.repo_root, config.selected_target, options.variant)
         session.execution = context.as_dict()
         try:
-            profile = signing_profile(config)
+            profile = validate_signing_profile_for_tasks(config, [f"assemble{options.variant[:1].upper() + options.variant[1:]}"], env=self.env) if (options.verify_signature or options.verify_certificate_identity) else signing_profile(config)
             session.signing = {
                 "mode": profile.mode,
                 "policy": profile.policy,
@@ -200,24 +230,44 @@ class AndroidReleaseOrchestrator:
             }
         except Exception as exc:
             session.signing = {"error": str(exc)}
+            if options.verify_signature or options.verify_certificate_identity:
+                session.add_gate("signing-config", "failed", required=True, detail=str(exc))
+
+        if not phases:
+            session.add_gate("release-plan", "failed", required=True, detail="Android release produced zero configured gates")
+
+        for phase_name, specs in phases:
+            if not specs:
+                session.add_gate(phase_name, "failed", required=True, detail=f"Android release phase {phase_name} produced zero command specs")
 
         all_results: list[OperationResult] = []
         raw_chunks: list[str] = []
         package_artifacts: dict[str, Any] = {}
         for phase_name, specs in phases:
+            if not specs:
+                if not continue_on_error:
+                    break
+                continue
             started = time.monotonic()
             phase_results, raw = self._run_specs(config, specs, verbose=verbose, dry_run=dry_run, continue_on_error=continue_on_error, log_path=log_path)
             all_results.extend(phase_results)
             if raw:
                 raw_chunks.append(raw)
-            failed = [item for item in phase_results if item.returncode != 0]
+            failed = [item for item in phase_results if _result_failed(item)]
             status = "failed" if failed else "passed"
-            detail = failed[0].output.strip().splitlines()[-1] if failed and failed[0].output.strip() else status
+            if failed and failed[0].output.strip():
+                detail = failed[0].output.strip().splitlines()[-1]
+            elif failed and _has_error_issue(failed[0]):
+                detail = next((issue.message for issue in failed[0].issues if str(issue.severity).lower() in {"error", "fatal"}), "error diagnostic reported")
+            else:
+                detail = status
             session.add_gate(phase_name, status, required=True, duration_seconds=round(time.monotonic() - started, 3), detail=detail,
                              metadata={"results": [item.name for item in phase_results]})
             if phase_name == "package":
                 package_artifacts = self._artifact_payload(phase_results)
                 session.add_artifacts(package_artifacts)
+                if status == "passed" and not self._release_artifacts(config, package_artifacts):
+                    session.add_gate("release-artifacts", "failed", required=True, detail="Android package phase produced no valid release APK/AAB/JAR artifacts")
             if failed and not continue_on_error:
                 break
 

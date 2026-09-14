@@ -184,11 +184,14 @@ class AndroidDeviceManager:
             return matches[:1]
         if policy == "all":
             return candidates
-        if policy == "preferred" and preferred:
-            matches = [item for item in candidates if item.serial == preferred or item.model == preferred or item.device == preferred]
+        if policy == "preferred":
+            wanted_preferred = str(preferred or "").strip()
+            if not wanted_preferred:
+                raise AndroidDeviceError("Device policy 'preferred' requires android.adb.preferred or --preferred")
+            matches = [item for item in candidates if item.serial == wanted_preferred or item.model == wanted_preferred or item.device == wanted_preferred]
             if matches:
                 return matches[:1]
-            policy = "exactly-one"
+            raise AndroidDeviceError(f"Preferred Android device {wanted_preferred!r} is not connected or usable")
         if policy == "first-physical":
             matches = [item for item in candidates if item.physical]
             if not matches:
@@ -239,6 +242,11 @@ class AndroidDeviceManager:
             return AndroidDeviceDoctor("warning", "device-offline", "Android device is visible but offline", self.adb.provider, self.adb.path, tuple(devices), termux_usb)
         if self.adb.provider == "termux-adb" and termux_usb.get("devices"):
             return AndroidDeviceDoctor("warning", "usb-visible-adb-missing", "USB device is visible to Termux:API but is not currently available through ADB; grant USB permission/ADB authorization and retry", self.adb.provider, self.adb.path, tuple(devices), termux_usb)
+        if self.adb.provider == "termux-adb":
+            detail = str(termux_usb.get("detail") or termux_usb.get("api_detail") or "")
+            lowered = detail.lower()
+            if "permission" in lowered and ("denied" in lowered or "grant" in lowered or "not granted" in lowered):
+                return AndroidDeviceDoctor("error", "usb-permission-not-granted", detail or "Termux USB permission has not been granted", self.adb.provider, self.adb.path, tuple(devices), termux_usb)
         return AndroidDeviceDoctor("warning", "no-device", "ADB provider is healthy but no Android device is connected", self.adb.provider, self.adb.path, tuple(devices), termux_usb)
 
 

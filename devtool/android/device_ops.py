@@ -11,6 +11,7 @@ import time
 from typing import Any, Mapping, Sequence
 
 from ..models import ProjectConfig
+from ..logstore import redact_sensitive_text
 from .devices import AndroidDevice, AndroidDeviceError, AndroidDeviceManager
 from .capabilities import AndroidExecutionContext
 from .operations import resolve_android_operations
@@ -270,7 +271,9 @@ class AndroidDeviceOperations:
         started = time.monotonic()
         device, data = self._run_bytes("screenshot", ["exec-out", "screencap", "-p"], serial=serial, policy=policy)
         target.write_bytes(data)
-        return DeviceOperationResult("screenshot", "passed", device.serial, 0, int((time.monotonic() - started) * 1000), detail=str(target), metadata={"path": str(target), "bytes": len(data)})
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise AndroidDeviceOperationError("Screenshot capture did not produce a valid PNG file")
+        return DeviceOperationResult("screenshot", "passed", device.serial, 0, int((time.monotonic() - started) * 1000), detail=str(target), metadata={"path": str(target), "bytes": len(data), "png_valid": True})
 
     def apk_metadata(self, apk: str | Path) -> dict[str, str]:
         path = Path(apk).expanduser().resolve(strict=False)
@@ -317,28 +320,48 @@ class AndroidDeviceOperations:
             activity = activity or metadata.get("activity", "")
         if not package:
             raise AndroidDeviceOperationError("install-smoke requires a package ID or an APK whose package can be inspected")
-        install = self.install(path, serial=serial, policy=policy)
+        install = self.install(path, serial=serial, policy=policy, test_only=False)
         launch = self.launch(package, activity=activity, serial=install.serial, policy="serial")
         process = self.process_state(package, serial=install.serial, policy="serial")
-        ok = install.ok and launch.ok
+        ok = install.ok and launch.ok and process.ok
         evidence: dict[str, Any] = {
             "install": install.as_dict(), "launch": launch.as_dict(), "process": process.as_dict(), "apk_metadata": metadata,
         }
+        cleanup_detail = ""
         if not keep_installed:
-            evidence["cleanup"] = self.uninstall(package, serial=install.serial, policy="serial", check=False).as_dict()
-        return SmokeGateResult("install-smoke", "passed" if ok else "failed", install.serial, package, str(path), int((time.monotonic() - started) * 1000), "installed and launched" if ok else "install/launch failed", evidence)
+            cleanup = self.uninstall(package, serial=install.serial, policy="serial", check=False)
+            evidence["cleanup"] = cleanup.as_dict()
+            if not cleanup.ok:
+                ok = False
+                cleanup_detail = cleanup.detail or f"cleanup exited {cleanup.returncode}"
+        if ok:
+            detail = "installed, launched and process state verified"
+        elif cleanup_detail:
+            detail = f"install smoke cleanup failed: {cleanup_detail}"
+        elif not process.ok:
+            detail = process.detail or "process state verification failed"
+        else:
+            detail = "install/launch failed"
+        return SmokeGateResult("install-smoke", "passed" if ok else "failed", install.serial, package, str(path), int((time.monotonic() - started) * 1000), detail, evidence)
 
     def upgrade_smoke(self, old_apk: str | Path, new_apk: str | Path, *, package: str = "", activity: str = "", serial: str = "", policy: str = "") -> SmokeGateResult:
         started = time.monotonic()
-        if not package:
-            package = self.apk_metadata(new_apk).get("package", "")
-        if not package:
+        old_metadata = self.apk_metadata(old_apk)
+        new_metadata = self.apk_metadata(new_apk)
+        old_package = old_metadata.get("package", "")
+        new_package = new_metadata.get("package", "")
+        expected_package = package or new_package
+        if not expected_package:
             raise AndroidDeviceOperationError("upgrade-smoke requires a package ID")
-        initial = self.install(old_apk, serial=serial, policy=policy, replace=True)
-        upgraded = self.install(new_apk, serial=initial.serial, policy="serial", replace=True)
-        launched = self.launch(package, activity=activity, serial=initial.serial, policy="serial")
+        if old_package and old_package != expected_package:
+            raise AndroidDeviceOperationError(f"upgrade-smoke old APK package {old_package!r} does not match {expected_package!r}")
+        if new_package and new_package != expected_package:
+            raise AndroidDeviceOperationError(f"upgrade-smoke new APK package {new_package!r} does not match {expected_package!r}")
+        initial = self.install(old_apk, serial=serial, policy=policy, replace=True, test_only=False)
+        upgraded = self.install(new_apk, serial=initial.serial, policy="serial", replace=True, test_only=False)
+        launched = self.launch(expected_package, activity=activity, serial=initial.serial, policy="serial")
         ok = initial.ok and upgraded.ok and launched.ok
-        return SmokeGateResult("upgrade-smoke", "passed" if ok else "failed", initial.serial, package, str(Path(new_apk)), int((time.monotonic() - started) * 1000), "upgrade and launch succeeded" if ok else "upgrade smoke failed", {"initial_install": initial.as_dict(), "upgrade_install": upgraded.as_dict(), "launch": launched.as_dict()})
+        return SmokeGateResult("upgrade-smoke", "passed" if ok else "failed", initial.serial, expected_package, str(Path(new_apk)), int((time.monotonic() - started) * 1000), "upgrade and launch succeeded" if ok else "upgrade smoke failed", {"old_apk_metadata": old_metadata, "new_apk_metadata": new_metadata, "initial_install": initial.as_dict(), "upgrade_install": upgraded.as_dict(), "launch": launched.as_dict()})
 
     def cold_start_smoke(self, package: str, *, activity: str = "", serial: str = "", policy: str = "") -> SmokeGateResult:
         started = time.monotonic()
@@ -371,8 +394,9 @@ class AndroidDeviceOperations:
         # `am kill` simulates background process death without clearing app data.
         killed = self.shell(["am", "kill", package], serial=device.serial, policy="serial", check=False)
         launched = self.launch(package, activity=activity, serial=device.serial, policy="serial")
-        ok = launched.ok
-        return SmokeGateResult("process-death-smoke", "passed" if ok else "failed", device.serial, package, duration_ms=int((time.monotonic() - started) * 1000), detail="process-death relaunch succeeded" if ok else "process-death relaunch failed", evidence={"kill": killed.as_dict(), "launch": launched.as_dict()})
+        ok = killed.ok and launched.ok
+        detail = "process-death relaunch succeeded" if ok else (killed.detail or launched.detail or "process-death relaunch failed")
+        return SmokeGateResult("process-death-smoke", "passed" if ok else "failed", device.serial, package, duration_ms=int((time.monotonic() - started) * 1000), detail=detail, evidence={"kill": killed.as_dict(), "launch": launched.as_dict()})
 
     def signed_artifact_smoke(self, artifact: str | Path, *, expected_sha256: str = "") -> SmokeGateResult:
         started = time.monotonic()
@@ -398,23 +422,28 @@ def capture_failure_evidence(
         try:
             logcat = operations.logcat(serial=serial, policy=policy, lines=600)
             path = root / "logcat.txt"
-            path.write_text(logcat.stdout + logcat.stderr, encoding="utf-8", errors="replace")
+            path.write_text(redact_sensitive_text(logcat.stdout + logcat.stderr), encoding="utf-8", errors="replace")
             evidence["logcat"] = str(path)
+            evidence["logcat_redacted"] = True
         except Exception as exc:
             evidence["logcat_error"] = str(exc)
     if capture_screenshot:
         try:
             screenshot = root / "screenshot.png"
             result = operations.screenshot(screenshot, serial=serial, policy=policy)
+            if screenshot.is_file() and not screenshot.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
+                raise AndroidDeviceOperationError("Screenshot capture did not produce a valid PNG file")
             evidence["screenshot"] = result.metadata.get("path", str(screenshot))
+            evidence["screenshot_png_valid"] = True
         except Exception as exc:
             evidence["screenshot_error"] = str(exc)
     if package:
         try:
             info = operations.package_info(package, serial=serial, policy=policy)
             path = root / "package.txt"
-            path.write_text(info.stdout + info.stderr, encoding="utf-8", errors="replace")
+            path.write_text(redact_sensitive_text(info.stdout + info.stderr), encoding="utf-8", errors="replace")
             evidence["package"] = str(path)
+            evidence["package_redacted"] = True
         except Exception as exc:
             evidence["package_error"] = str(exc)
     return evidence
