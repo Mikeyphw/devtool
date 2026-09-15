@@ -25,6 +25,7 @@ from .artifacts import (
     artifact_preflight_write_paths,
     is_skipped_artifact_payload_member,
     _is_skipped_artifact_payload_member,
+    _archive_member_is_root_directory,
     is_overlay_bundle,
     materialize_overlay_bundle_entries,
     open_tar_archive,
@@ -3336,7 +3337,14 @@ def _safe_extract_zip(
     target = target.resolve()
     skipped_metadata = 0
     for member in archive.infolist():
-        archive_name = _safe_archive_rel(member.filename.rstrip("/")).as_posix()
+        raw_name = member.filename.rstrip("/")
+        if _archive_member_is_root_directory(raw_name, is_dir=member.is_dir()):
+            # Harmless archive-root directory markers ("", ".", "./") do not
+            # map to repository payload. list_archive_members() already ignores
+            # them during preview/validation; extraction must apply the same
+            # normalization so validated artifacts do not fail at apply time.
+            continue
+        archive_name = _safe_archive_rel(raw_name).as_posix()
         mode_type = (member.external_attr >> 16) & 0o170000
         if mode_type == 0o120000:
             raise RuntimeError(f"Unsafe zip symlink member: {member.filename}")
@@ -3373,7 +3381,14 @@ def _safe_extract_tar(
     target = target.resolve()
     skipped_metadata = 0
     for member in archive.getmembers():
-        archive_name = _safe_archive_rel(member.name.rstrip("/")).as_posix()
+        raw_name = member.name.rstrip("/")
+        if _archive_member_is_root_directory(raw_name, is_dir=member.isdir()):
+            # Harmless archive-root directory markers ("", ".", "./") do not
+            # map to repository payload. list_archive_members() already ignores
+            # them during preview/validation; extraction must apply the same
+            # normalization so validated artifacts do not fail at apply time.
+            continue
+        archive_name = _safe_archive_rel(raw_name).as_posix()
         if _is_skipped_artifact_payload_member(
             archive_name,
             allowed_metadata_payloads=allowed_metadata_payloads,

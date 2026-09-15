@@ -1084,6 +1084,16 @@ def rollback_transaction(
         active = _read_json(path)
         path = Path(str(active.get("path") or ""))
     argv = ["transaction", "rollback", str(path)]
+    if not path.exists():
+        output = (
+            "No rollback metadata found.\n"
+            f"transaction: {path}\n"
+            f"reason: {reason}\n"
+            "status: already closed or unavailable\n"
+            "restored: 0\n"
+            "removed_added_paths: 0"
+        )
+        return OperationResult("apply-rollback", argv, 0, time.perf_counter() - start, output, [], failure_kind="rollback")
     tx: dict[str, Any] = {}
 
     def persist() -> None:
