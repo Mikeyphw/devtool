@@ -1680,6 +1680,17 @@ class JvmGradleRunner(ProjectRunner):
             root = self._root(config)
             gradle_options = _jvm_gradle_options(config)
             gradle_user_home = str(gradle_options.get("user_home") or "").strip()
+            # A global config is commonly shared between a Termux host and its
+            # Linux chroot. Do not pass a guest-only Gradle cache to native
+            # Termux: it may contain incompatible Linux/glibc native libraries.
+            execution = str(config.execution_environment or "auto").strip().lower().replace("_", "-")
+            if (
+                gradle_user_home
+                and execution == "native-termux"
+                and detect_current_environment() == NATIVE_TERMUX
+                and (gradle_user_home == "/root" or gradle_user_home.startswith(("/root/", "/home/")))
+            ):
+                gradle_user_home = str(Path.home() / ".gradle")
             if gradle_user_home:
                 env["GRADLE_USER_HOME"] = str(Path(gradle_user_home).expanduser())
             gradle, launcher_source, required_version = _jvm_gradle_launcher(

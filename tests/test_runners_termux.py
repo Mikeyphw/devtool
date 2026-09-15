@@ -247,7 +247,7 @@ class RunnersQuietModeTests(unittest.TestCase):
             tracker.finish(0)
 
         output = buffer.getvalue()
-        self.assertIn("clean", output)
+        self.assertIn("Clean", output)
         self.assertNotIn("cleaning", output)
         self.assertIn("removing stale cache", output)
 
@@ -265,7 +265,7 @@ class RunnersQuietModeTests(unittest.TestCase):
             tracker.finish(0)
 
         output = buffer.getvalue()
-        self.assertIn("sync", output)
+        self.assertIn("Sync", output)
         self.assertNotIn("running command", output)
         self.assertIn("syncing remote state", output)
 

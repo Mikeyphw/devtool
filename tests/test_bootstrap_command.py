@@ -113,6 +113,10 @@ def _ready_build_tools(sdk: Path, version: str) -> None:
 def _ready_ndk(sdk: Path, version: str) -> None:
     directory = sdk / "ndk" / version
     (directory / "toolchains" / "llvm" / "prebuilt").mkdir(parents=True, exist_ok=True)
+    host_bin = directory / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin"
+    host_bin.mkdir(parents=True)
+    (host_bin / "clang").write_bytes(b"clang")
+    (host_bin / "clang++").write_bytes(b"clang++")
     (directory / "build" / "cmake").mkdir(parents=True, exist_ok=True)
     (directory / "source.properties").write_text(f"Pkg.Revision = {version}\n", encoding="utf-8")
     (directory / "build" / "cmake" / "android.toolchain.cmake").write_text("# ready\n", encoding="utf-8")

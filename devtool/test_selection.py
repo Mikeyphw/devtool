@@ -883,6 +883,8 @@ def changed_paths(repo_root: Path, base: str, *, project_root: Path | None = Non
     project = (project_root or root).expanduser().resolve()
     try:
         project_prefix = project.relative_to(root).as_posix()
+        if project_prefix == ".":
+            project_prefix = ""
     except ValueError:
         project_prefix = ""
     commands = (

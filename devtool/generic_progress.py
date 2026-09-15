@@ -129,6 +129,7 @@ class GenericProgressTracker:
             "command": self.command_name,
             "target": self.display_target or self.cwd,
             "detail": self.detail,
+            "completion_status": self.detail,
             "phase_name": self._phase_label(),
             "completed": self.completed,
             "total": self.total,

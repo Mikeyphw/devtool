@@ -212,6 +212,7 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
             build_dir = root / ".devtool" / "build" / "cmake"
             build_dir.mkdir(parents=True)
             (build_dir / "CMakeCache.txt").write_text("", encoding="utf-8")
+            (build_dir / "CMakeFiles").mkdir()
             warm = build_validation_specs(config)
         self.assertEqual([spec.name for spec in cold], ["configure", "build", "test"])
         self.assertEqual([spec.name for spec in warm], ["build", "test"])
@@ -227,6 +228,8 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
             build_dir = root / ".devtool" / "build" / "meson"
             build_dir.mkdir(parents=True)
             (build_dir / "build.ninja").write_text("", encoding="utf-8")
+            (build_dir / "meson-private").mkdir()
+            (build_dir / "meson-private" / "coredata.dat").write_text("", encoding="utf-8")
             warm = build_validation_specs(config)
         self.assertEqual([spec.name for spec in cold], ["configure", "build", "test"])
         self.assertEqual([spec.name for spec in warm], ["build", "test"])

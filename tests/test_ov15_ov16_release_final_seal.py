@@ -155,7 +155,8 @@ def test_ov16_release_qualification_tracks_git_invariants_and_final_cli() -> Non
     assert "--final" in cli
     assert "Evidence SHA-256" in cli
     assert '--output "$out_dir/qualification.json" --final' in make_release
-    assert 'python3 -m build --outdir "$out_dir" "$root"' in make_release
+    assert "resolve_python_build_frontend" in make_release
+    assert '"${python_build[@]}" --outdir "$out_dir" "$root"' in make_release
     assert 'build-root-bridge-module.sh" "$out_dir/devtool-root-bridge-module.zip"' in make_release
     assert 'tools/build-release.py" --root "$root" --out-dir "$out_dir" --verify-reproducible' in make_release
     assert "SHA256SUMS.all.tmp" not in make_release

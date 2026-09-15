@@ -169,7 +169,7 @@ def test_root_log_indexer_is_incremental_bounded_and_zero_count_safe() -> None:
     assert "fileCursor(source.id, file.path)" in indexer
     assert "file.size < cursor.byteOffset" in indexer
     assert "cursor.partialLine" in indexer
-    assert "CHUNK_BYTES = 512 * 1024" in indexer
+    assert "CHUNK_BYTES = 256 * 1024" in indexer
     assert "MAX_CHUNKS_PER_FILE" in indexer
     assert "dd if=" in indexer and "skip=" in indexer and "count=" in indexer
     assert '"termux-xdg"' in indexer

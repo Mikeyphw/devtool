@@ -205,7 +205,7 @@ def test_malformed_android_env_ints_do_not_crash_parse_args(tmp_path: Path) -> N
     assert args.gradle_lock_timeout_ms == 600000
 
 
-def test_managed_gradle_offline_reuses_installed_tree_without_archive_sidecars(tmp_path: Path) -> None:
+def test_managed_gradle_offline_rejects_installed_tree_without_archive_sidecars(tmp_path: Path) -> None:
     home = tmp_path / "cache" / "gradle" / "gradle-8.13"
     launcher = home / "bin" / "gradle"
     launcher.parent.mkdir(parents=True)
@@ -216,7 +216,8 @@ def test_managed_gradle_offline_reuses_installed_tree_without_archive_sidecars(t
         encoding="utf-8",
     )
     with patch("devtool.android_build.gradle_version", return_value="8.13"):
-        assert android_build.managed_gradle("8.13", tmp_path / "cache", offline=True, force=False) == launcher
+        with pytest.raises(android_build.BuildError, match="failed version/provenance verification"):
+            android_build.managed_gradle("8.13", tmp_path / "cache", offline=True, force=False)
 
 
 def test_partial_ndk_without_clang_pair_is_not_ready(tmp_path: Path) -> None:

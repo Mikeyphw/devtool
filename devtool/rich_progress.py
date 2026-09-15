@@ -772,6 +772,41 @@ def completion_line(
     line = Text()
     line.append(f"{icon} ", style=style)
     line.append(label, style="bold")
+    context: list[str] = []
+    tool = str(data.get("completion_tool") or "").strip()
+    target = str(data.get("completion_target") or "").strip()
+    try:
+        phase_index = int(data.get("phase_index") or 0)
+        phase_total = int(data.get("phase_total") or 0)
+    except (TypeError, ValueError):
+        phase_index = phase_total = 0
+    if tool:
+        context.append(tool)
+    if target:
+        context.append(target)
+    if phase_index > 0 and phase_total > 0:
+        phase_label = str(data.get("phase_label") or label).strip()
+        overall = min(100, max(0, round(phase_index * 100 / phase_total)))
+        context.append(f"Step {phase_index} of {phase_total} · {phase_label} · {overall}% overall")
+    try:
+        target_phase_index = int(data.get("target_phase_index") or 0)
+        target_phase_total = int(data.get("target_phase_total") or 0)
+    except (TypeError, ValueError):
+        target_phase_index = target_phase_total = 0
+    if target_phase_index > 0 and target_phase_total > 0:
+        context.append(f"target phase {target_phase_index}/{target_phase_total}")
+    if context:
+        line.append(" · " + " · ".join(context), style="dim")
+    completed = data.get("completed")
+    total = data.get("total")
+    unit_label = str(data.get("unit_label") or "items")
+    if isinstance(completed, int) and isinstance(total, int) and total > 0:
+        line.append(" · ", style="dim")
+        line.append(f"{completed}/{total} {unit_label}")
+    completion_status = str(data.get("completion_status") or "").strip()
+    if completion_status:
+        line.append(" · " + completion_status, style="dim")
+
 
     tests_total = int(data.get("tests_total") or 0)
     tests_passed = int(data.get("tests_passed") or 0)

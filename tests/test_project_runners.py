@@ -618,6 +618,32 @@ class GradleLauncherResolutionTests(unittest.TestCase):
         self.assertIn("-Pkotlin.incremental=true", spec.argv)
         self.assertEqual(spec.env["GRADLE_USER_HOME"], str(root / ".gradle-local"))
 
+    def test_generic_gradle_native_termux_remaps_guest_gradle_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="gradle",
+                execution_environment="native-termux",
+                runner_options={
+                    "tasks": {"build": ["help"]},
+                    "gradle": {"user_home": "/home/mike/.gradle"},
+                },
+            )
+            with mock.patch("devtool.project_runners.detect_current_environment", return_value="native-termux"), mock.patch(
+                "devtool.project_runners.Path.home", return_value=Path("/data/data/com.termux/files/home")
+            ), mock.patch("devtool.project_runners.shutil.which", return_value="/usr/bin/gradle"), mock.patch(
+                "devtool.android_build.gradle_version", return_value="9.7.1"
+            ), mock.patch(
+                "devtool.android_build.executable_provider", return_value="system"
+            ):
+                spec = build_specs(config, "build")[0]
+
+        self.assertEqual(
+            spec.env["GRADLE_USER_HOME"],
+            "/data/data/com.termux/files/home/.gradle",
+        )
+
 
 class GradleDaemonReuseTests(unittest.TestCase):
     def test_gradle_daemon_shutdown_is_opt_in(self) -> None:

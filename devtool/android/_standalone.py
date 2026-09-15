@@ -7771,10 +7771,20 @@ def managed_gradle(
         actual = gradle_version(launcher)
         if str(data.get("version") or "") == version and gradle_version_matches(actual, version):
             recorded = str(data.get("archive_sha256") or "").lower()
-            # Offline reuse must not require the original archive or checksum
-            # sidecar: a verified installed tree plus Devtool provenance is the
-            # usable cache. Online runs still verify the archive when present.
             if offline:
+                if not (
+                    re.fullmatch(r"[0-9a-f]{64}", recorded)
+                    and archive.is_file()
+                    and checksum_file.is_file()
+                ):
+                    fail(f"Cached Gradle {version} failed version/provenance verification: {launcher}")
+                actual_archive = sha256(archive)
+                official = expected_checksum()
+                if actual_archive != recorded or actual_archive != official:
+                    fail(
+                        f"Cached Gradle archive digest verification failed for {version}: "
+                        f"provenance={recorded}, official={official}, actual={actual_archive}"
+                    )
                 return ensure_executable(launcher, "Gradle launcher")
             if re.fullmatch(r"[0-9a-f]{64}", recorded) and archive.is_file():
                 actual_archive = sha256(archive)

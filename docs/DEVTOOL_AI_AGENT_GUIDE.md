@@ -1983,6 +1983,7 @@ Run the FS03 repository-wide final release seal audit
 | --- | --- |
 | `--json` | Emit the versioned FS03 seal report as JSON |
 | `--strict` | Exit non-zero when any final-seal check fails |
+| `--target TARGET` | Emit the final seal for one configured target instead of the whole repository |
 
 Agent note: machine-friendly controls on this command include `--json`.
 

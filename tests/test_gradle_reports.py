@@ -300,7 +300,7 @@ class GradleReportTests(unittest.TestCase):
         self.assertEqual(results[0].returncode, 1)
         self.assertIn("Devtool artifact verification failures:", results[0].output)
         self.assertIn("[SIGNATURE]: verification tool failed", results[0].output)
-        self.assertIn("detected error diagnostics", raw)
+        self.assertIn("Devtool complete diagnostics", raw)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from .rich_progress import (
     TuiInspectionController,
     compact_display_target,
     completion_line,
+    human_command_label,
 )
 from .tui_icons import activity_icon
 
@@ -252,6 +253,17 @@ class DotnetProgressTracker:
         return {
             "command": self.plan.command if self.plan else "",
             "target": self.plan.target if self.plan else "",
+            "completion_tool": ".NET",
+            "completion_target": compact_display_target(
+                self.display_target or (self.plan.target if self.plan else ""),
+                cwd=self.cwd,
+            ),
+            "phase_index": self.phase_index,
+            "phase_total": self.phase_total,
+            "phase_label": human_command_label(self.command_name),
+            "target_phase_index": self.target_phase_index,
+            "target_phase_total": self.target_phase_total,
+            "completion_status": self.detail,
             "detail": self.detail,
             "completed": self.completed,
             "total": self.total,
