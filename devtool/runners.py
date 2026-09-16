@@ -2190,7 +2190,16 @@ def run_specs(
             # now, after all execution-backend wrapping has finished. Backends
             # that serialize env assignments into argv fail closed here.
             from .android.signing import signing_environment_for_execution
-            env = signing_environment_for_execution(config, spec.metadata, env=env)
+            signing_metadata = dict(spec.metadata)
+            # Some validation specs are assembled dynamically and do not carry
+            # signing metadata. Infer release intent from the final Gradle argv
+            # so configured project profiles are still loaded at execution.
+            if not signing_metadata.get("android_signing_required"):
+                release_markers = ("assembleRelease", "bundleRelease", "verifyPhoneReleaseSigningPreflight", "studyflow_release")
+                if any(any(marker in str(arg) for marker in release_markers) for arg in effective_argv):
+                    signing_metadata["android_signing_required"] = True
+                    signing_metadata["android_signing_tasks"] = [str(arg) for arg in effective_argv]
+            env = signing_environment_for_execution(config, signing_metadata, env=env)
             cwd = spec.cwd or str(config.repo_root)
             progress_argv = list(spec.metadata.get("progress_argv") or effective_argv)
             progress_cwd = str(spec.metadata.get("progress_cwd") or cwd)

@@ -623,6 +623,10 @@ def build_parser() -> argparse.ArgumentParser:
         _add_workspace_scope_flags(cmd)
         if name in {"restore", "build", "test", "lint", "package", "release", "validate", "validate-all", "wine-validate"}:
             _add_workflow_scheduler_flags(cmd)
+        # Resource/runtime overrides are valid after the subcommand as well as
+        # before it, matching the global parser surface used by validation.
+        if name in {"restore", "build", "test", "lint"}:
+            _add_validation_resource_override_flags(cmd)
         if name in {"build", "package"}:
             cmd.add_argument(
                 "-o",
@@ -1375,7 +1379,6 @@ def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     daemon = cmd.add_mutually_exclusive_group()
     daemon.add_argument("--stop-gradle-after-phase", action="store_true", help="Stop Gradle daemons after each completed phase")
     daemon.add_argument("--keep-gradle-daemon", action="store_true", help="Keep Gradle daemons available between phase invocations")
-    cmd.add_argument("--resource-profile", dest="validation_resource_profile", choices=["automatic", "android-low-power", "standard"], default="automatic", help="Validation resource profile")
     cmd.add_argument("--profile", dest="validation_workflow_profile", default="default", help="Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile)")
     cmd.add_argument("--max-infrastructure-retries", type=int, default=1, metavar="COUNT", help="Automatically retry environment/tooling interruptions this many times per phase")
     cmd.add_argument("--max-resource-retries", type=int, default=1, metavar="COUNT", help="Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available")
@@ -1409,6 +1412,7 @@ def _add_validation_resource_override_flags(cmd: argparse.ArgumentParser) -> Non
     the current command. They do not rewrite .devtool.toml or global config.
     """
 
+    cmd.add_argument("--resource-profile", dest="validation_resource_profile", choices=["automatic", "android-low-power", "standard"], default="automatic", help="Validation resource profile")
     cmd.add_argument("--max-workers", type=int, default=None, metavar="COUNT", help="Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits")
     cmd.add_argument("--cpu-limit", type=int, default=None, metavar="COUNT", help="Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits")
     cmd.add_argument("--gradle-heap-mb", type=int, default=None, metavar="MIB", help="Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults")

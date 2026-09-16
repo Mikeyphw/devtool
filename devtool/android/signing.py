@@ -64,6 +64,8 @@ class SigningProfile:
     policy: str = "optional"
     keystore: str = ""
     alias: str = ""
+    store_file_env: str = ""
+    key_alias_env: str = ""
     store_type: str = "PKCS12"
     expected_cert_sha256: str = ""
     store_password_env: str = ""
@@ -358,6 +360,18 @@ def signing_environment_for_tasks(
         return base
     secrets = signing_secret_environment(profile, env=base)
     base.update(secrets)
+    # Bridge Devtool-managed secrets to StudyFlow Gradle variables when the
+    # local release keystore exists. Values are materialized only at execution
+    # time and never persisted or placed in argv/logs.
+    store_file = Path(profile.keystore).expanduser() if profile.keystore else None
+    if store_file and store_file.is_file():
+        file_env = profile.store_file_env or "STUDYFLOW_RELEASE_STORE_FILE"
+        alias_env = profile.key_alias_env or "STUDYFLOW_RELEASE_KEY_ALIAS"
+        base.setdefault(file_env, str(store_file))
+        if profile.alias:
+            base.setdefault(alias_env, profile.alias)
+        base[profile.store_password_env or "STUDYFLOW_RELEASE_STORE_PASSWORD"] = secrets["DEVTOOL_ANDROID_SIGNING_STORE_PASSWORD"]
+        base[profile.key_password_env or "STUDYFLOW_RELEASE_KEY_PASSWORD"] = secrets["DEVTOOL_ANDROID_SIGNING_KEY_PASSWORD"]
     return base
 
 
@@ -421,7 +435,13 @@ def signing_environment_for_execution(
     profile = validate_signing_profile_for_tasks(config, tasks, env=base)
     if profile.mode != "devtool":
         return base
-    secrets = signing_secret_environment(profile, env=base)
+    # Interactive runs may securely prompt for missing passwords. CI and
+    # redirected/non-TTY executions remain fail-closed unless explicitly opted in
+    # through metadata (which still uses getpass and never logs the value).
+    interactive = bool(metadata.get("android_signing_interactive")) or (
+        sys.stdin.isatty() and sys.stderr.isatty()
+    )
+    secrets = signing_secret_environment(profile, env=base, allow_prompt=interactive)
     base.update(secrets)
     return base
 
