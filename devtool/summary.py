@@ -938,13 +938,47 @@ def _render_compact_issues(issues: list[Issue], target_console: Console) -> None
 
 def render_status_table(rows: list[tuple[str, str]], *, console_obj: Console | None = None) -> None:
     target_console = console_obj or console
+
     if is_narrow_console(target_console):
+        # Keep narrow-terminal status output in one coherent panel.
+        #
+        # Previously every key/value pair was rendered as its own Panel.
+        # On Termux this produced dozens of tiny boxes and left very little
+        # horizontal space for values such as paths and diagnostics.
+        #
+        # Give field names only as much space as they reasonably need and
+        # allow the value column to consume the rest of the terminal.
+        console_width = max(20, int(getattr(target_console, "width", 80) or 80))
+        longest_key = max((len(str(key)) for key, _ in rows), default=5)
+        field_width = min(max(longest_key, 8), max(12, console_width // 3))
+
+        grid = Table.grid(
+            expand=True,
+            padding=(0, 1),
+        )
+        grid.add_column(
+            style="bold",
+            width=field_width,
+            max_width=field_width,
+            overflow="ellipsis",
+            no_wrap=True,
+        )
+        grid.add_column(
+            ratio=1,
+            overflow="fold",
+        )
+
         for key, value in rows:
-            grid = Table.grid(expand=False)
-            grid.add_column(style="bold", no_wrap=True)
-            grid.add_column(overflow="fold")
             grid.add_row(_cell(key), _cell(value))
-            target_console.print(Panel(grid, title="Status", expand=False))
+
+        target_console.print(
+            Panel(
+                grid,
+                title="Status",
+                expand=True,
+                padding=(0, 1),
+            )
+        )
         return
 
     table = Table(title="Status", show_lines=False, expand=False)
