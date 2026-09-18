@@ -1313,7 +1313,7 @@ def rollback_transaction(
         _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
         emit_progress("rolled-back", completed=len(entries), total=len(entries))
         output = (
-            "Rolled back devtool apply transaction.\n"
+            "Recovered previous interrupted apply before continuing with the new artifact.\n"
             f"reason: {reason}\n"
             f"transaction: {_relative_to_repo(repo_root, path)}\n"
             f"restored: {len(restored)}\n"

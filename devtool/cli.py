@@ -3051,6 +3051,10 @@ def _emit_summary(
     output_debug_log_path: Path | str | None = None,
 ) -> tuple[dict[str, int], str, str, str]:
     repo_root = str(config.repo_root if config else Path.cwd())
+    if output_debug_log_path:
+        for result in results:
+            if not result.log_path:
+                result.log_path = str(output_debug_log_path)
     summary_text = _summary_text(results)
     json_data = build_json_summary(results, repo_root=repo_root)
     json_text = json.dumps(json_data, indent=2)
@@ -8516,7 +8520,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             [name, artifact],
             int(exc.code) if isinstance(exc.code, int) else 1,
             0.0,
-            "Cancelled before artifact apply.",
+            str(exc).strip() or "Cancelled before artifact apply.",
             [],
             failure_kind="artifact_failure",
         )
@@ -8543,7 +8547,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             [name, artifact],
             int(exc.code) if isinstance(exc.code, int) else 1,
             0.0,
-            "Cancelled before artifact apply.",
+            str(exc).strip() or "Cancelled before artifact apply.",
             [],
             failure_kind="artifact_failure",
         )

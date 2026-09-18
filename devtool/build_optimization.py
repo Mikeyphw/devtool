@@ -544,6 +544,12 @@ def optimized_build_env(
         env.setdefault("DOTNET_NOLOGO", "1")
         env.setdefault("NUGET_XMLDOC_MODE", "skip")
         env.setdefault("DOTNET_PROCESSOR_COUNT", str(policy.max_workers))
+        # Keep .NET runtime state (including Avalonia test state) out of the user home.
+        isolated_home = policy.cache_root / "runtime-home"
+        env.setdefault("HOME", str(isolated_home))
+        env.setdefault("XDG_CONFIG_HOME", str(isolated_home / ".config"))
+        env.setdefault("XDG_DATA_HOME", str(isolated_home / ".local" / "share"))
+        env.setdefault("XDG_CACHE_HOME", str(isolated_home / ".cache"))
     elif kind in {"android", "gradle"}:
         try:
             gradle_home = _home_for_environment(policy.environment) / ".gradle"
