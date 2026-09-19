@@ -15,6 +15,7 @@ test_framework = "pytest"
 locked = true
 install_project = true
 isolation = true
+lint = []
 
 [targets.devtool]
 runner = "python"

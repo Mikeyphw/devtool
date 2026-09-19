@@ -782,9 +782,14 @@ class AndroidGradleRunner(ProjectRunner):
             android = config.runner_options.get("android", {})
             android = dict(android) if isinstance(android, dict) else {}
             root = android_project_root(config)
-            variant_name = str(config.variant or android.get("variant") or "debug")
-            variant_title = variant_name[:1].upper() + variant_name[1:]
-            instrumentation_build_tasks = [f"assemble{variant_title}", f"assemble{variant_title}AndroidTest"]
+            from .android.variants import resolve_android_variant
+            variant_profile = resolve_android_variant(config)
+            if not variant_profile.deployable:
+                raise ValueError(f"Android variant {variant_profile.name!r} is not deployable and cannot run instrumentation")
+            variant_name = variant_profile.name
+            variant_title = variant_profile.title
+            module_prefix = f":{variant_profile.module}:"
+            instrumentation_build_tasks = [f"{module_prefix}assemble{variant_title}", f"{module_prefix}assemble{variant_title}AndroidTest"]
             instrumentation_env = _android_env_for_tasks(config, instrumentation_build_tasks)
             argv = [
                 sys.executable, "-m", "devtool.android_instrumentation", str(root),
@@ -969,10 +974,10 @@ class AndroidGradleRunner(ProjectRunner):
         validation = dict(validation) if isinstance(validation, dict) else {}
         phase_config = validation.get("phases", {})
         phase_config = dict(phase_config) if isinstance(phase_config, dict) else {}
-        android_options = config.runner_options.get("android", {})
-        android_options = dict(android_options) if isinstance(android_options, dict) else {}
-        variant = str(config.variant or android_options.get("variant") or "debug").strip()
-        variant_title = variant[:1].upper() + variant[1:]
+        from .android.variants import resolve_android_variant
+        variant_profile = resolve_android_variant(config)
+        variant_title = variant_profile.title
+        module_prefix = f":{variant_profile.module}:"
         project = inspect_android_project(config)
         project_root = android_project_root(config)
         lint_tasks, lint_scope, lint_modules = android_validation_lint_tasks(config)
@@ -1114,10 +1119,10 @@ class AndroidGradleRunner(ProjectRunner):
         if not skip_restore and phase_enabled("dependencies"):
             specs.append(gradle_phase("dependencies", phase_tasks("dependencies", ["dependencies"])))
         if not skip_build and phase_enabled("compile"):
-            compile_defaults = [f"compile{variant_title}Sources"] if project.android else ["classes"]
+            compile_defaults = [f"{module_prefix}compile{variant_title}Sources"] if project.android else ["classes"]
             specs.append(gradle_phase("compile", phase_tasks("compile", compile_defaults)))
         if not skip_build and project.android and phase_enabled("resources"):
-            specs.append(gradle_phase("resources", phase_tasks("resources", [f"process{variant_title}Resources"])))
+            specs.append(gradle_phase("resources", phase_tasks("resources", [f"{module_prefix}process{variant_title}Resources"])))
         if not skip_test and phase_enabled("unit-test"):
             specs.append(gradle_phase("unit-test", phase_tasks("unit-test", configured_tasks(config, "test")), report_parsers=["gradle-junit"]))
         if not skip_build and phase_enabled("package"):

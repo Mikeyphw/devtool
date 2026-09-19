@@ -80,11 +80,28 @@ def release_options(config: ProjectConfig, overrides: Mapping[str, Any] | None =
     android = dict(android) if isinstance(android, dict) else {}
     raw = android.get("release", {})
     values = dict(raw) if isinstance(raw, dict) else {}
-    values.update(dict(overrides or {}))
+    explicit_overrides = dict(overrides or {})
+    values.update(explicit_overrides)
+    profiles = android.get("variants", android.get("variant_profiles", {}))
+    configured_variant = bool(
+        config.variant
+        and isinstance(profiles, dict)
+        and config.variant in profiles
+    )
+    if not configured_variant and config.variant and config.selected_target in config.targets:
+        configured_variant = config.variant in config.targets[config.selected_target].variants
+    if "variant" not in values and configured_variant:
+        values["variant"] = config.variant
     device_tests = str(values.get("device_tests") or "required").strip().lower().replace("_", "-")
     if device_tests not in DEVICE_TEST_POLICIES:
         raise ValueError(f"Unsupported Android release device_tests policy: {device_tests}")
     return AndroidReleaseOptions(
+        # Release qualification is intentionally independent from the variant
+        # used by ordinary build/test commands. A project commonly defaults
+        # to ``debug``; inheriting that value silently downgrades the release
+        # pipeline and makes the release-gate policy reject legacy configs.
+        # Custom release variants remain available through
+        # android.release.variant or an explicit command override.
         variant=str(values.get("variant") or "release").strip() or "release",
         unit_tests=_bool(values, "unit_tests", True),
         lint=_bool(values, "lint", True),
@@ -134,8 +151,8 @@ class AndroidReleaseOrchestrator:
         self.executor = executor
 
     def _config(self, options: AndroidReleaseOptions) -> ProjectConfig:
-        config = deepcopy(self.base_config)
-        config.variant = options.variant
+        from .variants import activate_android_variant
+        config = activate_android_variant(self.base_config, options.variant)
         android = config.runner_options.get("android", {})
         android = dict(android) if isinstance(android, dict) else {}
         instrumentation = android.get("instrumentation", {})
@@ -149,6 +166,13 @@ class AndroidReleaseOrchestrator:
         from ..project_runners import AndroidGradleRunner
         options = release_options(self.base_config, overrides)
         config = self._config(options)
+        from .variants import resolve_android_variant
+        profile = resolve_android_variant(config)
+        if not profile.release_gates:
+            raise ValueError(
+                f"Android variant {profile.name!r} is not enabled for release qualification; "
+                "set android.variants.<name>.release_gates = true"
+            )
         runner = AndroidGradleRunner()
         phases: list[tuple[str, list[CommandSpec]]] = []
         if options.unit_tests:
@@ -197,8 +221,14 @@ class AndroidReleaseOrchestrator:
             if not path.is_absolute():
                 path = config.repo_root / path
             candidates.append((path.resolve(strict=False), item))
-        release = [entry for entry in candidates if "release" in entry[0].name.lower()]
-        return release or candidates
+        variant = str(config.variant or "").strip().lower()
+        selected = [entry for entry in candidates if variant and (str(entry[1].get("variant") or "").strip().lower() == variant or variant in entry[0].name.lower())]
+        if selected:
+            return selected
+        # Do not infer release identity from filenames. Artifact metadata is
+        # authoritative when available; otherwise preserve all valid candidates
+        # for the selected execution profile and let signature/type gates decide.
+        return candidates
 
     @classmethod
     def _release_apk(cls, config: ProjectConfig, artifact_payload: Mapping[str, Any]) -> Path | None:
@@ -220,7 +250,9 @@ class AndroidReleaseOrchestrator:
         session = AndroidReleaseEvidenceSession(config.repo_root, config.selected_target, options.variant)
         session.execution = context.as_dict()
         try:
-            profile = validate_signing_profile_for_tasks(config, [f"assemble{options.variant[:1].upper() + options.variant[1:]}"], env=self.env) if (options.verify_signature or options.verify_certificate_identity) else signing_profile(config)
+            from .variants import resolve_semantic_tasks
+            signing_tasks = resolve_semantic_tasks(config, ["assemble"])
+            profile = validate_signing_profile_for_tasks(config, signing_tasks, env=self.env) if (options.verify_signature or options.verify_certificate_identity) else signing_profile(config)
             session.signing = {
                 "mode": profile.mode,
                 "policy": profile.policy,

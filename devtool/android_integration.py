@@ -480,7 +480,8 @@ def configured_tasks(config: ProjectConfig, action: str) -> list[str]:
     for name in aliases.get(action, (action,)):
         selected = _task_values(tasks.get(name))
         if selected:
-            return selected
+            from .android.variants import resolve_semantic_tasks
+            return resolve_semantic_tasks(config, selected)
 
     project = inspect_android_project(config)
     if action == "restore":
@@ -488,19 +489,21 @@ def configured_tasks(config: ProjectConfig, action: str) -> list[str]:
     if action == "clean":
         return ["clean"]
     android = _dict_option(config, "android")
-    variant = str(config.variant or android.get("variant", "debug") or "debug").strip()
-    variant_title = variant[:1].upper() + variant[1:]
+    from .android.variants import resolve_android_variant
+    variant_profile = resolve_android_variant(config)
+    variant_title = variant_profile.title
+    module_prefix = f":{variant_profile.module}:"
     if action == "build":
         if project.android_application:
-            return ["assemble" + variant_title]
+            return [module_prefix + "assemble" + variant_title]
         return list(android_build.default_tasks(project))
     if action == "test":
         if project.android:
-            return ["test" + variant_title + "UnitTest"]
+            return [module_prefix + "test" + variant_title + "UnitTest"]
         return ["test"]
     if action == "lint":
         if project.android:
-            return ["lint" + variant_title]
+            return [module_prefix + "lint" + variant_title]
         # JVM Gradle projects do not have a universal lint task. The target can
         # opt into checkstyle/detekt/etc. through [tasks].lint.
         return []
@@ -666,11 +669,15 @@ def android_validation_lint_tasks(
         project_prefix = ""
 
     android = _dict_option(config, "android")
-    variant = str(config.variant or android.get("variant", "debug") or "debug").strip()
-    variant_title = variant[:1].upper() + variant[1:]
-    expected_root_task = "lint" + variant_title
+    from .android.variants import resolve_android_variant
+    variant_profile = resolve_android_variant(config)
+    variant_title = variant_profile.title
+    expected_root_task = f"{variant_profile.module}:lint{variant_title}"
+    legacy_root_task = f"lint{variant_title}"
     normalized_defaults = [task.lstrip(":") for task in default_tasks]
-    if normalized_defaults != [expected_root_task]:
+    # Preserve legacy explicit root lint tasks while recognizing the new
+    # module-qualified canonical task as equivalent for affected-module lint.
+    if normalized_defaults not in ([expected_root_task], [legacy_root_task]):
         return default_tasks, "full-custom-task", []
 
     relative_changes: list[str] = []

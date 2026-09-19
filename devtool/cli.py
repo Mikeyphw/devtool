@@ -741,6 +741,9 @@ def build_parser() -> argparse.ArgumentParser:
             if name == "validate":
                 _add_resumable_validation_flags(cmd)
 
+    variants_cmd = subparsers.add_parser("variants", help="List Android variant execution profiles for the selected target")
+    _add_workspace_scope_flags(variants_cmd)
+
     for name, aliases, mode in [
         ("start-validation", ["sv"], "start"),
         ("resume-validation", ["rv"], "resume"),
@@ -11919,7 +11922,7 @@ def _main_after_parse(
                 console.print(f"[red]{exc}[/red]")
             return VALIDATION_EXIT_INVALID_REQUEST
 
-    if args.command in {"doctor", "dr", "status", "st", "inspect", "info", "release-notes", "tag"} or args.command in {"commit", "ci"}:
+    if args.command in {"doctor", "dr", "status", "st", "inspect", "info", "variants", "release-notes", "tag"} or args.command in {"commit", "ci"}:
         repo = Path(args.repo or Path.cwd()).resolve()
         if args.command in {"commit", "ci"}:
             with _single_run_guard(repo, args):
@@ -11949,7 +11952,7 @@ def _main_after_parse(
                 final_exit = 0 if failed == 0 else 1
                 _append_run_log_summary(log_path, args, None, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=final_exit, results=results)
                 return final_exit
-        if args.command in {"doctor", "dr", "status", "st", "inspect", "info"}:
+        if args.command in {"doctor", "dr", "status", "st", "inspect", "info", "variants"}:
             config = _load_command_config(args)
         else:
             config = load_project_config(
@@ -11963,6 +11966,17 @@ def _main_after_parse(
             return 0
         if args.command in {"inspect", "info"}:
             _inspect_project(config, args=args)
+            return 0
+        if args.command == "variants":
+            from .android.variants import list_android_variant_profiles
+            profiles = list_android_variant_profiles(config)
+            default_name = next((p.name for p in profiles if p.name == (config.variant or "debug")), profiles[0].name if profiles else "debug")
+            console.print("Android variants")
+            for profile in profiles:
+                marker = "*" if profile.name == default_name else " "
+                signing = profile.signing_profile or profile.signing
+                console.print(f"{marker} {profile.name:<18} build type: {profile.build_type:<10} signing: {signing:<12} deployable: {'yes' if profile.deployable else 'no'}  release gates: {'yes' if profile.release_gates else 'no'}")
+            console.print(f"Default: {default_name}")
             return 0
         if args.command == "release-notes":
             print(_release_notes(config.repo_root, args.from_ref, args.to_ref))

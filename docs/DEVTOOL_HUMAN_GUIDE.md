@@ -440,6 +440,21 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--workflow-parallel` | Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe |
 | `--no-workflow-parallel` | Force workflow DAG nodes to execute sequentially |
 | `--workflow-max-workers COUNT` | Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
+| `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
+| `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
+| `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
+| `--gradle-metaspace-mb, --metaspace-guard-mb MIB` | Override the Gradle validation max metaspace; 0 disables Devtool's explicit MaxMetaspaceSize cap |
+| `--no-metaspace-guard` | Do not set an explicit Gradle MaxMetaspaceSize for this validation invocation |
+| `--memory-guard-mb MIB` | Override the validation free-memory guard for this invocation; 0 disables it and explicit CLI value wins over phase defaults |
+| `--low-priority` | Run validation commands at low scheduler priority |
+| `--normal-priority` | Do not lower validation process priority |
+| `--parallel` | Enable Gradle parallel execution for validation |
+| `--no-parallel` | Disable Gradle parallel execution for validation |
+| `--build-cache` | Enable the Gradle build cache for validation |
+| `--no-build-cache` | Disable the Gradle build cache for validation |
+| `--daemon` | Allow the Gradle daemon during validation |
+| `--no-daemon` | Disable the Gradle daemon during validation |
 
 ### `devtool build`
 
@@ -457,6 +472,21 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--workflow-parallel` | Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe |
 | `--no-workflow-parallel` | Force workflow DAG nodes to execute sequentially |
 | `--workflow-max-workers COUNT` | Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
+| `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
+| `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
+| `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
+| `--gradle-metaspace-mb, --metaspace-guard-mb MIB` | Override the Gradle validation max metaspace; 0 disables Devtool's explicit MaxMetaspaceSize cap |
+| `--no-metaspace-guard` | Do not set an explicit Gradle MaxMetaspaceSize for this validation invocation |
+| `--memory-guard-mb MIB` | Override the validation free-memory guard for this invocation; 0 disables it and explicit CLI value wins over phase defaults |
+| `--low-priority` | Run validation commands at low scheduler priority |
+| `--normal-priority` | Do not lower validation process priority |
+| `--parallel` | Enable Gradle parallel execution for validation |
+| `--no-parallel` | Disable Gradle parallel execution for validation |
+| `--build-cache` | Enable the Gradle build cache for validation |
+| `--no-build-cache` | Disable the Gradle build cache for validation |
+| `--daemon` | Allow the Gradle daemon during validation |
+| `--no-daemon` | Disable the Gradle daemon during validation |
 | `-o, --artifact-output-dir, --output-dir ARTIFACT_OUTPUT_DIR` | Copy produced artifacts here (default: .devtool/build-artifacts) |
 | `-n, --artifact-output-name, --output-name ARTIFACT_OUTPUT_NAME` | Base filename for copied artifacts |
 | `--artifact-collision ARTIFACT_COLLISION` | Managed artifact collision policy (default: unique) Choices: unique, replace, fail |
@@ -479,6 +509,21 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--workflow-parallel` | Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe |
 | `--no-workflow-parallel` | Force workflow DAG nodes to execute sequentially |
 | `--workflow-max-workers COUNT` | Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
+| `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
+| `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
+| `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
+| `--gradle-metaspace-mb, --metaspace-guard-mb MIB` | Override the Gradle validation max metaspace; 0 disables Devtool's explicit MaxMetaspaceSize cap |
+| `--no-metaspace-guard` | Do not set an explicit Gradle MaxMetaspaceSize for this validation invocation |
+| `--memory-guard-mb MIB` | Override the validation free-memory guard for this invocation; 0 disables it and explicit CLI value wins over phase defaults |
+| `--low-priority` | Run validation commands at low scheduler priority |
+| `--normal-priority` | Do not lower validation process priority |
+| `--parallel` | Enable Gradle parallel execution for validation |
+| `--no-parallel` | Disable Gradle parallel execution for validation |
+| `--build-cache` | Enable the Gradle build cache for validation |
+| `--no-build-cache` | Disable the Gradle build cache for validation |
+| `--daemon` | Allow the Gradle daemon during validation |
+| `--no-daemon` | Disable the Gradle daemon during validation |
 | `--no-build` | Pass --no-build to dotnet test |
 | `--list-tests, --list` | Discover and list tests without executing them; pytest uses native --collect-only discovery |
 | `--pytest-test NODEID` | Run exactly this pytest file/node ID; repeatable. Suppresses default/affected pytest targets unless --pytest-include-defaults is set. |
@@ -515,6 +560,21 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--workflow-parallel` | Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe |
 | `--no-workflow-parallel` | Force workflow DAG nodes to execute sequentially |
 | `--workflow-max-workers COUNT` | Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
+| `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
+| `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
+| `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
+| `--gradle-metaspace-mb, --metaspace-guard-mb MIB` | Override the Gradle validation max metaspace; 0 disables Devtool's explicit MaxMetaspaceSize cap |
+| `--no-metaspace-guard` | Do not set an explicit Gradle MaxMetaspaceSize for this validation invocation |
+| `--memory-guard-mb MIB` | Override the validation free-memory guard for this invocation; 0 disables it and explicit CLI value wins over phase defaults |
+| `--low-priority` | Run validation commands at low scheduler priority |
+| `--normal-priority` | Do not lower validation process priority |
+| `--parallel` | Enable Gradle parallel execution for validation |
+| `--no-parallel` | Disable Gradle parallel execution for validation |
+| `--build-cache` | Enable the Gradle build cache for validation |
+| `--no-build-cache` | Disable the Gradle build cache for validation |
+| `--daemon` | Allow the Gradle daemon during validation |
+| `--no-daemon` | Disable the Gradle daemon during validation |
 | `--format, --fix` | Autofix Python formatter output during lint/validation; default is check-only |
 
 ### `devtool validate`
@@ -564,6 +624,7 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--changed` | Select tests related to changed files during validation |
 | `--changed-from CHANGED_FROM` | Git base for --changed during validation |
 | `--instrumented` | Run Android instrumentation tests during validation |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
@@ -598,7 +659,6 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--stop-below-disk-mb MIB` | Pause a running validation phase when repository free space falls below this threshold; 0 disables |
 | `--stop-gradle-after-phase` | Stop Gradle daemons after each completed phase |
 | `--keep-gradle-daemon` | Keep Gradle daemons available between phase invocations |
-| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--profile VALIDATION_WORKFLOW_PROFILE` | Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile) |
 | `--max-infrastructure-retries COUNT` | Automatically retry environment/tooling interruptions this many times per phase |
 | `--max-resource-retries COUNT` | Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available |
@@ -660,6 +720,7 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--changed` | Select tests related to changed files during validation |
 | `--changed-from CHANGED_FROM` | Git base for --changed during validation |
 | `--instrumented` | Run Android instrumentation tests during validation |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
@@ -718,6 +779,7 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--changed` | Select tests related to changed files during validation |
 | `--changed-from CHANGED_FROM` | Git base for --changed during validation |
 | `--instrumented` | Run Android instrumentation tests during validation |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
@@ -863,6 +925,20 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--json` | Emit structured runtime, Android, device, project, and expanded-workflow health checks |
 | `--workflow WORKFLOW` | Workflow/action to analyze across the selected target scope; default: all declared workflows |
 
+### `devtool variants`
+
+List Android variant execution profiles for the selected target
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--target TARGET` | Named target/profile from .devtool.toml |
+| `--group GROUP` | Workspace target group; repeatable |
+| `--all-targets` | Select every configured workspace target |
+| `--affected` | Select dependency-aware targets affected by Git changes |
+| `--affected-base AFFECTED_BASE` | Git base revision for affected selection |
+| `--affected-head AFFECTED_HEAD` | Git head revision for affected selection |
+| `--variant VARIANT` | Variant within the selected workspace target(s) |
+
 ### `devtool start-validation`
 
 Start a persistent sequential validation session
@@ -916,7 +992,6 @@ Start a persistent sequential validation session
 | `--stop-below-disk-mb MIB` | Pause a running validation phase when repository free space falls below this threshold; 0 disables |
 | `--stop-gradle-after-phase` | Stop Gradle daemons after each completed phase |
 | `--keep-gradle-daemon` | Keep Gradle daemons available between phase invocations |
-| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--profile VALIDATION_WORKFLOW_PROFILE` | Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile) |
 | `--max-infrastructure-retries COUNT` | Automatically retry environment/tooling interruptions this many times per phase |
 | `--max-resource-retries COUNT` | Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available |
@@ -936,6 +1011,7 @@ Start a persistent sequential validation session
 | `--json` | Emit a stable validation-control JSON response |
 | `--machine MACHINE` | Machine response formatting; implies --json Choices: pretty, compact |
 | `--machine-file MACHINE_FILE` | Also write the validation-control JSON envelope to this file |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
@@ -1004,7 +1080,6 @@ Resume a persistent sequential validation session
 | `--stop-below-disk-mb MIB` | Pause a running validation phase when repository free space falls below this threshold; 0 disables |
 | `--stop-gradle-after-phase` | Stop Gradle daemons after each completed phase |
 | `--keep-gradle-daemon` | Keep Gradle daemons available between phase invocations |
-| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--profile VALIDATION_WORKFLOW_PROFILE` | Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile) |
 | `--max-infrastructure-retries COUNT` | Automatically retry environment/tooling interruptions this many times per phase |
 | `--max-resource-retries COUNT` | Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available |
@@ -1024,6 +1099,7 @@ Resume a persistent sequential validation session
 | `--json` | Emit a stable validation-control JSON response |
 | `--machine MACHINE` | Machine response formatting; implies --json Choices: pretty, compact |
 | `--machine-file MACHINE_FILE` | Also write the validation-control JSON envelope to this file |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
@@ -1160,7 +1236,6 @@ Open the validation menu and wizard
 | `--stop-below-disk-mb MIB` | Pause a running validation phase when repository free space falls below this threshold; 0 disables |
 | `--stop-gradle-after-phase` | Stop Gradle daemons after each completed phase |
 | `--keep-gradle-daemon` | Keep Gradle daemons available between phase invocations |
-| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--profile VALIDATION_WORKFLOW_PROFILE` | Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile) |
 | `--max-infrastructure-retries COUNT` | Automatically retry environment/tooling interruptions this many times per phase |
 | `--max-resource-retries COUNT` | Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available |
@@ -1180,6 +1255,7 @@ Open the validation menu and wizard
 | `--json` | Emit a stable validation-control JSON response |
 | `--machine MACHINE` | Machine response formatting; implies --json Choices: pretty, compact |
 | `--machine-file MACHINE_FILE` | Also write the validation-control JSON envelope to this file |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
@@ -1266,7 +1342,6 @@ Open the validation menu and wizard
 | `--stop-below-disk-mb MIB` | Pause a running validation phase when repository free space falls below this threshold; 0 disables |
 | `--stop-gradle-after-phase` | Stop Gradle daemons after each completed phase |
 | `--keep-gradle-daemon` | Keep Gradle daemons available between phase invocations |
-| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--profile VALIDATION_WORKFLOW_PROFILE` | Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile) |
 | `--max-infrastructure-retries COUNT` | Automatically retry environment/tooling interruptions this many times per phase |
 | `--max-resource-retries COUNT` | Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available |
@@ -1286,6 +1361,7 @@ Open the validation menu and wizard
 | `--json` | Emit a stable validation-control JSON response |
 | `--machine MACHINE` | Machine response formatting; implies --json Choices: pretty, compact |
 | `--machine-file MACHINE_FILE` | Also write the validation-control JSON envelope to this file |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
@@ -1372,7 +1448,6 @@ Open the validation menu and wizard
 | `--stop-below-disk-mb MIB` | Pause a running validation phase when repository free space falls below this threshold; 0 disables |
 | `--stop-gradle-after-phase` | Stop Gradle daemons after each completed phase |
 | `--keep-gradle-daemon` | Keep Gradle daemons available between phase invocations |
-| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--profile VALIDATION_WORKFLOW_PROFILE` | Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile) |
 | `--max-infrastructure-retries COUNT` | Automatically retry environment/tooling interruptions this many times per phase |
 | `--max-resource-retries COUNT` | Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available |
@@ -1392,6 +1467,7 @@ Open the validation menu and wizard
 | `--json` | Emit a stable validation-control JSON response |
 | `--machine MACHINE` | Machine response formatting; implies --json Choices: pretty, compact |
 | `--machine-file MACHINE_FILE` | Also write the validation-control JSON envelope to this file |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
@@ -1482,7 +1558,6 @@ Apply an overlay, overlay bundle, or snapshot
 | `--stop-below-disk-mb MIB` | Pause a running validation phase when repository free space falls below this threshold; 0 disables |
 | `--stop-gradle-after-phase` | Stop Gradle daemons after each completed phase |
 | `--keep-gradle-daemon` | Keep Gradle daemons available between phase invocations |
-| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--profile VALIDATION_WORKFLOW_PROFILE` | Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile) |
 | `--max-infrastructure-retries COUNT` | Automatically retry environment/tooling interruptions this many times per phase |
 | `--max-resource-retries COUNT` | Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available |
@@ -1502,6 +1577,7 @@ Apply an overlay, overlay bundle, or snapshot
 | `--json` | Emit a stable validation-control JSON response |
 | `--machine MACHINE` | Machine response formatting; implies --json Choices: pretty, compact |
 | `--machine-file MACHINE_FILE` | Also write the validation-control JSON envelope to this file |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
@@ -1586,7 +1662,6 @@ Apply an overlay, overlay bundle, or snapshot
 | `--stop-below-disk-mb MIB` | Pause a running validation phase when repository free space falls below this threshold; 0 disables |
 | `--stop-gradle-after-phase` | Stop Gradle daemons after each completed phase |
 | `--keep-gradle-daemon` | Keep Gradle daemons available between phase invocations |
-| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--profile VALIDATION_WORKFLOW_PROFILE` | Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile) |
 | `--max-infrastructure-retries COUNT` | Automatically retry environment/tooling interruptions this many times per phase |
 | `--max-resource-retries COUNT` | Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available |
@@ -1606,6 +1681,7 @@ Apply an overlay, overlay bundle, or snapshot
 | `--json` | Emit a stable validation-control JSON response |
 | `--machine MACHINE` | Machine response formatting; implies --json Choices: pretty, compact |
 | `--machine-file MACHINE_FILE` | Also write the validation-control JSON envelope to this file |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |
@@ -1690,7 +1766,6 @@ Apply an overlay, overlay bundle, or snapshot
 | `--stop-below-disk-mb MIB` | Pause a running validation phase when repository free space falls below this threshold; 0 disables |
 | `--stop-gradle-after-phase` | Stop Gradle daemons after each completed phase |
 | `--keep-gradle-daemon` | Keep Gradle daemons available between phase invocations |
-| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--profile VALIDATION_WORKFLOW_PROFILE` | Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile) |
 | `--max-infrastructure-retries COUNT` | Automatically retry environment/tooling interruptions this many times per phase |
 | `--max-resource-retries COUNT` | Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available |
@@ -1710,6 +1785,7 @@ Apply an overlay, overlay bundle, or snapshot
 | `--json` | Emit a stable validation-control JSON response |
 | `--machine MACHINE` | Machine response formatting; implies --json Choices: pretty, compact |
 | `--machine-file MACHINE_FILE` | Also write the validation-control JSON envelope to this file |
+| `--resource-profile VALIDATION_RESOURCE_PROFILE` | Validation resource profile Choices: automatic, android-low-power, standard |
 | `--max-workers COUNT` | Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--cpu-limit COUNT` | Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits |
 | `--gradle-heap-mb MIB` | Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults |

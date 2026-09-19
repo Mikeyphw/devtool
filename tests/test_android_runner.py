@@ -1046,7 +1046,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
             tasks, scope, modules = android_validation_lint_tasks(config)
 
-        self.assertEqual(tasks, ["lintDebug"])
+        self.assertEqual(tasks, [":app:lintDebug"])
         self.assertEqual(scope, "full-gradle-wide-change")
         self.assertEqual(modules, [])
 
@@ -1787,7 +1787,7 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
 
         self.assertEqual(build.argv[0], "python3")
         self.assertEqual(Path(build.argv[1]), staged)
-        self.assertIn("assembleDebug", build.argv)
+        self.assertIn(":app:assembleDebug", build.argv)
         self.assertIn("--aapt2-provider", build.argv)
         self.assertIn("--output-dir", build.argv)
         self.assertEqual([spec.name for spec in validation], ["android-validation"])
@@ -1798,9 +1798,9 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         self.assertTrue(combined.metadata["contains_tests"])
         self.assertTrue(combined.metadata["coalesced_gradle_validation"])
         self.assertEqual(combined.metadata["progress_parser"], "gradle")
-        self.assertIn("assembleDebug", combined.argv)
-        self.assertIn("testDebugUnitTest", combined.argv)
-        self.assertIn("lintDebug", combined.argv)
+        self.assertIn(":app:assembleDebug", combined.argv)
+        self.assertIn(":app:testDebugUnitTest", combined.argv)
+        self.assertIn(":app:lintDebug", combined.argv)
         self.assertNotIn("help", combined.argv)
         self.assertIn("--parallel", combined.argv)
         self.assertIn("--build-cache", combined.argv)
@@ -2143,8 +2143,8 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
                 test_spec = build_specs(config, "test")[0]
                 lint_spec = build_specs(config, "lint")[0]
 
-        self.assertIn("testReleaseUnitTest", test_spec.argv)
-        self.assertIn("lintRelease", lint_spec.argv)
+        self.assertIn(":app:testReleaseUnitTest", test_spec.argv)
+        self.assertIn(":app:lintRelease", lint_spec.argv)
         self.assertIn("--no-artifact-scan", test_spec.argv)
         self.assertIn("--init-script", test_spec.argv)
         self.assertEqual(test_spec.argv.count("--no-configuration-cache"), 1)
@@ -2175,9 +2175,9 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
                 test = build_specs(config, "test")[0]
                 lint = build_specs(config, "lint")[0]
 
-        self.assertIn("assembleRelease", build.argv)
-        self.assertIn("testReleaseUnitTest", test.argv)
-        self.assertIn("lintRelease", lint.argv)
+        self.assertIn(":app:assembleRelease", build.argv)
+        self.assertIn(":app:testReleaseUnitTest", test.argv)
+        self.assertIn(":app:lintRelease", lint.argv)
         self.assertEqual(build.metadata["variant"], "release")
         self.assertEqual(build.env["DEVTOOL_VARIANT"], "release")
 

@@ -417,9 +417,12 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
                     },
                 },
                 "tasks": {
-                    "build": ["assembleRelease", "verifyReleaseApk"],
-                    "test": ["testReleaseUnitTest"],
-                    "lint": ["lintRelease"],
+                    # Semantic tasks are resolved from the canonical active
+                    # Android variant. Keep only project-specific verifier
+                    # tasks explicit.
+                    "build": ["assemble", "verifyReleaseApk"],
+                    "test": ["unitTest"],
+                    "lint": ["lint"],
                 },
                 "artifacts": {"required": bool(signing_ready), "verify": bool(signing_ready)},
             },

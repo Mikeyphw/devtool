@@ -308,8 +308,15 @@ class AndroidInstrumentationOrchestrator:
         from .signing import signing_environment_for_tasks
 
         variant_title = _variant_title(request.variant)
-        tasks = [f"assemble{variant_title}", f"assemble{variant_title}AndroidTest"]
         config = self.config
+        if config is not None:
+            from .variants import resolve_android_variant
+            profile = resolve_android_variant(config, request.variant)
+            variant_title = profile.title
+            module_prefix = f":{profile.module}:"
+            tasks = [f"{module_prefix}assemble{variant_title}", f"{module_prefix}assemble{variant_title}AndroidTest"]
+        else:
+            tasks = [f"assemble{variant_title}", f"assemble{variant_title}AndroidTest"]
         if config is None:
             android: dict[str, Any] = {
                 "variant": request.variant,
@@ -512,7 +519,7 @@ def request_from_config(config: ProjectConfig, *, classes: Sequence[str] = (), m
     timeout = _coerce_float(ins.get("wait_timeout_seconds", timeout_default), timeout_default, field="android.instrumentation.wait_timeout_seconds")
     return InstrumentationRequest(
         project=project,
-        variant=str(config.variant or android.get("variant") or "debug"),
+        variant=__import__("devtool.android.variants", fromlist=["resolve_android_variant"]).resolve_android_variant(config).name,
         policy=resolve_instrumentation_policy(config),
         serial=str(config.device_serial or adb.get("serial") or android.get("device_serial") or ""),
         device_policy=str(adb.get("device_policy") or "exactly-one"),
