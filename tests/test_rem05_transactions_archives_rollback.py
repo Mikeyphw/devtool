@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import io
 import json
@@ -12,6 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
+from devtool.cli import _verify_applied_artifact_effects
 from devtool.artifacts import (
     list_archive_members,
     preview_artifact,
@@ -20,6 +22,7 @@ from devtool.artifacts import (
     validate_overlay_bundle,
     write_archive_entries,
 )
+from devtool.config import ProjectConfig
 from devtool.runners import _extract_archive, _sync_snapshot
 from devtool.transactions import (
     checkpoint_transaction_applied,
@@ -188,6 +191,36 @@ def test_rollback_removes_added_empty_directories_and_created_parents(tmp_path: 
     assert not (repo / "nested").exists()
     assert not (repo / "empty").exists()
     assert "removed_created_parent_dirs" in result.output
+
+
+def test_apply_verification_accepts_added_directory_and_rejects_non_directory(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    added = repo / "empty" / "dir"
+    added.mkdir(parents=True)
+    config = ProjectConfig(repo_root=repo, kind="unknown")
+    args = argparse.Namespace(
+        dry_run=False,
+        preview=False,
+        diff=False,
+        interactive=False,
+        validate_only=False,
+        command="apply-overlay",
+        _devtool_artifact_preview={"changes": [{"kind": "add-dir", "path": "empty/dir"}]},
+        _devtool_artifact_type="overlay",
+        artifact="",
+    )
+
+    result = _verify_applied_artifact_effects(config, args)
+    assert result is not None
+    assert result.returncode == 0, result.output
+
+    added.rmdir()
+    added.write_text("not a directory\n", encoding="utf-8")
+    result = _verify_applied_artifact_effects(config, args)
+    assert result is not None
+    assert result.returncode == 1
+    assert "expected applied directory" in result.output
 
 
 def test_delete_manifest_traversal_is_rejected_during_validation(tmp_path: Path) -> None:

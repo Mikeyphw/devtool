@@ -9864,6 +9864,10 @@ def _verify_applied_artifact_effects(config: ProjectConfig, args: argparse.Names
             if target.exists() or target.is_symlink():
                 problems.append(f"{display}: expected deleted but still exists")
             continue
+        if kind == "add-dir":
+            if not target.is_dir() or target.is_symlink():
+                problems.append(f"{display}: expected applied directory but is missing or not a directory")
+            continue
         if kind in {"add", "modify", "replace-dir"}:
             if not (target.exists() or target.is_symlink()):
                 problems.append(f"{display}: expected applied but is missing")
