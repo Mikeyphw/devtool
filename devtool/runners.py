@@ -22,6 +22,7 @@ from .artifacts import (
     artifact_inventory_entries,
     artifact_inventory_metadata_payload_paths,
     artifact_preflight_policy,
+    artifact_preflight_phases,
     artifact_preflight_write_paths,
     is_skipped_artifact_payload_member,
     _is_skipped_artifact_payload_member,
@@ -214,12 +215,18 @@ def _run_required_preflight(
     log_path: Path | str | None = None,
     ignore_checksum: bool = False,
     checksum_paths: Sequence[str] = (),
+    lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None,
 ) -> OperationResult | None:
     if not artifact_preflight_policy(manifest):
         return None
     artifact_sha_before = sha256_file(artifact_path) if artifact_path.is_file() else ""
     write_paths = artifact_preflight_write_paths(manifest)
     checksum_watch_before = _preflight_checksum_watch(repo_root, checksum_paths)
+    declared_phases = set(artifact_preflight_phases(manifest))
+    if phase not in declared_phases:
+        return None
+    if lifecycle_progress is not None:
+        lifecycle_progress("preflight", phase, None)
     result = run_artifact_preflight_script(
         repo_root,
         artifact_path,
@@ -230,6 +237,8 @@ def _run_required_preflight(
         log_path=log_path,
         ignore_checksum=ignore_checksum,
     )
+    if result is not None and lifecycle_progress is not None:
+        lifecycle_progress("preflight", phase, result)
     artifact_sha_after = sha256_file(artifact_path) if artifact_path.is_file() else ""
     integrity_errors: list[str] = []
     if not ignore_checksum and artifact_sha_before and artifact_sha_after != artifact_sha_before:
@@ -2894,6 +2903,7 @@ def apply_overlay(
     preview: dict | None = None,
     ignore_checksum: bool = False,
     skip_artifact_validation: bool = False,
+    lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None,
 ) -> OperationResult:
     artifact_path = resolve_artifact_path(artifact)
     if is_overlay_bundle(artifact_path):
@@ -2907,6 +2917,7 @@ def apply_overlay(
             preview=preview,
             ignore_checksum=ignore_checksum,
             skip_artifact_validation=skip_artifact_validation,
+            lifecycle_progress=lifecycle_progress,
         )
     argv = ["devtool", "extract-overlay", str(artifact_path), "-C", str(repo_root)]
     if not dry_run and not skip_artifact_validation:
@@ -2921,7 +2932,7 @@ def apply_overlay(
         )
         if rejected is not None:
             return rejected
-    return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
+    return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum, lifecycle_progress=lifecycle_progress)
 
 
 def apply_overlay_bundle(
@@ -2936,6 +2947,7 @@ def apply_overlay_bundle(
     source_artifacts: Sequence[str | Path] | None = None,
     ignore_checksum: bool = False,
     skip_artifact_validation: bool = False,
+    lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None,
 ) -> OperationResult:
     raw_artifacts = [artifact] if isinstance(artifact, (str, Path)) else list(artifact)
     if not raw_artifacts:
@@ -3006,6 +3018,7 @@ def apply_overlay_bundle(
                 log_path=log_path,
                 ignore_checksum=ignore_checksum,
                 checksum_paths=checksum_paths,
+                lifecycle_progress=lifecycle_progress,
             )
             if top_before is not None:
                 preflight_results.append(top_before)
@@ -3035,6 +3048,7 @@ def apply_overlay_bundle(
                         log_path=log_path,
                         ignore_checksum=ignore_checksum,
                         checksum_paths=checksum_paths,
+                        lifecycle_progress=lifecycle_progress,
                     )
                     if nested_before is not None:
                         preflight_results.append(nested_before)
@@ -3052,6 +3066,7 @@ def apply_overlay_bundle(
                         log_path=log_path,
                         ignore_checksum=ignore_checksum,
                         checksum_paths=checksum_paths,
+                        lifecycle_progress=lifecycle_progress,
                     )
                     if nested_after is not None:
                         preflight_results.append(nested_after)
@@ -3066,6 +3081,7 @@ def apply_overlay_bundle(
                 log_path=log_path,
                 ignore_checksum=ignore_checksum,
                 checksum_paths=checksum_paths,
+                lifecycle_progress=lifecycle_progress,
             )
             if top_after is not None:
                 preflight_results.append(top_after)
@@ -3148,7 +3164,7 @@ def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: 
     return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
 
 
-def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False) -> OperationResult:
+def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False, lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None) -> OperationResult:
     start = time.perf_counter()
     if dry_run:
         text = "$ " + " ".join(argv)
@@ -3193,6 +3209,7 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
                 log_path=log_path,
                 ignore_checksum=ignore_checksum,
                 checksum_paths=checksum_paths,
+                lifecycle_progress=lifecycle_progress,
             )
             if before is not None:
                 preflight_results.append(before)
@@ -3217,6 +3234,7 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
                 log_path=log_path,
                 ignore_checksum=ignore_checksum,
                 checksum_paths=checksum_paths,
+                lifecycle_progress=lifecycle_progress,
             )
             if after is not None:
                 preflight_results.append(after)

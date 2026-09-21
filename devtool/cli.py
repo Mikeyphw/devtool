@@ -5819,7 +5819,7 @@ def _finalize_validation_session(
             commit_pending=bool(str(final_args.commit or "").strip()),
         )
     commit_start = len(results)
-    results, raw_output = _maybe_commit_after_apply(config, final_args, results, raw_output, log_path=log_path)
+    results, raw_output = _maybe_commit_after_apply(config, final_args, results, raw_output, log_path=log_path, tasker_progress=tasker_progress)
     _record_transaction_commit_from_results(
         session.transaction_path, config.repo_root, results, start_index=commit_start
     )
@@ -7386,6 +7386,7 @@ def _maybe_commit_after_apply(
     raw_output: str,
     *,
     log_path: Path | str | None = None,
+    tasker_progress: TaskerProgressSink | None = None,
 ) -> tuple[list[OperationResult], str]:
     commit_message = str(getattr(args, "commit", "") or "").strip()
     if args.command not in APPLY_COMMANDS or not commit_message:
@@ -7404,6 +7405,13 @@ def _maybe_commit_after_apply(
         except Exception:
             artifact_path = None
     if artifact_path is not None and manifest:
+        finalize_display = "Artifact finalize: before commit"
+        if tasker_progress is not None and "before_commit" in set(artifact_finalize_phases(manifest)):
+            tasker_progress.phase_started(
+                "artifact-finalize-before_commit", index=1, total=1,
+                argv=["artifact-finalize", "before_commit", str(artifact_path)],
+                metadata={"validation_phase_name": finalize_display, "hook_kind": "finalize", "hook_phase": "before_commit"},
+            )
         try:
             finalize_result = run_artifact_finalize_script(
                 config.repo_root,
@@ -7431,9 +7439,14 @@ def _maybe_commit_after_apply(
                 f"{type(exc).__name__}: {exc}",
                 [Issue("error", "artifact-finalize-script", str(artifact_path), type(exc).__name__, str(exc))],
                 failure_kind="finalize_failure",
-                metadata={"finalize_phase": "before_commit"},
+                metadata={"finalize_phase": "before_commit", "hook_phase": "before_commit", "hook_kind": "finalize", "validation_phase_name": finalize_display},
             )
         if finalize_result is not None:
+            finalize_result.metadata.setdefault("validation_phase_name", finalize_display)
+            finalize_result.metadata.setdefault("hook_kind", "finalize")
+            finalize_result.metadata.setdefault("hook_phase", "before_commit")
+            if tasker_progress is not None:
+                tasker_progress.phase_finished(finalize_result)
             results.append(finalize_result)
             finalize_raw = "$ " + " ".join(finalize_result.argv) + "\n" + finalize_result.output
             raw_output = raw_output + ("\n\n" if raw_output else "") + finalize_raw
@@ -7456,6 +7469,13 @@ def _maybe_commit_after_apply(
 
     commit_succeeded = any(result.name == "git-commit" and result.returncode == 0 for result in commit_results)
     if commit_succeeded and artifact_path is not None and manifest:
+        finalize_display = "Artifact finalize: after commit"
+        if tasker_progress is not None and "after_commit" in set(artifact_finalize_phases(manifest)):
+            tasker_progress.phase_started(
+                "artifact-finalize-after_commit", index=1, total=1,
+                argv=["artifact-finalize", "after_commit", str(artifact_path)],
+                metadata={"validation_phase_name": finalize_display, "hook_kind": "finalize", "hook_phase": "after_commit"},
+            )
         try:
             after_commit = run_artifact_finalize_script(
                 config.repo_root,
@@ -7483,9 +7503,14 @@ def _maybe_commit_after_apply(
                 f"{type(exc).__name__}: {exc}",
                 [Issue("error", "artifact-finalize-script", str(artifact_path), type(exc).__name__, str(exc))],
                 failure_kind="finalize_failure",
-                metadata={"finalize_phase": "after_commit", "hook_phase": "after_commit", "hook_kind": "finalize"},
+                metadata={"finalize_phase": "after_commit", "hook_phase": "after_commit", "hook_kind": "finalize", "validation_phase_name": finalize_display},
             )
         if after_commit is not None:
+            after_commit.metadata.setdefault("validation_phase_name", finalize_display)
+            after_commit.metadata.setdefault("hook_kind", "finalize")
+            after_commit.metadata.setdefault("hook_phase", "after_commit")
+            if tasker_progress is not None:
+                tasker_progress.phase_finished(after_commit)
             event = dict((after_commit.metadata or {}).get("hook_event") or {})
             restoration_errors = [str(item) for item in event.get("write_restoration_errors") or []]
             if after_commit.returncode != 0 and not restoration_errors:
@@ -8598,6 +8623,22 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 )
                 return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
+    def _artifact_lifecycle_progress(kind: str, phase: str, result: OperationResult | None) -> None:
+        if tasker_progress is None:
+            return
+        display = f"Artifact {kind}: {phase.replace('_', ' ')}"
+        if result is None:
+            tasker_progress.phase_started(
+                f"artifact-{kind}-{phase}", index=1, total=1,
+                argv=[f"artifact-{kind}", phase, artifact],
+                metadata={"validation_phase_name": display, "hook_kind": kind, "hook_phase": phase},
+            )
+        else:
+            result.metadata.setdefault("validation_phase_name", display)
+            result.metadata.setdefault("hook_kind", kind)
+            result.metadata.setdefault("hook_phase", phase)
+            tasker_progress.phase_finished(result)
+
     if name in {"apply-overlays", "aos"}:
         result = apply_overlay_bundle(
             config.repo_root,
@@ -8610,6 +8651,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             source_artifacts=source_artifacts or None,
             ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
             skip_artifact_validation=bool(getattr(args, "no_manifest_check", False)),
+            lifecycle_progress=_artifact_lifecycle_progress,
         )
     elif name.startswith("apply-overlay") or name == "ao":
         result = apply_overlay(
@@ -8622,6 +8664,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             preview=preview,
             ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
             skip_artifact_validation=bool(getattr(args, "no_manifest_check", False)),
+            lifecycle_progress=_artifact_lifecycle_progress,
         )
     else:
         result = apply_snapshot(
@@ -9116,8 +9159,15 @@ def _artifact_script_result(
         return "$ " + " ".join(result.argv) + "\n" + result.output
 
     def _finalize(phase: str, status: str) -> OperationResult | None:
+        display = f"Artifact finalize: {phase.replace('_', ' ')}"
+        if tasker_progress is not None:
+            tasker_progress.phase_started(
+                f"artifact-finalize-{phase}", index=1, total=1,
+                argv=["artifact-finalize", phase, str(artifact)],
+                metadata={"validation_phase_name": display, "hook_kind": "finalize", "hook_phase": phase},
+            )
         try:
-            return run_artifact_finalize_script(
+            result = run_artifact_finalize_script(
                 config.repo_root,
                 artifact,
                 phase=phase,
@@ -9134,8 +9184,12 @@ def _artifact_script_result(
                 commit_message=str(getattr(args, "commit", "") or ""),
                 commit_paths=_artifact_commit_paths(args, config.repo_root),
             )
+            if result is not None and tasker_progress is not None:
+                result.metadata.setdefault("validation_phase_name", display)
+                tasker_progress.phase_finished(result)
+            return result
         except Exception as exc:
-            return OperationResult(
+            result = OperationResult(
                 "artifact-finalize-script",
                 ["artifact-finalize-script", str(artifact)],
                 1,
@@ -9143,8 +9197,11 @@ def _artifact_script_result(
                 f"{type(exc).__name__}: {exc}",
                 [Issue("error", "artifact-finalize-script", str(artifact), type(exc).__name__, str(exc))],
                 failure_kind="finalize_failure",
-                metadata={"finalize_phase": phase, "hook_phase": phase, "hook_kind": "finalize"},
+                metadata={"finalize_phase": phase, "hook_phase": phase, "hook_kind": "finalize", "validation_phase_name": display},
             )
+            if tasker_progress is not None:
+                tasker_progress.phase_finished(result)
+            return result
 
     before = _finalize("before_validation", "pending")
     if before is not None:
@@ -9183,8 +9240,12 @@ def _artifact_script_result(
                 f"{type(exc).__name__}: {exc}",
                 [Issue("error", "artifact-validate-script", str(artifact), type(exc).__name__, str(exc))],
                 failure_kind="validation_failure",
-                metadata={"hook_kind": "validation", "hook_phase": "validate"},
+                metadata={"hook_kind": "validation", "hook_phase": "validate", "validation_phase_name": "Artifact validation"},
             )
+        if validator is not None:
+            validator.metadata.setdefault("validation_phase_name", "Artifact validation")
+            validator.metadata.setdefault("hook_kind", "validation")
+            validator.metadata.setdefault("hook_phase", "validate")
         if validator is not None and tasker_progress is not None:
             tasker_progress.phase_finished(validator)
         if validator is not None:
@@ -9735,6 +9796,7 @@ def _run_sequential_overlays(
             all_results,
             "\n\n".join(raw_sections),
             log_path=log_path,
+            tasker_progress=tasker_progress,
         )
         _record_transaction_commit_from_results(
             transaction_path, config.repo_root, all_results, start_index=commit_start
@@ -12322,7 +12384,7 @@ def _main_after_parse(
                     results.append(rollback_result)
                     raw_output += "\n\n" + rollback_raw
                 commit_start = len(results)
-                results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
+                results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path, tasker_progress=tasker_progress)
                 _record_transaction_commit_from_results(
                     transaction_path, config.repo_root, results, start_index=commit_start
                 )

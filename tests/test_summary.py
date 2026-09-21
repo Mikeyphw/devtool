@@ -501,3 +501,25 @@ class MobileSummaryUxTests(unittest.TestCase):
         self.assertIn("Report", output)
         self.assertIn("Issues · ⚠ 1", output)
         self.assertEqual(output.count("example warning"), 1)
+
+
+def test_artifact_review_exposes_embedded_lifecycle_in_compact_and_expanded_views() -> None:
+    from rich.console import Console
+    from devtool.summary import render_artifact_manifest
+    import io
+
+    manifest = {
+        "schema_version": 2, "type": "overlay", "repository": {"name": "demo"},
+        "preflight": {"phases": ["before_extract", "after_extract"], "script": {"path": ".devtool-artifact/preflight.sh"}},
+        "validation": {"required": True, "script": {"path": ".devtool-artifact/validate.sh"}},
+        "finalize": {"phases": ["before_validation", "after_validation", "before_commit"], "script": {"path": ".devtool-artifact/finalize.sh"}},
+    }
+    for width in (60, 120):
+        out = io.StringIO()
+        console = Console(file=out, width=width, force_terminal=False)
+        render_artifact_manifest(manifest, console_obj=console)
+        text = out.getvalue()
+        assert "Lifecycle" in text or "Artifact lifecycle" in text
+        assert "preflight" in text.lower()
+        assert "validator" in text.lower() or "Artifact validation" in text
+        assert "finalize" in text.lower()

@@ -1628,6 +1628,49 @@ def _repository_layout_panel(manifest: dict) -> Panel | None:
         expand=True,
     )
 
+
+def _artifact_lifecycle_summary(manifest: dict) -> tuple[str, list[tuple[str, str]]]:
+    """Return a compact label and detailed lifecycle rows for artifact hooks."""
+    rows: list[tuple[str, str]] = []
+    preflight = manifest.get("preflight") if isinstance(manifest.get("preflight"), dict) else {}
+    validation = manifest.get("validation") if isinstance(manifest.get("validation"), dict) else {}
+    finalize = manifest.get("finalize") if isinstance(manifest.get("finalize"), dict) else {}
+
+    def phases(policy: dict, default: str) -> list[str]:
+        raw = policy.get("phases", policy.get("phase", default))
+        values = raw if isinstance(raw, list) else [raw]
+        return [str(value).strip().replace("-", "_") for value in values if str(value).strip()]
+
+    pre = phases(preflight, "before_extract") if preflight.get("script") else []
+    fin = phases(finalize, "before_validation") if finalize.get("script") else []
+    has_validator = isinstance(validation.get("script"), dict) and bool(validation.get("script"))
+    if pre:
+        rows.append(("Preflight", " · ".join(item.replace("_", " ") for item in pre)))
+    if has_validator:
+        script = validation.get("script") or {}
+        rows.append(("Artifact validation", str(script.get("path") or "embedded validator")))
+    if fin:
+        rows.append(("Finalize", " · ".join(item.replace("_", " ") for item in fin)))
+    bits: list[str] = []
+    if pre:
+        bits.append(f"{len(pre)} preflight")
+    if has_validator:
+        bits.append("validator")
+    if fin:
+        bits.append(f"{len(fin)} finalize")
+    return (" · ".join(bits), rows)
+
+def _artifact_lifecycle_panel(manifest: dict) -> Panel | None:
+    summary, rows = _artifact_lifecycle_summary(manifest)
+    if not rows:
+        return None
+    table = Table.grid(expand=True, padding=(0, 1))
+    table.add_column(style="bold dim", no_wrap=True, width=20)
+    table.add_column(ratio=1, overflow="fold")
+    for label, detail in rows:
+        table.add_row(label, detail)
+    return Panel(table, title="[bold]Artifact lifecycle[/]", subtitle=f"[dim]{summary}[/]", border_style="magenta", padding=(1, 2), expand=True)
+
 def _compact_artifact_manifest_panel(manifest: dict) -> Panel:
     repository = manifest.get("repository") if isinstance(manifest.get("repository"), dict) else {}
     inventory = manifest.get("inventory") if isinstance(manifest.get("inventory"), dict) else {}
@@ -1654,6 +1697,9 @@ def _compact_artifact_manifest_panel(manifest: dict) -> Panel:
     if validation:
         required = bool(validation.get("required", False))
         grid.add_row("Validate", Text("required" if required else "optional", style="green" if required else "yellow"))
+    lifecycle, _lifecycle_rows = _artifact_lifecycle_summary(manifest)
+    if lifecycle:
+        grid.add_row("Lifecycle", Text(lifecycle, style="magenta"))
     policy_bits: list[str] = []
     if apply:
         if "atomic" in apply:
@@ -1701,6 +1747,9 @@ def render_artifact_manifest(manifest: dict, *, console_obj: Console | None = No
     inventory_panel = _inventory_table(manifest)
     if inventory_panel is not None:
         renderables.append(inventory_panel)
+    lifecycle_panel = _artifact_lifecycle_panel(manifest)
+    if lifecycle_panel is not None:
+        renderables.append(lifecycle_panel)
     policy_panel = _execution_policy_panel(manifest)
     if policy_panel is not None:
         renderables.append(policy_panel)
