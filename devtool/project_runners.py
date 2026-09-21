@@ -1711,6 +1711,11 @@ class JvmGradleRunner(ProjectRunner):
                 config, root, options=gradle_options
             )
             argv = [gradle, *tasks, *_configured_gradle_cli_args(gradle_options)]
+            # Carry the repository-declared Java contract across execution
+            # boundaries so an SSH worker can provision the correct JDK rather
+            # than inheriting the phone's PATH/toolchain by accident.
+            from . import android_build
+            java_requirement = android_build.infer_java_requirement(android_build.inspect_project(root))
             structured_events = _bool_option(gradle_options.get("structured_events"), True)
             if structured_events:
                 # Plain JVM Gradle participates in the same exact-output
@@ -1726,6 +1731,8 @@ class JvmGradleRunner(ProjectRunner):
                     self.kind, root, gradle_tasks=list(tasks), gradle_direct=True,
                     gradle_launcher=gradle, gradle_launcher_source=launcher_source,
                     gradle_required_version=required_version or "",
+                    java_requirement_min=java_requirement.minimum,
+                    java_requirement_exact=java_requirement.exact or 0,
                     progress_parser="gradle" if structured_events else "generic",
                     report_parser="gradle-junit" if action == "test" else "",
                     collect_artifacts=action in {"build", "package"}, verify_artifacts=action in {"build", "package"},

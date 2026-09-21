@@ -219,6 +219,38 @@ managed workspace it compares the local tree to an empty local directory using
 the same rsync filters, so even planning does not create remote directories or
 markers.
 
+### Transparent managed-worker execution
+
+For a named worker in `managed` or `ephemeral` workspace mode, normal command-mode
+execution now owns the preparation lifecycle automatically. A command such as:
+
+```sh
+devtool -r "$HOME/Code/xdm" --target xdm_android --ssh-profile tablet validate --task assembleDebug
+```
+
+first checks/bootstraps the minimum worker runtime according to
+`bootstrap.policy`, synchronizes the live local checkout exactly once, resolves
+the verified canonical remote workspace, and then runs every external phase from
+that same workspace in tablet-owned tmux sessions. Manual `devtool ssh sync` is
+still useful for inspection/prewarming but is no longer required before normal
+managed builds. Raw/unprofiled SSH keeps the legacy explicit `ssh.cwd` contract.
+
+Android builds continue to use Devtool's staged Android builder on the remote
+Termux host. That builder owns task-aware JDK, Android SDK/build-tools/NDK, Node,
+and Gradle provisioning, so the remote worker reuses the same provider and
+bootstrap policies as local Android execution without copying phone toolchain
+paths. Plain JVM Gradle builds prefer the synchronized project `gradlew`; Devtool
+provisions a missing Termux JDK (Java 17/21 when compatible with the declared
+toolchain) and only installs system Gradle when no wrapper exists. A wrapperless
+project fails closed if the worker Gradle version does not satisfy the declared
+version.
+
+Worker-owned caches stay remote. In particular `$HOME/.gradle`, Android SDK/NDK
+state, and `$HOME/.cache/devtool` are not synchronized back to the phone and are
+reused by later builds. `devtool ssh doctor` reports whether automatic sync,
+tmux-owned phases, target-aware toolchains, and persistent remote caches are
+active for the selected profile.
+
 CLI values override environment variables (`DEVTOOL_SSH_HOST`,
 `DEVTOOL_SSH_PROFILE`, `DEVTOOL_SSH_PORT`, `DEVTOOL_SSH_USER`, `DEVTOOL_SSH_IDENTITY`,
 `DEVTOOL_SSH_CWD`, `DEVTOOL_SSH_SESSION`, `DEVTOOL_SSH_TOOL`,

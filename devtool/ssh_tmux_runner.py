@@ -1132,18 +1132,43 @@ def wrap_specs_for_ssh_commands(
             "must wait for each remote phase; use --ssh-mode devtool for detachable whole-run execution"
         )
     local_root = Path(repo_root).expanduser().resolve()
-    remote_root = str(config.cwd or "").strip()
+    spec_list = list(specs)
+    preparation = None
+    if config.profile:
+        # Named workers own their execution substrate. Managed/ephemeral workers
+        # bootstrap and synchronize here once, before any phase is wrapped.
+        from .ssh_execution import prepare_ssh_command_execution
+        preparation = prepare_ssh_command_execution(
+            config, spec_list, repo_root=local_root, dry_run=dry_run,
+        )
+        remote_root = str(preparation.remote_root or "").strip()
+    else:
+        remote_root = str(config.cwd or "").strip()
     if not remote_root:
         raise ValueError(
-            "--ssh-mode commands requires --ssh-cwd (or [ssh].cwd) as the explicit remote repository root"
+            "--ssh-mode commands requires --ssh-cwd/[ssh].cwd for unmanaged SSH, "
+            "or a named managed/ephemeral --ssh-profile worker"
         )
-    base_session = _sanitize_session(config.session or _default_session(config, ["commands"]))
+    if preparation is not None:
+        run_identity = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
+        if not run_identity and preparation.workspace is not None:
+            run_identity = preparation.workspace.instance_id
+        base_session = _sanitize_session(
+            config.session
+            or worker_session_name(
+                config, operation="commands", repository=remote_root, run_id=run_identity
+            )
+        )
+        preparation_metadata = preparation.metadata()
+    else:
+        base_session = _sanitize_session(config.session or _default_session(config, ["commands"]))
+        preparation_metadata = {}
     wrapped: list[Any] = []
     if not dry_run:
         _preflight_local_transport(config)
         _remote_tmux_preflight(config)
 
-    for ordinal, spec in enumerate(specs, 1):
+    for ordinal, spec in enumerate(spec_list, 1):
         metadata = dict(getattr(spec, "metadata", {}) or {})
         # Internal validation pseudo-specs are executed by local devtool logic,
         # not by a remote shell.
@@ -1151,12 +1176,23 @@ def wrap_specs_for_ssh_commands(
             wrapped.append(spec)
             continue
         original_argv = list(getattr(spec, "argv", []) or [])
+        host_cwd = str(getattr(spec, "cwd", "") or local_root)
         remote_base_argv = _drop_host_owned_toolchain_paths(original_argv, local_root)
+        if remote_base_argv and metadata.get("gradle_direct"):
+            # A local PATH Gradle selected during planning belongs to the phone.
+            # On a synchronized worker prefer the repository wrapper so the
+            # project itself owns the Gradle distribution/version contract.
+            wrapper = Path(host_cwd).expanduser() / ("gradlew.bat" if os.name == "nt" else "gradlew")
+            if wrapper.is_file():
+                # Native Termux does not promise a conventional /bin/sh, while
+                # Gradle wrappers normally carry #!/bin/sh. Invoke the synced
+                # wrapper through the remote login shell explicitly.
+                remote_base_argv = ["sh", str(wrapper.resolve()), *remote_base_argv[1:]]
+                metadata["ssh_gradle_launcher"] = "wrapper-via-sh"
         if remote_base_argv:
             remote_base_argv[0] = _remote_resolve_tool_executable(remote_base_argv[0], local_root)
         phase_name = _sanitize_session(str(getattr(spec, "name", "phase") or "phase"))
         session = _sanitize_session(f"{base_session}-{ordinal:02d}-{phase_name}")
-        host_cwd = str(getattr(spec, "cwd", "") or local_root)
         remote_cwd = _translate_repo_bound_path(host_cwd, local_root, remote_root)
         if remote_cwd == host_cwd and Path(host_cwd).is_absolute():
             # A cwd outside the repository has no declared SSH mapping. Use the
@@ -1241,6 +1277,7 @@ def wrap_specs_for_ssh_commands(
             )
             local_script += "; if [ \"$rc\" -eq 0 ]; then " + shlex.join(cleanup_remote) + " || rc=$?; fi"
         local_script += '; exit "$rc"'
+        metadata.update(preparation_metadata)
         metadata["execution_mode"] = "ssh-command"
         metadata["ssh_mode"] = "commands"
         metadata["ssh_destination"] = config.destination

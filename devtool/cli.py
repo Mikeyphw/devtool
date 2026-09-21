@@ -11470,6 +11470,7 @@ def _main_after_parse(
             storage_gib = float(probe.get("free_storage_kib", 0) or 0) / (1024.0 * 1024.0)
             tools = probe.get("tools", {})
             workspace_cfg = payload.get("workspace", {})
+            execution_cfg = payload.get("execution", {})
             rows = [
                 ("profile", payload.get("profile") or "-"),
                 ("destination", f"{payload.get('destination')}:{payload.get('port')}"),
@@ -11485,6 +11486,10 @@ def _main_after_parse(
                 ("workspace_root", workspace_cfg.get("root") or "-"),
                 ("sync_mode", workspace_cfg.get("sync_mode") or "incremental"),
                 ("sync_delete", "yes" if workspace_cfg.get("sync_delete") else "no"),
+                ("automatic_sync", "yes" if execution_cfg.get("automatic_sync") else "no"),
+                ("tmux_owned_phases", "yes" if execution_cfg.get("tmux_owned_phases") else "no"),
+                ("toolchain_policy", execution_cfg.get("toolchain_policy") or "target-aware"),
+                ("persistent_remote_caches", "yes" if execution_cfg.get("persistent_remote_caches") else "no"),
             ]
             rows.extend((f"tool.{name}", path or "MISSING") for name, path in tools.items())
             rows.append(("sessions", ", ".join(payload.get("sessions", [])) or "none"))

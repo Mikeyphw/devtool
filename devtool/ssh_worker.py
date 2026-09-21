@@ -264,6 +264,12 @@ def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
             "sync_default_excludes": config.sync_default_excludes,
             "sync_excludes": list(config.sync_excludes),
         },
+        "execution": {
+            "automatic_sync": config.workspace_mode in {"managed", "ephemeral"},
+            "tmux_owned_phases": True if config.profile else bool(config.worker_tmux),
+            "toolchain_policy": "target-aware",
+            "persistent_remote_caches": True,
+        },
         "probe": probe.as_dict(),
         "sessions": sessions,
         "sessions_error": sessions_error,

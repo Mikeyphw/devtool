@@ -1950,6 +1950,9 @@ detached = false # whole-run devtool mode only
 # delete = true # delete stale mirrored source, never excluded remote caches
 # default_excludes = true # .gradle/, build/, Devtool build/stage output
 # exclude = [".idea/", "local-only/"] # optional rsync patterns; .git is synced
+# Managed/ephemeral command-mode execution automatically bootstraps, syncs once,
+# and runs planned phases inside tablet-owned tmux sessions. Remote Gradle/SDK
+# caches remain worker-local and persist across source syncs.
 
 [toolchain]
 manager = "auto" # auto | mise | none
