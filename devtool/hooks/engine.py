@@ -24,6 +24,8 @@ from ..artifacts import (
     list_archive_members,
     resolve_artifact_path,
 )
+from ..console_utils import create_console
+from ..generic_progress import GenericProgressTracker
 from ..logstore import write_log
 from ..models import Issue, OperationResult
 from .capabilities import capability_report, normalize_hook_capabilities
@@ -34,6 +36,8 @@ from .result import load_structured_hook_result
 
 _ALLOWED_RUNNERS = {"bash", "sh", "python3"}
 _ALLOWED_PROTOCOLS = {"legacy-env", "json-v1"}
+
+console = create_console()
 
 
 def _heartbeat_seconds(env: dict[str, str]) -> float:
@@ -53,14 +57,37 @@ def _run_live(
     timeout_seconds: int,
     activity_label: str,
     script_label: str,
+    progress_label: str = "",
     stdin_text: str | None,
-) -> tuple[int, str]:
+    render_progress: bool = False,
+    stream_output: bool = False,
+    progress_target: str = "",
+) -> tuple[int, str, GenericProgressTracker | None]:
     started = time.monotonic()
     last_output_at = started
     last_heartbeat_at = started
     heartbeat_seconds = _heartbeat_seconds(env)
     output_parts: list[str] = []
     lines: queue.Queue[str | None] = queue.Queue()
+
+    # Artifact hooks use the exact same Rich progress surface as normal generic
+    # Devtool commands.  The hook runner owns no spinner/status UI of its own.
+    tracker: GenericProgressTracker | None = None
+    if render_progress:
+        tracker = GenericProgressTracker(
+            list(command),
+            str(cwd),
+            progress_label or activity_label,
+            console,
+            display_target=progress_target or str(cwd),
+        )
+        # GenericProgressTracker decides whether Rich Live is appropriate from
+        # the same Console capability checks used by normal Devtool commands.
+        # Do not force-enable it: redirected/CI output must retain the standard
+        # raw-stream fallback.
+        tracker.detail = f"Running {progress_target or progress_label or activity_label}".strip()
+        tracker.__enter__()
+
     try:
         proc = subprocess.Popen(
             command,
@@ -74,7 +101,7 @@ def _run_live(
             start_new_session=True,
         )
     except OSError as exc:
-        return 127, str(exc)
+        return 127, str(exc), tracker
 
     def reader_fn() -> None:
         try:
@@ -96,20 +123,27 @@ def _run_live(
             proc.stdin.close()
     reader_done = False
 
-    # Interactive Devtool surfaces own presentation. Keep hook stdout captured for
-    # logs/diagnostics instead of punching raw child output through the active TUI.
-    # Non-interactive/piped invocations retain streaming for CI compatibility.
-    stream_child_output = not bool(getattr(sys.stdout, "isatty", lambda: False)())
-
     def append(text: str) -> None:
         output_parts.append(text)
-        if stream_child_output:
+        # Raw hook output belongs in the durable log/inspection surface while a
+        # progress UI is active.  Verbose/non-UI callers can explicitly request
+        # streaming instead.
+        if tracker is not None:
+            for raw_line in text.splitlines():
+                if raw_line:
+                    tracker.inspection.append_line(raw_line)
+        # Match _run_process_live: non-interactive progress falls back to raw
+        # observable stdout, while an active Rich UI owns the terminal.
+        if stream_output or (tracker is not None and not tracker.enabled):
             print(text, end="", flush=True)
 
     while True:
         now = time.monotonic()
         if timeout_seconds > 0 and (now - started) >= timeout_seconds and proc.poll() is None:
-            append(f"\n{script_label} script timed out after {timeout_seconds} seconds.\n")
+            timeout_message = f"{script_label} script timed out after {timeout_seconds} seconds."
+            append(f"\n{timeout_message}\n")
+            if tracker is not None:
+                tracker.update_from_line(timeout_message)
             with contextlib.suppress(Exception):
                 os.killpg(proc.pid, signal.SIGTERM)
             with contextlib.suppress(Exception):
@@ -123,7 +157,7 @@ def _run_live(
                     proc.kill()
                 with contextlib.suppress(Exception):
                     proc.wait(timeout=1.0)
-            return 124, "".join(output_parts)
+            return 124, "".join(output_parts), tracker
         try:
             item = lines.get(timeout=0.1)
         except queue.Empty:
@@ -140,11 +174,13 @@ def _run_live(
         if heartbeat_seconds > 0 and now - last_output_at >= heartbeat_seconds and now - last_heartbeat_at >= heartbeat_seconds:
             last_heartbeat_at = now
             elapsed = int(round(now - last_output_at))
-            append(
-                "\n"
+            heartbeat = (
                 f"Devtool heartbeat: {activity_label} is still running after {elapsed}s without child output. "
-                "The process was not stopped; set DEVTOOL_COMMAND_HEARTBEAT_SECONDS=0 to disable this heartbeat.\n"
+                "The process was not stopped; set DEVTOOL_COMMAND_HEARTBEAT_SECONDS=0 to disable this heartbeat."
             )
+            append("\n" + heartbeat + "\n")
+            if tracker is not None:
+                tracker.update_from_line(f"Still running · {elapsed}s without output")
     try:
         rc = proc.wait(timeout=1.0)
     except subprocess.TimeoutExpired:
@@ -154,7 +190,7 @@ def _run_live(
             proc.kill()
         rc = 124
     reader.join(timeout=0.25)
-    return rc, "".join(output_parts)
+    return rc, "".join(output_parts), tracker
 
 
 def _preferred_tmp_parent() -> str | None:
@@ -420,16 +456,18 @@ class EmbeddedHookEngine:
                     repo_root=repo_root,
                     timeout_seconds=timeout_seconds,
                 )
-            if not bool(getattr(sys.stdout, "isatty", lambda: False)()):
-                print(f"==> Running {request.script_label.lower()} script", flush=True)
-            rc, child_output = _run_live(
+            rc, child_output, progress_tracker = _run_live(
                 command,
                 cwd=repo_root,
                 env=env,
                 timeout_seconds=timeout_seconds,
                 activity_label="artifact validator" if request.kind == "validation" else f"artifact {request.kind}",
                 script_label=f"Artifact {request.script_label.lower()}",
+                progress_label="Artifact validation" if request.kind == "validation" else f"Artifact {request.kind}",
                 stdin_text=stdin_text,
+                render_progress=request.render_progress,
+                stream_output=request.stream_output,
+                progress_target=request.phase.replace("_", " "),
             )
             try:
                 structured = load_structured_hook_result(result_path)
@@ -451,6 +489,15 @@ class EmbeddedHookEngine:
                 rc = 1
         if structured is not None and structured.status == "fail" and rc == 0:
             rc = 1
+
+        if progress_tracker is not None:
+            # Match the normal command runner: keep successful progress transient
+            # and let the authoritative operation summary report success. Failures
+            # remain visible immediately.
+            if rc != 0:
+                progress_tracker.finish(rc)
+            progress_tracker.__exit__(None, None, None)
+            progress_tracker = None
 
         header = f"$ {runner} {script_rel.as_posix()}"
         if runner == "python3" and command[:3] == [sys.executable, "-m", "devtool.python_support"]:

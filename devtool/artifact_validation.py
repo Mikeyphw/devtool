@@ -33,6 +33,8 @@ def run_artifact_validation_script(
     dry_run: bool = False,
     log_path: Path | str | None = None,
     ignore_checksum: bool = False,
+    render_progress: bool = False,
+    stream_output: bool = False,
 ) -> OperationResult | None:
     """Run an embedded validator through the canonical hook runtime."""
     artifact_path = resolve_artifact_path(artifact)
@@ -64,6 +66,8 @@ def run_artifact_validation_script(
             dry_run=dry_run,
             log_path=log_path,
             ignore_checksum=ignore_checksum,
+            render_progress=render_progress,
+            stream_output=stream_output,
             default_timeout_seconds=900,
             default_protocol="legacy-env",
             protect_artifact_path=True,
@@ -91,6 +95,8 @@ def run_artifact_finalize_script(
     dry_run: bool = False,
     log_path: Path | str | None = None,
     ignore_checksum: bool = False,
+    render_progress: bool = False,
+    stream_output: bool = False,
     validation_requested: bool = False,
     validation_status: str = "pending",
     commit_requested: bool = False,
@@ -128,6 +134,8 @@ def run_artifact_finalize_script(
             dry_run=dry_run,
             log_path=log_path,
             ignore_checksum=ignore_checksum,
+            render_progress=render_progress,
+            stream_output=stream_output,
             default_timeout_seconds=300,
             default_protocol="json-v1",
             protect_artifact_path=True,
@@ -168,6 +176,8 @@ def run_artifact_preflight_script(
     dry_run: bool = False,
     log_path: Path | str | None = None,
     ignore_checksum: bool = False,
+    render_progress: bool = False,
+    stream_output: bool = False,
 ) -> OperationResult | None:
     """Run an optional extraction-boundary hook through the canonical hook runtime."""
     artifact_path = resolve_artifact_path(artifact)
@@ -198,6 +208,8 @@ def run_artifact_preflight_script(
             dry_run=dry_run,
             log_path=log_path,
             ignore_checksum=ignore_checksum,
+            render_progress=render_progress,
+            stream_output=stream_output,
             default_timeout_seconds=300,
             default_protocol="legacy-env",
             protect_artifact_path=True,

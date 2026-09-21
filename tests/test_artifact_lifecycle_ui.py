@@ -3,7 +3,10 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
+from rich.console import Console
+
 from devtool.hooks.engine import _run_live
+from devtool.cli import _artifact_hook_presentation
 from devtool.models import OperationResult
 from devtool.summary import _presentation_results
 
@@ -13,22 +16,99 @@ class _TTY(io.StringIO):
         return True
 
 
-def test_hook_child_output_is_captured_not_echoed_on_interactive_stdout(monkeypatch, tmp_path: Path) -> None:
-    stream = _TTY()
-    monkeypatch.setattr("sys.stdout", stream)
-    rc, output = _run_live(
-        ["bash", "-lc", "printf 'hook-json\\n'"],
+def test_hook_child_output_is_captured_not_echoed_by_shared_progress_ui(monkeypatch, tmp_path: Path) -> None:
+    terminal = io.StringIO()
+    monkeypatch.setattr(
+        "devtool.hooks.engine.console",
+        Console(file=terminal, force_terminal=True, width=100),
+    )
+    rc, output, tracker = _run_live(
+        ["bash", "-lc", "printf '{\"ok\": true, \"message\": \"hook-json\"}\\n'"],
         cwd=tmp_path,
         env={},
         timeout_seconds=10,
-        activity_label="test",
+        activity_label="Artifact preflight",
         script_label="Preflight",
         stdin_text=None,
+        render_progress=True,
+        progress_target="before extract",
     )
     assert rc == 0
+    assert tracker is not None
+    tracker.finish(rc)
+    tracker.__exit__(None, None, None)
+    rendered = terminal.getvalue()
     assert "hook-json" in output
-    assert "hook-json" not in stream.getvalue()
+    assert "Artifact preflight" in rendered
+    assert "before extract" in rendered
+    assert "hook-json" not in rendered
+    assert "█" in rendered or "░" in rendered
 
+
+def test_noninteractive_shared_progress_falls_back_to_raw_stream(monkeypatch, tmp_path: Path) -> None:
+    terminal = _TTY()
+    monkeypatch.setattr("sys.stdout", terminal)
+    monkeypatch.setattr(
+        "devtool.hooks.engine.console",
+        Console(file=io.StringIO(), force_terminal=False, width=100),
+    )
+    rc, output, tracker = _run_live(
+        ["bash", "-lc", "printf 'hook-ci-output\\n'"],
+        cwd=tmp_path,
+        env={},
+        timeout_seconds=10,
+        activity_label="artifact preflight",
+        script_label="Preflight",
+        progress_label="Artifact preflight",
+        stdin_text=None,
+        render_progress=True,
+        progress_target="before extract",
+    )
+    assert rc == 0
+    assert tracker is not None
+    assert tracker.enabled is False
+    tracker.__exit__(None, None, None)
+    assert "hook-ci-output" in output
+    assert "hook-ci-output" in terminal.getvalue()
+
+
+def test_hook_verbose_stream_is_explicit_and_does_not_start_progress(monkeypatch, tmp_path: Path) -> None:
+    stream = _TTY()
+    monkeypatch.setattr("sys.stdout", stream)
+    rc, output, tracker = _run_live(
+        ["bash", "-lc", "printf 'hook-verbose\\n'"],
+        cwd=tmp_path,
+        env={},
+        timeout_seconds=10,
+        activity_label="Artifact preflight",
+        script_label="Preflight",
+        stdin_text=None,
+        render_progress=False,
+        stream_output=True,
+    )
+    assert rc == 0
+    assert tracker is None
+    assert "hook-verbose" in output
+    assert "hook-verbose" in stream.getvalue()
+
+
+
+def test_artifact_hook_presentation_matches_normal_devtool_modes() -> None:
+    class Args:
+        _devtool_json = False
+        quiet = False
+        verbose = False
+
+    args = Args()
+    assert _artifact_hook_presentation(args) == (True, False)
+    args.verbose = True
+    assert _artifact_hook_presentation(args) == (False, True)
+    args.verbose = False
+    args.quiet = True
+    assert _artifact_hook_presentation(args) == (False, False)
+    args.quiet = False
+    args._devtool_json = True
+    assert _artifact_hook_presentation(args) == (False, False)
 
 def test_lifecycle_steps_render_as_normal_actions_without_double_count_parent() -> None:
     parent = OperationResult(

@@ -31,6 +31,8 @@ class HookExecutionRequest:
     requested_capabilities: list[str] = field(default_factory=list)
     enforce_write_boundary: bool = False
     restore_on_write_violation: bool = False
+    render_progress: bool = False
+    stream_output: bool = False
     extra_env: dict[str, str] = field(default_factory=dict)
     payload_context: dict[str, Any] = field(default_factory=dict)
 
