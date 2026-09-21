@@ -1421,6 +1421,7 @@ def _run_process_live(
     requested_gradle_tasks: list[str] | tuple[str, ...] | None = None,
     live_log_path: Path | str | None = None,
     live_log_header: str = "",
+    timeout_seconds: float | None = None,
     memory_guard_mb: int = 0,
     supervisor_probe: Callable[[], tuple[str, str] | dict | str | None] | None = None,
     heartbeat_callback: Callable[[], None] | None = None,
@@ -1501,15 +1502,17 @@ def _run_process_live(
         # instead of crashing when the executable is unavailable.  This also keeps
         # older tests/wrappers that monkeypatch subprocess.run working.
         try:
-            completed = subprocess.run(
-                argv,
-                cwd=cwd,
-                env=env,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
+            fallback_kwargs = {
+                "cwd": cwd,
+                "env": env,
+                "text": True,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "check": False,
+            }
+            if timeout_seconds is not None:
+                fallback_kwargs["timeout"] = timeout_seconds
+            completed = subprocess.run(argv, **fallback_kwargs)
             output = completed.stdout or ""
             if live_log_handle is not None and output:
                 _append_live_log(output)
@@ -1517,6 +1520,19 @@ def _run_process_live(
                 print(output, end="", flush=True)
             _close_live_log()
             return completed.returncode, output
+        except subprocess.TimeoutExpired as timeout_exc:
+            captured = timeout_exc.stdout or ""
+            if isinstance(captured, bytes):
+                captured = captured.decode("utf-8", "replace")
+            output = str(captured)
+            timeout_value = float(timeout_seconds or 0.0)
+            timeout_message = f"\nDevtool command timeout: exceeded configured timeout of {timeout_value:g}s.\n"
+            output += timeout_message
+            _append_live_log(output)
+            if verbose:
+                print(output, end="", flush=True)
+            _close_live_log()
+            return 124, output
         except OSError:
             _append_live_log(str(exc))
             _close_live_log()
@@ -1635,9 +1651,9 @@ def _run_process_live(
                     pass
         tracker.update_callback = _progress_update
     interrupted_by_devtool = threading.Event()
+    timed_out_by_devtool = threading.Event()
 
-    def _interrupt_process() -> None:
-        interrupted_by_devtool.set()
+    def _terminate_process() -> None:
         try:
             if os.name == "posix":
                 os.killpg(proc.pid, 2)
@@ -1663,6 +1679,10 @@ def _run_process_live(
             except Exception:
                 pass
 
+    def _interrupt_process() -> None:
+        interrupted_by_devtool.set()
+        _terminate_process()
+
     if tracker is not None:
         set_stop_callback = getattr(tracker, "set_stop_callback", None)
         if callable(set_stop_callback):
@@ -1670,6 +1690,19 @@ def _run_process_live(
 
     cancel_watch_stop = threading.Event()
     cancel_watcher: threading.Thread | None = None
+    timeout_watch_stop = threading.Event()
+    timeout_watcher: threading.Thread | None = None
+    if timeout_seconds is not None and timeout_seconds > 0:
+        def _watch_timeout() -> None:
+            if timeout_watch_stop.wait(timeout_seconds):
+                return
+            if proc.poll() is not None:
+                return
+            timed_out_by_devtool.set()
+            setattr(proc, "_devtool_assumed_returncode", 124)
+            _terminate_process()
+        timeout_watcher = threading.Thread(target=_watch_timeout, name=f"devtool-timeout-{proc.pid}", daemon=True)
+        timeout_watcher.start()
     if tasker_progress is not None:
         def _watch_cancel() -> None:
             while not cancel_watch_stop.wait(0.1):
@@ -1726,7 +1759,13 @@ def _run_process_live(
                 _append_live_log(line)
                 print(line, end="", flush=True)
             code = _wait_process_returncode(proc)
-            if interrupted_by_devtool.is_set() or (tasker_progress is not None and tasker_progress.cancel_requested()):
+            if timed_out_by_devtool.is_set():
+                timeout_message = f"\nDevtool command timeout: exceeded configured timeout of {timeout_seconds:g}s.\n"
+                output_parts.append(timeout_message)
+                _append_live_log(timeout_message)
+                print(timeout_message, end="", flush=True)
+                code = 124
+            elif interrupted_by_devtool.is_set() or (tasker_progress is not None and tasker_progress.cancel_requested()):
                 code = 130
             _finalize_structured_state()
             return code, "".join(output_parts)
@@ -1771,7 +1810,13 @@ def _run_process_live(
                 telemetry_line = task_telemetry_line() + "\n"
                 _append_live_log(telemetry_line)
                 print(telemetry_line, end="", flush=True)
-            if interrupted_by_devtool.is_set() or (tasker_progress is not None and tasker_progress.cancel_requested()):
+            if timed_out_by_devtool.is_set():
+                timeout_message = f"\nDevtool command timeout: exceeded configured timeout of {timeout_seconds:g}s.\n"
+                output_parts.append(timeout_message)
+                _append_live_log(timeout_message)
+                print(timeout_message, end="", flush=True)
+                returncode = 124
+            elif interrupted_by_devtool.is_set() or (tasker_progress is not None and tasker_progress.cancel_requested()):
                 returncode = 130
                 output_parts.append("\nCancelled from Devtool Control Center. Child process was terminated.\n")
             # Do not render a terminal success here. Report parsing and
@@ -1793,8 +1838,11 @@ def _run_process_live(
         return 130, "".join(output_parts)
     finally:
         cancel_watch_stop.set()
+        timeout_watch_stop.set()
         if cancel_watcher is not None and cancel_watcher is not threading.current_thread():
             cancel_watcher.join(timeout=0.25)
+        if timeout_watcher is not None and timeout_watcher is not threading.current_thread():
+            timeout_watcher.join(timeout=0.25)
         if tasker_progress is not None:
             tasker_progress.clear_cancel()
         _close_live_log()
@@ -2198,6 +2246,16 @@ def run_specs(
             # proot-distro process as a second, backend-ambiguous channel.
             env.update(spec.env)
 
+        raw_timeout_seconds = spec.metadata.get("timeout_seconds")
+        command_timeout_seconds: float | None = None
+        if raw_timeout_seconds not in (None, ""):
+            try:
+                parsed_timeout = float(raw_timeout_seconds)
+            except (TypeError, ValueError):
+                parsed_timeout = 0.0
+            if parsed_timeout > 0:
+                command_timeout_seconds = parsed_timeout
+
         started = time.perf_counter()
         started_wall = time.time()
         returncode = 1
@@ -2259,6 +2317,7 @@ def run_specs(
                     requested_gradle_tasks=requested_gradle_tasks,
                     live_log_path=log_path,
                     live_log_header=command_line + "\n" if log_path is not None else "",
+                    timeout_seconds=command_timeout_seconds,
                     memory_guard_mb=memory_guard_mb,
                     supervisor_probe=supervisor_probe,
                     heartbeat_callback=heartbeat_callback,
@@ -2285,6 +2344,7 @@ def run_specs(
                         requested_gradle_tasks=requested_gradle_tasks,
                         live_log_path=log_path,
                         live_log_header=command_line + "\n" if log_path is not None else "",
+                        timeout_seconds=command_timeout_seconds,
                         memory_guard_mb=memory_guard_mb,
                         supervisor_probe=supervisor_probe,
                         heartbeat_callback=heartbeat_callback,
@@ -2316,6 +2376,7 @@ def run_specs(
                         requested_gradle_tasks=requested_gradle_tasks,
                         live_log_path=log_path,
                         live_log_header=command_line + "\n" if log_path is not None else "",
+                        timeout_seconds=command_timeout_seconds,
                         memory_guard_mb=memory_guard_mb,
                         supervisor_probe=supervisor_probe,
                         heartbeat_callback=heartbeat_callback,
@@ -2328,6 +2389,7 @@ def run_specs(
         process_output = output
         duration = time.perf_counter() - started
         result_metadata = dict(spec.metadata)
+        canonical_test_id = str(result_metadata.get("test_spec_id") or spec.name).strip() or spec.name
         canonical_test_candidates = []
         is_go_test = (
             str(result_metadata.get("runner") or "").lower() == "go"
@@ -2346,7 +2408,7 @@ def run_specs(
             go_metadata = go_report.to_metadata()
             result_metadata["go_test"] = go_metadata
             result_metadata["tests"] = dict(go_metadata["tests"])
-            canonical_test_candidates.append(_test_result_from_go_report(spec.name, go_report, evidence=go_report_evidence))
+            canonical_test_candidates.append(_test_result_from_go_report(canonical_test_id, go_report, evidence=go_report_evidence))
         command_issues = parse_issues(config.repo_root, spec.name, output)
         if go_report is not None:
             from .diagnostics import go_test_issues
@@ -2404,7 +2466,9 @@ def run_specs(
                         tests["selected"] = int(catalog_selected)
                     result_metadata["tests"] = tests
                     if collection.test_result is not None:
-                        canonical_test_candidates.append(collection.test_result)
+                        normalized_report_result = _reconcile_test_results(canonical_test_id, [collection.test_result])
+                        if normalized_report_result is not None:
+                            canonical_test_candidates.append(normalized_report_result)
                     if tests.get("report_files") or report_parser == "android-instrumentation":
                         test_prefix = "Devtool Gradle tests: " if report_parser == "gradle-junit" else f"Devtool tests ({tests.get('framework', report_parser)}): "
                         output = (output.rstrip() + "\n" if output else "") + (
@@ -2512,14 +2576,14 @@ def run_specs(
             # parsing is used only when no structured result was produced.
             if not canonical_test_candidates:
                 framework = str(result_metadata.get("test_framework") or result_metadata.get("runner") or "")
-                progress_result = _test_result_from_progress_snapshot(spec.name, last_progress_snapshot, framework=framework)
+                progress_result = _test_result_from_progress_snapshot(canonical_test_id, last_progress_snapshot, framework=framework)
                 if progress_result is not None:
                     canonical_test_candidates.append(progress_result)
                 else:
-                    stdout_result = _test_result_from_stdout(spec.name, effective_argv, process_output, framework=framework)
+                    stdout_result = _test_result_from_stdout(canonical_test_id, effective_argv, process_output, framework=framework)
                     if stdout_result is not None:
                         canonical_test_candidates.append(stdout_result)
-            canonical_test_result = _reconcile_test_results(spec.name, canonical_test_candidates)
+            canonical_test_result = _reconcile_test_results(canonical_test_id, canonical_test_candidates)
             if canonical_test_result is not None:
                 result_metadata["test_result"] = canonical_test_result.to_dict()
                 canonical_counts = _canonical_test_counts(canonical_test_result)
@@ -2530,7 +2594,7 @@ def run_specs(
                 # Exit status is deliberately metadata-only: do not invent a fake
                 # test case when a runner exposes no test identity or counters.
                 result_metadata["test_result"] = {
-                    "schema_version": 1, "id": spec.name, "suites": [], "artifacts": [],
+                    "schema_version": 1, "id": canonical_test_id, "suites": [], "artifacts": [],
                     "metadata": {"evidence": "exit", "exit_code": returncode},
                 }
                 result_metadata["test_evidence"] = "exit"
@@ -2662,6 +2726,10 @@ def run_specs(
             result_metadata["resource_guard_triggered"] = kind == "resource"
             result_metadata["timed_out"] = kind == "timeout"
         failure_kind = classify_failure(spec.name, output, returncode)
+        if command_timeout_seconds is not None and returncode == 124 and "Devtool command timeout:" in output:
+            result_metadata["timed_out"] = True
+            result_metadata["timeout_seconds"] = command_timeout_seconds
+            failure_kind = "command_timeout"
         if returncode != 0:
             from .execution_environments import NATIVE_TERMUX, detect_current_environment
             from .termux_runtime import classify_runtime_failure
