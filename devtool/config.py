@@ -1929,6 +1929,19 @@ tool = "devtool" # used only by devtool mode
 stage_dir = "~/.cache/devtool/ssh-stage"
 copy_artifacts = true
 detached = false # whole-run devtool mode only
+# profile = "tablet" # optional default named worker
+
+# Named workers are additive: explicit --ssh/--ssh-user/etc. still override
+# profile fields. Managed workspaces/sync are introduced by SSHW-02.
+# [ssh.hosts.tablet]
+# host = "192.168.1.50"
+# port = 8022
+# user = "u0_a123"
+# mode = "commands"
+# [ssh.hosts.tablet.bootstrap]
+# policy = "missing" # missing | never
+# [ssh.hosts.tablet.worker]
+# tmux = true
 
 [toolchain]
 manager = "auto" # auto | mise | none

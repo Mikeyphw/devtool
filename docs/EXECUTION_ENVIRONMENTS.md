@@ -134,8 +134,47 @@ copy_artifacts = true
 detached = false
 ```
 
+Named build workers can be declared without replacing the existing `[ssh]`
+configuration:
+
+```toml
+[ssh]
+profile = "tablet" # optional default for `devtool ssh ...` management commands
+
+[ssh.hosts.tablet]
+host = "192.168.1.50"
+port = 8022
+user = "u0_a123"
+mode = "commands"
+cwd = "~/Code/xdm" # SSHW-02 will remove this requirement for managed workspaces
+
+[ssh.hosts.tablet.bootstrap]
+policy = "missing" # missing | never
+
+[ssh.hosts.tablet.worker]
+tmux = true
+```
+
+`--ssh-profile tablet` selects the profile. Explicit transport flags still win,
+so `--ssh-profile tablet --ssh-port 2222` is a one-run override rather than a
+second configuration mechanism. SSHW-01 also adds read-only discovery and
+idempotent worker bootstrap:
+
+```sh
+devtool ssh doctor tablet
+devtool ssh bootstrap tablet --dry-run
+devtool ssh bootstrap tablet
+devtool ssh sessions tablet
+```
+
+`doctor` intentionally needs only SSH and a POSIX shell on the remote side. It
+reports Termux/Linux, architecture, CPU, memory, free storage, package manager,
+and the worker/runtime tools. Managed workers require `tmux`; bootstrap installs
+only missing `python`, `tmux`, `rsync`, and `git` packages. On Termux it uses
+`pkg`; supported Linux package managers require root or passwordless sudo.
+
 CLI values override environment variables (`DEVTOOL_SSH_HOST`,
-`DEVTOOL_SSH_PORT`, `DEVTOOL_SSH_USER`, `DEVTOOL_SSH_IDENTITY`,
+`DEVTOOL_SSH_PROFILE`, `DEVTOOL_SSH_PORT`, `DEVTOOL_SSH_USER`, `DEVTOOL_SSH_IDENTITY`,
 `DEVTOOL_SSH_CWD`, `DEVTOOL_SSH_SESSION`, `DEVTOOL_SSH_TOOL`,
 `DEVTOOL_SSH_MODE`, `DEVTOOL_SSH_STAGE_DIR`,
 `DEVTOOL_SSH_NO_ARTIFACT_COPY`, and `DEVTOOL_SSH_DETACHED`), which override

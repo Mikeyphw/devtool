@@ -107,11 +107,24 @@ def _overlay_fixture(tmp_path: Path) -> str:
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
+def _cli_help_body(text: str) -> str:
+    # CPython's argparse usage renderer has changed punctuation/grouping across
+    # supported Python releases (notably mutually-exclusive option groups).
+    # The documented help body is the stable Devtool-owned contract; the usage
+    # synopsis remains argparse-owned and is checked for the expected program.
+    parts = text.split("\n\n", 1)
+    return parts[1] if len(parts) == 2 else text
+
+
 def test_golden_cli_help_contract(monkeypatch) -> None:
     # argparse wraps help using the ambient terminal width. Golden output must
-    # be stable in narrow Termux panes, tmux, CI, and wide desktop terminals.
+    # be stable in narrow Termux panes, tmux, CI, and wide desktop terminals,
+    # while tolerating Python-version-specific usage grouping punctuation.
     monkeypatch.setenv("COLUMNS", "80")
-    assert build_parser().format_help() == (GOLDEN / "cli-help.txt").read_text(encoding="utf-8")
+    actual = build_parser().format_help()
+    expected = (GOLDEN / "cli-help.txt").read_text(encoding="utf-8")
+    assert actual.startswith("usage: devtool ")
+    assert _cli_help_body(actual) == _cli_help_body(expected)
 
 
 def test_golden_validation_summary_contract() -> None:

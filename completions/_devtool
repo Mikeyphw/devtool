@@ -585,6 +585,7 @@ _devtool() {
     '(--host --chroot --ssh --ssh-host --proot-distro --execution-environment)'{--ssh,--ssh-host}'[use an SSH host for devtool or command-phase execution]:host:_hosts' \
     '(--host --chroot --ssh --ssh-host --proot-distro --execution-environment)--proot-distro[run command phases in a PRoot-Distro container]:distro:' \
     '(--host --chroot --ssh --ssh-host --proot-distro --execution-environment)--execution-environment[execution backend]:backend:(auto native-termux chroot proot-distro desktop-linux android-device external-device ssh)' \
+    '--ssh-profile[named SSH worker profile]:name:' \
     '--ssh-port[SSH port]:port:' \
     '--ssh-user[SSH login user]:user:' \
     '--ssh-identity[SSH private key]:file:_files' \

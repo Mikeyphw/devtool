@@ -30,6 +30,7 @@ from typing import Any, Iterable, Mapping
 _SSH_VALUE_FLAGS = {
     "--ssh",
     "--ssh-host",
+    "--ssh-profile",
     "--ssh-port",
     "--ssh-user",
     "--ssh-identity",
@@ -97,6 +98,9 @@ class SSHRunnerConfig:
     detached: bool = False
     config_path: str = ""
     operation_id: str = ""
+    profile: str = ""
+    bootstrap_policy: str = "missing"
+    worker_tmux: bool = False
 
     @property
     def destination(self) -> str:
@@ -177,11 +181,54 @@ def _load_raw_config(argv: list[str], cwd: str) -> tuple[dict[str, Any], Path | 
     return (data if isinstance(data, dict) else {}), path
 
 
-def _ssh_section(data: Mapping[str, Any], target_name: str = "") -> dict[str, Any]:
+def _profile_name(data: Mapping[str, Any], explicit: str = "") -> str:
+    if explicit:
+        return explicit.strip()
+    top = data.get("ssh", {})
+    if isinstance(top, dict):
+        return str(top.get("profile", top.get("default_profile", "")) or "").strip()
+    return ""
+
+
+def _ssh_profile_section(data: Mapping[str, Any], profile: str) -> dict[str, Any]:
+    if not profile:
+        return {}
+    top = data.get("ssh", {})
+    if not isinstance(top, dict):
+        return {}
+    containers = []
+    for key in ("hosts", "profiles", "workers"):
+        value = top.get(key, {})
+        if isinstance(value, dict):
+            containers.append(value)
+    for container in containers:
+        if profile not in container:
+            continue
+        candidate = container.get(profile)
+        if isinstance(candidate, dict):
+            result = dict(candidate)
+            bootstrap = candidate.get("bootstrap", {})
+            if isinstance(bootstrap, dict) and "policy" in bootstrap:
+                result["bootstrap_policy"] = bootstrap.get("policy")
+            worker = candidate.get("worker", {})
+            if isinstance(worker, dict) and "tmux" in worker:
+                result["worker_tmux"] = worker.get("tmux")
+            return result
+    available = sorted({str(name) for container in containers for name in container})
+    suffix = f" Available profiles: {', '.join(available)}." if available else ""
+    raise ValueError(f"SSH profile {profile!r} is not defined under [ssh.hosts.*].{suffix}")
+
+
+def _ssh_section(data: Mapping[str, Any], target_name: str = "", profile: str = "") -> dict[str, Any]:
     merged: dict[str, Any] = {}
     top = data.get("ssh", {})
     if isinstance(top, dict):
-        merged.update(top)
+        # Do not leak profile containers into scalar runner options.
+        merged.update({k: v for k, v in top.items() if k not in {"hosts", "profiles", "workers", "profile", "default_profile"}})
+
+    # A named profile provides the worker baseline. Explicit execution/target
+    # settings still override it for backward-compatible per-target tuning.
+    merged.update(_ssh_profile_section(data, profile))
 
     execution = data.get("execution", {})
     if isinstance(execution, dict):
@@ -233,10 +280,10 @@ def configured_ssh_environment(data: Mapping[str, Any], target_name: str = "") -
 
 
 def ssh_requested(argv: list[str], *, cwd: str | None = None, env: Mapping[str, str] | None = None) -> bool:
-    env = env or os.environ
+    env = os.environ if env is None else env
     if _truthy(env.get("DEVTOOL_INSIDE_SSH")):
         return False
-    if _find_value(argv, {"--ssh", "--ssh-host"}).strip():
+    if _find_value(argv, {"--ssh", "--ssh-host", "--ssh-profile"}).strip():
         return True
     requested = _find_value(argv, {"--execution-environment"}).strip().lower().replace("_", "-")
     if requested == "ssh":
@@ -252,11 +299,14 @@ def resolve_ssh_config(
     cwd: str | None = None,
     env: Mapping[str, str] | None = None,
 ) -> SSHRunnerConfig:
-    env = env or os.environ
+    env = os.environ if env is None else env
     cwd = cwd or os.getcwd()
     data, config_path = _load_raw_config(argv, cwd)
     target_name = _find_value(argv, {"--target"}).strip()
-    file_options = _ssh_section(data, target_name)
+    cli_profile = _find_value(argv, {"--ssh-profile"}).strip()
+    env_profile = str(env.get("DEVTOOL_SSH_PROFILE", "") or "").strip()
+    profile = _profile_name(data, cli_profile or env_profile)
+    file_options = _ssh_section(data, target_name, profile)
 
     cli_host = _find_value(argv, {"--ssh", "--ssh-host"}).strip()
     cli_port = _find_value(argv, {"--ssh-port"}).strip()
@@ -294,9 +344,21 @@ def resolve_ssh_config(
     if "--ssh-detached" in argv:
         detached = True
 
+    bootstrap_policy = str(file_options.get("bootstrap_policy", "missing") or "missing").strip().lower().replace("_", "-")
+    if bootstrap_policy in {"auto", "if-missing", "needed"}:
+        bootstrap_policy = "missing"
+    if bootstrap_policy in {"off", "disabled", "none"}:
+        bootstrap_policy = "never"
+    if bootstrap_policy not in {"missing", "never"}:
+        raise ValueError(f"SSH bootstrap policy must be missing or never, got {bootstrap_policy!r}")
+    configured_worker_tmux = _bool_value(file_options.get("worker_tmux"), bool(profile))
+    if profile and "worker_tmux" in file_options and not configured_worker_tmux:
+        raise ValueError("Named SSH workers require tmux; [ssh.hosts.*.worker].tmux cannot be false")
+    worker_tmux = True if profile else configured_worker_tmux
+
     if not host:
         source = f" in {config_path}" if config_path else ""
-        raise ValueError(f"SSH execution requested but no host is configured{source}. Use --ssh HOST or set [ssh].host.")
+        raise ValueError(f"SSH execution requested but no host is configured{source}. Use --ssh HOST, --ssh-profile NAME, or set [ssh].host.")
     if identity:
         # Identity belongs to the local SSH client, so local ~ expansion is correct.
         identity = str(Path(identity).expanduser())
@@ -314,6 +376,9 @@ def resolve_ssh_config(
         copy_artifacts=copy_artifacts,
         detached=detached,
         config_path=str(config_path or ""),
+        profile=profile,
+        bootstrap_policy=bootstrap_policy,
+        worker_tmux=worker_tmux,
     )
 
 
@@ -524,6 +589,42 @@ def _session_active(config: SSHRunnerConfig, session: str) -> bool:
     return _session_status(config, session) != "inactive"
 
 
+def worker_session_name(
+    config: SSHRunnerConfig,
+    *,
+    operation: str = "worker",
+    repository: str = "",
+    run_id: str = "",
+) -> str:
+    """Return a stable tmux session name for an identified remote worker run.
+
+    When ``run_id`` is supplied the result is deterministic across reconnects.
+    The profile/repository parts are descriptive only; a short digest prevents
+    ambiguous repositories with the same basename from colliding.
+    """
+    repo_text = str(repository or config.cwd or "").strip().rstrip("/")
+    repo_name = repo_text.rsplit("/", 1)[-1] if repo_text else ""
+    identity = "|".join((config.profile, config.destination, repo_text, operation, run_id))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:10]
+    parts = ["devtool", config.profile, repo_name, operation, run_id[-16:] if run_id else digest]
+    return _sanitize_session("-".join(part for part in parts if part))
+
+
+def tmux_session_status(config: SSHRunnerConfig, session: str) -> str:
+    """Public worker-management wrapper around tmux session discovery."""
+    return _session_status(config, _sanitize_session(session))
+
+
+def list_tmux_sessions(config: SSHRunnerConfig, *, prefix: str = "devtool-") -> list[str]:
+    """List Devtool-owned tmux sessions without attaching to them."""
+    script = "tmux list-sessions -F '#{session_name}' 2>/dev/null || true"
+    command = _build_ssh_remote_sh_argv(config, script, tty=False)
+    completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=_transport_timeout())
+    if completed.returncode != 0:
+        raise ValueError(f"SSH tmux session discovery failed with exit {completed.returncode}")
+    return sorted({line.strip() for line in completed.stdout.splitlines() if line.strip().startswith(prefix)})
+
+
 def _assert_session_inactive(config: SSHRunnerConfig, session: str) -> None:
     status = _session_status(config, session)
     if status == "active":
@@ -640,6 +741,16 @@ def _build_ssh_remote_sh_argv(
     tty: bool,
 ) -> list[str]:
     return [*build_ssh_base_argv(config, tty=tty), _remote_sh_command(script)]
+
+
+def build_ssh_remote_sh_argv(
+    config: SSHRunnerConfig,
+    script: str,
+    *,
+    tty: bool = False,
+) -> list[str]:
+    """Build a safely quoted OpenSSH remote ``sh -lc`` invocation."""
+    return _build_ssh_remote_sh_argv(config, script, tty=tty)
 
 
 def _ensure_remote_dir(config: SSHRunnerConfig, remote_dir: str) -> None:

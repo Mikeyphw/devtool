@@ -300,6 +300,7 @@ GLOBAL_OPTIONS_WITH_VALUE = {
     "--chroot",
     "--ssh",
     "--ssh-host",
+    "--ssh-profile",
     "--ssh-port",
     "--ssh-user",
     "--ssh-identity",
@@ -543,6 +544,7 @@ def build_parser() -> argparse.ArgumentParser:
     exec_group.add_argument("--host", action="store_true", help="Force command phases to run in devtool's current host environment")
     exec_group.add_argument("--chroot", default="", help="Run command phases inside a named chroot via chrootctl exec")
     exec_group.add_argument("--ssh", "--ssh-host", dest="ssh", default="", metavar="HOST", help="Use HOST as the SSH execution target (whole devtool or command-phase mode)")
+    environment.add_argument("--ssh-profile", default="", metavar="NAME", help="Use a named SSH worker from [ssh.hosts.NAME]; explicit SSH flags override profile fields")
     exec_group.add_argument("--proot-distro", dest="proot_distro", default="", metavar="DISTRO", help="Run command phases inside a PRoot-Distro container; guest does not need devtool")
     exec_group.add_argument(
         "--execution-environment",
@@ -986,6 +988,20 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_migrate.add_argument("--global", dest="global_config", action="store_true", help="Migrate legacy UI preferences in the user global config")
     cfg_doctor = cfg_sub.add_parser("doctor")
     cfg_doctor.add_argument("--global", dest="global_config", action="store_true", help="Diagnose the user global config")
+
+    ssh_cmd = subparsers.add_parser("ssh", help="Inspect and bootstrap named SSH build workers")
+    ssh_sub = ssh_cmd.add_subparsers(dest="ssh_command", required=True)
+    ssh_doctor = ssh_sub.add_parser("doctor", help="Read-only capability discovery for a named SSH worker")
+    ssh_doctor.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_doctor.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_bootstrap = ssh_sub.add_parser("bootstrap", help="Install missing minimum worker tools (python, tmux, rsync, git)")
+    ssh_bootstrap.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_bootstrap.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_bootstrap.add_argument("--dry-run", dest="ssh_bootstrap_dry_run", action="store_true", help="Show the remote package command without modifying the worker")
+    ssh_bootstrap.add_argument("--force", dest="ssh_bootstrap_force", action="store_true", help="Override bootstrap.policy=never for this explicit request")
+    ssh_sessions = ssh_sub.add_parser("sessions", aliases=["ls"], help="List Devtool-owned tmux sessions on a named worker")
+    ssh_sessions.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_sessions.add_argument("--format", choices=["text", "json"], default="text")
 
     bootstrap_cmd = subparsers.add_parser("bootstrap", help="Provision reusable destination-specific build toolchains")
     bootstrap_sub = bootstrap_cmd.add_subparsers(dest="bootstrap_command", required=True)
@@ -10830,6 +10846,24 @@ def _config_command(args: argparse.Namespace) -> int:
 
 def _maybe_delegate_ssh(raw_argv: list[str], args: argparse.Namespace) -> int | None:
     """Select SSH whole-run or local-devtool/remote-command mode."""
+    # ``devtool ssh ...`` manages the transport itself and must never recurse
+    # through whole-run SSH delegation, even when the project defaults to SSH.
+    if str(getattr(args, "command", "") or "") == "ssh":
+        return None
+    ssh_profile = str(getattr(args, "ssh_profile", "") or "").strip()
+    if ssh_profile:
+        incompatible = []
+        if bool(getattr(args, "host", False)):
+            incompatible.append("--host")
+        if str(getattr(args, "chroot", "") or "").strip():
+            incompatible.append("--chroot")
+        if str(getattr(args, "proot_distro", "") or "").strip():
+            incompatible.append("--proot-distro")
+        requested_environment = str(getattr(args, "execution_environment", EXECUTION_AUTO) or EXECUTION_AUTO)
+        if requested_environment not in {EXECUTION_AUTO, EXECUTION_SSH}:
+            incompatible.append(f"--execution-environment={requested_environment}")
+        if incompatible:
+            raise SystemExit("--ssh-profile cannot be combined with non-SSH execution selectors: " + ", ".join(incompatible))
     if str(os.environ.get("DEVTOOL_INSIDE_SSH", "")).strip().lower() in {"1", "true", "yes", "on"}:
         return None
     from .ssh_tmux_runner import resolve_ssh_config, run_ssh_tmux, ssh_requested
@@ -10857,7 +10891,7 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
     native app HUD bridge, clipboard, and command summary on Android.  The old whole-
     devtool delegation remains available with DEVTOOL_AUTO_CHROOT_MODE=full.
     """
-    if str(getattr(args, "command", "") or "") == "validation-menu":
+    if str(getattr(args, "command", "") or "") in {"validation-menu", "ssh"}:
         return None
     if bool(getattr(args, "no_auto_chroot", False)) or inside_chroot():
         return None
@@ -11378,6 +11412,84 @@ def _main_after_parse(
             return tail_log(path, lines=int(getattr(args, "lines", 200) or 200), follow=not bool(getattr(args, "no_follow", False)))
         console.print(f"[red]Unknown logs command: {logs_command}[/red]")
         return 2
+
+    if args.command == "ssh":
+        from .ssh_worker import bootstrap_worker, resolve_worker_profile, session_payload, worker_doctor_payload
+
+        action = str(getattr(args, "ssh_command", "") or "")
+        output_format = str(getattr(args, "format", "text") or "text")
+        profile = str(getattr(args, "profile", "") or "").strip()
+        try:
+            worker = resolve_worker_profile(
+                profile,
+                repo=str(getattr(args, "repo", "") or ""),
+                config_path=str(getattr(args, "config", "") or ""),
+            )
+            if action == "doctor":
+                payload = worker_doctor_payload(worker)
+            elif action == "bootstrap":
+                payload = bootstrap_worker(
+                    worker,
+                    dry_run=bool(getattr(args, "ssh_bootstrap_dry_run", False)),
+                    force=bool(getattr(args, "ssh_bootstrap_force", False)),
+                )
+            elif action in {"sessions", "ls"}:
+                payload = session_payload(worker)
+            else:
+                parser.error(f"Unknown ssh command: {action}")
+                return 2
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            if output_format == "json":
+                print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+            else:
+                print(f"Error: {exc}", file=sys.stderr)
+            return 2
+
+        if output_format == "json":
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        elif action == "doctor":
+            probe = payload["probe"]
+            memory_gib = float(probe.get("memory_kib", 0) or 0) / (1024.0 * 1024.0)
+            storage_gib = float(probe.get("free_storage_kib", 0) or 0) / (1024.0 * 1024.0)
+            tools = probe.get("tools", {})
+            rows = [
+                ("profile", payload.get("profile") or "-"),
+                ("destination", f"{payload.get('destination')}:{payload.get('port')}"),
+                ("platform", f"{probe.get('platform', 'unknown')} / {probe.get('os_name', 'unknown')}"),
+                ("architecture", probe.get("architecture") or "unknown"),
+                ("cpu", str(probe.get("cpu_count", 0))),
+                ("memory", f"{memory_gib:.2f} GiB" if memory_gib else "unknown"),
+                ("free_storage", f"{storage_gib:.2f} GiB" if storage_gib else "unknown"),
+                ("package_manager", probe.get("package_manager") or "-"),
+                ("bootstrap_policy", payload.get("bootstrap_policy") or "missing"),
+                ("tmux_required", "yes" if payload.get("tmux_required") else "no"),
+            ]
+            rows.extend((f"tool.{name}", path or "MISSING") for name, path in tools.items())
+            rows.append(("sessions", ", ".join(payload.get("sessions", [])) or "none"))
+            rows.append(("overall", "READY" if payload.get("healthy") else ("BOOTSTRAPPABLE" if probe.get("bootstrap_supported") else "BLOCKED")))
+            render_status_table(rows)
+        elif action == "bootstrap":
+            probe = payload.get("probe", {})
+            rows = [
+                ("profile", payload.get("profile") or "-"),
+                ("destination", payload.get("destination") or "-"),
+                ("status", "READY" if payload.get("ok") else "BLOCKED"),
+                ("changed", "yes" if payload.get("changed") else "no"),
+                ("missing_before", ", ".join(payload.get("missing_before", [])) or "none"),
+                ("installed", ", ".join(payload.get("installed", [])) or "none"),
+                ("detail", payload.get("detail") or "-"),
+            ]
+            if payload.get("dry_run") and payload.get("command"):
+                rows.append(("command", payload["command"]))
+            render_status_table(rows)
+        else:
+            rows = [("profile", payload.get("profile") or "-"), ("destination", payload.get("destination") or "-")]
+            sessions = payload.get("sessions", [])
+            rows.extend((f"session.{item['name']}", item.get("status", "unknown")) for item in sessions)
+            if not sessions:
+                rows.append(("sessions", payload.get("detail") or "none"))
+            render_status_table(rows)
+        return 0 if bool(payload.get("healthy", payload.get("ok", True))) else 1
 
     if args.command == "bootstrap":
         try:

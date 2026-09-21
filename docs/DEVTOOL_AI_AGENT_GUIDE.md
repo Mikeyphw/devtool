@@ -286,6 +286,7 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--host` | Force command phases to run in devtool's current host environment |
 | `--chroot CHROOT` | Run command phases inside a named chroot via chrootctl exec |
 | `--ssh, --ssh-host HOST` | Use HOST as the SSH execution target (whole devtool or command-phase mode) |
+| `--ssh-profile NAME` | Use a named SSH worker from [ssh.hosts.NAME]; explicit SSH flags override profile fields |
 | `--proot-distro DISTRO` | Run command phases inside a PRoot-Distro container; guest does not need devtool |
 | `--execution-environment EXECUTION_ENVIRONMENT` | Execution backend: auto, native-termux, chroot, proot-distro, desktop-linux, ssh, android-device, or external-device Choices: auto, native-termux, chroot, desktop-linux, android-device, external-device, ssh, proot-distro |
 | `--ssh-port PORT` | SSH port (default: 22 or [ssh].port) |
@@ -434,6 +435,8 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--no-build-cache` | Disable the Gradle build cache for validation |
 | `--daemon` | Allow the Gradle daemon during validation |
 | `--no-daemon` | Disable the Gradle daemon during validation |
+| `TEST_NAMES...` | First-class [[test]] IDs from .devtool.toml |
+| `--all` | Run all first-class [[test]] declarations |
 | `--no-build` | Pass --no-build to dotnet test |
 | `--list-tests, --list` | Discover and list tests without executing them; pytest uses native --collect-only discovery |
 | `--pytest-test NODEID` | Run exactly this pytest file/node ID; repeatable. Suppresses default/affected pytest targets unless --pytest-include-defaults is set. |
@@ -507,6 +510,7 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--skip-restore` | Skip restore during validation |
 | `--skip-build` | Skip build during validation |
 | `--skip-test` | Skip test during validation |
+| `--test DECLARED_TESTS` | Run a first-class [[test]] declaration during validation; repeatable |
 | `[VALIDATE_SCOPE]` | Optional artifact validation scope: overlay or overlays |
 | `[VALIDATE_ARTIFACT]` | Artifact archive to validate when scope is overlay/overlays |
 | `--fail-on-conflict` | For overlay bundles, fail if multiple nested overlays write the same file |
@@ -2167,6 +2171,45 @@ Agent note: machine-friendly controls on this command include `--json`.
 | Argument / option | Meaning |
 | --- | --- |
 | `--global` | Diagnose the user global config |
+
+### `devtool ssh`
+
+Inspect and bootstrap named SSH build workers
+
+**Subcommands:** `doctor`, `bootstrap`, `sessions`
+
+### `devtool ssh doctor`
+
+Read-only capability discovery for a named SSH worker
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh bootstrap`
+
+Install missing minimum worker tools (python, tmux, rsync, git)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--format FORMAT` | Choices: text, json |
+| `--dry-run` | Show the remote package command without modifying the worker |
+| `--force` | Override bootstrap.policy=never for this explicit request |
+
+Agent note: machine-friendly controls on this command include `--dry-run`.
+
+### `devtool ssh sessions`
+
+List Devtool-owned tmux sessions on a named worker
+
+**Aliases:** `devtool ssh ls`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--format FORMAT` | Choices: text, json |
 
 ### `devtool bootstrap`
 

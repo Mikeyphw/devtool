@@ -20,7 +20,7 @@ _ROOT_OPTIONS_WITH_VALUE = {
     "--copy-via", "--theme", "--stdout-payload", "--ui-profile", "--ui-theme",
     "--ui-density", "--ui-icons", "--ui-motion", "--ui-verbosity", "--hud-mode",
     "--chroot", "--ssh", "--ssh-host", "--ssh-port", "--ssh-user",
-    "--ssh-identity", "--ssh-session", "--ssh-cwd", "--ssh-tool", "--ssh-mode",
+    "--ssh-profile", "--ssh-identity", "--ssh-session", "--ssh-cwd", "--ssh-tool", "--ssh-mode",
     "--ssh-stage-dir", "--execution-environment", "--proot-distro", "--proot-user",
     "--proot-cwd", "--proot-repo-mount", "--proot-bind", "--proot-env",
     "--proot-stage-dir", "--termux-resource-profile", "--shared-storage-policy",
