@@ -1932,7 +1932,7 @@ detached = false # whole-run devtool mode only
 # profile = "tablet" # optional default named worker
 
 # Named workers are additive: explicit --ssh/--ssh-user/etc. still override
-# profile fields. Managed workspaces/sync are introduced by SSHW-02.
+# profile fields. For a phone-authoritative build worker, use managed workspaces.
 # [ssh.hosts.tablet]
 # host = "192.168.1.50"
 # port = 8022
@@ -1941,7 +1941,15 @@ detached = false # whole-run devtool mode only
 # [ssh.hosts.tablet.bootstrap]
 # policy = "missing" # missing | never
 # [ssh.hosts.tablet.worker]
-# tmux = true
+# tmux = true # mandatory for named workers
+# [ssh.hosts.tablet.workspace]
+# mode = "managed" # existing | managed | ephemeral
+# root = "~/.cache/devtool/workspaces"
+# [ssh.hosts.tablet.sync]
+# mode = "incremental"
+# delete = true # delete stale mirrored source, never excluded remote caches
+# default_excludes = true # .gradle/, build/, Devtool build/stage output
+# exclude = [".idea/", "local-only/"] # optional rsync patterns; .git is synced
 
 [toolchain]
 manager = "auto" # auto | mise | none

@@ -224,6 +224,7 @@ _devtool_commands() {
     'st:alias for status'
     'doctor:diagnose devtool and project prerequisites'
     'dr:alias for doctor'
+    'ssh:inspect, bootstrap, and synchronize named SSH build workers'
     'bootstrap:provision reusable destination-specific toolchains'
     'android:inspect Android capabilities, ADB providers, and connected devices'
     'termux:inspect native Termux providers, packages, and PRoot guests'
@@ -766,6 +767,23 @@ _devtool() {
             '--fix[create safe devtool state and cache directories]' \
             '--explain[explain Termux provider selection and rejection reasons]' \
             '--json[emit structured runtime, device, project, and workflow preflight health checks]'
+          ;;
+        ssh)
+          if (( ${#line} < 2 )); then
+            _values 'ssh worker action' doctor bootstrap sessions ls workspace ws sync
+          else
+            case ${line[2]} in
+              doctor|sessions|ls|workspace|ws)
+                _arguments '1:worker profile:' '--format[output format]:format:(text json)'
+                ;;
+              bootstrap)
+                _arguments '1:worker profile:' '--format[output format]:format:(text json)' '--dry-run[show package installation plan only]' '--force[override bootstrap.policy=never]'
+                ;;
+              sync)
+                _arguments '1:worker profile:' '--format[output format]:format:(text json)' '--dry-run[show exact repository delta without modifying worker]'
+                ;;
+            esac
+          fi
           ;;
         bootstrap)
           if (( ${#line} < 2 )); then

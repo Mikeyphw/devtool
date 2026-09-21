@@ -1002,6 +1002,13 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_sessions = ssh_sub.add_parser("sessions", aliases=["ls"], help="List Devtool-owned tmux sessions on a named worker")
     ssh_sessions.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_sessions.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_workspace = ssh_sub.add_parser("workspace", aliases=["ws"], help="Inspect the repository workspace mapping on a named worker")
+    ssh_workspace.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_workspace.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_sync = ssh_sub.add_parser("sync", help="Plan or synchronize the local repository into the worker workspace")
+    ssh_sync.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_sync.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_sync.add_argument("--dry-run", dest="ssh_sync_dry_run", action="store_true", help="Show the exact rsync delta without modifying the worker")
 
     bootstrap_cmd = subparsers.add_parser("bootstrap", help="Provision reusable destination-specific build toolchains")
     bootstrap_sub = bootstrap_cmd.add_subparsers(dest="bootstrap_command", required=True)
@@ -11415,10 +11422,12 @@ def _main_after_parse(
 
     if args.command == "ssh":
         from .ssh_worker import bootstrap_worker, resolve_worker_profile, session_payload, worker_doctor_payload
+        from .ssh_workspace import sync_payload, workspace_payload
 
         action = str(getattr(args, "ssh_command", "") or "")
         output_format = str(getattr(args, "format", "text") or "text")
         profile = str(getattr(args, "profile", "") or "").strip()
+        repo_root = str(getattr(args, "repo", "") or os.getcwd())
         try:
             worker = resolve_worker_profile(
                 profile,
@@ -11435,6 +11444,14 @@ def _main_after_parse(
                 )
             elif action in {"sessions", "ls"}:
                 payload = session_payload(worker)
+            elif action in {"workspace", "ws"}:
+                payload = workspace_payload(worker, repo_root)
+            elif action == "sync":
+                payload = sync_payload(
+                    worker,
+                    repo_root,
+                    dry_run=bool(getattr(args, "ssh_sync_dry_run", False)),
+                )
             else:
                 parser.error(f"Unknown ssh command: {action}")
                 return 2
@@ -11452,6 +11469,7 @@ def _main_after_parse(
             memory_gib = float(probe.get("memory_kib", 0) or 0) / (1024.0 * 1024.0)
             storage_gib = float(probe.get("free_storage_kib", 0) or 0) / (1024.0 * 1024.0)
             tools = probe.get("tools", {})
+            workspace_cfg = payload.get("workspace", {})
             rows = [
                 ("profile", payload.get("profile") or "-"),
                 ("destination", f"{payload.get('destination')}:{payload.get('port')}"),
@@ -11463,6 +11481,10 @@ def _main_after_parse(
                 ("package_manager", probe.get("package_manager") or "-"),
                 ("bootstrap_policy", payload.get("bootstrap_policy") or "missing"),
                 ("tmux_required", "yes" if payload.get("tmux_required") else "no"),
+                ("workspace_mode", workspace_cfg.get("mode") or "existing"),
+                ("workspace_root", workspace_cfg.get("root") or "-"),
+                ("sync_mode", workspace_cfg.get("sync_mode") or "incremental"),
+                ("sync_delete", "yes" if workspace_cfg.get("sync_delete") else "no"),
             ]
             rows.extend((f"tool.{name}", path or "MISSING") for name, path in tools.items())
             rows.append(("sessions", ", ".join(payload.get("sessions", [])) or "none"))
@@ -11482,13 +11504,48 @@ def _main_after_parse(
             if payload.get("dry_run") and payload.get("command"):
                 rows.append(("command", payload["command"]))
             render_status_table(rows)
-        else:
+        elif action in {"sessions", "ls"}:
             rows = [("profile", payload.get("profile") or "-"), ("destination", payload.get("destination") or "-")]
             sessions = payload.get("sessions", [])
             rows.extend((f"session.{item['name']}", item.get("status", "unknown")) for item in sessions)
             if not sessions:
                 rows.append(("sessions", payload.get("detail") or "none"))
             render_status_table(rows)
+        elif action in {"workspace", "ws"}:
+            workspace = payload.get("workspace", {})
+            status = payload.get("status", {})
+            rows = [
+                ("profile", workspace.get("profile") or "-"),
+                ("destination", workspace.get("destination") or "-"),
+                ("mode", workspace.get("mode") or "-"),
+                ("workspace_id", workspace.get("workspace_id") or "-"),
+                ("remote_path", workspace.get("remote_path") or "-"),
+                ("exists", "yes" if status.get("exists") else "no"),
+                ("safe", "yes" if status.get("safe") else "no"),
+                ("marker", status.get("marker") or "-"),
+                ("sync_delete", "yes" if workspace.get("delete") else "no"),
+                ("excludes", ", ".join(workspace.get("excludes", [])) or "none"),
+                ("detail", status.get("detail") or "-"),
+            ]
+            render_status_table(rows)
+        else:
+            workspace = payload.get("workspace", {})
+            changes = payload.get("changes", [])
+            rows = [
+                ("profile", workspace.get("profile") or "-"),
+                ("destination", workspace.get("destination") or "-"),
+                ("mode", workspace.get("mode") or "-"),
+                ("remote_path", workspace.get("remote_path") or "-"),
+                ("dry_run", "yes" if payload.get("dry_run") else "no"),
+                ("delete", "yes" if payload.get("delete_enabled", workspace.get("delete")) else "no"),
+                ("changes", str(payload.get("change_count", len(changes)))),
+                ("detail", payload.get("detail") or "-"),
+            ]
+            render_status_table(rows)
+            for item in changes[:100]:
+                print(f"{item.get('code', ''):>12}  {item.get('path', '')}")
+            if len(changes) > 100:
+                print(f"... {len(changes) - 100} more change(s)")
         return 0 if bool(payload.get("healthy", payload.get("ok", True))) else 1
 
     if args.command == "bootstrap":

@@ -146,32 +146,78 @@ host = "192.168.1.50"
 port = 8022
 user = "u0_a123"
 mode = "commands"
-cwd = "~/Code/xdm" # SSHW-02 will remove this requirement for managed workspaces
 
 [ssh.hosts.tablet.bootstrap]
 policy = "missing" # missing | never
 
 [ssh.hosts.tablet.worker]
 tmux = true
+
+[ssh.hosts.tablet.workspace]
+mode = "managed" # existing | managed | ephemeral
+root = "~/.cache/devtool/workspaces"
+
+[ssh.hosts.tablet.sync]
+mode = "incremental"
+delete = true
+default_excludes = true
+exclude = [".idea/"] # optional rsync patterns
 ```
 
 `--ssh-profile tablet` selects the profile. Explicit transport flags still win,
 so `--ssh-profile tablet --ssh-port 2222` is a one-run override rather than a
-second configuration mechanism. SSHW-01 also adds read-only discovery and
-idempotent worker bootstrap:
+second configuration mechanism. Worker discovery, bootstrap, tmux inspection,
+workspace mapping, and repository synchronization are available directly:
 
 ```sh
 devtool ssh doctor tablet
 devtool ssh bootstrap tablet --dry-run
 devtool ssh bootstrap tablet
 devtool ssh sessions tablet
+devtool -r "$HOME/Code/xdm" ssh workspace tablet
+devtool -r "$HOME/Code/xdm" ssh sync tablet --dry-run
+devtool -r "$HOME/Code/xdm" ssh sync tablet
 ```
 
 `doctor` intentionally needs only SSH and a POSIX shell on the remote side. It
 reports Termux/Linux, architecture, CPU, memory, free storage, package manager,
-and the worker/runtime tools. Managed workers require `tmux`; bootstrap installs
-only missing `python`, `tmux`, `rsync`, and `git` packages. On Termux it uses
-`pkg`; supported Linux package managers require root or passwordless sudo.
+worker/runtime tools, and the configured workspace/sync policy. Managed workers
+require `tmux`; bootstrap installs only missing `python`, `tmux`, `rsync`, and
+`git` packages. On Termux it uses `pkg`; supported Linux package managers
+require root or passwordless sudo.
+
+### SSH workspace modes and synchronization
+
+`existing` preserves the legacy model: `ssh.cwd` points at a checkout that the
+user manages on the remote host. `devtool ssh sync` is deliberately
+non-destructive by default in this mode (`delete = false` unless explicitly
+configured), and Devtool does not add ownership metadata to that checkout.
+
+`managed` makes the local repository authoritative. Devtool derives a stable
+workspace identity from the local checkout, resolves the remote worker home,
+and maps it below the configured workspace root. The first real sync creates a
+Devtool ownership marker; subsequent syncs verify that marker plus the canonical
+remote root before allowing rsync deletion. A pre-existing non-empty directory
+without that marker is never claimed.
+
+`ephemeral` uses the same guarded root but creates a per-operation instance
+below `.ephemeral/`. The stable repository ID and the operation instance ID are
+both recorded so later execution/resume layers can identify the source truth.
+
+Synchronization uses rsync archive semantics, so modified/staged/untracked
+files, `.git` state, symlinks, executable bits, and timestamps are mirrored from
+the phone. It does **not** use `.gitignore` as a transfer policy: ignored files
+can still be legitimate build inputs. Instead Devtool has explicit sync
+exclusions. With `default_excludes = true`, `.gradle/`, `build/`, Devtool build
+artifacts, and SSH staging directories are excluded and therefore survive
+`--delete-delay` on the worker. Global Gradle/SDK/JDK/NDK/npm caches live
+outside the managed repository and are not synchronized at all.
+
+`devtool ssh sync ... --dry-run` is strictly non-mutating. For an existing
+workspace it asks remote rsync for the exact delta. For a not-yet-created
+managed workspace it compares the local tree to an empty local directory using
+the same rsync filters, so even planning does not create remote directories or
+markers.
 
 CLI values override environment variables (`DEVTOOL_SSH_HOST`,
 `DEVTOOL_SSH_PROFILE`, `DEVTOOL_SSH_PORT`, `DEVTOOL_SSH_USER`, `DEVTOOL_SSH_IDENTITY`,

@@ -2176,7 +2176,7 @@ Agent note: machine-friendly controls on this command include `--json`.
 
 Inspect and bootstrap named SSH build workers
 
-**Subcommands:** `doctor`, `bootstrap`, `sessions`
+**Subcommands:** `doctor`, `bootstrap`, `sessions`, `workspace`, `sync`
 
 ### `devtool ssh doctor`
 
@@ -2210,6 +2210,29 @@ List Devtool-owned tmux sessions on a named worker
 | --- | --- |
 | `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
 | `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh workspace`
+
+Inspect the repository workspace mapping on a named worker
+
+**Aliases:** `devtool ssh ws`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh sync`
+
+Plan or synchronize the local repository into the worker workspace
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--format FORMAT` | Choices: text, json |
+| `--dry-run` | Show the exact rsync delta without modifying the worker |
+
+Agent note: machine-friendly controls on this command include `--dry-run`.
 
 ### `devtool bootstrap`
 

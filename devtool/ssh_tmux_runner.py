@@ -101,6 +101,12 @@ class SSHRunnerConfig:
     profile: str = ""
     bootstrap_policy: str = "missing"
     worker_tmux: bool = False
+    workspace_mode: str = "existing"
+    workspace_root: str = "~/.cache/devtool/workspaces"
+    sync_mode: str = "incremental"
+    sync_delete: bool = False
+    sync_default_excludes: bool = True
+    sync_excludes: tuple[str, ...] = ()
 
     @property
     def destination(self) -> str:
@@ -213,6 +219,22 @@ def _ssh_profile_section(data: Mapping[str, Any], profile: str) -> dict[str, Any
             worker = candidate.get("worker", {})
             if isinstance(worker, dict) and "tmux" in worker:
                 result["worker_tmux"] = worker.get("tmux")
+            workspace = candidate.get("workspace", {})
+            if isinstance(workspace, dict):
+                if "mode" in workspace:
+                    result["workspace_mode"] = workspace.get("mode")
+                if "root" in workspace:
+                    result["workspace_root"] = workspace.get("root")
+            sync = candidate.get("sync", {})
+            if isinstance(sync, dict):
+                if "mode" in sync:
+                    result["sync_mode"] = sync.get("mode")
+                if "delete" in sync:
+                    result["sync_delete"] = sync.get("delete")
+                if "default_excludes" in sync:
+                    result["sync_default_excludes"] = sync.get("default_excludes")
+                if "exclude" in sync:
+                    result["sync_excludes"] = sync.get("exclude")
             return result
     available = sorted({str(name) for container in containers for name in container})
     suffix = f" Available profiles: {', '.join(available)}." if available else ""
@@ -356,6 +378,29 @@ def resolve_ssh_config(
         raise ValueError("Named SSH workers require tmux; [ssh.hosts.*.worker].tmux cannot be false")
     worker_tmux = True if profile else configured_worker_tmux
 
+    workspace_mode = str(file_options.get("workspace_mode", "existing") or "existing").strip().lower().replace("_", "-")
+    if workspace_mode not in {"existing", "managed", "ephemeral"}:
+        raise ValueError(f"SSH workspace mode must be existing, managed, or ephemeral, got {workspace_mode!r}")
+    workspace_root = str(file_options.get("workspace_root", "~/.cache/devtool/workspaces") or "~/.cache/devtool/workspaces").strip()
+    if workspace_mode != "existing" and not profile:
+        raise ValueError("Managed/ephemeral SSH workspaces require a named --ssh-profile worker")
+    if workspace_mode != "existing" and cli_cwd:
+        raise ValueError("--ssh-cwd is only valid for workspace.mode=existing; managed/ephemeral paths are Devtool-owned")
+    sync_mode = str(file_options.get("sync_mode", "incremental") or "incremental").strip().lower().replace("_", "-")
+    if sync_mode != "incremental":
+        raise ValueError(f"SSH sync mode must be incremental, got {sync_mode!r}")
+    sync_delete = _bool_value(file_options.get("sync_delete"), workspace_mode != "existing")
+    sync_default_excludes = _bool_value(file_options.get("sync_default_excludes"), True)
+    raw_sync_excludes = file_options.get("sync_excludes", ())
+    if raw_sync_excludes is None:
+        sync_excludes: tuple[str, ...] = ()
+    elif isinstance(raw_sync_excludes, str):
+        sync_excludes = (raw_sync_excludes.strip(),) if raw_sync_excludes.strip() else ()
+    elif isinstance(raw_sync_excludes, (list, tuple)):
+        sync_excludes = tuple(str(item).strip() for item in raw_sync_excludes if str(item).strip())
+    else:
+        raise ValueError("SSH sync.exclude must be a string or list of strings")
+
     if not host:
         source = f" in {config_path}" if config_path else ""
         raise ValueError(f"SSH execution requested but no host is configured{source}. Use --ssh HOST, --ssh-profile NAME, or set [ssh].host.")
@@ -379,6 +424,12 @@ def resolve_ssh_config(
         profile=profile,
         bootstrap_policy=bootstrap_policy,
         worker_tmux=worker_tmux,
+        workspace_mode=workspace_mode,
+        workspace_root=workspace_root,
+        sync_mode=sync_mode,
+        sync_delete=sync_delete,
+        sync_default_excludes=sync_default_excludes,
+        sync_excludes=sync_excludes,
     )
 
 
