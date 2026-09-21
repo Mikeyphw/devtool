@@ -19,12 +19,15 @@ import xml.etree.ElementTree as ET
 
 from .diagnostics import relativize
 from .models import Issue
+from .test_model import TestArtifact, TestCaseResult, TestFailure, TestResult, TestSource, TestStatus, TestSuiteResult
+from .test_adapters import safe_test_id, reconcile_results, compatibility_counts
 
 
 @dataclass(slots=True)
 class ReportCollection:
     metadata: dict[str, Any]
     issues: list[Issue]
+    test_result: TestResult | None = None
 
 
 def _task_leaf(task: str) -> str:
@@ -35,9 +38,12 @@ def _recent(path: Path, started_at: float | None) -> bool:
     if started_at is None:
         return True
     try:
-        # Report truth is invocation-bound. A report that predates task start
-        # is stale even if it is only a fraction of a second old.
-        return path.stat().st_mtime_ns >= int(float(started_at) * 1_000_000_000)
+        # Report truth is invocation-bound. Allow only 1 ms of filesystem/clock
+        # granularity around process start: newly-created reports can otherwise
+        # appear a few microseconds older than time.time() on real filesystems.
+        # This is intentionally tiny; genuinely stale reports remain excluded.
+        tolerance_ns = 1_000_000
+        return path.stat().st_mtime_ns + tolerance_ns >= int(float(started_at) * 1_000_000_000)
     except (OSError, TypeError, ValueError):
         return False
 
@@ -126,87 +132,113 @@ def parse_junit_reports(
     suites = 0
     parsed_files: list[str] = []
     issues: list[Issue] = []
+    canonical_suites: list[TestSuiteResult] = []
 
     for path in sorted({Path(item).resolve() for item in files}):
         try:
             root = ET.parse(path).getroot()
         except (OSError, ET.ParseError) as exc:
             issues.append(Issue(
-                "error",
-                command_name,
-                relativize(repo_root, str(path)),
-                report_error_code,
+                "error", command_name, relativize(repo_root, str(path)), report_error_code,
                 f"Could not parse {report_label}: {exc}",
             ))
             continue
 
-        parsed_files.append(relativize(repo_root, str(path)))
+        report_rel = relativize(repo_root, str(path))
+        parsed_files.append(report_rel)
         roots = [root] if root.tag.rsplit("}", 1)[-1] == "testsuite" else [
             node for node in root.iter() if node.tag.rsplit("}", 1)[-1] == "testsuite"
         ]
         if not roots:
             roots = [root]
 
-        for suite in roots:
-            suites += 1
+        for suite_index, suite in enumerate(roots):
             cases = [node for node in suite if node.tag.rsplit("}", 1)[-1] == "testcase"]
             if not cases:
-                # Parent suites often repeat aggregate counters for nested suites.
-                # Counting the parent and each child double-counts the same tests.
                 has_nested_suites = any(child.tag.rsplit("}", 1)[-1] == "testsuite" for child in suite)
                 if has_nested_suites:
                     continue
                 suite_total = _int(suite.attrib.get("tests"))
                 suite_failed = _int(suite.attrib.get("failures")) + _int(suite.attrib.get("errors"))
                 suite_skipped = _int(suite.attrib.get("skipped"))
+                suite_passed = max(0, suite_total - suite_failed - suite_skipped)
                 total += suite_total
                 failed += suite_failed
                 skipped += suite_skipped
-                passed += max(0, suite_total - suite_failed - suite_skipped)
+                passed += suite_passed
                 duration += _float(suite.attrib.get("time"))
+                if suite_total:
+                    suite_name = str(suite.attrib.get("name") or f"suite-{suite_index}")
+                    sid = safe_test_id(f"{framework}:{report_rel}:{suite_name}")
+                    aggregate_cases: list[TestCaseResult] = []
+                    for label, count, status in (
+                        ("passed", suite_passed, TestStatus.PASSED),
+                        ("failed", suite_failed, TestStatus.FAILED),
+                        ("skipped", suite_skipped, TestStatus.SKIPPED),
+                    ):
+                        for index in range(count):
+                            aggregate_cases.append(TestCaseResult(
+                                safe_test_id(f"{sid}/{label}/{index + 1}"), f"{label} #{index + 1}", status,
+                                metadata={"evidence": "report", "aggregate": True, "framework": framework},
+                            ))
+                    canonical_suites.append(TestSuiteResult(
+                        sid, suite_name, tuple(aggregate_cases),
+                        duration_seconds=_float(suite.attrib.get("time")) or None,
+                        metadata={"evidence": "report", "framework": framework, "report": report_rel},
+                    ))
+                suites += 1
                 continue
 
-            for case in cases:
+            suites += 1
+            suite_name = str(suite.attrib.get("name") or f"suite-{suite_index}")
+            sid = safe_test_id(f"{framework}:{report_rel}:{suite_name}")
+            canonical_cases: list[TestCaseResult] = []
+            seen_case_ids: set[str] = set()
+            for case_index, case in enumerate(cases):
                 total += 1
-                duration += _float(case.attrib.get("time"))
-                failure_node = next(
-                    (
-                        child
-                        for child in case
-                        if child.tag.rsplit("}", 1)[-1] in {"failure", "error"}
-                    ),
-                    None,
-                )
-                skipped_node = next(
-                    (child for child in case if child.tag.rsplit("}", 1)[-1] == "skipped"),
-                    None,
-                )
+                case_duration = _float(case.attrib.get("time"))
+                duration += case_duration
+                failure_node = next((child for child in case if child.tag.rsplit("}", 1)[-1] in {"failure", "error"}), None)
+                skipped_node = next((child for child in case if child.tag.rsplit("}", 1)[-1] == "skipped"), None)
+                classname = str(case.attrib.get("classname") or "").strip()
+                case_name = str(case.attrib.get("name") or f"case-{case_index}").strip()
+                base_case_id = safe_test_id("#".join(item for item in (classname, case_name) if item) or f"{sid}#case-{case_index}")
+                case_id = base_case_id
+                suffix = 2
+                while case_id in seen_case_ids:
+                    case_id = safe_test_id(f"{base_case_id}#{suffix}")
+                    suffix += 1
+                seen_case_ids.add(case_id)
+                status = TestStatus.PASSED
+                canonical_failure = None
                 if failure_node is not None:
                     failed += 1
+                    tag = failure_node.tag.rsplit("}", 1)[-1]
+                    status = TestStatus.ERROR if tag == "error" else TestStatus.FAILED
                     file_text, line = _testcase_location(repo_root, case)
-                    test_name = ".".join(
-                        item
-                        for item in (
-                            str(case.attrib.get("classname") or "").strip(),
-                            str(case.attrib.get("name") or "").strip(),
-                        )
-                        if item
-                    ) or "test"
+                    test_name = ".".join(item for item in (classname, case_name) if item) or "test"
                     message = str(failure_node.attrib.get("message") or "").strip()
                     body = str(failure_node.text or "").strip()
                     detail = message or (body.splitlines()[0] if body else "Test failed")
-                    issues.append(Issue(
-                        "error",
-                        command_name,
-                        file_text,
-                        issue_code,
-                        f"{test_name}: {detail}",
-                        line=line,
-                    ))
+                    issues.append(Issue("error", command_name, file_text, issue_code, f"{test_name}: {detail}", line=line))
+                    source = TestSource("file", file_text, line) if file_text and file_text != "-" else None
+                    canonical_failure = TestFailure(detail, details=body or None, source=source)
                 elif skipped_node is not None:
                     skipped += 1
+                    status = TestStatus.SKIPPED
                 else:
                     passed += 1
+                canonical_cases.append(TestCaseResult(
+                    case_id, case_name, status,
+                    duration_seconds=case_duration or None,
+                    failure=canonical_failure,
+                    metadata={"evidence": "report", "framework": framework, "classname": classname},
+                ))
+            canonical_suites.append(TestSuiteResult(
+                sid, suite_name, tuple(canonical_cases),
+                duration_seconds=_float(suite.attrib.get("time")) or None,
+                metadata={"evidence": "report", "framework": framework, "report": report_rel},
+            ))
 
     metadata: dict[str, Any] = {
         "framework": framework,
@@ -221,8 +253,13 @@ def parse_junit_reports(
         "total": total,
         "duration_seconds": round(duration, 6),
     }
-    return ReportCollection(metadata, issues)
-
+    canonical = TestResult(
+        safe_test_id(command_name), tuple(canonical_suites),
+        duration_seconds=round(duration, 6) if duration else None,
+        artifacts=tuple(TestArtifact("junit-xml", item) for item in parsed_files),
+        metadata={"evidence": "report", "framework": framework},
+    ) if parsed_files else None
+    return ReportCollection(metadata, issues, canonical)
 
 def _report_module(project_root: Path, path: Path) -> str:
     try:
@@ -256,6 +293,7 @@ def collect_gradle_test_reports(
     }
     parsed_files: list[str] = []
     issues: list[Issue] = []
+    canonical_parts: list[TestResult] = []
     report_modules: dict[str, str] = {}
     for path in files:
         module = _report_module(project_root, path)
@@ -266,6 +304,8 @@ def collect_gradle_test_reports(
             totals[key] = int(totals[key]) + int(parsed.metadata.get(key) or 0)
         totals["duration_seconds"] = float(totals["duration_seconds"]) + float(parsed.metadata.get("duration_seconds") or 0.0)
         issues.extend(parsed.issues)
+        if parsed.test_result is not None:
+            canonical_parts.append(parsed.test_result)
         for report_file in parsed.metadata.get("report_files", []):
             report_modules[str(report_file)] = module
     metadata: dict[str, Any] = {
@@ -276,7 +316,7 @@ def collect_gradle_test_reports(
         "tasks": [str(task) for task in tasks],
         "report_modules": report_modules,
     }
-    return ReportCollection(metadata, issues)
+    return ReportCollection(metadata, issues, reconcile_results(command_name, canonical_parts))
 
 
 def _lint_severity(value: str) -> str | None:
@@ -500,10 +540,13 @@ def collect_pytest_report(
     *,
     repo_root: Path | None = None,
     report_path: str = "",
+    started_at: float | None = None,
     command_name: str = "test",
 ) -> ReportCollection:
     path = Path(report_path) if report_path else project_root / ".devtool" / "reports" / "pytest.xml"
     files = [path] if path.is_file() else list(project_root.glob("**/pytest*.xml"))
+    if started_at is not None:
+        files = [item for item in files if _recent(item, started_at)]
     collection = parse_junit_reports(
         repo_root or project_root,
         files,
@@ -753,6 +796,203 @@ def collect_python_coverage_report(
     }
     return ReportCollection(payload, [])
 
+
+def _duration_seconds(value: object) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    match = re.match(r"^(?:(\d+)\.)?(\d+):(\d+):(\d+(?:\.\d+)?)$", text)
+    if not match:
+        return None
+    days = int(match.group(1) or 0)
+    hours = int(match.group(2)); minutes = int(match.group(3)); seconds = float(match.group(4))
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
+
+
+def _duration_milliseconds(value: object) -> float | None:
+    try:
+        return float(value) / 1000.0 if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def collect_dotnet_trx_report(
+    project_root: Path,
+    *,
+    repo_root: Path | None = None,
+    report_path: str = "",
+    started_at: float | None = None,
+    command_name: str = "test",
+) -> ReportCollection:
+    root = Path(report_path).expanduser() if report_path else project_root / ".devtool" / "reports" / "dotnet"
+    if not root.is_absolute():
+        root = project_root / root
+    files = [root] if root.is_file() else sorted(root.glob("*.trx")) if root.is_dir() else []
+    if started_at is not None:
+        files = [path for path in files if _recent(path, started_at)]
+    cases: list[TestCaseResult] = []
+    parsed_files: list[str] = []
+    issues: list[Issue] = []
+    for path in files:
+        try:
+            doc = ET.parse(path).getroot()
+        except (OSError, ET.ParseError) as exc:
+            issues.append(Issue("error", command_name, relativize(repo_root or project_root, path), "DOTNET_TRX", f"Could not parse .NET TRX report: {exc}"))
+            continue
+        rel = relativize(repo_root or project_root, path)
+        parsed_files.append(rel)
+        for index, node in enumerate(doc.iter()):
+            if node.tag.rsplit("}", 1)[-1] != "UnitTestResult":
+                continue
+            name = str(node.attrib.get("testName") or f"test-{index}")
+            cid = safe_test_id(str(node.attrib.get("testId") or name))
+            outcome = str(node.attrib.get("outcome") or "Error")
+            status = {
+                "Passed": TestStatus.PASSED,
+                "Failed": TestStatus.FAILED,
+                "NotExecuted": TestStatus.SKIPPED,
+                "Aborted": TestStatus.CANCELLED,
+                "Timeout": TestStatus.ERROR,
+            }.get(outcome, TestStatus.ERROR)
+            message = ""
+            stack = ""
+            for child in node.iter():
+                tag = child.tag.rsplit("}", 1)[-1]
+                if tag == "Message" and child.text: message = child.text.strip()
+                elif tag == "StackTrace" and child.text: stack = child.text.strip()
+            failure = None
+            if status in {TestStatus.FAILED, TestStatus.ERROR, TestStatus.CANCELLED}:
+                failure = TestFailure(message or outcome or ".NET test failed", details=stack or None)
+                issues.append(Issue("error", command_name, "-", "DOTNET_TEST", f"{name}: {message or outcome}"))
+            cases.append(TestCaseResult(
+                cid, name, status,
+                duration_seconds=_duration_seconds(node.attrib.get("duration")),
+                failure=failure,
+                metadata={"evidence": "report", "framework": "dotnet-trx"},
+            ))
+    suite = TestSuiteResult("dotnet", ".NET tests", tuple(cases), metadata={"evidence": "report", "framework": "dotnet-trx"})
+    result = TestResult(
+        safe_test_id(command_name), (suite,),
+        artifacts=tuple(TestArtifact("trx", item) for item in parsed_files),
+        metadata={"evidence": "report", "framework": "dotnet-trx"},
+    ) if parsed_files else None
+    counts = compatibility_counts(result) if result is not None else {"passed": 0, "failed": 0, "skipped": 0, "total": 0}
+    metadata = {"framework": "dotnet-trx", "report_files": parsed_files, **counts}
+    return ReportCollection(metadata, issues, result)
+
+
+def collect_maven_test_reports(
+    project_root: Path,
+    *,
+    repo_root: Path | None = None,
+    started_at: float | None = None,
+    command_name: str = "test",
+) -> ReportCollection:
+    files = [
+        *project_root.glob("**/target/surefire-reports/TEST-*.xml"),
+        *project_root.glob("**/target/failsafe-reports/TEST-*.xml"),
+    ]
+    files = sorted({path.resolve() for path in files if path.is_file() and _recent(path, started_at)})
+    return parse_junit_reports(
+        repo_root or project_root,
+        files,
+        command_name=command_name,
+        framework="maven-surefire",
+        issue_code="MAVEN_TEST",
+        report_label="Maven Surefire/Failsafe report",
+        report_error_code="MAVEN_TEST_XML",
+    )
+
+
+def collect_node_junit_report(
+    project_root: Path,
+    *,
+    repo_root: Path | None = None,
+    report_path: str = "",
+    started_at: float | None = None,
+    command_name: str = "test",
+) -> ReportCollection:
+    path = Path(report_path).expanduser() if report_path else project_root / ".devtool" / "reports" / "node-tests.xml"
+    if not path.is_absolute():
+        path = project_root / path
+    files = [path] if path.is_file() else []
+    if started_at is not None:
+        files = [item for item in files if _recent(item, started_at)]
+    return parse_junit_reports(
+        repo_root or project_root, files, command_name=command_name,
+        framework="node-junit", issue_code="NODE_TEST",
+        report_label="Node JUnit report", report_error_code="NODE_JUNIT_XML",
+    )
+
+
+def collect_node_json_report(
+    project_root: Path,
+    *,
+    repo_root: Path | None = None,
+    report_path: str = "",
+    started_at: float | None = None,
+    command_name: str = "test",
+) -> ReportCollection:
+    path = Path(report_path).expanduser() if report_path else project_root / ".devtool" / "reports" / "node-tests.json"
+    if not path.is_absolute(): path = project_root / path
+    if not path.is_file() or not _recent(path, started_at):
+        return ReportCollection({"framework": "node-json", "report_files": [], "passed": 0, "failed": 0, "skipped": 0, "total": 0}, [])
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return ReportCollection({}, [Issue("error", command_name, relativize(repo_root or project_root, path), "NODE_TEST_JSON", f"Could not parse Node test report: {exc}")])
+    suites: list[TestSuiteResult] = []
+    issues: list[Issue] = []
+    raw_suites = payload.get("suites") if isinstance(payload, dict) else None
+    if isinstance(raw_suites, list):
+        for si, raw_suite in enumerate(raw_suites):
+            if not isinstance(raw_suite, dict): continue
+            name = str(raw_suite.get("name") or raw_suite.get("id") or f"suite-{si}")
+            sid = safe_test_id(raw_suite.get("id") or name)
+            items = raw_suite.get("cases") if isinstance(raw_suite.get("cases"), list) else []
+            suite_cases=[]
+            for ci, raw_case in enumerate(items):
+                if not isinstance(raw_case, dict): continue
+                cname=str(raw_case.get("name") or raw_case.get("title") or f"case-{ci}")
+                cid=safe_test_id(raw_case.get("id") or f"{sid}#{cname}")
+                status={"passed":TestStatus.PASSED,"failed":TestStatus.FAILED,"skipped":TestStatus.SKIPPED,"pending":TestStatus.SKIPPED,"todo":TestStatus.SKIPPED,"cancelled":TestStatus.CANCELLED,"canceled":TestStatus.CANCELLED,"error":TestStatus.ERROR}.get(str(raw_case.get("status") or "").lower(),TestStatus.ERROR)
+                message = str(raw_case.get("message") or raw_case.get("failure") or "").strip()
+                failure = TestFailure(message or "Node test failed") if status in {TestStatus.FAILED, TestStatus.ERROR, TestStatus.CANCELLED} else None
+                if failure is not None:
+                    issues.append(Issue("error", command_name, "-", "NODE_TEST", f"{cname}: {failure.message}"))
+                duration_value = _duration_seconds(raw_case.get("duration_seconds"))
+                if duration_value is None:
+                    duration_value = _duration_milliseconds(raw_case.get("duration_ms"))
+                suite_cases.append(TestCaseResult(cid,cname,status,duration_seconds=duration_value,failure=failure,metadata={"evidence":"report","framework":"node-json"}))
+            suites.append(TestSuiteResult(sid,name,tuple(suite_cases),metadata={"evidence":"report","framework":"node-json"}))
+    elif isinstance(payload, dict) and isinstance(payload.get("testResults"), list):
+        # Jest and Vitest JSON reporters expose testResults/assertionResults.
+        for si, raw_suite in enumerate(payload["testResults"]):
+            if not isinstance(raw_suite, dict): continue
+            name=str(raw_suite.get("name") or raw_suite.get("testFilePath") or f"suite-{si}")
+            sid=safe_test_id(name)
+            assertions=raw_suite.get("assertionResults") if isinstance(raw_suite.get("assertionResults"), list) else []
+            suite_cases=[]
+            for ci, raw_case in enumerate(assertions):
+                if not isinstance(raw_case, dict): continue
+                cname=str(raw_case.get("fullName") or raw_case.get("title") or f"case-{ci}")
+                cid=safe_test_id(f"{sid}#{cname}")
+                status={"passed":TestStatus.PASSED,"failed":TestStatus.FAILED,"pending":TestStatus.SKIPPED,"skipped":TestStatus.SKIPPED,"todo":TestStatus.SKIPPED,"disabled":TestStatus.SKIPPED}.get(str(raw_case.get("status") or "").lower(),TestStatus.ERROR)
+                failure_msgs=raw_case.get("failureMessages") if isinstance(raw_case.get("failureMessages"), list) else []
+                failure=TestFailure(str(failure_msgs[0]), details="\n".join(str(x) for x in failure_msgs)) if status==TestStatus.FAILED and failure_msgs else None
+                if status == TestStatus.FAILED:
+                    issues.append(Issue("error", command_name, "-", "NODE_TEST", f"{cname}: {failure.message if failure else 'Node test failed'}"))
+                suite_cases.append(TestCaseResult(cid,cname,status,duration_seconds=_duration_milliseconds(raw_case.get("duration")),failure=failure,metadata={"evidence":"report","framework":"node-json"}))
+            suites.append(TestSuiteResult(sid,name,tuple(suite_cases),metadata={"evidence":"report","framework":"node-json"}))
+    result=TestResult(safe_test_id(command_name),tuple(suites),artifacts=(TestArtifact("node-json",relativize(repo_root or project_root,path)),),metadata={"evidence":"report","framework":"node-json"})
+    counts=compatibility_counts(result)
+    return ReportCollection({"framework":"node-json","report_files":[relativize(repo_root or project_root,path)],**counts},issues,result)
+
+
 def collect_report_metadata(
     project_root: Path,
     *,
@@ -782,7 +1022,23 @@ def collect_report_metadata(
         )
     if parser == "pytest-junit":
         return collect_pytest_report(
-            project_root, repo_root=repo_root, report_path=report_path, command_name=command_name
+            project_root, repo_root=repo_root, report_path=report_path, started_at=started_at, command_name=command_name
+        )
+    if parser == "dotnet-trx":
+        return collect_dotnet_trx_report(
+            project_root, repo_root=repo_root, report_path=report_path, started_at=started_at, command_name=command_name
+        )
+    if parser == "maven-surefire":
+        return collect_maven_test_reports(
+            project_root, repo_root=repo_root, started_at=started_at, command_name=command_name
+        )
+    if parser == "node-junit":
+        return collect_node_junit_report(
+            project_root, repo_root=repo_root, report_path=report_path, started_at=started_at, command_name=command_name
+        )
+    if parser == "node-json":
+        return collect_node_json_report(
+            project_root, repo_root=repo_root, report_path=report_path, started_at=started_at, command_name=command_name
         )
     if parser == "android-instrumentation":
         return collect_instrumentation_output(output, repo_root=repo_root or project_root, command_name=command_name)

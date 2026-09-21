@@ -1,6 +1,8 @@
 """Canonical framework-independent test domain model."""
 from __future__ import annotations
 
+__test__ = False  # Prevent pytest from collecting production TSYS modules.
+
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from types import MappingProxyType

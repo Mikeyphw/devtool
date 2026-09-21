@@ -56,6 +56,17 @@ class GoTestFailure:
 
 
 @dataclass(slots=True)
+class GoTestCase:
+    package: str
+    test: str
+    status: str
+    elapsed: float | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {"package": self.package, "test": self.test, "status": self.status, "elapsed": self.elapsed}
+
+
+@dataclass(slots=True)
 class GoTestReport:
     tests_passed: int = 0
     tests_failed: int = 0
@@ -65,6 +76,7 @@ class GoTestReport:
     packages_skipped: int = 0
     packages_no_tests: int = 0
     failures: list[GoTestFailure] = field(default_factory=list)
+    cases: list[GoTestCase] = field(default_factory=list)
 
     @property
     def tests_total(self) -> int:
@@ -90,6 +102,7 @@ class GoTestReport:
                 "total": self.packages_total,
             },
             "failures": [item.to_dict() for item in self.failures],
+            "cases": [item.to_dict() for item in self.cases],
             "rerun": next((item.rerun for item in self.failures if item.rerun), ""),
         }
 
@@ -134,6 +147,7 @@ class GoTestJSONStream:
         self._finished_packages: set[str] = set()
         self._package_status: dict[str, str] = {}
         self._test_status: dict[tuple[str, str], str] = {}
+        self._test_elapsed: dict[tuple[str, str], float | None] = {}
         self._no_test_packages: set[str] = set()
         self._package_output: dict[str, list[str]] = {}
         self._test_output: dict[tuple[str, str], list[str]] = {}
@@ -149,10 +163,11 @@ class GoTestJSONStream:
         if no_tests:
             self._no_test_packages.add(no_tests.group("package"))
 
-    def _record_test_result(self, package: str, test: str, status: str) -> None:
+    def _record_test_result(self, package: str, test: str, status: str, elapsed: float | None = None) -> None:
         if not package or not test:
             return
         self._test_status[(package, test)] = status
+        self._test_elapsed[(package, test)] = elapsed
         if status != "fail" or (package, test) in self._failure_keys:
             return
         file_text, line_no, column, message = _best_failure_detail(self._test_output.get((package, test), []))
@@ -212,7 +227,12 @@ class GoTestJSONStream:
             return output
 
         if action in {"pass", "fail", "skip"} and test:
-            self._record_test_result(package, test, action)
+            elapsed_value = event.get("Elapsed")
+            try:
+                elapsed = float(elapsed_value) if elapsed_value is not None else None
+            except (TypeError, ValueError):
+                elapsed = None
+            self._record_test_result(package, test, action, elapsed)
             return ""
 
         if action in {"pass", "fail", "skip"} and package:
@@ -230,6 +250,10 @@ class GoTestJSONStream:
         report.tests_passed = sum(status == "pass" for status in self._test_status.values())
         report.tests_failed = sum(status == "fail" for status in self._test_status.values())
         report.tests_skipped = sum(status == "skip" for status in self._test_status.values())
+        report.cases = [
+            GoTestCase(package=package, test=test, status=status, elapsed=self._test_elapsed.get((package, test)))
+            for (package, test), status in sorted(self._test_status.items())
+        ]
 
         for package in set(self._package_status) | self._no_test_packages:
             if package in self._no_test_packages:
@@ -357,6 +381,10 @@ def parse_go_test_report(output: str) -> GoTestReport:
     report.tests_passed = sum(status == "pass" for status in test_status.values())
     report.tests_failed = sum(status == "fail" for status in test_status.values())
     report.tests_skipped = sum(status == "skip" for status in test_status.values())
+    report.cases = [
+        GoTestCase(package=package, test=test, status=status)
+        for (package, test), status in sorted(test_status.items())
+    ]
 
     for package in set(package_status) | no_test_packages:
         if package in no_test_packages:

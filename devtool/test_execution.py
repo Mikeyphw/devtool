@@ -1,5 +1,7 @@
 """Test execution core and runner registry."""
 from __future__ import annotations
+
+__test__ = False  # Prevent pytest from collecting production TSYS modules.
 from dataclasses import dataclass, field
 from typing import Protocol, Callable, Mapping, Any
 import threading

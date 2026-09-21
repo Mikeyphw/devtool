@@ -51,6 +51,14 @@ from .generic_progress import GenericProgressTracker
 from .npm_progress import NpmProgressTracker, npm_progress_plan
 from .gradle_progress import GradleProgressTracker
 from .gradle_reports import collect_report_metadata
+from .test_adapters import (
+    compatibility_counts as _canonical_test_counts,
+    is_test_operation as _is_test_operation,
+    reconcile_results as _reconcile_test_results,
+    result_from_go_report as _test_result_from_go_report,
+    result_from_progress_snapshot as _test_result_from_progress_snapshot,
+    result_from_stdout as _test_result_from_stdout,
+)
 from .transactions import create_apply_transaction, rollback_transaction, checkpoint_transaction_applied
 from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
@@ -2320,11 +2328,13 @@ def run_specs(
         process_output = output
         duration = time.perf_counter() - started
         result_metadata = dict(spec.metadata)
+        canonical_test_candidates = []
         is_go_test = (
             str(result_metadata.get("runner") or "").lower() == "go"
             and str(spec.name or "").lower() in {"test", "go-test", "go-validation"}
         )
         go_report = structured_process_state.get("go_test_report")
+        go_report_evidence = "protocol" if go_report is not None else "stdout"
         if go_report is None and (
             bool(result_metadata.get("go_test_json"))
             or str(result_metadata.get("progress_parser") or "") == "go-test-json"
@@ -2336,6 +2346,7 @@ def run_specs(
             go_metadata = go_report.to_metadata()
             result_metadata["go_test"] = go_metadata
             result_metadata["tests"] = dict(go_metadata["tests"])
+            canonical_test_candidates.append(_test_result_from_go_report(spec.name, go_report, evidence=go_report_evidence))
         command_issues = parse_issues(config.repo_root, spec.name, output)
         if go_report is not None:
             from .diagnostics import go_test_issues
@@ -2383,7 +2394,7 @@ def run_specs(
                         else result_metadata.get("test_report") or result_metadata.get("package_report") or ""
                     ),
                 )
-                if report_parser in {"gradle-junit", "pytest-junit", "android-instrumentation"}:
+                if report_parser in {"gradle-junit", "pytest-junit", "android-instrumentation", "dotnet-trx", "maven-surefire", "node-json", "node-junit"}:
                     tests = dict(collection.metadata)
                     catalog_discovered = result_metadata.get("test_catalog_discovered")
                     catalog_selected = result_metadata.get("test_catalog_selected")
@@ -2392,6 +2403,8 @@ def run_specs(
                     if catalog_selected is not None:
                         tests["selected"] = int(catalog_selected)
                     result_metadata["tests"] = tests
+                    if collection.test_result is not None:
+                        canonical_test_candidates.append(collection.test_result)
                     if tests.get("report_files") or report_parser == "android-instrumentation":
                         test_prefix = "Devtool Gradle tests: " if report_parser == "gradle-junit" else f"Devtool tests ({tests.get('framework', report_parser)}): "
                         output = (output.rstrip() + "\n" if output else "") + (
@@ -2407,6 +2420,10 @@ def run_specs(
                         title=(
                             "Devtool Gradle test failures"
                             if report_parser == "gradle-junit"
+                            else "Devtool .NET test failures"
+                            if report_parser == "dotnet-trx"
+                            else "Devtool Maven test failures"
+                            if report_parser == "maven-surefire"
                             else "Devtool test failures"
                         ),
                         codes=(
@@ -2414,6 +2431,12 @@ def run_specs(
                             if report_parser == "gradle-junit"
                             else {"ANDROID_INSTRUMENTATION"}
                             if report_parser == "android-instrumentation"
+                            else {"DOTNET_TEST"}
+                            if report_parser == "dotnet-trx"
+                            else {"MAVEN_TEST"}
+                            if report_parser == "maven-surefire"
+                            else {"NODE_TEST"}
+                            if report_parser in {"node-json", "node-junit"}
                             else {"PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT"}
                         ),
                     )
@@ -2438,7 +2461,7 @@ def run_specs(
                                 if issue.code in {
                                     "GRADLE_TEST", "ANDROID_INSTRUMENTATION",
                                     "PYTEST_FAILURE", "PYTHON_DEPENDENCY",
-                                    "PYTHON_PLATFORM", "PYTHON_IMPORT",
+                                    "PYTHON_PLATFORM", "PYTHON_IMPORT", "DOTNET_TEST", "MAVEN_TEST", "NODE_TEST",
                                 }
                             ]
                         save_failed_test_ids(config.repo_root, failed_ids)
@@ -2482,6 +2505,35 @@ def run_specs(
                             f"Devtool Python coverage: {collection.metadata.get('line_percent', 0):.2f}%.\n"
                         )
                 issues.extend(collection.issues)
+
+
+        if _is_test_operation(spec.name, effective_argv, result_metadata):
+            # Structured protocol/report evidence is authoritative. Progress/stdout
+            # parsing is used only when no structured result was produced.
+            if not canonical_test_candidates:
+                framework = str(result_metadata.get("test_framework") or result_metadata.get("runner") or "")
+                progress_result = _test_result_from_progress_snapshot(spec.name, last_progress_snapshot, framework=framework)
+                if progress_result is not None:
+                    canonical_test_candidates.append(progress_result)
+                else:
+                    stdout_result = _test_result_from_stdout(spec.name, effective_argv, process_output, framework=framework)
+                    if stdout_result is not None:
+                        canonical_test_candidates.append(stdout_result)
+            canonical_test_result = _reconcile_test_results(spec.name, canonical_test_candidates)
+            if canonical_test_result is not None:
+                result_metadata["test_result"] = canonical_test_result.to_dict()
+                canonical_counts = _canonical_test_counts(canonical_test_result)
+                existing_tests = result_metadata.get("tests") if isinstance(result_metadata.get("tests"), dict) else {}
+                result_metadata["tests"] = {**existing_tests, **canonical_counts}
+                result_metadata["test_evidence"] = str(canonical_test_result.metadata.get("evidence") or "")
+            else:
+                # Exit status is deliberately metadata-only: do not invent a fake
+                # test case when a runner exposes no test identity or counters.
+                result_metadata["test_result"] = {
+                    "schema_version": 1, "id": spec.name, "suites": [], "artifacts": [],
+                    "metadata": {"evidence": "exit", "exit_code": returncode},
+                }
+                result_metadata["test_evidence"] = "exit"
 
 
         artifact_options = config.runner_options.get("artifacts", {})
@@ -2650,7 +2702,7 @@ def run_specs(
             and issue.code in {
                 "GRADLE_TEST", "ANDROID_INSTRUMENTATION", "UNITTEST", "PYTEST", "VSTEST",
                 "PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT",
-                "GO_TEST", "GO_TEST_PACKAGE",
+                "GO_TEST", "GO_TEST_PACKAGE", "DOTNET_TEST", "MAVEN_TEST", "NODE_TEST",
             }
             for issue in issues
         ):

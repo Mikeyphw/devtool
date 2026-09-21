@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+__test__ = False  # Prevent pytest from collecting production TSYS modules.
+
 from dataclasses import dataclass, field
 import json
 import re

@@ -563,9 +563,18 @@ class DotnetRunner(ProjectRunner):
         if action in {"test", "wine-test"}:
             from .test_selection import apply_test_selection
             name = "wine-test" if action == "wine-test" else "test"
-            specs = _maybe_explicit(name, config.test_command, env) or [
-                CommandSpec(name, ["dotnet", "test", test_target], env=env)
-            ]
+            specs = _maybe_explicit(name, config.test_command, env)
+            if not specs:
+                root = _project_root(config)
+                metadata = _tool_metadata(self.kind, root, test_framework="dotnet")
+                configured_report = str(self._dotnet_options(config).get("test_report") or "").strip()
+                if configured_report:
+                    metadata.update({
+                        "report_parser": "dotnet-trx",
+                        "report_parsers": ["dotnet-trx"],
+                        "test_report": configured_report,
+                    })
+                specs = [CommandSpec(name, ["dotnet", "test", test_target], env=env, metadata=metadata)]
             return [apply_test_selection(config, apply_dotnet_variant_to_spec(config, spec)) for spec in specs]
         if action == "run":
             specs = _maybe_explicit("run", config.run_command, env) or [
@@ -1721,6 +1730,7 @@ class JvmGradleRunner(ProjectRunner):
                     report_parser="gradle-junit" if action == "test" else "",
                     collect_artifacts=action in {"build", "package"}, verify_artifacts=action in {"build", "package"},
                     artifact_required=action == "package",
+                    test_framework="gradle" if action == "test" else "",
                 ),
             )]
         for spec in specs:
@@ -2878,6 +2888,17 @@ class NodeRunner(ProjectRunner):
     def _metadata(self, config: ProjectConfig, root: Path, **extra: object) -> dict[str, object]:
         metadata = _tool_metadata(self.kind, root, package_manager=self._manager(config), **extra)
         metadata["progress_parser"] = "npm"
+        if str(extra.get("test_framework") or ""):
+            options = self._options(config)
+            report = str(options.get("test_report") or "").strip()
+            report_format = str(options.get("test_report_format") or "auto").strip().lower()
+            if report:
+                if report_format == "auto":
+                    report_format = "junit" if report.lower().endswith(".xml") else "json"
+                parser = "node-junit" if report_format == "junit" else "node-json"
+                metadata["report_parser"] = parser
+                metadata["report_parsers"] = [parser]
+                metadata["test_report"] = report
         return metadata
 
     def capabilities_for(self, config: ProjectConfig) -> RunnerCapabilities:
@@ -2930,6 +2951,7 @@ class NodeRunner(ProjectRunner):
                     config, root, explicit=True,
                     collect_artifacts=action == "package", verify_artifacts=action == "package",
                     artifact_required=action == "package",
+                    test_framework="node" if action in {"test", "wine-test"} else "",
                 ),
             )
             if action in {"test", "wine-test"}:
@@ -2969,7 +2991,10 @@ class NodeRunner(ProjectRunner):
             for selected_script in selected_scripts:
                 if selected_script not in scripts:
                     raise SystemExit(f"package.json has no '{selected_script}' script.")
-                spec = CommandSpec(action.replace("wine-", ""), self._script_argv(config, selected_script), env=env, cwd=str(root), metadata=self._metadata(config, root, node_script=selected_script))
+                spec = CommandSpec(
+                    action.replace("wine-", ""), self._script_argv(config, selected_script), env=env, cwd=str(root),
+                    metadata=self._metadata(config, root, node_script=selected_script, test_framework="node" if action in {"test", "wine-test"} else ""),
+                )
                 if action in {"test", "wine-test"}:
                     spec = apply_test_selection(config, spec)
                 specs.append(spec)
@@ -3063,7 +3088,11 @@ class RustRunner(ProjectRunner):
             raise SystemExit(f"Unsupported Rust action: {action}")
         spec = CommandSpec(
             action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean",
-            metadata=_tool_metadata(self.kind, root, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
+            metadata=_tool_metadata(
+                self.kind, root,
+                collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package",
+                test_framework="cargo" if action in {"test", "wine-test"} else "",
+            ),
         )
         if action in {"test", "wine-test"}:
             from .test_selection import apply_test_selection
@@ -3500,6 +3529,7 @@ done < "$plan"
         if action in {"test", "wine-test"}:
             metadata["progress_parser"] = "go-test-json"
             metadata["go_test_json"] = True
+            metadata["test_framework"] = "go"
         spec = CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=metadata)
         if action in {"test", "wine-test"}:
             from .test_selection import apply_test_selection
@@ -3589,9 +3619,16 @@ class MavenRunner(ProjectRunner):
         }.get(action)
         if goals is None:
             raise SystemExit(f"Unsupported Maven action: {action}")
+        test_action = action in {"test", "wine-test", "verify"}
         spec = CommandSpec(
             action.replace("wine-", ""), [*self._base(config), *goals], env=env, cwd=str(root), destructive=action == "clean",
-            metadata=_tool_metadata(self.kind, root, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
+            metadata=_tool_metadata(
+                self.kind, root,
+                collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package",
+                test_framework="maven" if test_action else "",
+                report_parser="maven-surefire" if test_action else "",
+                report_parsers=["maven-surefire"] if test_action else [],
+            ),
         )
         if action in {"test", "wine-test", "verify"}:
             from .test_selection import apply_test_selection
