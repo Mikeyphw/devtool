@@ -137,7 +137,24 @@ detached = false
 ```
 
 Named build workers can be declared without replacing the existing `[ssh]`
-configuration:
+configuration. SSHW-06 also treats workers as reusable user-level resources:
+`devtool ssh add` writes them to `~/.config/devtool/config.toml` by default, so
+the same tablet can be selected from every repository. Repository-local worker
+profiles remain available with `--repo-local` and override matching global
+profile fields. A raw legacy `--ssh HOST` does not inherit a global default
+profile unless `--ssh-profile` is explicitly supplied.
+
+```sh
+# One-time setup from the phone. Termux sshd commonly listens on 8022.
+devtool ssh add tablet --host 192.168.1.50 --port 8022 --user u0_a123
+devtool ssh profiles
+
+# Optional repository-only definition/override instead of the global profile.
+devtool -r "$HOME/Code/xdm" ssh add tablet --repo-local \
+  --host 192.168.1.50 --port 8022 --user u0_a123
+```
+
+The equivalent TOML is:
 
 ```toml
 [ssh]
@@ -189,6 +206,36 @@ require `tmux`; bootstrap installs only missing `python`, `tmux`, `rsync`, and
 `git` packages. On Termux it uses `pkg`; supported Linux package managers
 require root or passwordless sudo.
 
+### Final worker qualification
+
+`devtool ssh qualify` is the final worker-side seal. On a managed worker it
+checks/bootstraps the minimum runtime, synchronizes the authoritative phone
+checkout, starts a detached tmux probe and returns from that SSH connection,
+reconnects through a separate SSH request to observe completion, rsyncs a
+run-scoped evidence marker back to `.devtool/ssh-qualification/`, then plans a
+second source synchronization. The second plan must be clean; a non-zero delta
+means the phone source changed during qualification or the sync filters are not
+stable. Timing and transfer counters are reported so the first-vs-incremental
+path is observable.
+
+```sh
+devtool -r "$HOME/Code/xdm" ssh qualify tablet --dry-run
+devtool -r "$HOME/Code/xdm" ssh qualify tablet
+
+# Then qualify the real project/toolchain through the ordinary managed-build path.
+devtool -r "$HOME/Code/xdm" --target xdm_android --ssh-profile tablet \
+  validate --task assembleDebug
+
+# Re-run the same command to exercise persistent Gradle/SDK caches and the
+# near-zero source delta expected from the incremental path.
+```
+
+Use `--no-sync` when only transport/tmux/evidence-return qualification is
+wanted. `--dry-run` is non-mutating. The qualification marker is intentionally
+outside the synchronized source set, so it cannot create a false delta on the
+second pass. Project-specific Gradle/Android correctness remains qualified by
+the normal `validate --task ...` command rather than by a synthetic project.
+
 ### SSH workspace modes and synchronization
 
 `existing` preserves the legacy model: `ssh.cwd` points at a checkout that the
@@ -212,8 +259,8 @@ files, `.git` state, symlinks, executable bits, and timestamps are mirrored from
 the phone. It does **not** use `.gitignore` as a transfer policy: ignored files
 can still be legitimate build inputs. Instead Devtool has explicit sync
 exclusions. With `default_excludes = true`, `.gradle/`, `build/`, Devtool build
-artifacts, SSH staging directories, and `.devtool/ssh-return/` evidence bundles
-are excluded and therefore survive `--delete-delay` on the worker. Global
+artifacts, SSH staging directories, `.devtool/ssh-return/` evidence bundles, and
+`.devtool/ssh-qualification/` qualification evidence are excluded and therefore survive `--delete-delay` on the worker. Global
 Gradle/SDK/JDK/NDK/npm caches live
 outside the managed repository and are not synchronized at all.
 

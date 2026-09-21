@@ -2216,9 +2216,80 @@ Check or rewrite legacy kind/type aliases to canonical runner/platform syntax
 
 ### `devtool ssh`
 
-Inspect and bootstrap named SSH build workers
+Manage, qualify, and operate named SSH build workers
 
-**Subcommands:** `doctor`, `bootstrap`, `sessions`, `workspace`, `sync`, `retrieve`, `runs`, `resume`, `cancel`, `recover`
+**Subcommands:** `profiles`, `add`, `remove`, `default`, `qualify`, `doctor`, `bootstrap`, `sessions`, `workspace`, `sync`, `retrieve`, `runs`, `resume`, `cancel`, `recover`
+
+### `devtool ssh profiles`
+
+List effective global and repository SSH worker profiles
+
+**Aliases:** `devtool ssh list`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh add`
+
+Create or replace a reusable named SSH worker profile
+
+| Argument / option | Meaning |
+| --- | --- |
+| `PROFILE` | Worker profile name |
+| `--host HOST` | SSH host name or address Required. |
+| `--port PORT` | SSH port (Termux sshd commonly uses 8022) |
+| `--user USER` | Remote SSH user |
+| `--identity IDENTITY` | Local SSH identity file |
+| `--cwd CWD` | Existing remote checkout path; required with --workspace-mode existing |
+| `--workspace-mode WORKSPACE_MODE` | Choices: managed, existing, ephemeral |
+| `--workspace-root WORKSPACE_ROOT` | Accepted by this command. |
+| `--bootstrap-policy BOOTSTRAP_POLICY` | Choices: missing, never |
+| `--host-key-policy HOST_KEY_POLICY` | Choices: accept-new, strict, system |
+| `--min-free-mb MIN_FREE_MB` | Accepted by this command. |
+| `--no-default` | Do not make this the default SSH worker |
+| `--force` | Replace an existing profile in the selected scope |
+| `--format FORMAT` | Choices: text, json |
+| `--global` | Manage the reusable user-global SSH worker profile (default) |
+| `--repo-local` | Manage the worker only in this repository .devtool.toml |
+
+### `devtool ssh remove`
+
+Remove a named SSH worker profile
+
+**Aliases:** `devtool ssh rm`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `PROFILE` | Worker profile name |
+| `--format FORMAT` | Choices: text, json |
+| `--global` | Manage the reusable user-global SSH worker profile (default) |
+| `--repo-local` | Manage the worker only in this repository .devtool.toml |
+
+### `devtool ssh default`
+
+Set the default named SSH worker profile
+
+| Argument / option | Meaning |
+| --- | --- |
+| `PROFILE` | Worker profile name |
+| `--format FORMAT` | Choices: text, json |
+| `--global` | Manage the reusable user-global SSH worker profile (default) |
+| `--repo-local` | Manage the worker only in this repository .devtool.toml |
+
+### `devtool ssh qualify`
+
+End-to-end qualify a named managed SSH worker
+
+**Aliases:** `devtool ssh seal`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named worker; defaults to the configured default profile |
+| `--format FORMAT` | Choices: text, json |
+| `--dry-run` | Plan bootstrap/sync/qualification without modifying the worker |
+| `--no-bootstrap` | Do not install missing minimum worker tools |
+| `--no-sync` | Qualify transport/tmux/return only; skip repository sync checks |
 
 ### `devtool ssh doctor`
 

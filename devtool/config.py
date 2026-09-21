@@ -32,7 +32,7 @@ CONFIG_NAME = ".devtool.toml"
 GLOBAL_CONFIG_NAME = "config.toml"
 GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
     "cli", "environment", "termux_chroot", "termux", "proot", "android", "gradle", "dotnet", "terminal",
-    "bootstrap", "chroots", "features", "ui",
+    "bootstrap", "chroots", "features", "ui", "ssh",
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
     "project", "workspace", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
@@ -185,6 +185,10 @@ def minimal_global_config_template() -> str:
         "",
         "[environment]",
         "default_chroot = \"androidos\"",
+        "",
+        "# Reusable SSH workers are user-global by default. Create them with:",
+        "# devtool ssh add tablet --host HOST --port 8022 --user USER",
+        "# Repository-local worker overrides remain available with --repo-local.",
         "",
         "[bootstrap]",
         "downloads = \"auto\" # never | missing | auto | force",

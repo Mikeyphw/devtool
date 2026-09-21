@@ -97,6 +97,26 @@ _devtool_ui_profiles() {
   _describe -t ui-profiles 'UI profile' profiles
 }
 
+_devtool_ssh_profiles() {
+  local repo config global_config
+  local -a profiles
+  repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
+  config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
+  global_config=${DEVTOOL_GLOBAL_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/devtool/config.toml}
+  if [[ -r $global_config ]]; then
+    profiles+=(${(f)"$(sed -nE 's/^\[ssh\.hosts\.([^].]+)\].*/\1/p' "$global_config" 2>/dev/null)"})
+  fi
+  if [[ -r $config ]]; then
+    profiles+=(${(f)"$(sed -nE 's/^\[ssh\.hosts\.([^].]+)\].*/\1/p' "$config" 2>/dev/null)"})
+  fi
+  profiles=(${(u)profiles})
+  if (( ${#profiles} )); then
+    _describe -t ssh-profiles 'SSH worker profile' profiles
+  else
+    _message 'named SSH worker profile'
+  fi
+}
+
 _devtool_test_profiles() {
   local repo config
   local -a profiles
@@ -772,23 +792,51 @@ _devtool() {
           ;;
         ssh)
           if (( ${#line} < 2 )); then
-            _values 'ssh worker action' doctor bootstrap sessions ls workspace ws sync retrieve return runs resume cancel recover
+            _values 'ssh worker action' profiles list add remove rm default qualify seal doctor bootstrap sessions ls workspace ws sync retrieve return runs resume cancel recover
           else
             case ${line[2]} in
+              profiles|list)
+                _arguments '--format[output format]:format:(text json)'
+                ;;
+              add)
+                _arguments \
+                  '1:worker profile:_devtool_ssh_profiles' \
+                  '--host[SSH host name or address]:host:' \
+                  '--port[SSH port]:port:' \
+                  '--user[remote SSH user]:user:' \
+                  '--identity[local SSH identity file]:file:_files' \
+                  '--cwd[existing remote checkout path]:path:' \
+                  '--workspace-mode[remote workspace mode]:mode:(managed existing ephemeral)' \
+                  '--workspace-root[managed remote workspace root]:path:' \
+                  '--bootstrap-policy[remote bootstrap policy]:policy:(missing never)' \
+                  '--host-key-policy[OpenSSH host key policy]:policy:(accept-new strict system)' \
+                  '--min-free-mb[minimum remote free storage]:mebibytes:' \
+                  '--no-default[do not make this the default SSH worker]' \
+                  '--force[replace an existing profile in the selected scope]' \
+                  '(--repo-local)--global[manage the reusable user-global profile]' \
+                  '(--global)--repo-local[manage only this repository profile]' \
+                  '--format[output format]:format:(text json)'
+                ;;
+              remove|rm|default)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '(--repo-local)--global[manage the reusable user-global profile]' '(--global)--repo-local[manage only this repository profile]' '--format[output format]:format:(text json)'
+                ;;
+              qualify|seal)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--dry-run[plan qualification without modifying the worker]' '--no-bootstrap[do not install missing worker tools]' '--no-sync[skip repository synchronization checks]'
+                ;;
               doctor|sessions|ls|workspace|ws|runs)
-                _arguments '1:worker profile:' '--format[output format]:format:(text json)'
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)'
                 ;;
               bootstrap)
-                _arguments '1:worker profile:' '--format[output format]:format:(text json)' '--dry-run[show package installation plan only]' '--force[override bootstrap.policy=never]'
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--dry-run[show package installation plan only]' '--force[override bootstrap.policy=never]'
                 ;;
               sync)
-                _arguments '1:worker profile:' '--format[output format]:format:(text json)' '--dry-run[show exact repository delta without modifying worker]'
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--dry-run[show exact repository delta without modifying worker]'
                 ;;
               retrieve|return|resume|cancel)
-                _arguments '1:worker profile:' '--format[output format]:format:(text json)' '--run-id[select one Devtool run]:run-id:' '--session[select one SSH phase session]:session:'
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--run-id[select one Devtool run]:run-id:' '--session[select one SSH phase session]:session:'
                 ;;
               recover)
-                _arguments '1:worker profile:' '--format[output format]:format:(text json)' '--run-id[restrict stale-run recovery to one Devtool run]:run-id:'
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--run-id[restrict stale-run recovery to one Devtool run]:run-id:'
                 ;;
             esac
           fi

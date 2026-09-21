@@ -35,6 +35,7 @@ _DEFAULT_EXCLUDES = (
     ".devtool/build-artifacts/",
     ".devtool/ssh-stage/",
     ".devtool/ssh-return/",
+    ".devtool/ssh-qualification/",
 )
 _RESERVED_EXCLUDES = (
     f"/{_WORKSPACE_MARKER}",

@@ -79,7 +79,7 @@ positional arguments:
                         Audit retained legacy interfaces and migration paths
     final-seal (seal)   Run the FS03 repository-wide final release seal audit
     pytest              Inspect and profile Devtool's pytest suite
-    ssh                 Inspect and bootstrap named SSH build workers
+    ssh                 Manage, qualify, and operate named SSH build workers
     bootstrap           Provision reusable destination-specific build
                         toolchains
     android             Inspect Android capabilities, ADB providers, and

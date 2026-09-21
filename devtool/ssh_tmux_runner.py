@@ -181,15 +181,39 @@ def _config_path_from_args(argv: list[str], cwd: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-def _load_raw_config(argv: list[str], cwd: str) -> tuple[dict[str, Any], Path | None]:
-    path = _config_path_from_args(argv, cwd)
-    if path is None:
-        return {}, None
+def _merge_config_maps(defaults: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
+    merged = dict(defaults)
+    for key, value in overrides.items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+            merged[key] = _merge_config_maps(dict(merged[key]), value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _read_ssh_toml(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.is_file():
+        return {}
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(f"Unable to read SSH settings from {path}: {exc}") from exc
-    return (data if isinstance(data, dict) else {}), path
+    return data if isinstance(data, dict) else {}
+
+
+def _load_raw_config(argv: list[str], cwd: str) -> tuple[dict[str, Any], Path | None]:
+    # SSH workers are machine/user resources first and repository overrides
+    # second.  A globally-added tablet can therefore be reused by every repo,
+    # while a repo-local [ssh] or [ssh.hosts.*] table wins field-by-field.
+    from .config import global_config_path
+
+    global_path = global_config_path()
+    local_path = _config_path_from_args(argv, cwd)
+    global_data = _read_ssh_toml(global_path)
+    local_data = _read_ssh_toml(local_path)
+    merged = _merge_config_maps(global_data, local_data)
+    source = local_path if local_path is not None else (global_path if global_data else None)
+    return merged, source
 
 
 def _profile_name(data: Mapping[str, Any], explicit: str = "") -> str:
@@ -344,10 +368,18 @@ def resolve_ssh_config(
     target_name = _find_value(argv, {"--target"}).strip()
     cli_profile = _find_value(argv, {"--ssh-profile"}).strip()
     env_profile = str(env.get("DEVTOOL_SSH_PROFILE", "") or "").strip()
-    profile = _profile_name(data, cli_profile or env_profile)
+    cli_host = _find_value(argv, {"--ssh", "--ssh-host"}).strip()
+    env_host = str(env.get("DEVTOOL_SSH_HOST", "") or "").strip()
+    # A user-global default profile is convenient for `devtool ssh ...` and
+    # --execution-environment=ssh, but it must not change the semantics of the
+    # legacy raw `--ssh HOST` / DEVTOOL_SSH_HOST path. Explicit --ssh-profile
+    # may still be combined with a raw host override intentionally.
+    if (cli_host or env_host) and not (cli_profile or env_profile):
+        profile = ""
+    else:
+        profile = _profile_name(data, cli_profile or env_profile)
     file_options = _ssh_section(data, target_name, profile)
 
-    cli_host = _find_value(argv, {"--ssh", "--ssh-host"}).strip()
     cli_port = _find_value(argv, {"--ssh-port"}).strip()
     cli_user = _find_value(argv, {"--ssh-user"}).strip()
     cli_identity = _find_value(argv, {"--ssh-identity"}).strip()
@@ -357,7 +389,7 @@ def resolve_ssh_config(
     cli_mode = _find_value(argv, {"--ssh-mode"}).strip()
     cli_stage_dir = _find_value(argv, {"--ssh-stage-dir"}).strip()
 
-    host = cli_host or str(env.get("DEVTOOL_SSH_HOST", "") or "").strip() or str(file_options.get("host", "") or "").strip()
+    host = cli_host or env_host or str(file_options.get("host", "") or "").strip()
     port_value = cli_port or str(env.get("DEVTOOL_SSH_PORT", "") or "").strip() or file_options.get("port", 22)
     user = cli_user or str(env.get("DEVTOOL_SSH_USER", "") or "").strip() or str(file_options.get("user", "") or "").strip()
     identity = cli_identity or str(env.get("DEVTOOL_SSH_IDENTITY", "") or "").strip() or str(file_options.get("identity", "") or "").strip()

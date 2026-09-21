@@ -989,8 +989,49 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_doctor = cfg_sub.add_parser("doctor")
     cfg_doctor.add_argument("--global", dest="global_config", action="store_true", help="Diagnose the user global config")
 
-    ssh_cmd = subparsers.add_parser("ssh", help="Inspect and bootstrap named SSH build workers")
+    ssh_cmd = subparsers.add_parser("ssh", help="Manage, qualify, and operate named SSH build workers")
     ssh_sub = ssh_cmd.add_subparsers(dest="ssh_command", required=True)
+
+    def add_ssh_profile_scope(sub: argparse.ArgumentParser) -> None:
+        scope = sub.add_mutually_exclusive_group()
+        scope.add_argument("--global", dest="ssh_profile_global", action="store_true", help="Manage the reusable user-global SSH worker profile (default)")
+        scope.add_argument("--repo-local", dest="ssh_profile_global", action="store_false", help="Manage the worker only in this repository .devtool.toml")
+        sub.set_defaults(ssh_profile_global=True)
+
+    ssh_profiles = ssh_sub.add_parser("profiles", aliases=["list"], help="List effective global and repository SSH worker profiles")
+    ssh_profiles.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_add = ssh_sub.add_parser("add", help="Create or replace a reusable named SSH worker profile")
+    ssh_add.add_argument("profile", help="Worker profile name")
+    ssh_add.add_argument("--host", required=True, help="SSH host name or address")
+    ssh_add.add_argument("--port", type=int, default=22, help="SSH port (Termux sshd commonly uses 8022)")
+    ssh_add.add_argument("--user", default="", help="Remote SSH user")
+    ssh_add.add_argument("--identity", default="", help="Local SSH identity file")
+    ssh_add.add_argument("--cwd", default="", help="Existing remote checkout path; required with --workspace-mode existing")
+    ssh_add.add_argument("--workspace-mode", choices=["managed", "existing", "ephemeral"], default="managed")
+    ssh_add.add_argument("--workspace-root", default="~/.cache/devtool/workspaces")
+    ssh_add.add_argument("--bootstrap-policy", choices=["missing", "never"], default="missing")
+    ssh_add.add_argument("--host-key-policy", choices=["accept-new", "strict", "system"], default="accept-new")
+    ssh_add.add_argument("--min-free-mb", type=int, default=1024)
+    ssh_add.add_argument("--no-default", dest="ssh_profile_default", action="store_false", help="Do not make this the default SSH worker")
+    ssh_add.add_argument("--force", action="store_true", help="Replace an existing profile in the selected scope")
+    ssh_add.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_add.set_defaults(ssh_profile_default=True)
+    add_ssh_profile_scope(ssh_add)
+    ssh_remove = ssh_sub.add_parser("remove", aliases=["rm"], help="Remove a named SSH worker profile")
+    ssh_remove.add_argument("profile", help="Worker profile name")
+    ssh_remove.add_argument("--format", choices=["text", "json"], default="text")
+    add_ssh_profile_scope(ssh_remove)
+    ssh_default = ssh_sub.add_parser("default", help="Set the default named SSH worker profile")
+    ssh_default.add_argument("profile", help="Worker profile name")
+    ssh_default.add_argument("--format", choices=["text", "json"], default="text")
+    add_ssh_profile_scope(ssh_default)
+    ssh_qualify = ssh_sub.add_parser("qualify", aliases=["seal"], help="End-to-end qualify a named managed SSH worker")
+    ssh_qualify.add_argument("profile", nargs="?", default="", help="Named worker; defaults to the configured default profile")
+    ssh_qualify.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_qualify.add_argument("--dry-run", dest="ssh_qualify_dry_run", action="store_true", help="Plan bootstrap/sync/qualification without modifying the worker")
+    ssh_qualify.add_argument("--no-bootstrap", dest="ssh_qualify_bootstrap", action="store_false", help="Do not install missing minimum worker tools")
+    ssh_qualify.add_argument("--no-sync", dest="ssh_qualify_sync", action="store_false", help="Qualify transport/tmux/return only; skip repository sync checks")
+    ssh_qualify.set_defaults(ssh_qualify_bootstrap=True, ssh_qualify_sync=True)
     ssh_doctor = ssh_sub.add_parser("doctor", help="Read-only capability discovery for a named SSH worker")
     ssh_doctor.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_doctor.add_argument("--format", choices=["text", "json"], default="text")
@@ -11447,62 +11488,98 @@ def _main_after_parse(
         from .ssh_workspace import sync_payload, workspace_payload
         from .ssh_returns import recover_return_bundles
         from .ssh_resilience import runs_payload, resume_remote_run, cancel_remote_run, recover_stale_runs
+        from .ssh_profiles import add_profile, list_profiles, remove_profile, set_default_profile
+        from .ssh_qualification import qualify_worker
 
         action = str(getattr(args, "ssh_command", "") or "")
         output_format = str(getattr(args, "format", "text") or "text")
         profile = str(getattr(args, "profile", "") or "").strip()
-        repo_root = str(getattr(args, "repo", "") or os.getcwd())
+        repo_arg = str(getattr(args, "repo", "") or "")
+        config_arg = str(getattr(args, "config", "") or "")
+        repo_root = str(repo_arg or os.getcwd())
         try:
-            worker = resolve_worker_profile(
-                profile,
-                repo=str(getattr(args, "repo", "") or ""),
-                config_path=str(getattr(args, "config", "") or ""),
-            )
-            if action == "doctor":
-                payload = worker_doctor_payload(worker)
-            elif action == "bootstrap":
-                payload = bootstrap_worker(
-                    worker,
-                    dry_run=bool(getattr(args, "ssh_bootstrap_dry_run", False)),
-                    force=bool(getattr(args, "ssh_bootstrap_force", False)),
+            if action in {"profiles", "list"}:
+                payload = list_profiles(repo=repo_arg, config_path=config_arg)
+            elif action == "add":
+                payload = add_profile(
+                    profile,
+                    host=str(getattr(args, "host", "") or ""),
+                    port=int(getattr(args, "port", 22) or 22),
+                    user=str(getattr(args, "user", "") or ""),
+                    identity=str(getattr(args, "identity", "") or ""),
+                    cwd=str(getattr(args, "cwd", "") or ""),
+                    repo=repo_arg,
+                    config_path=config_arg,
+                    global_scope=bool(getattr(args, "ssh_profile_global", True)),
+                    set_default=bool(getattr(args, "ssh_profile_default", True)),
+                    force=bool(getattr(args, "force", False)),
+                    workspace_mode=str(getattr(args, "workspace_mode", "managed") or "managed"),
+                    workspace_root=str(getattr(args, "workspace_root", "~/.cache/devtool/workspaces") or "~/.cache/devtool/workspaces"),
+                    bootstrap_policy=str(getattr(args, "bootstrap_policy", "missing") or "missing"),
+                    host_key_policy=str(getattr(args, "host_key_policy", "accept-new") or "accept-new"),
+                    min_free_mb=int(getattr(args, "min_free_mb", 1024) or 0),
                 )
-            elif action in {"sessions", "ls"}:
-                payload = session_payload(worker)
-            elif action in {"workspace", "ws"}:
-                payload = workspace_payload(worker, repo_root)
-            elif action == "sync":
-                payload = sync_payload(
-                    worker,
-                    repo_root,
-                    dry_run=bool(getattr(args, "ssh_sync_dry_run", False)),
+            elif action in {"remove", "rm"}:
+                payload = remove_profile(
+                    profile, repo=repo_arg, config_path=config_arg,
+                    global_scope=bool(getattr(args, "ssh_profile_global", True)),
                 )
-            elif action in {"retrieve", "return"}:
-                payload = recover_return_bundles(
-                    worker,
-                    repo_root,
-                    run_id=str(getattr(args, "run_id", "") or ""),
-                    session=str(getattr(args, "session", "") or ""),
+            elif action == "default":
+                payload = set_default_profile(
+                    profile, repo=repo_arg, config_path=config_arg,
+                    global_scope=bool(getattr(args, "ssh_profile_global", True)),
                 )
-                from .test_runstore import reconcile_ssh_return_recovery
-                payload["runstore"] = reconcile_ssh_return_recovery(payload.get("results", []))
-            elif action == "runs":
-                payload = runs_payload(worker)
-            elif action == "resume":
-                payload = resume_remote_run(
-                    worker, run_id=str(getattr(args, "run_id", "") or ""),
-                    session=str(getattr(args, "session", "") or ""),
-                    attach=output_format != "json",
-                )
-            elif action == "cancel":
-                payload = cancel_remote_run(
-                    worker, run_id=str(getattr(args, "run_id", "") or ""),
-                    session=str(getattr(args, "session", "") or ""),
-                )
-            elif action == "recover":
-                payload = recover_stale_runs(worker, run_id=str(getattr(args, "run_id", "") or ""))
             else:
-                parser.error(f"Unknown ssh command: {action}")
-                return 2
+                worker = resolve_worker_profile(profile, repo=repo_arg, config_path=config_arg)
+                if action == "doctor":
+                    payload = worker_doctor_payload(worker)
+                elif action in {"qualify", "seal"}:
+                    payload = qualify_worker(
+                        worker, repo_root,
+                        dry_run=bool(getattr(args, "ssh_qualify_dry_run", False)),
+                        bootstrap=bool(getattr(args, "ssh_qualify_bootstrap", True)),
+                        sync=bool(getattr(args, "ssh_qualify_sync", True)),
+                    )
+                elif action == "bootstrap":
+                    payload = bootstrap_worker(
+                        worker,
+                        dry_run=bool(getattr(args, "ssh_bootstrap_dry_run", False)),
+                        force=bool(getattr(args, "ssh_bootstrap_force", False)),
+                    )
+                elif action in {"sessions", "ls"}:
+                    payload = session_payload(worker)
+                elif action in {"workspace", "ws"}:
+                    payload = workspace_payload(worker, repo_root)
+                elif action == "sync":
+                    payload = sync_payload(
+                        worker, repo_root, dry_run=bool(getattr(args, "ssh_sync_dry_run", False)),
+                    )
+                elif action in {"retrieve", "return"}:
+                    payload = recover_return_bundles(
+                        worker, repo_root,
+                        run_id=str(getattr(args, "run_id", "") or ""),
+                        session=str(getattr(args, "session", "") or ""),
+                    )
+                    from .test_runstore import reconcile_ssh_return_recovery
+                    payload["runstore"] = reconcile_ssh_return_recovery(payload.get("results", []))
+                elif action == "runs":
+                    payload = runs_payload(worker)
+                elif action == "resume":
+                    payload = resume_remote_run(
+                        worker, run_id=str(getattr(args, "run_id", "") or ""),
+                        session=str(getattr(args, "session", "") or ""),
+                        attach=output_format != "json",
+                    )
+                elif action == "cancel":
+                    payload = cancel_remote_run(
+                        worker, run_id=str(getattr(args, "run_id", "") or ""),
+                        session=str(getattr(args, "session", "") or ""),
+                    )
+                elif action == "recover":
+                    payload = recover_stale_runs(worker, run_id=str(getattr(args, "run_id", "") or ""))
+                else:
+                    parser.error(f"Unknown ssh command: {action}")
+                    return 2
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             if output_format == "json":
                 print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
@@ -11512,6 +11589,47 @@ def _main_after_parse(
 
         if output_format == "json":
             print(json.dumps(payload, indent=2, ensure_ascii=False))
+        elif action in {"profiles", "list"}:
+            records = payload.get("records", [])
+            render_status_table([
+                ("default_profile", payload.get("default_profile") or "-"),
+                ("global_config", payload.get("global_config") or "-"),
+                ("repo_config", payload.get("repo_config") or "-"),
+                ("profiles", str(len(records))),
+            ])
+            for item in records:
+                marker = "*" if item.get("default") else " "
+                destination = f"{item.get('user') + '@' if item.get('user') else ''}{item.get('host')}:{item.get('port')}"
+                print(f"{marker} {item.get('name',''):<18} {item.get('scope',''):<6} {destination:<32} {item.get('mode','')} {item.get('workspace_mode','')}")
+        elif action in {"add", "remove", "rm", "default"}:
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("scope", payload.get("scope") or "-"),
+                ("path", payload.get("path") or "-"),
+                ("status", "OK" if payload.get("ok") else "BLOCKED"),
+                ("default", "yes" if payload.get("default") else ("cleared" if payload.get("cleared_default") else "no")),
+            ])
+        elif action in {"qualify", "seal"}:
+            perf = payload.get("performance", {})
+            checks = payload.get("checks", {})
+            rows = [
+                ("profile", payload.get("profile") or "-"),
+                ("destination", payload.get("destination") or "-"),
+                ("mode", "DRY-RUN" if payload.get("dry_run") else "QUALIFIED"),
+            ]
+            rows.extend((f"check.{name}", str(value)) for name, value in checks.items())
+            if perf:
+                rows.extend([
+                    ("first_sync_changes", str(perf.get("first_sync_changes", 0))),
+                    ("second_sync_changes", str(perf.get("second_sync_changes", 0))),
+                    ("sync_seconds", str(perf.get("sync_seconds", 0))),
+                    ("tmux_seconds", str(perf.get("tmux_seconds", 0))),
+                    ("return_seconds", str(perf.get("return_seconds", 0))),
+                    ("total_seconds", str(perf.get("total_seconds", 0))),
+                    ("returned_bytes", str(perf.get("returned_bytes", 0))),
+                ])
+            rows.append(("detail", payload.get("detail") or "qualification plan ready"))
+            render_status_table(rows)
         elif action == "doctor":
             probe = payload["probe"]
             memory_gib = float(probe.get("memory_kib", 0) or 0) / (1024.0 * 1024.0)
