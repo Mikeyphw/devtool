@@ -398,7 +398,14 @@ def _add_apply_policy_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--ignore-checksum", action="store_true", help="Skip SHA-256 checksum validation while retaining all other artifact manifest checks")
     cmd.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)")
     cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
-    cmd.add_argument("--no-rollback-on-failure", action="store_true", help="Disable rollback when an apply or its validation fails")
+    cmd.add_argument(
+        "--no-rollback-on-failure",
+        action="store_true",
+        help=(
+            "Keep successfully applied changes when post-apply validation or commands fail; "
+            "atomic extraction/preflight failures still roll back for repository integrity"
+        ),
+    )
     cmd.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
     cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
     cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
@@ -7736,13 +7743,19 @@ def _append_run_log_summary(
     def _rollback_state() -> str:
         for result in results or []:
             name = str(result.name or "").lower()
-            if name in {"rollback", "apply-rollback"}:
+            if name in {"rollback", "apply-rollback"} and result.failure_kind != "stale_apply_rolled_back":
                 return "succeeded" if result.returncode == 0 else "failed"
         recovery = _first_matching_line("Recovery:")
         if "rollback succeeded" in recovery.lower():
             return "succeeded"
         if "rollback failed" in recovery.lower():
             return "failed"
+        return ""
+
+    def _stale_recovery_state() -> str:
+        for result in results or []:
+            if str(result.name or "").lower() == "apply-rollback" and result.failure_kind == "stale_apply_rolled_back":
+                return "succeeded" if result.returncode == 0 else "failed"
         return ""
 
     lines = [
@@ -7775,6 +7788,11 @@ def _append_run_log_summary(
     rollback_state = _rollback_state()
     if rollback_state:
         lines.append(f"Devtool rollback: {rollback_state}")
+    stale_recovery_state = _stale_recovery_state()
+    if stale_recovery_state:
+        lines.append(f"Devtool previous interrupted apply recovery: {stale_recovery_state}")
+    if any(str(result.name or "").lower() == "apply-retain" and result.returncode == 0 for result in results or []):
+        lines.append("Devtool changes retained: yes")
     artifacts = _resolved_artifact_paths_for_args(args)
     for artifact in artifacts:
         lines.append(f"Devtool artifact: {artifact}")
@@ -9987,6 +10005,14 @@ def _run_sequential_overlays(
                     )
                     all_results.append(rollback_result)
                     raw_sections.append(rollback_raw)
+                elif not rollback_enabled and not any(result.name == "apply-retain" for result in all_results):
+                    retain_result, retain_raw = _run_transaction_keep_changes(
+                        transaction_path,
+                        reason="post-bundle command failed and --no-rollback-on-failure retained changes",
+                        log_path=log_path,
+                    )
+                    all_results.append(retain_result)
+                    raw_sections.append(retain_raw)
             else:
                 mark_transaction_completed(transaction_path)
 
@@ -10223,6 +10249,50 @@ def _delete_original_artifact_after_apply(
 
 def _delete_original_artifact_after_success(results: list[OperationResult]) -> OperationResult | None:
     return _delete_original_artifact_after_apply(results, delete_on_failure=False)
+
+
+def _run_transaction_keep_changes(
+    transaction_path: str | Path,
+    *,
+    reason: str,
+    log_path: Path | str | None = None,
+) -> tuple[OperationResult, str]:
+    """Close an apply transaction while deliberately retaining its working tree.
+
+    This is the durable counterpart of ``--no-rollback-on-failure`` for
+    non-resumable apply flows. Leaving the transaction active would make the
+    next Devtool invocation classify the intentionally retained changes as an
+    interrupted apply and roll them back during stale-transaction recovery.
+    """
+
+    start = time.perf_counter()
+    path = Path(transaction_path)
+    abandon_transaction(path, reason=reason)
+    output = (
+        "Applied changes retained after failure; rollback was disabled.\n"
+        f"transaction: {path}\n"
+        f"reason: {reason}\n"
+        "status: abandoned-kept-changes\n"
+        "future stale-transaction recovery: disabled for this transaction"
+    )
+    result = OperationResult(
+        "apply-retain",
+        ["transaction", "keep-changes", str(path)],
+        0,
+        time.perf_counter() - start,
+        output,
+        [],
+        failure_kind="changes_retained",
+        metadata={"transaction_path": str(path), "kept_changes": True},
+    )
+    if log_path is not None:
+        try:
+            from .logstore import write_log
+            result.log_path = str(write_log("$ " + " ".join(result.argv) + "\n" + result.output, log_path, append=True))
+        except Exception:
+            pass
+    raw = "$ " + " ".join(result.argv) + "\n" + result.output
+    return result, raw
 
 
 def _run_transaction_rollback(
@@ -12891,6 +12961,14 @@ def _main_after_parse(
                             )
                             results.append(rollback_result)
                             raw_output += "\n\n" + rollback_raw
+                        elif not rollback_enabled and not any(result.name == "apply-retain" for result in results):
+                            retain_result, retain_raw = _run_transaction_keep_changes(
+                                transaction_path,
+                                reason="post-apply command failed and --no-rollback-on-failure retained changes",
+                                log_path=log_path,
+                            )
+                            results.append(retain_result)
+                            raw_output += "\n\n" + retain_raw
                     else:
                         mark_transaction_completed(transaction_path)
                 delete_on_failure = bool(getattr(args, "delete_artifact_on_failure", False))

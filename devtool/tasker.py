@@ -653,6 +653,7 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
                 warning_details.append(detail)
 
     rollback_results = [result for result in results if result.name == "apply-rollback"]
+    retained_changes = any(result.name == "apply-retain" and result.returncode == 0 for result in results)
     stale_recovery = any(result.failure_kind == "stale_apply_rolled_back" for result in rollback_results)
     rollback_succeeded = any(
         result.returncode == 0 and result.failure_kind != "stale_apply_rolled_back"
@@ -682,7 +683,10 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
 
     if ok:
         headline = "Completed successfully"
-    elif stale_recovery:
+    elif retained_changes:
+        phase_name = _human_phase_name(failed_result.name) if failed_result is not None else "Validation"
+        headline = f"{phase_name} failed; changes retained"
+    elif stale_recovery and failed_result is None:
         headline = "Recovered interrupted apply; rerun command"
     elif rollback_succeeded and not rollback_failed:
         phase_name = _human_phase_name(failed_result.name) if failed_result is not None else "Validation"

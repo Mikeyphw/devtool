@@ -1202,7 +1202,7 @@ Open the validation menu and wizard
 | `--ignore-checksum` | Skip SHA-256 checksum validation while retaining all other artifact manifest checks |
 | `--keep-artifact` | Keep the source artifact and sidecars after a successful apply (failures are always preserved by default) |
 | `--delete-artifact-on-failure` | Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis) |
-| `--no-rollback-on-failure` | Disable rollback when an apply or its validation fails |
+| `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
 | `--no-commit` | Disable a commit requested by the artifact manifest |
@@ -1310,7 +1310,7 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--ignore-checksum` | Skip SHA-256 checksum validation while retaining all other artifact manifest checks |
 | `--keep-artifact` | Keep the source artifact and sidecars after a successful apply (failures are always preserved by default) |
 | `--delete-artifact-on-failure` | Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis) |
-| `--no-rollback-on-failure` | Disable rollback when an apply or its validation fails |
+| `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
 | `--no-commit` | Disable a commit requested by the artifact manifest |
@@ -1418,7 +1418,7 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--ignore-checksum` | Skip SHA-256 checksum validation while retaining all other artifact manifest checks |
 | `--keep-artifact` | Keep the source artifact and sidecars after a successful apply (failures are always preserved by default) |
 | `--delete-artifact-on-failure` | Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis) |
-| `--no-rollback-on-failure` | Disable rollback when an apply or its validation fails |
+| `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
 | `--no-commit` | Disable a commit requested by the artifact manifest |
@@ -1530,7 +1530,7 @@ Apply an overlay, overlay bundle, or snapshot
 | `--ignore-checksum` | Skip SHA-256 checksum validation while retaining all other artifact manifest checks |
 | `--keep-artifact` | Keep the source artifact and sidecars after a successful apply (failures are always preserved by default) |
 | `--delete-artifact-on-failure` | Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis) |
-| `--no-rollback-on-failure` | Disable rollback when an apply or its validation fails |
+| `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
 | `--no-commit` | Disable a commit requested by the artifact manifest |
@@ -1636,7 +1636,7 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--ignore-checksum` | Skip SHA-256 checksum validation while retaining all other artifact manifest checks |
 | `--keep-artifact` | Keep the source artifact and sidecars after a successful apply (failures are always preserved by default) |
 | `--delete-artifact-on-failure` | Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis) |
-| `--no-rollback-on-failure` | Disable rollback when an apply or its validation fails |
+| `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
 | `--no-commit` | Disable a commit requested by the artifact manifest |
@@ -1742,7 +1742,7 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--ignore-checksum` | Skip SHA-256 checksum validation while retaining all other artifact manifest checks |
 | `--keep-artifact` | Keep the source artifact and sidecars after a successful apply (failures are always preserved by default) |
 | `--delete-artifact-on-failure` | Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis) |
-| `--no-rollback-on-failure` | Disable rollback when an apply or its validation fails |
+| `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
 | `--no-commit` | Disable a commit requested by the artifact manifest |
