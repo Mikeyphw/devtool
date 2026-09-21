@@ -704,6 +704,8 @@ def build_parser() -> argparse.ArgumentParser:
                 help="With --space, keep this many newest Devtool-managed Gradle distributions",
             )
         if name == "test":
+            cmd.add_argument("test_names", nargs="*", help="First-class [[test]] IDs from .devtool.toml")
+            cmd.add_argument("--all", dest="all_declared_tests", action="store_true", help="Run all first-class [[test]] declarations")
             cmd.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="Pass --no-build to dotnet test")
             cmd.add_argument("--list-tests", "--list", action="store_true", help="Discover and list tests without executing them; pytest uses native --collect-only discovery")
             _add_pytest_selection_flags(cmd)
@@ -727,6 +729,7 @@ def build_parser() -> argparse.ArgumentParser:
             _add_python_format_flags(cmd)
             _add_validation_skip_flags(cmd)
             if name == "validate":
+                cmd.add_argument("--test", dest="declared_tests", action="append", default=[], help="Run a first-class [[test]] declaration during validation; repeatable")
                 cmd.add_argument("validate_scope", nargs="?", help="Optional artifact validation scope: overlay or overlays")
                 cmd.add_argument("validate_artifact", nargs="?", help="Artifact archive to validate when scope is overlay/overlays")
                 cmd.add_argument("--fail-on-conflict", action="store_true", help="For overlay bundles, fail if multiple nested overlays write the same file")
@@ -12663,6 +12666,9 @@ def _main_after_parse(
                 raw_output = str(exc)
         else:
             specs = _validation_specs_for_args(config, args, parser)
+            if getattr(args, "declared_tests", []):
+                from .test_declarations import command_specs as _declared_test_specs
+                specs.extend(_declared_test_specs(config, getattr(args, "declared_tests", [])))
             results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
     elif args.command == "batch":
         results, raw_output = _handle_batch(config, args, log_path=log_path, tasker_progress=tasker_progress)
@@ -12686,7 +12692,11 @@ def _main_after_parse(
                     metadata["affected_targets"] = list(affected_selection.targets)
                 spec.metadata = metadata
         else:
-            specs = build_specs(planning_config, args.command)
+            if args.command in {"test", "t"} and (getattr(args, "test_names", []) or bool(getattr(args, "all_declared_tests", False))):
+                from .test_declarations import command_specs as _declared_test_specs
+                specs = _declared_test_specs(planning_config, getattr(args, "test_names", []), all_tests=bool(getattr(args, "all_declared_tests", False)))
+            else:
+                specs = build_specs(planning_config, args.command)
         specs = _maybe_apply_test_no_build_flag(specs, args, parser)
         results, raw_output = _run_specs_for_args(planning_config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
 

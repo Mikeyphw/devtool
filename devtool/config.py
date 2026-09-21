@@ -647,6 +647,49 @@ def _default_target_name(
     return ""
 
 
+def _parse_test_specs(loaded: dict[str, Any], source: object) -> dict[str, Any]:
+    """Parse first-class [[test]] declarations into canonical TestSpec objects."""
+    from .test_model import TestSpec
+    raw = loaded.get("test", [])
+    if raw in (None, []):
+        return {}
+    if not isinstance(raw, list):
+        raise SystemExit(f"Invalid config {source}: [[test]] must be an array of tables.")
+    out: dict[str, TestSpec] = {}
+    for index, item in enumerate(raw, 1):
+        if not isinstance(item, dict):
+            raise SystemExit(f"Invalid config {source}: test entry {index} must be a table.")
+        test_id = str(item.get("id") or "").strip()
+        runner = str(item.get("runner") or "").strip()
+        if not test_id or not runner:
+            raise SystemExit(f"Invalid config {source}: test entry {index} requires id and runner.")
+        if test_id in out:
+            raise SystemExit(f"Invalid config {source}: duplicate test id {test_id!r}.")
+        command = item.get("command", [])
+        if isinstance(command, str):
+            import shlex
+            command = shlex.split(command)
+        if not isinstance(command, list) or not all(isinstance(v, str) for v in command):
+            raise SystemExit(f"Invalid config {source}: test {test_id!r} command must be a string or string array.")
+        task = str(item.get("task") or "").strip()
+        if task and command:
+            raise SystemExit(f"Invalid config {source}: test {test_id!r} cannot declare both command and task.")
+        if task:
+            if runner not in {"gradle", "android"}:
+                raise SystemExit(f"Invalid config {source}: test {test_id!r} task is only valid for Gradle/Android runners.")
+            command = ["./gradlew", task]
+        if not command:
+            raise SystemExit(f"Invalid config {source}: test {test_id!r} requires command or task.")
+        env=item.get("env", {}) or {}
+        if not isinstance(env, dict): raise SystemExit(f"Invalid config {source}: test {test_id!r} env must be a table.")
+        out[test_id] = TestSpec(id=test_id, name=str(item.get("name") or test_id), runner=runner, command=tuple(command),
+            cwd=str(item.get("cwd") or "") or None, env={str(k):str(v) for k,v in env.items()},
+            timeout_seconds=float(item["timeout_seconds"]) if item.get("timeout_seconds") is not None else None,
+            required=bool(item.get("required", True)), requires_device=bool(item.get("requires_device", False)),
+            requires_network=bool(item.get("requires_network", False)), metadata={"declared": True})
+    return out
+
+
 def load_project_config(
     repo_root_arg: str | None,
     config_path_arg: str | None,
@@ -1022,6 +1065,7 @@ def load_project_config(
         global_config_path=global_path if global_loaded else None,
         config_provenance=provenance,
         configured_runner_options=copy.deepcopy(runner_options),
+        tests=_parse_test_specs(repo_loaded, repo_source_label),
     )
 
     # MP05 validates the complete configured cross-target workspace graph at

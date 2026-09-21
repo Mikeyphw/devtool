@@ -430,6 +430,13 @@ class ThreeLineProgressState:
     warnings: int = 0
     errors: int = 0
 
+    @classmethod
+    def from_test_result(cls, result, **kwargs):
+        """Project canonical TestResult into the existing three-line progress contract."""
+        from .test_ui import TestProgressState
+        state = TestProgressState.from_result(result)
+        return cls(tests_passed=state.passed, tests_failed=state.failed + state.errors + state.cancelled, tests_skipped=state.skipped, tests_total=state.total, **kwargs)
+
 
 def human_command_label(value: str) -> str:
     """Return a compact human label for internal command/phase names."""

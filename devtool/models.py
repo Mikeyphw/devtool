@@ -234,6 +234,7 @@ class ProjectConfig:
     config_provenance: dict[str, str] = field(default_factory=dict)
     configured_runner_options: dict[str, Any] = field(default_factory=dict)
     runtime_runner_overrides: dict[str, Any] = field(default_factory=dict)
+    tests: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         effective_runner = str(self.runner or self.kind or "unknown").strip().lower() or "unknown"
