@@ -1090,6 +1090,11 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
         if protocol not in _HOOK_PROTOCOLS:
             ok = False
             messages.append("validation.script.protocol must be one of: legacy-env, json-v1.")
+    try:
+        artifact_validation_tests(manifest)
+    except ValueError as exc:
+        ok = False
+        messages.append(str(exc))
     if bundle:
         strategy = str(raw.get("strategy") or "per-overlay").strip().lower()
         if strategy not in {"per-overlay", "after-all", "both"}:
@@ -3167,3 +3172,29 @@ def latest_commit_hash(repo_root: Path) -> str:
 
     proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     return proc.stdout.strip() if proc.returncode == 0 else ""
+
+def artifact_validation_tests(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize artifact-v2 validation.tests without conflating them with lifecycle scripts."""
+    raw=manifest.get("validation")
+    if not isinstance(raw,dict): return []
+    tests=raw.get("tests",[])
+    if tests is None: return []
+    if not isinstance(tests,list): raise ValueError("validation.tests must be a list.")
+    out=[]
+    for i,item in enumerate(tests,1):
+        if isinstance(item,str): item={"ref":item}
+        if not isinstance(item,dict): raise ValueError(f"validation.tests entry {i} must be an object or test ref string.")
+        ref=str(item.get("ref") or "").strip(); tid=str(item.get("id") or "").strip()
+        if ref:
+            if len(item)!=1: raise ValueError(f"validation.tests ref entry {i} may only contain ref.")
+            out.append({"ref":ref}); continue
+        runner=str(item.get("runner") or "").strip(); command=item.get("command",[]); task=str(item.get("task") or "").strip()
+        if not tid or not runner: raise ValueError(f"validation.tests entry {i} requires id and runner, or ref.")
+        if isinstance(command,str): import shlex; command=shlex.split(command)
+        if task:
+            if command: raise ValueError(f"validation.tests {tid!r} cannot declare both command and task.")
+            if runner not in {"gradle","android"}: raise ValueError(f"validation.tests {tid!r} task requires gradle/android runner.")
+            command=["./gradlew",task]
+        if not isinstance(command,list) or not command or not all(isinstance(x,str) for x in command): raise ValueError(f"validation.tests {tid!r} requires a command or task.")
+        out.append({"id":tid,"name":str(item.get("name") or tid),"runner":runner,"command":list(command),"cwd":str(item.get("cwd") or ""),"required":bool(item.get("required",True))})
+    return out

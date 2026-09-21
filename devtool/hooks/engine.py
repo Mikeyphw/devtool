@@ -49,7 +49,7 @@ def _heartbeat_seconds(env: dict[str, str]) -> float:
     return max(0.0, min(value, 3600.0))
 
 
-def _run_live(
+def _run_live_with_events(
     command: list[str],
     *,
     cwd: Path,
@@ -62,13 +62,18 @@ def _run_live(
     render_progress: bool = False,
     stream_output: bool = False,
     progress_target: str = "",
-) -> tuple[int, str, GenericProgressTracker | None]:
+) -> tuple[int, str, GenericProgressTracker | None, list[dict[str, Any]]]:
     started = time.monotonic()
     last_output_at = started
     last_heartbeat_at = started
     heartbeat_seconds = _heartbeat_seconds(env)
     output_parts: list[str] = []
     lines: queue.Queue[str | None] = queue.Queue()
+    test_events: list[dict[str, Any]] = []
+    event_r, event_w = os.pipe()
+    child_env = dict(env)
+    child_env["DEVTOOL_TEST_EVENT_FD"] = str(event_w)
+    child_env["DEVTOOL_TEST_PROTOCOL"] = "devtool.test/v1"
 
     # Artifact hooks use the exact same Rich progress surface as normal generic
     # Devtool commands.  The hook runner owns no spinner/status UI of its own.
@@ -92,16 +97,19 @@ def _run_live(
         proc = subprocess.Popen(
             command,
             cwd=cwd,
-            env=env,
+            env=child_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if stdin_text is not None else None,
             text=True,
             bufsize=1,
             start_new_session=True,
+            pass_fds=(event_w,),
         )
+        os.close(event_w)
     except OSError as exc:
-        return 127, str(exc), tracker
+        os.close(event_r); os.close(event_w)
+        return 127, str(exc), tracker, test_events
 
     def reader_fn() -> None:
         try:
@@ -113,6 +121,15 @@ def _run_live(
 
     reader = threading.Thread(target=reader_fn, name=f"devtool-artifact-hook-{proc.pid}", daemon=True)
     reader.start()
+
+    def event_reader_fn() -> None:
+        from ..test_protocol import parse_line
+        with os.fdopen(event_r, "r", encoding="utf-8", errors="replace") as stream:
+            for raw in stream:
+                event=parse_line(raw)
+                if event is not None: test_events.append(event)
+    event_reader=threading.Thread(target=event_reader_fn,name=f"devtool-test-events-{proc.pid}",daemon=True)
+    event_reader.start()
     if stdin_text is not None and proc.stdin is not None:
         try:
             proc.stdin.write(stdin_text)
@@ -157,7 +174,8 @@ def _run_live(
                     proc.kill()
                 with contextlib.suppress(Exception):
                     proc.wait(timeout=1.0)
-            return 124, "".join(output_parts), tracker
+            event_reader.join(timeout=0.25)
+            return 124, "".join(output_parts), tracker, test_events
         try:
             item = lines.get(timeout=0.1)
         except queue.Empty:
@@ -190,8 +208,14 @@ def _run_live(
             proc.kill()
         rc = 124
     reader.join(timeout=0.25)
-    return rc, "".join(output_parts), tracker
+    event_reader.join(timeout=0.25)
+    return rc, "".join(output_parts), tracker, test_events
 
+
+def _run_live(*args, **kwargs):
+    """Backward-compatible hook runner surface; protocol events are internal."""
+    rc, output, tracker, _events = _run_live_with_events(*args, **kwargs)
+    return rc, output, tracker
 
 def _preferred_tmp_parent() -> str | None:
     configured = os.environ.get("TMPDIR", "").strip()
@@ -456,7 +480,7 @@ class EmbeddedHookEngine:
                     repo_root=repo_root,
                     timeout_seconds=timeout_seconds,
                 )
-            rc, child_output, progress_tracker = _run_live(
+            rc, child_output, progress_tracker, test_events = _run_live_with_events(
                 command,
                 cwd=repo_root,
                 env=env,
@@ -489,6 +513,15 @@ class EmbeddedHookEngine:
                 rc = 1
         if structured is not None and structured.status == "fail" and rc == 0:
             rc = 1
+
+        if test_events:
+            from ..test_protocol import EventAccumulator
+            acc=EventAccumulator()
+            for event in test_events: acc.feed(event)
+            canonical_test_result=acc.to_result(f"artifact-{request.kind}")
+            if canonical_test_result.tests_failed and rc == 0: rc = 1
+        else:
+            canonical_test_result=None
 
         if progress_tracker is not None:
             # Match the normal command runner: keep successful progress transient
@@ -572,6 +605,8 @@ class EmbeddedHookEngine:
                 "hook_kind": request.kind,
                 "hook_phase": request.phase,
                 "hook_protocol": protocol,
+                "test_protocol": "devtool.test/v1" if test_events else "",
+                "canonical_test_result": canonical_test_result.to_dict() if canonical_test_result is not None else None,
                 "hook_result": structured.raw if structured is not None else {},
                 "hook_event": event,
             },

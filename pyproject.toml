@@ -20,6 +20,7 @@ select = ["E9", "F63", "F7", "F82"]
 
 [project.scripts]
 devtool = "devtool.cli:main"
+devtool-test = "devtool.test_helper:main"
 devtool-termux-chroot = "devtool.termux_chroot_runner:main"
 devtool-androidos = "devtool.termux_chroot_runner:main"
 devtool-control-center-hud = "devtool.desktop.gtk_hud_cli:main"

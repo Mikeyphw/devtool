@@ -9188,8 +9188,10 @@ def _artifact_script_result(
     if getattr(args, "no_artifact_script", False):
         return None, ""
     validation_script = artifact_validation_policy(manifest).get("script")
+    from .artifacts import artifact_validation_tests
+    validation_tests = artifact_validation_tests(manifest)
     finalize_phases = set(artifact_finalize_phases(manifest))
-    if not validation_script and not ({"before_validation", "after_validation"} & finalize_phases):
+    if not validation_script and not validation_tests and not ({"before_validation", "after_validation"} & finalize_phases):
         return None, ""
 
     raw_sections: list[str] = []
@@ -9296,6 +9298,16 @@ def _artifact_script_result(
         if validator is not None:
             executed.append(validator)
             raw_sections.append(_raw(validator))
+
+    if validation_tests and (validator is None or validator.returncode == 0):
+        from .artifact_tests import run_artifact_tests
+        test_results, test_raw = run_artifact_tests(config.repo_root, manifest, verbose=bool(getattr(args,"verbose",False)), dry_run=bool(getattr(args,"dry_run",False)), log_path=log_path, tasker_progress=tasker_progress)
+        executed.extend(test_results)
+        if test_raw: raw_sections.append(test_raw)
+        failed_tests=[r for r in test_results if r.returncode != 0 and bool(r.metadata.get("required",True))]
+        if failed_tests:
+            validator=failed_tests[0]
+            validator.failure_kind=validator.failure_kind or "artifact_test_failure"
 
     validation_status = "not-run" if validator is None else ("passed" if validator.returncode == 0 else "failed")
     after = _finalize("after_validation", validation_status)

@@ -1688,11 +1688,14 @@ def _artifact_lifecycle_summary(manifest: dict) -> tuple[str, list[tuple[str, st
     pre = phases(preflight, "before_extract") if preflight.get("script") else []
     fin = phases(finalize, "before_validation") if finalize.get("script") else []
     has_validator = isinstance(validation.get("script"), dict) and bool(validation.get("script"))
+    validation_tests = validation.get("tests") if isinstance(validation.get("tests"), list) else []
     if pre:
         rows.append(("Preflight", " · ".join(item.replace("_", " ") for item in pre)))
     if has_validator:
         script = validation.get("script") or {}
         rows.append(("Artifact validation", str(script.get("path") or "embedded validator")))
+    if validation_tests:
+        rows.append(("Artifact tests", f"{len(validation_tests)} suite{'s' if len(validation_tests) != 1 else ''}"))
     if fin:
         rows.append(("Finalize", " · ".join(item.replace("_", " ") for item in fin)))
     bits: list[str] = []
@@ -1700,6 +1703,8 @@ def _artifact_lifecycle_summary(manifest: dict) -> tuple[str, list[tuple[str, st
         bits.append(f"{len(pre)} preflight")
     if has_validator:
         bits.append("validator")
+    if validation_tests:
+        bits.append(f"{len(validation_tests)} tests")
     if fin:
         bits.append(f"{len(fin)} finalize")
     return (" · ".join(bits), rows)
