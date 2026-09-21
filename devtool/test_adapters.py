@@ -28,7 +28,8 @@ from .test_model import (
     TestSuiteResult,
 )
 
-_EVIDENCE_RANK = {"exit": 0, "stdout": 1, "report": 2, "protocol": 3}
+EVIDENCE_PRECEDENCE = {"exit": 0, "stdout": 1, "report": 2, "protocol": 3}
+_EVIDENCE_RANK = EVIDENCE_PRECEDENCE  # backward-compatible internal alias
 _SAFE_ID = re.compile(r"[^A-Za-z0-9._:/#-]+")
 _PYTEST_SUMMARY_RE = re.compile(r"(?P<count>\d+)\s+(?P<kind>passed|failed|skipped|xfailed|xpassed|errors?)\b", re.I)
 _DOTNET_SUMMARY_RE = re.compile(
