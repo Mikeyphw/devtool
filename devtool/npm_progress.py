@@ -33,6 +33,7 @@ from .rich_progress import (
     completion_line,
 )
 from .tui_icons import activity_icon
+from .test_counts import TestCountAccumulator
 
 
 _NODE_MANAGERS = {"npm", "pnpm", "yarn", "bun"}
@@ -112,12 +113,18 @@ class NpmProgressTracker:
     _started_count: int = field(init=False, default=0)
     _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
+    tests_passed: int = field(init=False, default=0)
+    tests_failed: int = field(init=False, default=0)
+    tests_skipped: int = field(init=False, default=0)
+    tests_total: int = field(init=False, default=0)
+    _test_counts: TestCountAccumulator = field(init=False)
 
     def __post_init__(self) -> None:
         self.plan = npm_progress_plan(self.argv, self.cwd)
         self.total = len(self.plan.steps) if self.plan is not None else None
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
         self.inspection = TuiInspectionController(self.console)
+        self._test_counts = TestCountAccumulator(framework="node")
 
     def __enter__(self) -> "NpmProgressTracker":
         if not self.enabled:
@@ -156,6 +163,10 @@ class NpmProgressTracker:
         if not text:
             return
         self.last_line = text
+        if self._test_counts.feed(text):
+            counts = self._test_counts.counts
+            self.tests_passed, self.tests_failed = counts.passed, counts.failed
+            self.tests_skipped, self.tests_total = counts.skipped, counts.total
         banner = _parse_npm_banner(text)
         if banner is not None:
             self._script_started(banner)
@@ -192,6 +203,10 @@ class NpmProgressTracker:
             "unit_label": self.unit_label,
             "returncode": self.returncode,
             "last_line": self.last_line,
+            "tests_passed": self.tests_passed,
+            "tests_failed": self.tests_failed,
+            "tests_skipped": self.tests_skipped,
+            "tests_total": self.tests_total,
             "current_task": self.current_script or None,
         }
 
@@ -261,6 +276,10 @@ class NpmProgressTracker:
             phase_index=self.phase_index,
             phase_total=self.phase_total,
             phase_label=self.command_name,
+            tests_passed=self.tests_passed,
+            tests_failed=self.tests_failed,
+            tests_skipped=self.tests_skipped,
+            tests_total=self.tests_total,
         )
 
     def _renderable(self) -> Panel:

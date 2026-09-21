@@ -21,6 +21,7 @@ from .rich_progress import (
     completion_line,
 )
 from .tui_icons import activity_icon
+from .test_counts import TestCountAccumulator
 
 
 _FRACTION_RE = re.compile(r"(?:^|[\[(\s])(?P<completed>\d+)\s*/\s*(?P<total>\d+)(?:[\])\s]|$)")
@@ -67,10 +68,12 @@ class GenericProgressTracker:
     tests_total: int = field(init=False, default=0)
     _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
+    _test_counts: TestCountAccumulator = field(init=False)
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
         self.inspection = TuiInspectionController(self.console)
+        self._test_counts = TestCountAccumulator.for_argv(self.argv)
 
     def __enter__(self) -> "GenericProgressTracker":
         if not self.enabled:
@@ -111,6 +114,12 @@ class GenericProgressTracker:
         self.last_line = text
         self.detail = text
         self._update_pytest_counters(text)
+        if self._test_counts.feed(text):
+            counts = self._test_counts.counts
+            self.tests_passed, self.tests_failed = counts.passed, counts.failed
+            self.tests_skipped, self.tests_total = counts.skipped, counts.total
+            self.completed, self.total, self.unit_label = counts.passed + counts.failed + counts.skipped, counts.total, "tests"
+            self.percent = min(100.0, self.completed * 100.0 / counts.total) if counts.total else None
         self._update_counters(text)
         self._publish()
 
