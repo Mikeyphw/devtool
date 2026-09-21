@@ -7406,6 +7406,10 @@ def _maybe_commit_after_apply(
             artifact_path = None
     if artifact_path is not None and manifest:
         finalize_display = "Artifact finalize: before commit"
+        finalize_status = None
+        if "before_commit" in set(artifact_finalize_phases(manifest)) and not bool(getattr(args, "quiet", False)) and not bool(getattr(args, "_devtool_json", False)):
+            finalize_status = console.status(f"[cyan]{finalize_display}[/cyan]", spinner="dots")
+            finalize_status.start()
         if tasker_progress is not None and "before_commit" in set(artifact_finalize_phases(manifest)):
             tasker_progress.phase_started(
                 "artifact-finalize-before_commit", index=1, total=1,
@@ -7441,6 +7445,11 @@ def _maybe_commit_after_apply(
                 failure_kind="finalize_failure",
                 metadata={"finalize_phase": "before_commit", "hook_phase": "before_commit", "hook_kind": "finalize", "validation_phase_name": finalize_display},
             )
+        if finalize_status is not None:
+            finalize_status.stop()
+            if finalize_result is not None:
+                symbol = "[green]✓[/green]" if finalize_result.returncode == 0 else "[red]✗[/red]"
+                console.print(f"{symbol} {finalize_display} [dim]({finalize_result.duration_seconds:.2f}s)[/dim]")
         if finalize_result is not None:
             finalize_result.metadata.setdefault("validation_phase_name", finalize_display)
             finalize_result.metadata.setdefault("hook_kind", "finalize")
@@ -7470,6 +7479,10 @@ def _maybe_commit_after_apply(
     commit_succeeded = any(result.name == "git-commit" and result.returncode == 0 for result in commit_results)
     if commit_succeeded and artifact_path is not None and manifest:
         finalize_display = "Artifact finalize: after commit"
+        finalize_status = None
+        if "after_commit" in set(artifact_finalize_phases(manifest)) and not bool(getattr(args, "quiet", False)) and not bool(getattr(args, "_devtool_json", False)):
+            finalize_status = console.status(f"[cyan]{finalize_display}[/cyan]", spinner="dots")
+            finalize_status.start()
         if tasker_progress is not None and "after_commit" in set(artifact_finalize_phases(manifest)):
             tasker_progress.phase_started(
                 "artifact-finalize-after_commit", index=1, total=1,
@@ -7505,6 +7518,11 @@ def _maybe_commit_after_apply(
                 failure_kind="finalize_failure",
                 metadata={"finalize_phase": "after_commit", "hook_phase": "after_commit", "hook_kind": "finalize", "validation_phase_name": finalize_display},
             )
+        if finalize_status is not None:
+            finalize_status.stop()
+            if after_commit is not None:
+                symbol = "[green]✓[/green]" if after_commit.returncode == 0 else "[red]✗[/red]"
+                console.print(f"{symbol} {finalize_display} [dim]({after_commit.duration_seconds:.2f}s)[/dim]")
         if after_commit is not None:
             after_commit.metadata.setdefault("validation_phase_name", finalize_display)
             after_commit.metadata.setdefault("hook_kind", "finalize")
@@ -8623,20 +8641,42 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 )
                 return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
+    _artifact_hook_status: dict[str, object] = {}
+    _artifact_lifecycle_steps: list[dict[str, object]] = []
+
     def _artifact_lifecycle_progress(kind: str, phase: str, result: OperationResult | None) -> None:
-        if tasker_progress is None:
-            return
         display = f"Artifact {kind}: {phase.replace('_', ' ')}"
+        key = f"{kind}:{phase}"
         if result is None:
-            tasker_progress.phase_started(
-                f"artifact-{kind}-{phase}", index=1, total=1,
-                argv=[f"artifact-{kind}", phase, artifact],
-                metadata={"validation_phase_name": display, "hook_kind": kind, "hook_phase": phase},
-            )
-        else:
-            result.metadata.setdefault("validation_phase_name", display)
-            result.metadata.setdefault("hook_kind", kind)
-            result.metadata.setdefault("hook_phase", phase)
+            if not bool(getattr(args, "quiet", False)) and not bool(getattr(args, "_devtool_json", False)):
+                status = console.status(f"[cyan]{display}[/cyan]", spinner="dots")
+                status.start()
+                _artifact_hook_status[key] = status
+            if tasker_progress is not None:
+                tasker_progress.phase_started(
+                    f"artifact-{kind}-{phase}", index=1, total=1,
+                    argv=[f"artifact-{kind}", phase, artifact],
+                    metadata={"validation_phase_name": display, "hook_kind": kind, "hook_phase": phase},
+                )
+            return
+        status = _artifact_hook_status.pop(key, None)
+        if status is not None:
+            status.stop()
+            symbol = "[green]✓[/green]" if result.returncode == 0 else "[red]✗[/red]"
+            console.print(f"{symbol} {display} [dim]({result.duration_seconds:.2f}s)[/dim]")
+        result.metadata.setdefault("validation_phase_name", display)
+        result.metadata.setdefault("hook_kind", kind)
+        result.metadata.setdefault("hook_phase", phase)
+        _artifact_lifecycle_steps.append({
+            "name": result.name,
+            "label": display,
+            "returncode": int(result.returncode or 0),
+            "skipped": bool(result.skipped),
+            "duration_seconds": float(result.duration_seconds or 0.0),
+            "hook_kind": kind,
+            "hook_phase": phase,
+        })
+        if tasker_progress is not None:
             tasker_progress.phase_finished(result)
 
     if name in {"apply-overlays", "aos"}:
@@ -8677,6 +8717,9 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             preview=preview,
             ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
         )
+    if _artifact_lifecycle_steps:
+        result.metadata.setdefault("lifecycle_steps", []).extend(_artifact_lifecycle_steps)
+        result.metadata.setdefault("lifecycle_steps_position", "before")
     if result.returncode != 0 and not result.failure_kind:
         result.failure_kind = "artifact_failure"
     config_paths = result.metadata.get("config_paths", []) if result.metadata else []
@@ -9160,7 +9203,11 @@ def _artifact_script_result(
 
     def _finalize(phase: str, status: str) -> OperationResult | None:
         display = f"Artifact finalize: {phase.replace('_', ' ')}"
-        if tasker_progress is not None:
+        terminal_status = None
+        if phase in set(artifact_finalize_phases(manifest)) and not bool(getattr(args, "quiet", False)) and not bool(getattr(args, "_devtool_json", False)):
+            terminal_status = console.status(f"[cyan]{display}[/cyan]", spinner="dots")
+            terminal_status.start()
+        if tasker_progress is not None and phase in set(artifact_finalize_phases(manifest)):
             tasker_progress.phase_started(
                 f"artifact-finalize-{phase}", index=1, total=1,
                 argv=["artifact-finalize", phase, str(artifact)],
@@ -9184,6 +9231,11 @@ def _artifact_script_result(
                 commit_message=str(getattr(args, "commit", "") or ""),
                 commit_paths=_artifact_commit_paths(args, config.repo_root),
             )
+            if terminal_status is not None:
+                terminal_status.stop()
+                if result is not None:
+                    symbol = "[green]✓[/green]" if result.returncode == 0 else "[red]✗[/red]"
+                    console.print(f"{symbol} {display} [dim]({result.duration_seconds:.2f}s)[/dim]")
             if result is not None and tasker_progress is not None:
                 result.metadata.setdefault("validation_phase_name", display)
                 tasker_progress.phase_finished(result)
@@ -9199,6 +9251,9 @@ def _artifact_script_result(
                 failure_kind="finalize_failure",
                 metadata={"finalize_phase": phase, "hook_phase": phase, "hook_kind": "finalize", "validation_phase_name": display},
             )
+            if terminal_status is not None:
+                terminal_status.stop()
+                console.print(f"[red]✗[/red] {display} [dim]({result.duration_seconds:.2f}s)[/dim]")
             if tasker_progress is not None:
                 tasker_progress.phase_finished(result)
             return result
@@ -9212,6 +9267,10 @@ def _artifact_script_result(
 
     validator: OperationResult | None = None
     if validation_script:
+        validator_status = None
+        if not bool(getattr(args, "quiet", False)) and not bool(getattr(args, "_devtool_json", False)):
+            validator_status = console.status("[cyan]Artifact validation[/cyan]", spinner="dots")
+            validator_status.start()
         try:
             if tasker_progress is not None:
                 tasker_progress.phase_started(
@@ -9242,6 +9301,11 @@ def _artifact_script_result(
                 failure_kind="validation_failure",
                 metadata={"hook_kind": "validation", "hook_phase": "validate", "validation_phase_name": "Artifact validation"},
             )
+        if validator_status is not None:
+            validator_status.stop()
+            if validator is not None:
+                symbol = "[green]✓[/green]" if validator.returncode == 0 else "[red]✗[/red]"
+                console.print(f"{symbol} Artifact validation [dim]({validator.duration_seconds:.2f}s)[/dim]")
         if validator is not None:
             validator.metadata.setdefault("validation_phase_name", "Artifact validation")
             validator.metadata.setdefault("hook_kind", "validation")
@@ -9289,6 +9353,19 @@ def _artifact_script_result(
         for item in executed:
             combined_issues.extend(item.issues)
         primary.issues = combined_issues
+    primary.metadata["lifecycle_steps"] = [
+        {
+            "name": item.name,
+            "label": str((item.metadata or {}).get("validation_phase_name") or item.name),
+            "returncode": int(item.returncode or 0),
+            "skipped": bool(item.skipped),
+            "duration_seconds": float(item.duration_seconds or 0.0),
+            "hook_kind": str((item.metadata or {}).get("hook_kind") or ""),
+            "hook_phase": str((item.metadata or {}).get("hook_phase") or ""),
+        }
+        for item in executed
+    ]
+    primary.metadata["lifecycle_steps_replace_parent"] = True
     return primary, "\n\n".join(raw_sections)
 
 

@@ -736,7 +736,7 @@ def _overlay_panel(info: dict[str, object], results: list[OperationResult], targ
     actions.add_column("Result", no_wrap=True)
     actions.add_column("Time", justify="right", no_wrap=True)
     actions.add_column("Details", ratio=4, overflow="fold")
-    for result in results:
+    for result in _presentation_results(results):
         mark, result_status, result_style = _result_status(result)
         actions.add_row(
             Text(mark, style=result_style),
@@ -836,6 +836,50 @@ def _result_detail(result: OperationResult) -> Text:
     return Text("", style="dim")
 
 
+
+def _presentation_results(results: list[OperationResult]) -> list[OperationResult]:
+    """Expand artifact lifecycle metadata into ordinary UI action rows.
+
+    Lifecycle children are presentation-only: they do not affect totals, diagnostics,
+    or duration accounting because their time is already included by the owning
+    operation.
+    """
+    rendered: list[OperationResult] = []
+    for result in results:
+        metadata = dict(result.metadata or {})
+        raw_steps = metadata.get("lifecycle_steps")
+        steps: list[OperationResult] = []
+        if isinstance(raw_steps, list):
+            for raw in raw_steps:
+                if not isinstance(raw, dict):
+                    continue
+                label = str(raw.get("label") or raw.get("name") or "Artifact lifecycle")
+                step_meta = {
+                    "validation_phase_name": label,
+                    "hook_kind": str(raw.get("hook_kind") or ""),
+                    "hook_phase": str(raw.get("hook_phase") or ""),
+                    "lifecycle_presentation_only": True,
+                }
+                steps.append(OperationResult(
+                    str(raw.get("name") or "artifact-lifecycle"),
+                    [],
+                    int(raw.get("returncode") or 0),
+                    float(raw.get("duration_seconds") or 0.0),
+                    "",
+                    [],
+                    skipped=bool(raw.get("skipped", False)),
+                    metadata=step_meta,
+                ))
+        position = str(metadata.get("lifecycle_steps_position") or "after")
+        replace_parent = bool(metadata.get("lifecycle_steps_replace_parent")) and not _result_failed(result)
+        if position == "before":
+            rendered.extend(steps)
+        if not replace_parent:
+            rendered.append(result)
+        if position != "before":
+            rendered.extend(steps)
+    return rendered
+
 def _render_wide_results(results: list[OperationResult], target_console: Console) -> None:
     op_table = Table(
         title="Actions",
@@ -851,7 +895,7 @@ def _render_wide_results(results: list[OperationResult], target_console: Console
     op_table.add_column("Duration", justify="right", no_wrap=True)
     op_table.add_column("Details", ratio=4, overflow="fold")
 
-    for result in results:
+    for result in _presentation_results(results):
         symbol, status, style = _result_status(result)
         op_table.add_row(
             Text(symbol, style=style),
@@ -868,7 +912,7 @@ def _render_compact_results(results: list[OperationResult], target_console: Cons
     table.add_column(width=1, no_wrap=True)
     table.add_column(ratio=1, overflow="fold")
     table.add_column(justify="right", no_wrap=True)
-    for result in results:
+    for result in _presentation_results(results):
         symbol, _status, style = _result_status(result)
         label = Text(_action_label(result.name, result.metadata), style="bold")
         detail = _result_detail(result)

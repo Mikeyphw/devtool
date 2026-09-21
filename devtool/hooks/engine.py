@@ -96,9 +96,15 @@ def _run_live(
             proc.stdin.close()
     reader_done = False
 
+    # Interactive Devtool surfaces own presentation. Keep hook stdout captured for
+    # logs/diagnostics instead of punching raw child output through the active TUI.
+    # Non-interactive/piped invocations retain streaming for CI compatibility.
+    stream_child_output = not bool(getattr(sys.stdout, "isatty", lambda: False)())
+
     def append(text: str) -> None:
         output_parts.append(text)
-        print(text, end="", flush=True)
+        if stream_child_output:
+            print(text, end="", flush=True)
 
     while True:
         now = time.monotonic()
@@ -414,7 +420,8 @@ class EmbeddedHookEngine:
                     repo_root=repo_root,
                     timeout_seconds=timeout_seconds,
                 )
-            print(f"==> Running {request.script_label.lower()} script", flush=True)
+            if not bool(getattr(sys.stdout, "isatty", lambda: False)()):
+                print(f"==> Running {request.script_label.lower()} script", flush=True)
             rc, child_output = _run_live(
                 command,
                 cwd=repo_root,
