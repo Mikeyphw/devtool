@@ -1,0 +1,418 @@
+from __future__ import annotations
+
+"""Remote SSH build output/evidence return and recovery support.
+
+SSHW-04 keeps the repository authoritative on the phone while treating generated
+remote outputs as evidence that must come home before local report/artifact
+processing.  Every command-mode phase gets an immutable local return bundle with
+an on-disk manifest.  Transfer is rsync-based, resumable, filtered to generated
+reports/distributables, and can be retried explicitly after an interrupted SSH
+connection without re-running the build.
+"""
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
+from typing import Any, Iterable
+
+from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_base_argv
+
+_SCHEMA_VERSION = 1
+_DEFAULT_PATTERNS = (
+    "**/build/test-results/***",
+    "**/build/reports/**/*.xml",
+    "**/build/reports/**/*.json",
+    "**/build/outputs/***",
+    "**/build/libs/*.jar",
+    "**/build/libs/*.aar",
+    "**/target/surefire-reports/***",
+    "**/target/failsafe-reports/***",
+    "**/target/*.jar",
+    "**/target/*.war",
+    "**/target/*.ear",
+    "**/TestResults/***",
+    "**/test-results/***",
+    "**/coverage.xml",
+    "**/coverage.json",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SSHReturnBundle:
+    run_id: str
+    session: str
+    root: Path
+    repo_root: Path
+    project_root: Path
+    manifest_path: Path
+    status_path: Path
+    remote_root: str
+    patterns: tuple[str, ...]
+    source_sync_id: str
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "ssh_return_root": str(self.root),
+            "ssh_return_repo_root": str(self.repo_root),
+            "ssh_return_project_root": str(self.project_root),
+            "ssh_return_manifest": str(self.manifest_path),
+            "ssh_return_status_file": str(self.status_path),
+            "ssh_return_patterns": list(self.patterns),
+            "ssh_return_remote_root": self.remote_root,
+            "ssh_source_sync_id": self.source_sync_id,
+        }
+
+
+def _safe(value: str, fallback: str = "run") -> str:
+    text = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip()).strip(".-")
+    return text[:160] or fallback
+
+
+def _iter_values(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        for item in value.split(","):
+            item = item.strip()
+            if item:
+                yield item
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                yield text
+
+
+def _relative_pattern(value: str, *, local_root: Path, project_root: Path, directory: bool = False) -> str:
+    text = str(value or "").strip()
+    if not text or text.startswith(("~/", "$HOME/")):
+        return ""
+    # Preserve glob spelling while resolving the non-glob prefix relative to the
+    # declared project root. Absolute local paths are accepted only under repo.
+    has_glob = any(ch in text for ch in "*?[")
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = project_root / path
+    try:
+        rel = path.relative_to(local_root) if has_glob else path.resolve().relative_to(local_root)
+    except (OSError, ValueError):
+        return ""
+    pattern = rel.as_posix()
+    if directory and not any(ch in pattern for ch in "*?["):
+        pattern = pattern.rstrip("/") + "/***"
+    return pattern
+
+
+def return_patterns(project_config: Any, spec_metadata: dict[str, Any], *, local_root: Path, project_root: Path) -> tuple[str, ...]:
+    patterns: list[str] = list(_DEFAULT_PATTERNS)
+    for key in ("test_report", "coverage_report", "package_report"):
+        pattern = _relative_pattern(str(spec_metadata.get(key) or ""), local_root=local_root, project_root=project_root)
+        if pattern:
+            patterns.append(pattern)
+
+    options = getattr(project_config, "runner_options", {}) or {}
+    artifacts = options.get("artifacts", {}) if isinstance(options, dict) else {}
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    for key in ("paths", "artifact_paths"):
+        for value in _iter_values(artifacts.get(key)):
+            pattern = _relative_pattern(value, local_root=local_root, project_root=project_root)
+            if pattern:
+                patterns.append(pattern)
+    for key in ("directories", "artifact_directories"):
+        for value in _iter_values(artifacts.get(key)):
+            pattern = _relative_pattern(value, local_root=local_root, project_root=project_root, directory=True)
+            if pattern:
+                patterns.append(pattern)
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in patterns:
+        clean = str(item or "").strip().lstrip("/")
+        if clean and clean not in seen:
+            seen.add(clean)
+            result.append(clean)
+    return tuple(result)
+
+
+def create_return_bundle(
+    config: SSHRunnerConfig,
+    *,
+    local_root: Path,
+    host_cwd: str,
+    remote_root: str,
+    session: str,
+    project_config: Any,
+    spec_metadata: dict[str, Any],
+    source_sync_id: str = "",
+) -> SSHReturnBundle:
+    run_id = _safe(str(os.environ.get("DEVTOOL_RUN_ID") or config.operation_id or "run"))
+    session_id = _safe(session, "phase")
+    root = local_root / ".devtool" / "ssh-return" / run_id / session_id
+    repo_mirror = root / "repo"
+    try:
+        host_project = Path(host_cwd).expanduser().resolve()
+        relative_project = host_project.relative_to(local_root)
+    except (OSError, ValueError):
+        relative_project = Path(".")
+    project_mirror = repo_mirror / relative_project
+    root.mkdir(parents=True, exist_ok=True)
+    patterns = return_patterns(project_config, spec_metadata, local_root=local_root, project_root=Path(host_cwd).expanduser().resolve())
+    manifest = root / "manifest.json"
+    status = root / "transfer.status"
+    payload = {
+        "schema_version": _SCHEMA_VERSION,
+        "kind": "ssh-return-bundle",
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "run_id": run_id,
+        "session": session,
+        "profile": config.profile,
+        "destination": config.destination,
+        "port": config.port,
+        "remote_root": remote_root,
+        "local_repo_root": str(local_root),
+        "local_return_root": str(root),
+        "local_return_repo_root": str(repo_mirror),
+        "local_return_project_root": str(project_mirror),
+        "patterns": list(patterns),
+        "source_sync_id": source_sync_id,
+        "state": "pending",
+    }
+    tmp = manifest.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, manifest)
+    return SSHReturnBundle(run_id, session, root, repo_mirror, project_mirror, manifest, status, remote_root, patterns, source_sync_id)
+
+
+def _local_rsync() -> str:
+    candidate = str(os.environ.get("DEVTOOL_RSYNC_COMMAND", "rsync") or "rsync").strip()
+    resolved = shutil.which(candidate) if os.sep not in candidate else candidate
+    if not resolved or not Path(resolved).is_file() or not os.access(resolved, os.X_OK):
+        raise ValueError(f"Local rsync executable is unavailable or not executable: {candidate}")
+    return str(resolved)
+
+
+def _ssh_shell(config: SSHRunnerConfig) -> str:
+    argv = build_ssh_base_argv(config, tty=False)
+    return shlex.join(argv[:-1])
+
+
+def build_return_rsync_argv(
+    config: SSHRunnerConfig,
+    *,
+    remote_root: str,
+    local_repo_root: Path,
+    patterns: Iterable[str],
+    remote_rsync: str = "rsync",
+) -> list[str]:
+    argv = [
+        _local_rsync(), "-a", "--no-owner", "--no-group", "--no-devices", "--no-specials",
+        "--protect-args", "--human-readable", "--partial", "--delay-updates", "--prune-empty-dirs",
+        "--itemize-changes", "--out-format=%i|%n%L", "-e", _ssh_shell(config),
+        f"--rsync-path={remote_rsync}", "--include=*/",
+    ]
+    for pattern in patterns:
+        argv.append(f"--include={pattern}")
+    argv.extend(["--exclude=*", f"{config.destination}:{remote_root.rstrip('/')}/", str(local_repo_root) + "/"])
+    return argv
+
+
+def shell_return_fragment(
+    config: SSHRunnerConfig,
+    bundle: SSHReturnBundle,
+    *,
+    remote_rsync: str,
+) -> str:
+    """Return local-shell fragment that retrieves evidence without masking build rc."""
+    rsync = build_return_rsync_argv(
+        config,
+        remote_root=bundle.remote_root,
+        local_repo_root=bundle.repo_root,
+        patterns=bundle.patterns,
+        remote_rsync=remote_rsync or "rsync",
+    )
+    status = shlex.quote(str(bundle.status_path))
+    repo = shlex.quote(str(bundle.repo_root))
+    # rc=125 means the user detached from the phase while it is still running;
+    # do not publish a misleading final evidence snapshot in that state.
+    status_tmp = shlex.quote(str(bundle.status_path) + ".tmp")
+    return (
+        "; return_rc=0; "
+        "if [ \"$rc\" -eq 125 ]; then "
+        f"printf 'returncode=125\\nstate=deferred\\n' > {status_tmp}; mv -f -- {status_tmp} {status}; "
+        "else "
+        f"rm -rf -- {repo}; mkdir -p {repo}; {shlex.join(rsync)}; return_rc=$?; "
+        f"printf 'returncode=%s\\nstate=%s\\n' \"$return_rc\" \"$([ \"$return_rc\" -eq 0 ] && printf complete || printf partial)\" > {status_tmp}; "
+        f"mv -f -- {status_tmp} {status}; "
+        "fi"
+    )
+
+
+def load_return_state(metadata: dict[str, Any]) -> dict[str, Any]:
+    status_path = Path(str(metadata.get("ssh_return_status_file") or "")).expanduser()
+    manifest_path = Path(str(metadata.get("ssh_return_manifest") or "")).expanduser()
+    values: dict[str, str] = {}
+    try:
+        for line in status_path.read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip()
+    except OSError:
+        pass
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    try:
+        returncode = int(values.get("returncode", -1))
+    except ValueError:
+        returncode = -1
+    state = values.get("state") or ("pending" if returncode < 0 else "complete" if returncode == 0 else "partial")
+    return {
+        "state": state,
+        "returncode": returncode,
+        "recoverable": state in {"partial", "pending", "deferred"},
+        "manifest": str(manifest_path) if manifest_path else "",
+        "local_root": str(metadata.get("ssh_return_root") or manifest.get("local_return_root") or ""),
+        "repo_root": str(metadata.get("ssh_return_repo_root") or manifest.get("local_return_repo_root") or ""),
+        "project_root": str(metadata.get("ssh_return_project_root") or manifest.get("local_return_project_root") or ""),
+        "remote_root": str(metadata.get("ssh_return_remote_root") or manifest.get("remote_root") or ""),
+        "source_sync_id": str(metadata.get("ssh_source_sync_id") or manifest.get("source_sync_id") or ""),
+    }
+
+
+def map_returned_path(value: str, *, local_repo_root: Path, returned_repo_root: Path, project_root: Path) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = project_root / path
+    try:
+        relative = path.resolve().relative_to(local_repo_root.resolve())
+    except (OSError, ValueError):
+        return text
+    return str((returned_repo_root / relative).resolve())
+
+
+def _read_manifest(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Unable to read SSH return manifest {path}: {exc}") from exc
+    if not isinstance(value, dict) or value.get("kind") != "ssh-return-bundle":
+        raise ValueError(f"Invalid SSH return manifest: {path}")
+    return value
+
+
+def _manifest_candidates(repo_root: Path, *, run_id: str = "", session: str = "") -> list[Path]:
+    base = repo_root / ".devtool" / "ssh-return"
+    if run_id:
+        base = base / _safe(run_id)
+    manifests = list(base.glob("*/manifest.json")) if run_id else list(base.glob("*/*/manifest.json"))
+    if session:
+        wanted = _safe(session, "phase")
+        manifests = [path for path in manifests if path.parent.name == wanted or str(_read_manifest(path).get("session") or "") == session]
+    return sorted(manifests, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def recover_return_bundles(
+    config: SSHRunnerConfig,
+    repo_root: str | Path,
+    *,
+    run_id: str = "",
+    session: str = "",
+) -> dict[str, Any]:
+    repo = Path(repo_root).expanduser().resolve()
+    manifests = _manifest_candidates(repo, run_id=run_id, session=session)
+    if not manifests:
+        raise ValueError("No SSH return manifests matched the requested run/session")
+
+    allowed_local = (repo / ".devtool" / "ssh-return").resolve()
+    prepared: list[tuple[Path, dict[str, Any], str, Path, tuple[str, ...]]] = []
+    for manifest_path in manifests:
+        manifest = _read_manifest(manifest_path)
+        if str(manifest.get("destination") or "") != config.destination:
+            raise ValueError(
+                f"SSH return manifest destination {manifest.get('destination')!r} does not match profile destination {config.destination!r}"
+            )
+        remote_root = str(manifest.get("remote_root") or "")
+        if not remote_root.startswith("/"):
+            raise ValueError(f"SSH return manifest has unsafe remote root: {remote_root!r}")
+        resolved_manifest = manifest_path.resolve()
+        try:
+            resolved_manifest.relative_to(allowed_local)
+        except ValueError as exc:
+            raise ValueError(f"SSH return manifest escapes the repository return root: {resolved_manifest}") from exc
+        local_repo = Path(str(manifest.get("local_return_repo_root") or "")).expanduser().resolve()
+        expected_local_repo = (resolved_manifest.parent / "repo").resolve()
+        if local_repo != expected_local_repo:
+            raise ValueError(
+                f"SSH return manifest local mirror does not match its owned bundle directory: {local_repo}"
+            )
+        try:
+            local_repo.relative_to(allowed_local)
+        except ValueError as exc:
+            raise ValueError(f"SSH return manifest local path escapes the repository return root: {local_repo}") from exc
+        patterns = tuple(str(item) for item in manifest.get("patterns", []) if str(item).strip())
+        prepared.append((resolved_manifest, manifest, remote_root, local_repo, patterns))
+
+    # Only after all local manifests pass their trust checks do we touch the
+    # network. This keeps a tampered/mismatched recovery request fail-closed
+    # without contacting an unrelated host.
+    from .ssh_worker import probe_worker
+    from .ssh_workspace import resolve_workspace_spec
+    probe = probe_worker(config)
+    boundary = resolve_workspace_spec(config, repo, operation_id="recovery", remote_home=probe.home)
+    remote_rsync = str(probe.tools.get("rsync") or "")
+    if not remote_rsync:
+        raise ValueError("SSH return recovery requires rsync on the remote worker")
+
+    results: list[dict[str, Any]] = []
+    for manifest_path, manifest, remote_root, local_repo, patterns in prepared:
+        if boundary.mode == "existing":
+            if remote_root.rstrip("/") != str(boundary.remote_path).rstrip("/"):
+                raise ValueError(f"SSH return manifest remote root is outside the configured existing workspace: {remote_root}")
+        elif boundary.mode == "managed":
+            if remote_root.rstrip("/") != str(boundary.remote_path).rstrip("/"):
+                raise ValueError(f"SSH return manifest remote root is outside the configured managed workspace: {remote_root}")
+        else:
+            prefix = str(boundary.workspace_root).rstrip("/") + "/.ephemeral/" + boundary.workspace_id + "/"
+            if not remote_root.startswith(prefix):
+                raise ValueError(f"SSH return manifest remote root is outside the configured ephemeral workspace boundary: {remote_root}")
+        # Recovery produces an exact bundle snapshot. The path was proven above
+        # to be the manifest-owned ``repo`` directory under .devtool/ssh-return.
+        if local_repo.exists():
+            if local_repo.is_symlink() or not local_repo.is_dir():
+                raise ValueError(f"SSH return local mirror is not a safe directory: {local_repo}")
+            shutil.rmtree(local_repo)
+        local_repo.mkdir(parents=True, exist_ok=True)
+        argv = build_return_rsync_argv(
+            config, remote_root=remote_root, local_repo_root=local_repo, patterns=patterns, remote_rsync=remote_rsync,
+        )
+        completed = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=None)
+        status_path = manifest_path.parent / "transfer.status"
+        state = "complete" if completed.returncode == 0 else "partial"
+        tmp = status_path.with_suffix(".status.tmp")
+        tmp.write_text(f"returncode={completed.returncode}\nstate={state}\n", encoding="utf-8")
+        os.replace(tmp, status_path)
+        results.append({
+            "manifest": str(manifest_path),
+            "session": str(manifest.get("session") or ""),
+            "run_id": str(manifest.get("run_id") or ""),
+            "returncode": int(completed.returncode),
+            "state": state,
+            "detail": (completed.stderr or completed.stdout or "").strip(),
+        })
+
+    return {
+        "schema_version": 1,
+        "kind": "ssh-return-recovery",
+        "ok": all(item["returncode"] == 0 for item in results),
+        "profile": config.profile,
+        "destination": config.destination,
+        "results": results,
+    }

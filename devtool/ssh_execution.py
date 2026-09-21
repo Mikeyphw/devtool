@@ -54,6 +54,8 @@ class SSHExecutionPreparation:
             "ssh_workspace_path": self.remote_root,
             "ssh_sync_change_count": int(self.sync.get("change_count") or 0),
             "ssh_sync_automatic": bool(self.sync),
+            "ssh_source_sync_id": str(self.sync.get("sync_id") or ""),
+            "ssh_source_revision": dict(self.sync.get("source_revision") or {}),
             "ssh_toolchain_kind": str(self.toolchain.get("kind") or "generic"),
             "ssh_toolchain_detail": str(self.toolchain.get("detail") or ""),
         }

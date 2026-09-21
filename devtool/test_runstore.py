@@ -168,6 +168,81 @@ def _artifacts(operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return found
 
 
+
+
+def _execution_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
+    if str(metadata.get("execution_mode") or "") != "ssh-command" and not metadata.get("ssh_destination"):
+        return {}
+    returned = metadata.get("ssh_return") if isinstance(metadata.get("ssh_return"), dict) else {}
+    return {
+        "transport": "ssh",
+        "profile": str(metadata.get("ssh_profile") or ""),
+        "destination": str(metadata.get("ssh_destination") or ""),
+        "worker_platform": str(metadata.get("ssh_worker_platform") or ""),
+        "worker_architecture": str(metadata.get("ssh_worker_architecture") or ""),
+        "workspace_id": str(metadata.get("ssh_workspace_id") or ""),
+        "workspace_instance_id": str(metadata.get("ssh_workspace_instance_id") or ""),
+        "workspace_path": str(metadata.get("ssh_workspace_path") or metadata.get("ssh_cwd") or ""),
+        "source_sync_id": str(metadata.get("ssh_source_sync_id") or ""),
+        "source_revision": dict(metadata.get("ssh_source_revision") or {}) if isinstance(metadata.get("ssh_source_revision"), dict) else {},
+        "session": str(metadata.get("ssh_session") or ""),
+        "return_state": str(returned.get("state") or ""),
+        "return_manifest": str(metadata.get("ssh_return_manifest") or ""),
+        "return_recoverable": bool(returned.get("recoverable")),
+    }
+
+
+def _build_artifact_records(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    artifacts = metadata.get("artifacts") if isinstance(metadata.get("artifacts"), dict) else {}
+    records: list[dict[str, Any]] = []
+    for item in artifacts.get("items", []) or []:
+        if isinstance(item, dict) and item.get("path"):
+            records.append(dict(item))
+    return records
+
+
+def _report_records(metadata: dict[str, Any]) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+    tests = metadata.get("tests") if isinstance(metadata.get("tests"), dict) else {}
+    candidates: list[Any] = [*(tests.get("report_files") or [])]
+    for key in ("test_report", "coverage_report", "package_report"):
+        if metadata.get(key):
+            candidates.append(metadata.get(key))
+    for value in candidates:
+        text = str(value or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            found.append(text)
+    return found
+
+
+def _top_level_build_artifacts(operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for operation in operations:
+        for item in operation.get("build_artifacts", []) or []:
+            if not isinstance(item, dict) or not item.get("path"):
+                continue
+            key = (str(item.get("type") or item.get("kind") or ""), str(item.get("path") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(dict(item))
+    return found
+
+
+def _top_level_logs(operations: list[dict[str, Any]]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for operation in operations:
+        value = str(operation.get("log_path") or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
 def normalize_test_run_payload(value: Any) -> dict[str, Any] | None:
     """Upgrade tolerant legacy test-history shapes into the current schema."""
     if not isinstance(value, dict):
@@ -194,6 +269,8 @@ def normalize_test_run_payload(value: Any) -> dict[str, Any] | None:
     payload["schema_version"] = SCHEMA_VERSION
     payload["summary"] = _summary(operations)
     payload["artifacts"] = _artifacts(operations)
+    payload["build_artifacts"] = _top_level_build_artifacts(operations)
+    payload["logs"] = _top_level_logs(operations)
     payload.setdefault("comparison", {"new_failures": [], "existing_failures": [], "fixed": []})
     return payload
 
@@ -223,6 +300,10 @@ def _operation_from_result(result: Any) -> dict[str, Any] | None:
             "total": counts["total"],
         },
         "test_result": canonical,
+        "log_path": str(getattr(result, "log_path", "") or ""),
+        "reports": _report_records(metadata),
+        "build_artifacts": _build_artifact_records(metadata),
+        "provenance": _execution_provenance(metadata),
     }
 
 
@@ -294,6 +375,72 @@ def _merge_same_run(existing: dict[str, Any] | None, incoming: dict[str, Any]) -
     merged["operations"] = [by_id[key] for key in order]
     return normalize_test_run_payload(merged) or incoming
 
+
+
+def reconcile_ssh_return_recovery(results: Iterable[dict[str, Any]]) -> dict[str, int]:
+    """Reconcile explicit SSH evidence-recovery state into persisted test runs.
+
+    Recovery must not change stable operation/TestResult identity or case counts;
+    it only refreshes return provenance for the matching run/session.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        run_id = _safe_run_id(str(item.get("run_id") or ""))
+        session = str(item.get("session") or "").strip()
+        if run_id and session:
+            grouped.setdefault(run_id, []).append(dict(item))
+
+    runs_updated = 0
+    operations_updated = 0
+    root = _root()
+    with _PERSIST_LOCK:
+        for run_id, items in grouped.items():
+            path = root / f"{run_id}.json"
+            payload = _read(path)
+            if not isinstance(payload, dict):
+                continue
+            by_session = {str(item.get("session") or ""): item for item in items}
+            changed = False
+            operations = payload.get("operations") if isinstance(payload.get("operations"), list) else []
+            for operation in operations:
+                if not isinstance(operation, dict):
+                    continue
+                provenance = operation.get("provenance") if isinstance(operation.get("provenance"), dict) else {}
+                session = str(provenance.get("session") or "")
+                recovered = by_session.get(session)
+                if recovered is None:
+                    continue
+                state = str(recovered.get("state") or "partial")
+                returncode = int(recovered.get("returncode", -1) or 0)
+                updated_provenance = dict(provenance)
+                updated_provenance["return_state"] = state
+                updated_provenance["return_recoverable"] = state != "complete"
+                updated_provenance["returncode"] = returncode
+                operation["provenance"] = updated_provenance
+
+                canonical = operation.get("test_result") if isinstance(operation.get("test_result"), dict) else None
+                if canonical is not None:
+                    canonical_metadata = canonical.get("metadata") if isinstance(canonical.get("metadata"), dict) else {}
+                    execution = canonical_metadata.get("execution_provenance") if isinstance(canonical_metadata.get("execution_provenance"), dict) else {}
+                    if execution:
+                        execution = dict(execution)
+                        execution["return_state"] = state
+                        canonical_metadata = dict(canonical_metadata)
+                        canonical_metadata["execution_provenance"] = execution
+                        canonical["metadata"] = canonical_metadata
+                operations_updated += 1
+                changed = True
+            if not changed:
+                continue
+            payload["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            root.mkdir(parents=True, exist_ok=True)
+            tmp = root / f".{run_id}.{threading.get_ident()}.recovery.json.tmp"
+            tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            os.replace(tmp, path)
+            runs_updated += 1
+    return {"runs_updated": runs_updated, "operations_updated": operations_updated}
 
 def persist_test_run(repo_root: Path, results: Iterable[Any], *, run_id: str = "") -> Path | None:
     incoming = build_run_payload(repo_root, results, run_id=run_id)

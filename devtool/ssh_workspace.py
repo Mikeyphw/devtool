@@ -33,6 +33,7 @@ _DEFAULT_EXCLUDES = (
     "build/",
     ".devtool/build-artifacts/",
     ".devtool/ssh-stage/",
+    ".devtool/ssh-return/",
 )
 _RESERVED_EXCLUDES = (
     f"/{_WORKSPACE_MARKER}",
@@ -507,7 +508,32 @@ def plan_workspace_sync(config: SSHRunnerConfig, spec: SSHWorkspaceSpec) -> dict
     }
 
 
-def _metadata_payload(spec: SSHWorkspaceSpec, *, changes: int) -> dict[str, Any]:
+def _source_revision(repo_root: str) -> dict[str, Any]:
+    repo = Path(repo_root).expanduser().resolve()
+    git = shutil.which("git")
+    if not git or not (repo / ".git").exists():
+        return {"git_head": "", "working_tree_dirty": False, "working_tree_fingerprint": ""}
+    head = subprocess.run([git, "-C", str(repo), "rev-parse", "HEAD"], check=False, capture_output=True, text=True, timeout=10)
+    status = subprocess.run(
+        [git, "-C", str(repo), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        check=False, capture_output=True, timeout=30,
+    )
+    raw = status.stdout if status.returncode == 0 else b""
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8", errors="surrogateescape")
+    return {
+        "git_head": head.stdout.strip() if head.returncode == 0 else "",
+        "working_tree_dirty": bool(raw),
+        "working_tree_fingerprint": hashlib.sha256(raw).hexdigest() if raw else hashlib.sha256(b"").hexdigest(),
+    }
+
+
+def _new_sync_id(spec: SSHWorkspaceSpec) -> str:
+    stamp = int(time.time() * 1000)
+    return f"sync-{spec.workspace_id}-{stamp}-{uuid.uuid4().hex[:8]}"
+
+
+def _metadata_payload(spec: SSHWorkspaceSpec, *, changes: int, sync_id: str, source_revision: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "workspace_id": spec.workspace_id,
@@ -522,7 +548,9 @@ def _metadata_payload(spec: SSHWorkspaceSpec, *, changes: int) -> dict[str, Any]
         "delete": spec.delete,
         "excludes": list(spec.excludes),
         "last_sync_unix": int(time.time()),
+        "last_sync_id": sync_id,
         "last_change_count": int(changes),
+        "source_revision": dict(source_revision),
     }
 
 
@@ -583,7 +611,9 @@ def sync_workspace(config: SSHRunnerConfig, spec: SSHWorkspaceSpec, *, dry_run: 
             "change_count": len(changes),
             "detail": detail or f"rsync failed with exit {completed.returncode}",
         }
-    payload = _metadata_payload(spec, changes=len(changes))
+    sync_id = _new_sync_id(spec)
+    source_revision = _source_revision(spec.repo_root)
+    payload = _metadata_payload(spec, changes=len(changes), sync_id=sync_id, source_revision=source_revision)
     _write_remote_metadata(config, spec, payload)
     status_after = workspace_status(config, spec)
     return {
@@ -595,6 +625,8 @@ def sync_workspace(config: SSHRunnerConfig, spec: SSHWorkspaceSpec, *, dry_run: 
         "status_after": status_after.as_dict(),
         "changes": changes,
         "change_count": len(changes),
+        "sync_id": sync_id,
+        "source_revision": source_revision,
         "delete_enabled": spec.delete,
         "detail": "workspace synchronized" if status_after.safe else status_after.detail,
     }

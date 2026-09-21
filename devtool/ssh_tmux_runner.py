@@ -1198,6 +1198,35 @@ def wrap_specs_for_ssh_commands(
             # A cwd outside the repository has no declared SSH mapping. Use the
             # explicit remote repo root rather than inventing a remote path.
             remote_cwd = remote_root
+
+        return_bundle = None
+        return_fragment = ""
+        if config.profile and config.copy_artifacts and not dry_run:
+            # Named workers always have rsync after preparation. Snapshot the
+            # generated reports/distributables back to an immutable local return
+            # bundle before local report parsing/artifact verification runs.
+            from .ssh_returns import create_return_bundle, shell_return_fragment
+            return_bundle = create_return_bundle(
+                config,
+                local_root=local_root,
+                host_cwd=host_cwd,
+                remote_root=remote_root,
+                session=session,
+                project_config=project_config,
+                spec_metadata=metadata,
+                source_sync_id=str(preparation_metadata.get("ssh_source_sync_id") or ""),
+            )
+            metadata.update(return_bundle.metadata())
+            remote_rsync = preparation.worker.tools.get("rsync", "") if preparation is not None else "rsync"
+            try:
+                return_fragment = shell_return_fragment(config, return_bundle, remote_rsync=remote_rsync or "rsync")
+            except ValueError as exc:
+                # Existing named checkouts predate managed rsync workspaces. Do
+                # not make them un-runnable solely because local return-rsync is
+                # unavailable; retain the manifest and surface the limitation.
+                metadata["ssh_return_disabled_reason"] = str(exc)
+                return_fragment = ""
+
         artifact_phase = bool(metadata.get("collect_artifacts") or metadata.get("verify_artifacts"))
         explicit_artifact_output = bool(_find_value(remote_base_argv, {"--output-dir", "-o", "--out-dir", "--outdir"}).strip())
         remote_base_argv, local_artifact_dir, remote_artifact_dir = _rewrite_artifact_output_for_remote(
@@ -1257,6 +1286,8 @@ def wrap_specs_for_ssh_commands(
             "trap " + shlex.quote(shlex.join(kill_command) + "; exit 130") + " INT TERM; "
             + shlex.join(ssh_command) + "; rc=$?; trap - INT TERM"
         )
+        if return_fragment:
+            local_script += return_fragment
         if bool(metadata.get("collect_artifacts") or metadata.get("verify_artifacts")) and config.copy_artifacts:
             # Pull before local verification and clear the destination first so
             # a previous invocation cannot contaminate current artifact truth.

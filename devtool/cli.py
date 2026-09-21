@@ -1009,6 +1009,11 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_sync.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_sync.add_argument("--format", choices=["text", "json"], default="text")
     ssh_sync.add_argument("--dry-run", dest="ssh_sync_dry_run", action="store_true", help="Show the exact rsync delta without modifying the worker")
+    ssh_retrieve = ssh_sub.add_parser("retrieve", aliases=["return"], help="Retry retrieval of reports/artifacts from a prior SSH worker run")
+    ssh_retrieve.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_retrieve.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_retrieve.add_argument("--run-id", default="", help="Restrict recovery to one local Devtool run id")
+    ssh_retrieve.add_argument("--session", default="", help="Restrict recovery to one SSH tmux phase session")
 
     bootstrap_cmd = subparsers.add_parser("bootstrap", help="Provision reusable destination-specific build toolchains")
     bootstrap_sub = bootstrap_cmd.add_subparsers(dest="bootstrap_command", required=True)
@@ -11423,6 +11428,7 @@ def _main_after_parse(
     if args.command == "ssh":
         from .ssh_worker import bootstrap_worker, resolve_worker_profile, session_payload, worker_doctor_payload
         from .ssh_workspace import sync_payload, workspace_payload
+        from .ssh_returns import recover_return_bundles
 
         action = str(getattr(args, "ssh_command", "") or "")
         output_format = str(getattr(args, "format", "text") or "text")
@@ -11452,6 +11458,15 @@ def _main_after_parse(
                     repo_root,
                     dry_run=bool(getattr(args, "ssh_sync_dry_run", False)),
                 )
+            elif action in {"retrieve", "return"}:
+                payload = recover_return_bundles(
+                    worker,
+                    repo_root,
+                    run_id=str(getattr(args, "run_id", "") or ""),
+                    session=str(getattr(args, "session", "") or ""),
+                )
+                from .test_runstore import reconcile_ssh_return_recovery
+                payload["runstore"] = reconcile_ssh_return_recovery(payload.get("results", []))
             else:
                 parser.error(f"Unknown ssh command: {action}")
                 return 2
@@ -11490,6 +11505,8 @@ def _main_after_parse(
                 ("tmux_owned_phases", "yes" if execution_cfg.get("tmux_owned_phases") else "no"),
                 ("toolchain_policy", execution_cfg.get("toolchain_policy") or "target-aware"),
                 ("persistent_remote_caches", "yes" if execution_cfg.get("persistent_remote_caches") else "no"),
+                ("automatic_returns", "yes" if execution_cfg.get("automatic_returns") else "no"),
+                ("return_recovery", "yes" if execution_cfg.get("return_recovery") else "no"),
             ]
             rows.extend((f"tool.{name}", path or "MISSING") for name, path in tools.items())
             rows.append(("sessions", ", ".join(payload.get("sessions", [])) or "none"))
@@ -11533,6 +11550,18 @@ def _main_after_parse(
                 ("detail", status.get("detail") or "-"),
             ]
             render_status_table(rows)
+        elif action in {"retrieve", "return"}:
+            results = payload.get("results", [])
+            rows = [
+                ("profile", payload.get("profile") or "-"),
+                ("destination", payload.get("destination") or "-"),
+                ("bundles", str(len(results))),
+                ("status", "COMPLETE" if payload.get("ok") else "PARTIAL"),
+                ("runstore_updates", str((payload.get("runstore") or {}).get("operations_updated", 0))),
+            ]
+            render_status_table(rows)
+            for item in results:
+                print(f"{item.get('state', 'unknown'):>10}  {item.get('run_id', '')}  {item.get('session', '')}")
         else:
             workspace = payload.get("workspace", {})
             changes = payload.get("changes", [])

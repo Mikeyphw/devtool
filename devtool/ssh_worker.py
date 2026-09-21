@@ -269,6 +269,8 @@ def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
             "tmux_owned_phases": True if config.profile else bool(config.worker_tmux),
             "toolchain_policy": "target-aware",
             "persistent_remote_caches": True,
+            "automatic_returns": bool(config.copy_artifacts and config.profile),
+            "return_recovery": bool(config.copy_artifacts and config.profile),
         },
         "probe": probe.as_dict(),
         "sessions": sessions,

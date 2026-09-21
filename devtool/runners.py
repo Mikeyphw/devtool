@@ -80,6 +80,36 @@ from .tasker import TaskerProgressSink
 console = create_console()
 
 
+def _ssh_execution_provenance(metadata: Mapping[str, object]) -> dict[str, object]:
+    if str(metadata.get("execution_mode") or "") != "ssh-command" and not metadata.get("ssh_destination"):
+        return {}
+    return {
+        "transport": "ssh",
+        "profile": str(metadata.get("ssh_profile") or ""),
+        "destination": str(metadata.get("ssh_destination") or ""),
+        "workspace_id": str(metadata.get("ssh_workspace_id") or ""),
+        "workspace_instance_id": str(metadata.get("ssh_workspace_instance_id") or ""),
+        "workspace_path": str(metadata.get("ssh_workspace_path") or metadata.get("ssh_cwd") or ""),
+        "source_sync_id": str(metadata.get("ssh_source_sync_id") or ""),
+        "source_revision": dict(metadata.get("ssh_source_revision") or {}) if isinstance(metadata.get("ssh_source_revision"), Mapping) else {},
+        "session": str(metadata.get("ssh_session") or ""),
+        "return_state": str((metadata.get("ssh_return") or {}).get("state") or "") if isinstance(metadata.get("ssh_return"), Mapping) else "",
+        "return_manifest": str(metadata.get("ssh_return_manifest") or ""),
+    }
+
+
+def _attach_test_provenance(payload: dict[str, object], metadata: Mapping[str, object]) -> dict[str, object]:
+    provenance = _ssh_execution_provenance(metadata)
+    if not provenance:
+        return payload
+    updated = dict(payload)
+    test_metadata = updated.get("metadata")
+    test_metadata = dict(test_metadata) if isinstance(test_metadata, Mapping) else {}
+    test_metadata["execution_provenance"] = provenance
+    updated["metadata"] = test_metadata
+    return updated
+
+
 class _ArtifactPreflightFailure(RuntimeError):
     def __init__(self, result: OperationResult, phase: str) -> None:
         self.result = result
@@ -2389,6 +2419,10 @@ def run_specs(
         process_output = output
         duration = time.perf_counter() - started
         result_metadata = dict(spec.metadata)
+        if result_metadata.get("ssh_return_manifest"):
+            from .ssh_returns import load_return_state
+            ssh_return = load_return_state(result_metadata)
+            result_metadata["ssh_return"] = ssh_return
         canonical_test_id = str(result_metadata.get("test_spec_id") or spec.name).strip() or spec.name
         canonical_test_candidates = []
         is_go_test = (
@@ -2410,6 +2444,7 @@ def run_specs(
             result_metadata["tests"] = dict(go_metadata["tests"])
             canonical_test_candidates.append(_test_result_from_go_report(canonical_test_id, go_report, evidence=go_report_evidence))
         command_issues = parse_issues(config.repo_root, spec.name, output)
+        ssh_return = result_metadata.get("ssh_return") if isinstance(result_metadata.get("ssh_return"), dict) else {}
         if go_report is not None:
             from .diagnostics import go_test_issues
             command_issues = [issue for issue in command_issues if issue.code not in {"GO_TEST", "GO_TEST_PACKAGE"}]
@@ -2428,6 +2463,17 @@ def run_specs(
         if suppressed_stdout_diagnostics:
             result_metadata["suppressed_stdout_diagnostics"] = suppressed_stdout_diagnostics
             result_metadata["suppressed_stdout_diagnostics_reason"] = "successful process boundary captured non-authoritative stdout diagnostics"
+        try:
+            ssh_return_code = int(ssh_return.get("returncode", -1)) if ssh_return else -1
+        except (TypeError, ValueError):
+            ssh_return_code = -1
+        if ssh_return and ssh_return_code not in {0, 125}:
+            command_issues.append(Issue(
+                "warning", "ssh-return", str(ssh_return.get("local_root") or config.repo_root),
+                "SSH_RETURN_PARTIAL",
+                "Remote reports/artifacts were only partially returned; the build result is preserved and the return bundle can be retried with 'devtool ssh retrieve'.",
+            ))
+            result_metadata["ssh_return_recovery_required"] = True
         configured_report_parsers = result_metadata.get("report_parsers")
         if isinstance(configured_report_parsers, (list, tuple)):
             report_parsers = [str(value).strip() for value in configured_report_parsers if str(value).strip()]
@@ -2440,21 +2486,33 @@ def run_specs(
         if report_parsers and report_interrupted:
             result_metadata["report_parsing_skipped"] = "interrupted"
         if report_parsers and not report_interrupted:
-            report_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
+            original_report_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
+            returned_project_root = str(result_metadata.get("ssh_return_project_root") or "").strip()
+            report_root = Path(returned_project_root).resolve() if returned_project_root else original_report_root
+            returned_repo_root = str(result_metadata.get("ssh_return_repo_root") or "").strip()
             for report_parser in report_parsers:
+                raw_report_path = str(
+                    result_metadata.get("coverage_report")
+                    if report_parser == "python-coverage"
+                    else result_metadata.get("test_report") or result_metadata.get("package_report") or ""
+                )
+                if returned_repo_root and raw_report_path:
+                    from .ssh_returns import map_returned_path
+                    raw_report_path = map_returned_path(
+                        raw_report_path,
+                        local_repo_root=config.repo_root,
+                        returned_repo_root=Path(returned_repo_root),
+                        project_root=original_report_root,
+                    )
                 collection = collect_report_metadata(
                     report_root,
                     repo_root=config.repo_root,
                     parser=report_parser,
                     tasks=result_metadata.get("gradle_tasks") or (),
-                    started_at=started_wall,
+                    started_at=None if returned_project_root else started_wall,
                     command_name=spec.name,
                     output=output,
-                    report_path=str(
-                        result_metadata.get("coverage_report")
-                        if report_parser == "python-coverage"
-                        else result_metadata.get("test_report") or result_metadata.get("package_report") or ""
-                    ),
+                    report_path=raw_report_path,
                 )
                 if report_parser in {"gradle-junit", "pytest-junit", "android-instrumentation", "dotnet-trx", "maven-surefire", "node-json", "node-junit"}:
                     tests = dict(collection.metadata)
@@ -2585,7 +2643,7 @@ def run_specs(
                         canonical_test_candidates.append(stdout_result)
             canonical_test_result = _reconcile_test_results(canonical_test_id, canonical_test_candidates)
             if canonical_test_result is not None:
-                result_metadata["test_result"] = canonical_test_result.to_dict()
+                result_metadata["test_result"] = _attach_test_provenance(canonical_test_result.to_dict(), result_metadata)
                 canonical_counts = _canonical_test_counts(canonical_test_result)
                 existing_tests = result_metadata.get("tests") if isinstance(result_metadata.get("tests"), dict) else {}
                 result_metadata["tests"] = {**existing_tests, **canonical_counts}
@@ -2593,10 +2651,10 @@ def run_specs(
             else:
                 # Exit status is deliberately metadata-only: do not invent a fake
                 # test case when a runner exposes no test identity or counters.
-                result_metadata["test_result"] = {
+                result_metadata["test_result"] = _attach_test_provenance({
                     "schema_version": 1, "id": canonical_test_id, "suites": [], "artifacts": [],
                     "metadata": {"evidence": "exit", "exit_code": returncode},
-                }
+                }, result_metadata)
                 result_metadata["test_evidence"] = "exit"
 
 
@@ -2613,11 +2671,12 @@ def run_specs(
             or artifact_options.get("artifact_directories")
         ):
             from .artifact_pipeline import collect_and_process_artifacts, format_artifact_summary
-            artifact_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
+            returned_artifact_root = str(result_metadata.get("ssh_return_project_root") or "").strip()
+            artifact_root = Path(returned_artifact_root or str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
             artifact_metadata, artifact_issues = collect_and_process_artifacts(
                 config,
                 project_root=artifact_root,
-                started_at=started_wall,
+                started_at=0.0 if returned_artifact_root else started_wall,
                 spec_name=spec.name,
                 spec_metadata=dict(spec.metadata),
                 result_metadata=result_metadata,

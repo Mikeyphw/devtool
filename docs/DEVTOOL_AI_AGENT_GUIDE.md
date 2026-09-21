@@ -2176,7 +2176,7 @@ Agent note: machine-friendly controls on this command include `--json`.
 
 Inspect and bootstrap named SSH build workers
 
-**Subcommands:** `doctor`, `bootstrap`, `sessions`, `workspace`, `sync`
+**Subcommands:** `doctor`, `bootstrap`, `sessions`, `workspace`, `sync`, `retrieve`
 
 ### `devtool ssh doctor`
 
@@ -2233,6 +2233,19 @@ Plan or synchronize the local repository into the worker workspace
 | `--dry-run` | Show the exact rsync delta without modifying the worker |
 
 Agent note: machine-friendly controls on this command include `--dry-run`.
+
+### `devtool ssh retrieve`
+
+Retry retrieval of reports/artifacts from a prior SSH worker run
+
+**Aliases:** `devtool ssh return`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--format FORMAT` | Choices: text, json |
+| `--run-id RUN_ID` | Restrict recovery to one local Devtool run id |
+| `--session SESSION` | Restrict recovery to one SSH tmux phase session |
 
 ### `devtool bootstrap`
 

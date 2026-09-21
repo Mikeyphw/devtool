@@ -80,14 +80,15 @@ local devtool performs planning/UI/orchestration and wraps each external command
 phase with SSH + tmux. The remote host needs only `tmux` and the project
 toolchain required by the actual command.
 
-Because an SSH host is an independent filesystem, command mode requires
-`--ssh-cwd` (or `[ssh].cwd`) as the explicit remote counterpart of the local
-repository root. Only that one user-supplied repository mapping is applied; no
-remote HOME, username, Termux, or chroot path is inferred. Devtool-owned helper
-files referenced by a phase (for example the staged Android builder/Gradle init
-script) are copied to the remote staging directory over SCP. Android/Gradle
-build artifacts written to the configured artifact output directory are pulled
-back over SCP before the local artifact verifier runs.
+For raw/unprofiled command-mode SSH, `--ssh-cwd` (or `[ssh].cwd`) remains the
+explicit remote counterpart of the local repository root. Named workers in
+`managed`/`ephemeral` workspace mode do not require a pre-existing checkout or
+`ssh.cwd`: Devtool synchronizes the authoritative local checkout and resolves the
+remote workspace automatically. Devtool-owned helper files referenced by a phase
+(for example the staged Android builder/Gradle init script) are copied to the
+remote staging directory over SCP. Generated reports and distributable outputs
+from named workers are returned to the phone before local report parsing and
+artifact verification.
 
 ```bash
 devtool --ssh buildbox --ssh-mode commands \
@@ -101,10 +102,11 @@ still runs inside a named remote tmux session; manually detaching leaves that
 phase alive, but the local run stops with a distinct status instead of falsely
 advancing to the next phase.
 
-Command mode assumes the remote checkout already contains the source state that
-should be built/tested. For overlay application against an independent remote
-checkout, prefer whole-run `devtool` mode so the copied overlay is applied by the
-remote devtool itself.
+Raw/unprofiled command mode assumes the remote checkout already contains the
+source state that should be built/tested. Named managed workers instead mirror
+the live phone checkout automatically. For overlay application against an
+independent unmanaged remote checkout, prefer whole-run `devtool` mode so the
+copied overlay is applied by the remote devtool itself.
 
 The local machine must provide `ssh` and `scp`. Port 22 is the default, but any
 TCP port from 1 to 65535 can be selected. Automatic artifact transfer can be
@@ -177,6 +179,7 @@ devtool ssh sessions tablet
 devtool -r "$HOME/Code/xdm" ssh workspace tablet
 devtool -r "$HOME/Code/xdm" ssh sync tablet --dry-run
 devtool -r "$HOME/Code/xdm" ssh sync tablet
+devtool -r "$HOME/Code/xdm" ssh retrieve tablet --run-id <run-id>
 ```
 
 `doctor` intentionally needs only SSH and a POSIX shell on the remote side. It
@@ -209,8 +212,9 @@ files, `.git` state, symlinks, executable bits, and timestamps are mirrored from
 the phone. It does **not** use `.gitignore` as a transfer policy: ignored files
 can still be legitimate build inputs. Instead Devtool has explicit sync
 exclusions. With `default_excludes = true`, `.gradle/`, `build/`, Devtool build
-artifacts, and SSH staging directories are excluded and therefore survive
-`--delete-delay` on the worker. Global Gradle/SDK/JDK/NDK/npm caches live
+artifacts, SSH staging directories, and `.devtool/ssh-return/` evidence bundles
+are excluded and therefore survive `--delete-delay` on the worker. Global
+Gradle/SDK/JDK/NDK/npm caches live
 outside the managed repository and are not synchronized at all.
 
 `devtool ssh sync ... --dry-run` is strictly non-mutating. For an existing
@@ -250,6 +254,40 @@ state, and `$HOME/.cache/devtool` are not synchronized back to the phone and are
 reused by later builds. `devtool ssh doctor` reports whether automatic sync,
 tmux-owned phases, target-aware toolchains, and persistent remote caches are
 active for the selected profile.
+
+### Returned artifacts, reports, logs, and provenance
+
+Named command-mode workers create one run/session-scoped phone-side return bundle per
+remote phase under `.devtool/ssh-return/<run>/<session>/`. Before local report
+parsing runs, rsync returns generated test/lint reports and common distributable
+outputs such as APK/AAB/JAR/AAR files while leaving SDK, Gradle, and other remote
+caches on the worker. The normal local artifact pipeline then verifies and copies
+returned distributables into the configured `.devtool/build-artifacts` output,
+so existing artifact registry/release logic continues to operate on phone-local
+files. Remote command output is already streamed into Devtool's ordinary local
+run log.
+
+Every return bundle contains a manifest linking the worker profile/destination,
+tmux session, verified remote workspace, and source synchronization ID. RunStore
+records that provenance alongside the stable declared TestSpec identity, report
+paths, build-artifact records, and local log path. Failure evidence therefore
+remains attributable to the exact remote source sync without changing `TestResult.id`.
+
+Evidence transfer is resumable and does not replace the build's exit code. A
+partial rsync becomes an `SSH_RETURN_PARTIAL` warning and the manifest/partial
+files are retained. Retry the transfer without re-running the build with:
+
+```sh
+devtool -r "$HOME/Code/xdm" ssh retrieve tablet --run-id <run-id>
+# optionally narrow it further
+devtool -r "$HOME/Code/xdm" ssh retrieve tablet --run-id <run-id> --session <tmux-session>
+```
+
+Recovery revalidates the named worker and workspace boundary before trusting a
+persisted manifest, so a local manifest cannot request an arbitrary remote path.
+When a recovered bundle belongs to a persisted test run, Devtool also reconciles
+that run's SSH return provenance from partial/deferred to the recovered state
+without changing the stable TestSpec/operation identity or any test counts.
 
 CLI values override environment variables (`DEVTOOL_SSH_HOST`,
 `DEVTOOL_SSH_PROFILE`, `DEVTOOL_SSH_PORT`, `DEVTOOL_SSH_USER`, `DEVTOOL_SSH_IDENTITY`,
