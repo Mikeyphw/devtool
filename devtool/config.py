@@ -784,7 +784,8 @@ def load_project_config(
         runner_option_sections=RUNNER_OPTION_SECTIONS,
     )
     targets = _load_named_targets(config_root, targets_raw, env_section)
-    load_target_workflows(targets_raw, targets, jobs, supported_runners=SUPPORTED_RUNNERS)
+    declared_tests = _parse_test_specs(repo_loaded, repo_source_label)
+    load_target_workflows(targets_raw, targets, jobs, supported_runners=SUPPORTED_RUNNERS, tests=declared_tests)
     try:
         workspace = load_workspace_config(
             workspace_raw,
@@ -1065,7 +1066,7 @@ def load_project_config(
         global_config_path=global_path if global_loaded else None,
         config_provenance=provenance,
         configured_runner_options=copy.deepcopy(runner_options),
-        tests=_parse_test_specs(repo_loaded, repo_source_label),
+        tests=declared_tests,
     )
 
     # MP05 validates the complete configured cross-target workspace graph at

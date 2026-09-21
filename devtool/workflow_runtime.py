@@ -430,7 +430,18 @@ def _node_specs(config: ProjectConfig, node: WorkflowNode, *, validation_skip: t
     target_config = _target_scoped_config(config, node.target)
     if ref.kind == "target":
         raise WorkflowRuntimeError(f"Unexpanded target workflow node reached execution: {ref.raw}")
-    if ref.kind == "job":
+    if ref.kind == "test":
+        from .test_declarations import command_specs as declared_test_specs
+        specs = declared_test_specs(target_config, [ref.name])
+        execution_environment = target_config.execution_environment
+        chroot_name = target_config.chroot_name
+        device_serial = target_config.device_serial
+        runner_options = target_config.runner_options
+        runner_name = str(config.tests[ref.name].runner)
+        effective_action = "test"
+        inputs = ()
+        outputs = ()
+    elif ref.kind == "job":
         job = config.jobs.get(ref.name)
         if job is None:
             raise WorkflowRuntimeError(f"Workflow references missing job {ref.name!r}.")
@@ -600,6 +611,8 @@ def workflow_runner_kinds(config: ProjectConfig, action: str) -> tuple[str, ...]
     for node in graph.nodes:
         if node.ref.kind == "runner":
             runners.append(node.ref.name)
+        elif node.ref.kind == "test" and node.ref.name in config.tests:
+            runners.append(str(config.tests[node.ref.name].runner))
         elif node.ref.kind == "job" and node.ref.name in config.jobs:
             runners.append(config.jobs[node.ref.name].runner)
     return tuple(dict.fromkeys(runners))

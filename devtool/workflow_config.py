@@ -174,6 +174,7 @@ def _parse_workflow_reference(
     jobs: Mapping[str, JobConfig],
     targets: Mapping[str, TargetConfig],
     supported_runners: set[str],
+    tests: Mapping[str, Any] | None = None,
     step_id: str = "",
     depends_on: tuple[str, ...] = (),
     depends_on_declared: bool = False,
@@ -181,10 +182,24 @@ def _parse_workflow_reference(
     prefix, separator, payload = raw.partition(":")
     kind = prefix.strip().lower()
     payload = payload.strip()
-    if not separator or kind not in {"job", "runner", "target"} or not payload:
+    if not separator or kind not in {"job", "runner", "target", "test"} or not payload:
         raise SystemExit(
             f"Invalid workflow step {raw!r} in target '{target_name}' workflow '{workflow_name}'. "
-            "Use job:<name>, runner:<runner>#<action>, or target:<target>#<action>."
+            "Use job:<name>, test:<id>, runner:<runner>#<action>, or target:<target>#<action>."
+        )
+
+    if kind == "test":
+        if "#" in payload:
+            raise SystemExit(f"Test workflow reference {raw!r} must not include an action suffix.")
+        declared = dict(tests or {})
+        if payload not in declared:
+            available = ", ".join(sorted(declared)) or "<none>"
+            raise SystemExit(
+                f"Workflow target '{target_name}' references unknown test '{payload}'. Available tests: {available}"
+            )
+        return WorkflowStepRef(
+            raw=raw, kind="test", name=payload, step_id=step_id,
+            depends_on=depends_on, depends_on_declared=depends_on_declared,
         )
 
     if kind == "job":
@@ -250,6 +265,7 @@ def parse_workflow_step(
     jobs: Mapping[str, JobConfig],
     targets: Mapping[str, TargetConfig],
     supported_runners: set[str],
+    tests: Mapping[str, Any] | None = None,
 ) -> WorkflowStepRef:
     """Normalize one workflow step.
 
@@ -275,6 +291,7 @@ def parse_workflow_step(
             jobs=jobs,
             targets=targets,
             supported_runners=supported_runners,
+            tests=tests,
         )
 
     if not isinstance(raw_step, dict):
@@ -309,6 +326,7 @@ def parse_workflow_step(
         jobs=jobs,
         targets=targets,
         supported_runners=supported_runners,
+        tests=tests,
         step_id=step_id,
         depends_on=depends_on,
         depends_on_declared=depends_on_declared,
@@ -320,6 +338,7 @@ def load_target_workflows(
     jobs: Mapping[str, JobConfig],
     *,
     supported_runners: set[str],
+    tests: Mapping[str, Any] | None = None,
 ) -> None:
     if not isinstance(raw_targets, dict):
         return
@@ -354,6 +373,7 @@ def load_target_workflows(
                     jobs=jobs,
                     targets=targets,
                     supported_runners=supported_runners,
+                    tests=tests,
                 )
                 for step in raw_steps
             )

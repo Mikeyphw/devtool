@@ -179,6 +179,33 @@ class IpcBroker:
                 value = _with_machine_state(value)
                 self.runs[str(value["run_id"])] = value
 
+        # TSYS-05 canonical test history is stored independently so it can
+        # outlive UI/runtime snapshots. Merge it by run_id for IPC consumers.
+        test_roots = [state_dir() / "test-runs"]
+        transient_tests = self.state_dir / "test-runs"
+        if transient_tests not in test_roots:
+            test_roots.append(transient_tests)
+        seen_test_paths: set[Path] = set()
+        for test_runs in test_roots:
+            if not test_runs.is_dir():
+                continue
+            for path in sorted(test_runs.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+                resolved = path.resolve(strict=False)
+                if resolved in seen_test_paths:
+                    continue
+                seen_test_paths.add(resolved)
+                try:
+                    from .test_runstore import normalize_test_run_payload
+                    test_state = normalize_test_run_payload(json.loads(path.read_text(encoding="utf-8")))
+                except Exception:
+                    continue
+                if not isinstance(test_state, dict) or not test_state.get("run_id"):
+                    continue
+                run_id = str(test_state["run_id"])
+                current = dict(self.runs.get(run_id) or {"run_id": run_id})
+                current["tests"] = test_state
+                self.runs[run_id] = _with_machine_state(current)
+
     def start(self) -> None:
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self.socket_path.exists():

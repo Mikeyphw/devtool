@@ -2840,6 +2840,21 @@ def run_specs(
         results.append(shutdown_result)
         raw_sections.append(shutdown_raw)
 
+    if not dry_run:
+        try:
+            from .test_runstore import persist_test_run
+            test_run_path = persist_test_run(config.repo_root, results)
+            if test_run_path is not None:
+                for item in results:
+                    if isinstance(item.metadata, dict) and isinstance(item.metadata.get("test_result"), dict):
+                        item.metadata["test_run_path"] = str(test_run_path)
+        except Exception as exc:
+            # Test-result persistence is historical/evidence plumbing and must
+            # never turn an otherwise valid test execution into a false failure.
+            for item in results:
+                if isinstance(item.metadata, dict) and isinstance(item.metadata.get("test_result"), dict):
+                    item.metadata["test_run_persistence_warning"] = f"{type(exc).__name__}: {exc}"
+
     return results, "\n\n".join(raw_sections)
 
 def shutdown_dotnet_build_server(
