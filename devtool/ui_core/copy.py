@@ -62,6 +62,7 @@ _SPECS = (
     CopySpec("nav.environment", "Environment", "Environment"),
     CopySpec("nav.settings", "Settings", "Settings"),
     CopySpec("nav.build", "Build", "Build"),
+    CopySpec("nav.workers", "SSH workers", "Workers"),
     CopySpec("nav.overlays", "Overlays", "Overlays"),
     CopySpec("status.idle", "Waiting", "Waiting"),
     CopySpec("status.success", "Succeeded", "Success", surface=(("hud", "Complete"),)),

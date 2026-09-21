@@ -40,6 +40,7 @@ _DEFAULT_PATTERNS = (
     "**/test-results/***",
     "**/coverage.xml",
     "**/coverage.json",
+    ".devtool/ssh-runtime-logs/***",
 )
 
 

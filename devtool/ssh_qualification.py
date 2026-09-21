@@ -14,6 +14,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from typing import Any
@@ -159,6 +160,65 @@ def _cleanup_probe(config: SSHRunnerConfig, *, session: str, remote_root: str) -
     _run_remote(config, script)
 
 
+
+
+def _return_manifest_snapshot(repo_root: Path) -> set[str]:
+    root = repo_root / ".devtool" / "ssh-return"
+    if not root.is_dir():
+        return set()
+    return {str(path.resolve()) for path in root.rglob("manifest.json") if path.is_file()}
+
+
+def _project_validation_argv(
+    config: SSHRunnerConfig,
+    repo_root: Path,
+    *,
+    target: str = "",
+    tasks: tuple[str, ...] = (),
+) -> list[str]:
+    argv = [sys.executable, "-m", "devtool", "-r", str(repo_root)]
+    if target:
+        argv.extend(["--target", target])
+    argv.extend(["--ssh-profile", str(config.profile), "--no-hud", "validate"])
+    for task in tasks:
+        argv.extend(["--task", str(task)])
+    return argv
+
+
+def _run_project_validation(
+    config: SSHRunnerConfig,
+    repo_root: Path,
+    *,
+    target: str = "",
+    tasks: tuple[str, ...] = (),
+    ordinal: int,
+) -> dict[str, Any]:
+    before = _return_manifest_snapshot(repo_root)
+    argv = _project_validation_argv(config, repo_root, target=target, tasks=tasks)
+    started = time.monotonic()
+    completed = subprocess.run(argv, cwd=repo_root, check=False, text=True)
+    elapsed = time.monotonic() - started
+    after = _return_manifest_snapshot(repo_root)
+    new_manifests = sorted(after - before)
+    if completed.returncode != 0:
+        raise ValueError(
+            f"SSH qualification project validation pass {ordinal} failed with exit {completed.returncode}"
+        )
+    if not new_manifests:
+        raise ValueError(
+            f"SSH qualification project validation pass {ordinal} produced no new SSH return evidence; "
+            "the real remote validation path was not fully exercised"
+        )
+    return {
+        "ok": True,
+        "ordinal": ordinal,
+        "argv": argv,
+        "seconds": round(elapsed, 3),
+        "return_manifests": new_manifests,
+        "return_manifest_count": len(new_manifests),
+    }
+
+
 def qualify_worker(
     config: SSHRunnerConfig,
     repo_root: str | Path,
@@ -166,6 +226,10 @@ def qualify_worker(
     dry_run: bool = False,
     bootstrap: bool = True,
     sync: bool = True,
+    project_validation: bool = False,
+    validation_target: str = "",
+    validation_tasks: tuple[str, ...] = (),
+    validation_twice: bool = True,
 ) -> dict[str, Any]:
     if not config.profile:
         raise ValueError("SSH qualification requires a named worker profile")
@@ -221,6 +285,17 @@ def qualify_worker(
                 "detached_tmux": "planned",
                 "return_transport": "planned",
                 "second_sync_clean": "planned" if sync else "skipped",
+                **({
+                    "project_validation": "planned",
+                    "warm_validation": "planned" if validation_twice else "skipped",
+                } if project_validation else {}),
+            },
+            "project_validation": {
+                "enabled": bool(project_validation),
+                "target": validation_target,
+                "tasks": list(validation_tasks),
+                "twice": bool(validation_twice),
+                "argv": _project_validation_argv(config, repo, target=validation_target, tasks=validation_tasks) if project_validation else [],
             },
         }
 
@@ -238,6 +313,24 @@ def qualify_worker(
         sync_seconds = time.monotonic() - sync_started
         if not bool(sync_payload.get("ok")):
             raise ValueError(str(sync_payload.get("detail") or "SSH qualification source synchronization failed"))
+
+    project_runs: list[dict[str, Any]] = []
+    post_build_plan: dict[str, Any] = {}
+    if project_validation:
+        project_runs.append(_run_project_validation(
+            config, repo, target=validation_target, tasks=validation_tasks, ordinal=1,
+        ))
+        if sync:
+            post_build_plan = plan_workspace_sync(config, spec)
+            if int(post_build_plan.get("change_count", 0) or 0) != 0:
+                raise ValueError(
+                    "SSH qualification project validation left the managed source workspace dirty "
+                    f"({post_build_plan.get('change_count')} pending sync change(s))"
+                )
+        if validation_twice:
+            project_runs.append(_run_project_validation(
+                config, repo, target=validation_target, tasks=validation_tasks, ordinal=2,
+            ))
 
     nonce = "q-" + uuid.uuid4().hex[:12]
     local_root = _local_qualification_root(repo, config.profile, nonce)
@@ -291,6 +384,20 @@ def qualify_worker(
             "first_sync_changes": int(sync_payload.get("change_count", 0) or 0),
             "second_sync_changes": int(second_plan.get("change_count", 0) or 0),
             "returned_bytes": int(returned.get("bytes", 0) or 0),
+            "project_validation_first_seconds": float(project_runs[0].get("seconds", 0.0)) if project_runs else 0.0,
+            "project_validation_second_seconds": float(project_runs[1].get("seconds", 0.0)) if len(project_runs) > 1 else 0.0,
+            "project_validation_warm_ratio": (
+                round(float(project_runs[1].get("seconds", 0.0)) / max(float(project_runs[0].get("seconds", 0.0)), 0.001), 3)
+                if len(project_runs) > 1 else 0.0
+            ),
+        },
+        "project_validation": {
+            "enabled": bool(project_validation),
+            "target": validation_target,
+            "tasks": list(validation_tasks),
+            "twice": bool(validation_twice),
+            "runs": project_runs,
+            "post_build_sync_plan": post_build_plan,
         },
         "checks": {
             "transport": "pass",
@@ -299,6 +406,10 @@ def qualify_worker(
             "detached_tmux": "pass",
             "return_transport": "pass",
             "second_sync_clean": "pass" if sync else "skipped",
+            **({
+                "project_validation": "pass",
+                "warm_validation": "pass" if validation_twice else "skipped",
+            } if project_validation else {}),
         },
-        "detail": "SSH managed worker qualification passed",
+        "detail": "SSH managed worker qualification passed" + (" with project validation" if project_validation else ""),
     }

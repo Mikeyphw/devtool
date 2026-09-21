@@ -36,6 +36,7 @@ _DEFAULT_EXCLUDES = (
     ".devtool/ssh-stage/",
     ".devtool/ssh-return/",
     ".devtool/ssh-qualification/",
+    ".devtool/ssh-runtime-logs/",
 )
 _RESERVED_EXCLUDES = (
     f"/{_WORKSPACE_MARKER}",

@@ -819,7 +819,7 @@ _devtool() {
                 _arguments '1:worker profile:_devtool_ssh_profiles' '(--repo-local)--global[manage the reusable user-global profile]' '(--global)--repo-local[manage only this repository profile]' '--format[output format]:format:(text json)'
                 ;;
               qualify|seal)
-                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--dry-run[plan qualification without modifying the worker]' '--no-bootstrap[do not install missing worker tools]' '--no-sync[skip repository synchronization checks]'
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--dry-run[plan qualification without modifying the worker]' '--no-bootstrap[do not install missing worker tools]' '--no-sync[skip repository synchronization checks]' '--project-validation[run the real managed SSH validation path]' '--target[target/profile for project validation]:target:_devtool_targets' '*--task[project validation task; repeatable]:task:' '--single-validation[run only one project validation pass]'
                 ;;
               doctor|sessions|ls|workspace|ws|runs)
                 _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)'
@@ -1072,7 +1072,7 @@ _devtool() {
           fi
           ;;
         tui)
-          _arguments '--page[initial page]:page:(dashboard build overlays)' '--artifact[overlay artifact to preflight]:artifact:_devtool_artifact_path' '--once[render once and exit]' '--width[override terminal width]:columns:'
+          _arguments '--page[initial page]:page:(dashboard build overlays workers)' '--artifact[overlay artifact to preflight]:artifact:_devtool_artifact_path' '--once[render once and exit]' '--width[override terminal width]:columns:'
           ;;
         cleanup)
           _arguments '--dry-run[show changes without moving or deleting files]' '--prune-history-days[delete archived backup batches older than this many days]:days:'

@@ -57,6 +57,7 @@ NAVIGATION_REGISTRY: tuple[NavigationSpec, ...] = (
     _nav("environment", "nav.environment", 110, routes=(("machine", "environment"),)),
     _nav("settings", "nav.settings", 120, section="secondary", routes=(("desktop", "settings"), ("android", "settings"), ("machine", "settings"))),
     _nav("build", "nav.build", 130, routes=(("tui", "build"),), shortcuts=(("tui", "b"),)),
+    _nav("workers", "nav.environment", 135, routes=(("tui", "workers"),), shortcuts=(("tui", "w"),)),
     _nav("overlays", "nav.overlays", 140, routes=(("tui", "overlays"),), shortcuts=(("tui", "o"),)),
 )
 

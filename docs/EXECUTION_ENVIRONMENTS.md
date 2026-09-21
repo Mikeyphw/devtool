@@ -233,8 +233,22 @@ devtool -r "$HOME/Code/xdm" --target xdm_android --ssh-profile tablet \
 Use `--no-sync` when only transport/tmux/evidence-return qualification is
 wanted. `--dry-run` is non-mutating. The qualification marker is intentionally
 outside the synchronized source set, so it cannot create a false delta on the
-second pass. Project-specific Gradle/Android correctness remains qualified by
-the normal `validate --task ...` command rather than by a synthetic project.
+second pass. For the full roadmap seal, add `--project-validation`. Devtool then invokes the
+repository's real managed `validate` path through the selected worker, requires
+new SSH return evidence, verifies the remote build did not create a phone->tablet
+source delta, and (by default) runs the same validation a second time so the warm
+cache/incremental timing is recorded. Use `--target` and repeatable `--task` to
+select the real project gate; `--single-validation` disables the second pass.
+
+```sh
+devtool -r "$HOME/Code/xdm" ssh qualify tablet \
+  --project-validation \
+  --target xdm_android \
+  --task assembleDebug
+```
+
+The infrastructure-only form without `--project-validation` remains available
+for fast worker/transport qualification.
 
 ### SSH workspace modes and synchronization
 

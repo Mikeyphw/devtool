@@ -408,6 +408,65 @@ def _overlay_page(snapshot: dict[str, Any], profile: TerminalProfile, *, repo_ro
     return Group(*panels)
 
 
+
+
+def _workers_page(snapshot: dict[str, Any], profile: TerminalProfile, *, repo_root: Path) -> Group:
+    try:
+        from .ssh_profiles import list_profiles
+        payload = list_profiles(repo=repo_root)
+        records = list(payload.get("records", []) or [])
+    except Exception as exc:
+        return Group(_kv_panel("SSH workers", [("Status", f"unavailable: {exc}")], profile=profile))
+
+    panels: list[Any] = [_kv_panel("SSH worker configuration", [
+        ("Default", payload.get("default_profile") or "-"),
+        ("Profiles", len(records)),
+        ("Global", _short_path(str(payload.get("global_config") or "-"), width=max(18, profile.width - 18))),
+        ("Repository", _short_path(str(payload.get("repo_config") or "-"), width=max(18, profile.width - 18))),
+    ], profile=profile)]
+    if not records:
+        panels.append(_kv_panel("Workers", [
+            ("Status", "No SSH workers configured"),
+            ("Add", "devtool ssh add tablet --host HOST --port 8022 --user USER"),
+        ], profile=profile))
+        return Group(*panels)
+
+    if profile.compact:
+        for item in records[:4]:
+            destination = f"{item.get('user') + '@' if item.get('user') else ''}{item.get('host')}:{item.get('port')}"
+            panels.append(_kv_panel(str(item.get("name") or "worker"), [
+                ("Default", "yes" if item.get("default") else "no"),
+                ("Scope", item.get("scope") or "-"),
+                ("Host", destination),
+                ("Workspace", item.get("workspace_mode") or "-"),
+            ], profile=profile))
+    else:
+        table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False)
+        table.add_column("Worker", ratio=2, overflow="ellipsis")
+        table.add_column("Scope", no_wrap=True)
+        table.add_column("Destination", ratio=3, overflow="ellipsis")
+        table.add_column("Workspace", no_wrap=True)
+        if profile.mode == "wide":
+            table.add_column("Default", no_wrap=True)
+        for item in records[:8]:
+            destination = f"{item.get('user') + '@' if item.get('user') else ''}{item.get('host')}:{item.get('port')}"
+            row = [str(item.get("name") or "-"), str(item.get("scope") or "-"), destination, str(item.get("workspace_mode") or "-")]
+            if profile.mode == "wide":
+                row.append("yes" if item.get("default") else "")
+            table.add_row(*row)
+        panels.append(Panel(table, title="Workers", box=box.ROUNDED, padding=(0, 1)))
+
+    selected = str(payload.get("default_profile") or records[0].get("name") or "").strip()
+    if selected:
+        panels.append(_kv_panel("Worker actions", [
+            ("Doctor", f"devtool ssh doctor {selected}"),
+            ("Qualify", f"devtool -r {repo_root} ssh qualify {selected}"),
+            ("Runs", f"devtool ssh runs {selected}"),
+            ("Full seal", f"devtool -r {repo_root} ssh qualify {selected} --project-validation --target TARGET --task TASK"),
+        ], profile=profile))
+    return Group(*panels)
+
+
 def render_page(repo_root: Path, *, page: str, width: int | None = None, height: int | None = None, artifact: str = "") -> tuple[Group, TerminalProfile]:
     profile = terminal_profile(width=width, height=height)
     snapshot = _repo_snapshot(repo_root)
@@ -416,6 +475,8 @@ def render_page(repo_root: Path, *, page: str, width: int | None = None, height:
         renderable = _build_page(snapshot, profile)
     elif normalized in {"overlay", "overlays"}:
         renderable = _overlay_page(snapshot, profile, repo_root=repo_root, artifact=artifact)
+    elif normalized in {"worker", "workers", "ssh"}:
+        renderable = _workers_page(snapshot, profile, repo_root=repo_root)
     else:
         renderable = _dashboard(snapshot, profile)
     return renderable, profile

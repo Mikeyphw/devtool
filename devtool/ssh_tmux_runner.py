@@ -1159,13 +1159,24 @@ def _build_remote_phase_script(
     status_path = paths["status"]
     state_path = paths["state"]
     metadata_path = paths["metadata"]
+    runtime_log = _remote_join(
+        str(workspace_path or config.cwd or "~").rstrip("/"),
+        ".devtool", "ssh-runtime-logs", _sanitize_session(run_identity), _sanitize_session(session) + ".log",
+    )
+    runtime_log_dir = runtime_log.rsplit("/", 1)[0]
+    command_status = _remote_join(state_dir, "command-status")
     payload = (
-        command
-        + f"; rc=$?; printf '%s\\n' \"$rc\" > {_remote_shell_path(status_path + '.tmp')}"
+        f"rm -f -- {_remote_shell_path(command_status)} {_remote_shell_path(command_status + '.tmp')}; "
+        + "( " + command
+        + f'; printf \'%s\\n\' "$?" > {_remote_shell_path(command_status + ".tmp")}'
+        + f"; mv -f -- {_remote_shell_path(command_status + '.tmp')} {_remote_shell_path(command_status)} ) 2>&1"
+        + f" | tee -a {_remote_shell_path(runtime_log)}"
+        + f"; rc=$(cat {_remote_shell_path(command_status)} 2>/dev/null || printf 1)"
+        + f'; printf \'%s\\n\' "$rc" > {_remote_shell_path(status_path + ".tmp")}'
         + f"; mv -f -- {_remote_shell_path(status_path + '.tmp')} {_remote_shell_path(status_path)}"
-        + f"; printf 'completed\\n' > {_remote_shell_path(state_path + '.tmp')}"
+        + f"; printf 'completed\n' > {_remote_shell_path(state_path + '.tmp')}"
         + f"; mv -f -- {_remote_shell_path(state_path + '.tmp')} {_remote_shell_path(state_path)}"
-        + f"; printf 'finished_unix=%s\\n' \"$(date +%s 2>/dev/null || printf 0)\" >> {_remote_shell_path(metadata_path)}"
+        + f'; printf \'finished_unix=%s\\n\' "$(date +%s 2>/dev/null || printf 0)" >> {_remote_shell_path(metadata_path)}'
         + '; exit "$rc"'
     )
     metadata_lines = [
@@ -1174,6 +1185,7 @@ def _build_remote_phase_script(
         "workspace_id=" + str(workspace_id or ""),
         "workspace_path=" + str(workspace_path or ""),
         "lease_dir=" + str(lease_dir or ""),
+        "remote_log_path=" + runtime_log,
     ]
     metadata_printf = " ".join(shlex.quote(line) for line in metadata_lines)
     lines = [
@@ -1187,6 +1199,8 @@ def _build_remote_phase_script(
         "command -v tmux >/dev/null 2>&1 || { echo 'devtool ssh: tmux is required on the remote host' >&2; exit 127; }",
         'if ! tmux has-session -t "$session" 2>/dev/null; then',
         '  rm -f "$status"',
+        f"  mkdir -p -- {_remote_shell_path(runtime_log_dir)}",
+        f"  : > {_remote_shell_path(runtime_log)}",
         f"  printf '%s\\n' {metadata_printf} > \"$metadata.tmp\"",
         '  printf \'started_unix=%s\\n\' "$(date +%s 2>/dev/null || printf 0)" >> "$metadata.tmp"',
         '  mv -f -- "$metadata.tmp" "$metadata"',

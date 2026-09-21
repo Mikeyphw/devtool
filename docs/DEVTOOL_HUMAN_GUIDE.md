@@ -1987,7 +1987,7 @@ Open the responsive terminal dashboard
 
 | Argument / option | Meaning |
 | --- | --- |
-| `--page PAGE` | Initial terminal dashboard page Choices: dashboard, build, overlays |
+| `--page PAGE` | Initial terminal dashboard page Choices: dashboard, build, overlays, workers |
 | `--artifact ARTIFACT` | Overlay artifact to preflight on the overlays page |
 | `--once` | Render one frame and exit |
 | `--width WIDTH` | Override terminal width for rendering/debugging |
@@ -2290,6 +2290,10 @@ End-to-end qualify a named managed SSH worker
 | `--dry-run` | Plan bootstrap/sync/qualification without modifying the worker |
 | `--no-bootstrap` | Do not install missing minimum worker tools |
 | `--no-sync` | Qualify transport/tmux/return only; skip repository sync checks |
+| `--project-validation` | Also run the repository's real managed SSH validation path |
+| `--target SSH_QUALIFY_TARGET` | Target/profile used by --project-validation |
+| `--task SSH_QUALIFY_TASKS` | Validation task used by --project-validation; repeatable |
+| `--single-validation` | Run one project validation instead of first + warm/incremental validation |
 
 ### `devtool ssh doctor`
 

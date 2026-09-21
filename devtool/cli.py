@@ -891,7 +891,7 @@ def build_parser() -> argparse.ArgumentParser:
     artifact_prune.add_argument("--json", action="store_true", help="Emit prune result JSON")
 
     tui_cmd = subparsers.add_parser("tui", help="Open the responsive terminal dashboard")
-    tui_cmd.add_argument("--page", choices=["dashboard", "build", "overlays"], default="dashboard", help="Initial terminal dashboard page")
+    tui_cmd.add_argument("--page", choices=["dashboard", "build", "overlays", "workers"], default="dashboard", help="Initial terminal dashboard page")
     tui_cmd.add_argument("--artifact", default="", help="Overlay artifact to preflight on the overlays page")
     tui_cmd.add_argument("--once", action="store_true", help="Render one frame and exit")
     tui_cmd.add_argument("--width", type=int, default=0, help="Override terminal width for rendering/debugging")
@@ -1031,7 +1031,11 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_qualify.add_argument("--dry-run", dest="ssh_qualify_dry_run", action="store_true", help="Plan bootstrap/sync/qualification without modifying the worker")
     ssh_qualify.add_argument("--no-bootstrap", dest="ssh_qualify_bootstrap", action="store_false", help="Do not install missing minimum worker tools")
     ssh_qualify.add_argument("--no-sync", dest="ssh_qualify_sync", action="store_false", help="Qualify transport/tmux/return only; skip repository sync checks")
-    ssh_qualify.set_defaults(ssh_qualify_bootstrap=True, ssh_qualify_sync=True)
+    ssh_qualify.add_argument("--project-validation", dest="ssh_qualify_project_validation", action="store_true", help="Also run the repository's real managed SSH validation path")
+    ssh_qualify.add_argument("--target", dest="ssh_qualify_target", default="", help="Target/profile used by --project-validation")
+    ssh_qualify.add_argument("--task", dest="ssh_qualify_tasks", action="append", default=[], help="Validation task used by --project-validation; repeatable")
+    ssh_qualify.add_argument("--single-validation", dest="ssh_qualify_validation_twice", action="store_false", help="Run one project validation instead of first + warm/incremental validation")
+    ssh_qualify.set_defaults(ssh_qualify_bootstrap=True, ssh_qualify_sync=True, ssh_qualify_validation_twice=True)
     ssh_doctor = ssh_sub.add_parser("doctor", help="Read-only capability discovery for a named SSH worker")
     ssh_doctor.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_doctor.add_argument("--format", choices=["text", "json"], default="text")
@@ -11539,6 +11543,10 @@ def _main_after_parse(
                         dry_run=bool(getattr(args, "ssh_qualify_dry_run", False)),
                         bootstrap=bool(getattr(args, "ssh_qualify_bootstrap", True)),
                         sync=bool(getattr(args, "ssh_qualify_sync", True)),
+                        project_validation=bool(getattr(args, "ssh_qualify_project_validation", False)),
+                        validation_target=str(getattr(args, "ssh_qualify_target", "") or ""),
+                        validation_tasks=tuple(str(item) for item in (getattr(args, "ssh_qualify_tasks", []) or []) if str(item).strip()),
+                        validation_twice=bool(getattr(args, "ssh_qualify_validation_twice", True)),
                     )
                 elif action == "bootstrap":
                     payload = bootstrap_worker(
@@ -11628,6 +11636,12 @@ def _main_after_parse(
                     ("total_seconds", str(perf.get("total_seconds", 0))),
                     ("returned_bytes", str(perf.get("returned_bytes", 0))),
                 ])
+                if payload.get("project_validation", {}).get("enabled"):
+                    rows.extend([
+                        ("validation.first_seconds", str(perf.get("project_validation_first_seconds", 0))),
+                        ("validation.second_seconds", str(perf.get("project_validation_second_seconds", 0))),
+                        ("validation.warm_ratio", str(perf.get("project_validation_warm_ratio", 0))),
+                    ])
             rows.append(("detail", payload.get("detail") or "qualification plan ready"))
             render_status_table(rows)
         elif action == "doctor":
