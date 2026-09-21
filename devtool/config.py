@@ -1950,6 +1950,12 @@ detached = false # whole-run devtool mode only
 # delete = true # delete stale mirrored source, never excluded remote caches
 # default_excludes = true # .gradle/, build/, Devtool build/stage output
 # exclude = [".idea/", "local-only/"] # optional rsync patterns; .git is synced
+# [ssh.hosts.tablet.resilience]
+# host_key_policy = "accept-new" # accept-new | strict | system
+# known_hosts = "" # optional dedicated local known_hosts file
+# run_root = "~/.cache/devtool/ssh-runs"
+# lease_timeout_seconds = 900
+# min_free_mb = 1024
 # Managed/ephemeral command-mode execution automatically bootstraps, syncs once,
 # and runs planned phases inside tablet-owned tmux sessions. Remote Gradle/SDK
 # caches remain worker-local and persist across source syncs.

@@ -770,10 +770,10 @@ _devtool() {
           ;;
         ssh)
           if (( ${#line} < 2 )); then
-            _values 'ssh worker action' doctor bootstrap sessions ls workspace ws sync retrieve return
+            _values 'ssh worker action' doctor bootstrap sessions ls workspace ws sync retrieve return runs resume cancel recover
           else
             case ${line[2]} in
-              doctor|sessions|ls|workspace|ws)
+              doctor|sessions|ls|workspace|ws|runs)
                 _arguments '1:worker profile:' '--format[output format]:format:(text json)'
                 ;;
               bootstrap)
@@ -782,8 +782,11 @@ _devtool() {
               sync)
                 _arguments '1:worker profile:' '--format[output format]:format:(text json)' '--dry-run[show exact repository delta without modifying worker]'
                 ;;
-              retrieve|return)
-                _arguments '1:worker profile:' '--format[output format]:format:(text json)' '--run-id[recover one Devtool run]:run-id:' '--session[recover one SSH phase session]:session:'
+              retrieve|return|resume|cancel)
+                _arguments '1:worker profile:' '--format[output format]:format:(text json)' '--run-id[select one Devtool run]:run-id:' '--session[select one SSH phase session]:session:'
+                ;;
+              recover)
+                _arguments '1:worker profile:' '--format[output format]:format:(text json)' '--run-id[restrict stale-run recovery to one Devtool run]:run-id:'
                 ;;
             esac
           fi

@@ -289,6 +289,59 @@ When a recovered bundle belongs to a persisted test run, Devtool also reconciles
 that run's SSH return provenance from partial/deferred to the recovered state
 without changing the stable TestSpec/operation identity or any test counts.
 
+### Resilient SSH worker runs and hardening
+
+Named SSH workers persist every command phase below the configured `run_root` and
+let the tablet's tmux server own the actual process. If the control connection
+drops while tmux is still running, the local wrapper maps SSH transport failure
+to the distinct recoverable status `125`; it does not kill the remote build or
+release its workspace lease. Inspect and reconnect with:
+
+```sh
+devtool ssh runs tablet
+devtool ssh resume tablet --run-id <run-id>
+# JSON resume is intentionally non-interactive and reports current state only.
+devtool ssh resume tablet --run-id <run-id> --format json
+devtool ssh cancel tablet --run-id <run-id>
+devtool ssh recover tablet
+```
+
+A managed/ephemeral workspace uses an atomic lease acquired before rsync. The
+lease spans all phases in one local execution plan, blocks concurrent writers,
+and is released on definitive completion/failure/cancellation. Transport loss
+keeps it while the matching tmux phase may still be active. Stale leases are
+reclaimed only when no matching tmux session exists and the configured
+`lease_timeout_seconds` has elapsed; explicit stale-run recovery reconciles the
+run state and its matching owned lease immediately. Manual `devtool ssh sync`
+uses the same lock while transferring but releases it as soon as the prewarm
+sync completes.
+
+Before managed execution Devtool checks the worker's reported free storage
+against `min_free_mb`. Named profiles default to `StrictHostKeyChecking=accept-new`
+while raw/unprofiled SSH keeps the system OpenSSH policy; profiles can choose
+`strict` and an optional dedicated `known_hosts` path. The same policy is used
+for SSH, SCP, rsync transport, management, and recovery operations.
+
+Environment names that look credential-bearing (tokens, passwords, API/private
+keys, signing/keystore credentials, and similar) are never embedded in the SSH
+argv. Their values are sent over SSH stdin into a mode-`0600` run-state file,
+sourced by the tmux phase, omitted from metadata except for key names, and
+removed on definitive completion, timeout/cancellation, resume reconciliation,
+or stale recovery. A transport-loss case keeps the file only while the remote
+phase may still need it. Local timeout/termination traps kill the owned tmux
+phase and release the matching lease rather than leaving a concurrent writer.
+
+Example policy:
+
+```toml
+[ssh.hosts.tablet.resilience]
+host_key_policy = "accept-new" # accept-new | strict | system
+known_hosts = ""                # optional local OpenSSH known_hosts file
+run_root = "~/.cache/devtool/ssh-runs"
+lease_timeout_seconds = 900
+min_free_mb = 1024
+```
+
 CLI values override environment variables (`DEVTOOL_SSH_HOST`,
 `DEVTOOL_SSH_PROFILE`, `DEVTOOL_SSH_PORT`, `DEVTOOL_SSH_USER`, `DEVTOOL_SSH_IDENTITY`,
 `DEVTOOL_SSH_CWD`, `DEVTOOL_SSH_SESSION`, `DEVTOOL_SSH_TOOL`,

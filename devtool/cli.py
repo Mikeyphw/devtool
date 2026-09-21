@@ -1014,6 +1014,23 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_retrieve.add_argument("--format", choices=["text", "json"], default="text")
     ssh_retrieve.add_argument("--run-id", default="", help="Restrict recovery to one local Devtool run id")
     ssh_retrieve.add_argument("--session", default="", help="Restrict recovery to one SSH tmux phase session")
+    ssh_runs = ssh_sub.add_parser("runs", help="List persisted Devtool SSH worker runs and tmux phase state")
+    ssh_runs.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_runs.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_resume = ssh_sub.add_parser("resume", help="Reattach to an active remote tmux phase or report its persisted status")
+    ssh_resume.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_resume.add_argument("--run-id", default="", help="Resume a specific Devtool SSH run; defaults to the newest run")
+    ssh_resume.add_argument("--session", default="", help="Resume a specific tmux phase session")
+    ssh_resume.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_cancel = ssh_sub.add_parser("cancel", help="Cancel Devtool-owned tmux phases for a remote run")
+    ssh_cancel.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_cancel.add_argument("--run-id", default="", help="Cancel a specific run; defaults to the newest run")
+    ssh_cancel.add_argument("--session", default="", help="Cancel only a specific tmux phase session")
+    ssh_cancel.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_recover = ssh_sub.add_parser("recover", help="Reconcile stale remote run records after interrupted SSH sessions")
+    ssh_recover.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_recover.add_argument("--run-id", default="", help="Restrict stale-run recovery to one run")
+    ssh_recover.add_argument("--format", choices=["text", "json"], default="text")
 
     bootstrap_cmd = subparsers.add_parser("bootstrap", help="Provision reusable destination-specific build toolchains")
     bootstrap_sub = bootstrap_cmd.add_subparsers(dest="bootstrap_command", required=True)
@@ -11429,6 +11446,7 @@ def _main_after_parse(
         from .ssh_worker import bootstrap_worker, resolve_worker_profile, session_payload, worker_doctor_payload
         from .ssh_workspace import sync_payload, workspace_payload
         from .ssh_returns import recover_return_bundles
+        from .ssh_resilience import runs_payload, resume_remote_run, cancel_remote_run, recover_stale_runs
 
         action = str(getattr(args, "ssh_command", "") or "")
         output_format = str(getattr(args, "format", "text") or "text")
@@ -11467,6 +11485,21 @@ def _main_after_parse(
                 )
                 from .test_runstore import reconcile_ssh_return_recovery
                 payload["runstore"] = reconcile_ssh_return_recovery(payload.get("results", []))
+            elif action == "runs":
+                payload = runs_payload(worker)
+            elif action == "resume":
+                payload = resume_remote_run(
+                    worker, run_id=str(getattr(args, "run_id", "") or ""),
+                    session=str(getattr(args, "session", "") or ""),
+                    attach=output_format != "json",
+                )
+            elif action == "cancel":
+                payload = cancel_remote_run(
+                    worker, run_id=str(getattr(args, "run_id", "") or ""),
+                    session=str(getattr(args, "session", "") or ""),
+                )
+            elif action == "recover":
+                payload = recover_stale_runs(worker, run_id=str(getattr(args, "run_id", "") or ""))
             else:
                 parser.error(f"Unknown ssh command: {action}")
                 return 2
@@ -11486,6 +11519,7 @@ def _main_after_parse(
             tools = probe.get("tools", {})
             workspace_cfg = payload.get("workspace", {})
             execution_cfg = payload.get("execution", {})
+            resilience_cfg = payload.get("resilience", {})
             rows = [
                 ("profile", payload.get("profile") or "-"),
                 ("destination", f"{payload.get('destination')}:{payload.get('port')}"),
@@ -11507,6 +11541,12 @@ def _main_after_parse(
                 ("persistent_remote_caches", "yes" if execution_cfg.get("persistent_remote_caches") else "no"),
                 ("automatic_returns", "yes" if execution_cfg.get("automatic_returns") else "no"),
                 ("return_recovery", "yes" if execution_cfg.get("return_recovery") else "no"),
+                ("resumable_runs", "yes" if execution_cfg.get("resumable_runs") else "no"),
+                ("workspace_leases", "yes" if execution_cfg.get("workspace_leases") else "no"),
+                ("host_key_policy", resilience_cfg.get("host_key_policy") or "system"),
+                ("run_state_root", resilience_cfg.get("run_root") or "-"),
+                ("lease_timeout_seconds", str(resilience_cfg.get("lease_timeout_seconds") or 0)),
+                ("min_free_mb", str(resilience_cfg.get("min_free_mb") or 0)),
             ]
             rows.extend((f"tool.{name}", path or "MISSING") for name, path in tools.items())
             rows.append(("sessions", ", ".join(payload.get("sessions", [])) or "none"))
@@ -11562,6 +11602,41 @@ def _main_after_parse(
             render_status_table(rows)
             for item in results:
                 print(f"{item.get('state', 'unknown'):>10}  {item.get('run_id', '')}  {item.get('session', '')}")
+        elif action == "runs":
+            records = payload.get("records", [])
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("destination", payload.get("destination") or "-"),
+                ("runs", str(len({item.get('run_id') for item in records}))),
+                ("active_phases", str(payload.get("active_count", 0))),
+                ("stale_phases", str(payload.get("stale_count", 0))),
+            ])
+            for item in records:
+                status = item.get("status")
+                print(f"{item.get('state','unknown'):>11}  rc={status if status is not None else '-':>3}  {item.get('run_id','')}  {item.get('session','')}")
+        elif action == "resume":
+            record = payload.get("record", {})
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("run_id", record.get("run_id") or "-"),
+                ("session", record.get("session") or "-"),
+                ("state", record.get("state") or "unknown"),
+                ("active", "yes" if record.get("active") else "no"),
+                ("status", str(record.get("status")) if record.get("status") is not None else "-"),
+                ("detail", payload.get("detail") or "-"),
+            ])
+        elif action == "cancel":
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("cancelled_phases", str(len(payload.get("cancelled", [])))),
+                ("status", "CANCELLED"),
+            ])
+        elif action == "recover":
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("recovered_phases", str(len(payload.get("recovered", [])))),
+                ("detail", payload.get("detail") or "-"),
+            ])
         else:
             workspace = payload.get("workspace", {})
             changes = payload.get("changes", [])

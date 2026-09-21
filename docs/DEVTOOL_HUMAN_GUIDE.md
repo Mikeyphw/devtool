@@ -2218,7 +2218,7 @@ Check or rewrite legacy kind/type aliases to canonical runner/platform syntax
 
 Inspect and bootstrap named SSH build workers
 
-**Subcommands:** `doctor`, `bootstrap`, `sessions`, `workspace`, `sync`, `retrieve`
+**Subcommands:** `doctor`, `bootstrap`, `sessions`, `workspace`, `sync`, `retrieve`, `runs`, `resume`, `cancel`, `recover`
 
 ### `devtool ssh doctor`
 
@@ -2284,6 +2284,47 @@ Retry retrieval of reports/artifacts from a prior SSH worker run
 | `--format FORMAT` | Choices: text, json |
 | `--run-id RUN_ID` | Restrict recovery to one local Devtool run id |
 | `--session SESSION` | Restrict recovery to one SSH tmux phase session |
+
+### `devtool ssh runs`
+
+List persisted Devtool SSH worker runs and tmux phase state
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh resume`
+
+Reattach to an active remote tmux phase or report its persisted status
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--run-id RUN_ID` | Resume a specific Devtool SSH run; defaults to the newest run |
+| `--session SESSION` | Resume a specific tmux phase session |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh cancel`
+
+Cancel Devtool-owned tmux phases for a remote run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--run-id RUN_ID` | Cancel a specific run; defaults to the newest run |
+| `--session SESSION` | Cancel only a specific tmux phase session |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh recover`
+
+Reconcile stale remote run records after interrupted SSH sessions
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--run-id RUN_ID` | Restrict stale-run recovery to one run |
+| `--format FORMAT` | Choices: text, json |
 
 ### `devtool bootstrap`
 

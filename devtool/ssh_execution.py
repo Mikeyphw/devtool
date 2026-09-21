@@ -11,7 +11,7 @@ plain JVM Gradle uses the project wrapper where available and provisions only
 missing Termux JDK/Gradle packages when policy permits.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import re
@@ -20,7 +20,7 @@ import subprocess
 import uuid
 from typing import Any, Iterable
 
-from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_remote_sh_argv
+from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_remote_sh_argv, worker_session_name
 from .ssh_worker import SSHWorkerProbe, bootstrap_worker, probe_worker
 from .ssh_workspace import (
     SSHWorkspaceSpec,
@@ -29,6 +29,7 @@ from .ssh_workspace import (
     sync_workspace,
     workspace_status,
 )
+from .ssh_resilience import SSHWorkspaceLease, ensure_remote_capacity, release_workspace_lease
 
 
 @dataclass(slots=True)
@@ -40,6 +41,10 @@ class SSHExecutionPreparation:
     bootstrap: dict[str, Any]
     sync: dict[str, Any]
     toolchain: dict[str, Any]
+    lease: dict[str, Any] = field(default_factory=dict)
+    capacity: dict[str, Any] = field(default_factory=dict)
+    run_id: str = ""
+    session_prefix: str = ""
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -58,6 +63,10 @@ class SSHExecutionPreparation:
             "ssh_source_revision": dict(self.sync.get("source_revision") or {}),
             "ssh_toolchain_kind": str(self.toolchain.get("kind") or "generic"),
             "ssh_toolchain_detail": str(self.toolchain.get("detail") or ""),
+            "ssh_workspace_lease": dict(self.lease),
+            "ssh_capacity": dict(self.capacity),
+            "ssh_run_id": self.run_id,
+            "ssh_session_prefix": self.session_prefix,
         }
 
 
@@ -320,54 +329,73 @@ def prepare_ssh_command_execution(
         if not dry_run:
             worker = probe_worker(config)
 
+    capacity = ensure_remote_capacity(config, free_storage_kib=worker.free_storage_kib)
     workspace: SSHWorkspaceSpec | None = None
     sync: dict[str, Any] = {}
     status_payload: dict[str, Any] = {}
-    if config.workspace_mode == "existing":
-        workspace = resolve_workspace_spec(config, repo_root, remote_home=worker.home)
-        status = workspace_status(config, workspace)
-        if not status.exists or not status.is_directory or not status.safe:
-            raise ValueError(f"Existing SSH workspace is unavailable or unsafe: {workspace.remote_path}: {status.detail}")
-        remote_root = status.canonical_path or workspace.remote_path
-        status_payload = status.as_dict()
-    else:
-        operation_id = str(config.operation_id or os.environ.get("DEVTOOL_RUN_ID") or "").strip()
-        if config.workspace_mode == "ephemeral" and not operation_id:
-            operation_id = uuid.uuid4().hex[:12]
-        workspace = resolve_workspace_spec(
-            config,
-            repo_root,
-            operation_id=operation_id,
-            remote_home=worker.home,
-        )
-        if dry_run:
-            # If bootstrap itself is only planned, rsync may not exist yet. Keep
-            # validate --dry-run strictly non-mutating and expose that deferred
-            # sync instead of turning a planned bootstrap into a false failure.
-            if worker.tools.get("rsync"):
-                sync = plan_workspace_sync(config, workspace)
-            else:
-                sync = {
-                    "schema_version": 1,
-                    "kind": "ssh-workspace-sync-plan",
-                    "ok": True,
-                    "dry_run": True,
-                    "workspace": workspace.as_dict(),
-                    "changes": [],
-                    "change_count": 0,
-                    "would_create_workspace": True,
-                    "detail": "sync planning deferred until the planned worker bootstrap installs rsync",
-                }
-            remote_root = workspace.remote_path
-        else:
-            sync = sync_workspace(config, workspace, dry_run=False)
-            if not bool(sync.get("ok")):
-                raise ValueError(str(sync.get("detail") or "SSH managed workspace synchronization failed"))
-            after = dict(sync.get("status_after") or {})
-            remote_root = str(after.get("canonical_path") or workspace.remote_path)
-            status_payload = after
+    lease_obj = None
+    run_identity = str(config.operation_id or os.environ.get("DEVTOOL_RUN_ID") or "").strip()
+    session_prefix = ""
 
-    toolchain = ensure_remote_toolchain(config, external, worker=worker, dry_run=dry_run)
+    try:
+        if config.workspace_mode == "existing":
+            workspace = resolve_workspace_spec(config, repo_root, remote_home=worker.home)
+            status = workspace_status(config, workspace)
+            if not status.exists or not status.is_directory or not status.safe:
+                raise ValueError(f"Existing SSH workspace is unavailable or unsafe: {workspace.remote_path}: {status.detail}")
+            remote_root = status.canonical_path or workspace.remote_path
+            status_payload = status.as_dict()
+            if not run_identity:
+                run_identity = workspace.instance_id
+            session_prefix = worker_session_name(config, operation="commands", repository=remote_root, run_id=run_identity)
+        else:
+            if config.workspace_mode == "ephemeral" and not run_identity:
+                run_identity = uuid.uuid4().hex[:12]
+            workspace = resolve_workspace_spec(
+                config,
+                repo_root,
+                operation_id=run_identity,
+                remote_home=worker.home,
+            )
+            if not run_identity:
+                run_identity = workspace.instance_id
+            if dry_run:
+                if worker.tools.get("rsync"):
+                    sync = plan_workspace_sync(config, workspace)
+                else:
+                    sync = {
+                        "schema_version": 1,
+                        "kind": "ssh-workspace-sync-plan",
+                        "ok": True,
+                        "dry_run": True,
+                        "workspace": workspace.as_dict(),
+                        "changes": [],
+                        "change_count": 0,
+                        "would_create_workspace": True,
+                        "detail": "sync planning deferred until the planned worker bootstrap installs rsync",
+                    }
+                remote_root = workspace.remote_path
+                session_prefix = worker_session_name(config, operation="commands", repository=remote_root, run_id=run_identity)
+            else:
+                sync = sync_workspace(config, workspace, dry_run=False, retain_lease=True)
+                if not bool(sync.get("ok")):
+                    raise ValueError(str(sync.get("detail") or "SSH managed workspace synchronization failed"))
+                after = dict(sync.get("status_after") or {})
+                remote_root = str(after.get("canonical_path") or workspace.remote_path)
+                status_payload = after
+                lease_payload = sync.get("lease") if isinstance(sync.get("lease"), dict) else {}
+                if lease_payload:
+                    lease_obj = SSHWorkspaceLease(**lease_payload)
+                session_prefix = str((lease_payload or {}).get("session_prefix") or "") or worker_session_name(
+                    config, operation="commands", repository=remote_root, run_id=run_identity
+                )
+
+        toolchain = ensure_remote_toolchain(config, external, worker=worker, dry_run=dry_run)
+    except Exception:
+        if lease_obj is not None:
+            release_workspace_lease(config, lease_obj)
+        raise
+
     return SSHExecutionPreparation(
         remote_root=remote_root,
         worker=worker,
@@ -376,4 +404,8 @@ def prepare_ssh_command_execution(
         bootstrap=bootstrap,
         sync=sync,
         toolchain=toolchain,
+        lease=lease_obj.as_dict() if lease_obj is not None else {},
+        capacity=capacity,
+        run_id=run_identity,
+        session_prefix=session_prefix,
     )

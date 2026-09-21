@@ -27,6 +27,7 @@ from .ssh_worker import probe_worker
 
 _WORKSPACE_MARKER = ".devtool-workspace-id"
 _WORKSPACE_METADATA = ".devtool-remote-workspace.json"
+_SYNC_STATE = ".devtool-sync-state.json"
 _REGISTRY_DIR = ".registry"
 _DEFAULT_EXCLUDES = (
     ".gradle/",
@@ -38,6 +39,7 @@ _DEFAULT_EXCLUDES = (
 _RESERVED_EXCLUDES = (
     f"/{_WORKSPACE_MARKER}",
     f"/{_WORKSPACE_METADATA}",
+    f"/{_SYNC_STATE}",
 )
 _VALID_MODES = {"existing", "managed", "ephemeral"}
 
@@ -577,7 +579,29 @@ def _write_remote_metadata(config: SSHRunnerConfig, spec: SSHWorkspaceSpec, payl
         raise ValueError(f"SSH workspace metadata update failed with exit {completed.returncode}: {detail or 'no diagnostic output'}")
 
 
-def sync_workspace(config: SSHRunnerConfig, spec: SSHWorkspaceSpec, *, dry_run: bool = False) -> dict[str, Any]:
+
+
+def _write_sync_state(config: SSHRunnerConfig, spec: SSHWorkspaceSpec, payload: dict[str, Any]) -> None:
+    if spec.mode == "existing":
+        return
+    body = json.dumps(payload, sort_keys=True, indent=2) + "\n"
+    target = spec.remote_path.rstrip("/") + "/" + _SYNC_STATE
+    script = (
+        f"set -eu; umask 077; cat > {shlex.quote(target + '.tmp')}; "
+        f"mv -f -- {shlex.quote(target + '.tmp')} {shlex.quote(target)}"
+    )
+    completed = _run_remote(config, script, input_text=body)
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise ValueError(f"SSH workspace sync-state update failed with exit {completed.returncode}: {detail or 'no diagnostic output'}")
+
+def sync_workspace(
+    config: SSHRunnerConfig,
+    spec: SSHWorkspaceSpec,
+    *,
+    dry_run: bool = False,
+    retain_lease: bool = False,
+) -> dict[str, Any]:
     if dry_run:
         return plan_workspace_sync(config, spec)
 
@@ -588,49 +612,89 @@ def sync_workspace(config: SSHRunnerConfig, spec: SSHWorkspaceSpec, *, dry_run: 
     if not probe.tools.get("rsync"):
         raise ValueError("SSH workspace sync requires rsync on the remote worker; run 'devtool ssh bootstrap' first")
 
-    status_before = workspace_status(config, spec)
-    prepared = prepare_workspace(config, spec)
-    canonical = prepared.canonical_path or spec.remote_path
-    argv = _rsync_argv(
-        config,
-        spec,
-        dry_run=False,
-        destination_override=f"{config.destination}:{canonical.rstrip('/')}/",
-    )
-    completed = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=None)
-    changes = _parse_rsync_changes(completed.stdout)
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "").strip()
+    lease = None
+    if spec.mode != "existing":
+        from .ssh_resilience import acquire_workspace_lease, release_workspace_lease
+        from .ssh_tmux_runner import worker_session_name
+        run_id = str(config.operation_id or os.environ.get("DEVTOOL_RUN_ID") or spec.instance_id).strip()
+        session_prefix = worker_session_name(config, operation="commands", repository=spec.remote_path, run_id=run_id)
+        lease = acquire_workspace_lease(config, spec, run_id=run_id, session_prefix=session_prefix, runner=_run_remote)
+
+    try:
+        status_before = workspace_status(config, spec)
+        prepared = prepare_workspace(config, spec)
+        canonical = prepared.canonical_path or spec.remote_path
+        sync_id = _new_sync_id(spec)
+        source_revision = _source_revision(spec.repo_root)
+        _write_sync_state(config, spec, {
+            "schema_version": 1, "state": "in-progress", "sync_id": sync_id,
+            "started_unix": int(time.time()), "source_revision": source_revision,
+        })
+        argv = _rsync_argv(
+            config,
+            spec,
+            dry_run=False,
+            destination_override=f"{config.destination}:{canonical.rstrip('/')}/",
+        )
+        completed = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=None)
+        changes = _parse_rsync_changes(completed.stdout)
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip()
+            _write_sync_state(config, spec, {
+                "schema_version": 1, "state": "partial", "recoverable": True, "sync_id": sync_id,
+                "updated_unix": int(time.time()), "returncode": int(completed.returncode),
+                "source_revision": source_revision, "change_count": len(changes),
+            })
+            if lease is not None:
+                release_workspace_lease(config, lease, runner=_run_remote)
+            return {
+                "schema_version": 1,
+                "kind": "ssh-workspace-sync",
+                "ok": False,
+                "recoverable": True,
+                "state": "partial",
+                "sync_id": sync_id,
+                "workspace": spec.as_dict(),
+                "status_before": status_before.as_dict(),
+                "changes": changes,
+                "change_count": len(changes),
+                "detail": detail or f"rsync failed with exit {completed.returncode}; the next sync will resume from rsync partial state",
+            }
+        payload = _metadata_payload(spec, changes=len(changes), sync_id=sync_id, source_revision=source_revision)
+        _write_sync_state(config, spec, {
+            "schema_version": 1, "state": "complete", "recoverable": False, "sync_id": sync_id,
+            "completed_unix": int(time.time()), "source_revision": source_revision, "change_count": len(changes),
+        })
+        _write_remote_metadata(config, spec, payload)
+        status_after = workspace_status(config, spec)
+        lease_payload = lease.as_dict() if lease is not None else {}
+        if lease is not None and not retain_lease:
+            # A manual/prewarm sync must never leave a workspace locked. Only
+            # execution preparation deliberately carries the lease into the
+            # subsequent remote phase plan.
+            release_workspace_lease(config, lease, runner=_run_remote)
+            lease_payload = {}
+            lease = None
         return {
             "schema_version": 1,
             "kind": "ssh-workspace-sync",
-            "ok": False,
+            "ok": status_after.exists and status_after.safe,
             "workspace": spec.as_dict(),
             "status_before": status_before.as_dict(),
+            "status_after": status_after.as_dict(),
             "changes": changes,
             "change_count": len(changes),
-            "detail": detail or f"rsync failed with exit {completed.returncode}",
+            "sync_id": sync_id,
+            "source_revision": source_revision,
+            "delete_enabled": spec.delete,
+            "lease": lease_payload,
+            "detail": "workspace synchronized" if status_after.safe else status_after.detail,
         }
-    sync_id = _new_sync_id(spec)
-    source_revision = _source_revision(spec.repo_root)
-    payload = _metadata_payload(spec, changes=len(changes), sync_id=sync_id, source_revision=source_revision)
-    _write_remote_metadata(config, spec, payload)
-    status_after = workspace_status(config, spec)
-    return {
-        "schema_version": 1,
-        "kind": "ssh-workspace-sync",
-        "ok": status_after.exists and status_after.safe,
-        "workspace": spec.as_dict(),
-        "status_before": status_before.as_dict(),
-        "status_after": status_after.as_dict(),
-        "changes": changes,
-        "change_count": len(changes),
-        "sync_id": sync_id,
-        "source_revision": source_revision,
-        "delete_enabled": spec.delete,
-        "detail": "workspace synchronized" if status_after.safe else status_after.detail,
-    }
-
+    except Exception:
+        if lease is not None:
+            from .ssh_resilience import release_workspace_lease
+            release_workspace_lease(config, lease, runner=_run_remote)
+        raise
 
 def workspace_payload(config: SSHRunnerConfig, repo_root: str | Path) -> dict[str, Any]:
     probe = probe_worker(config)

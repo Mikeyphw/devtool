@@ -322,12 +322,15 @@ def test_managed_sync_writes_registry_metadata_after_success(tmp_path: Path, mon
     assert result["ok"] is True
     assert result["change_count"] == 1
     assert remote_writes
-    script, body = remote_writes[-1]
-    assert "/.registry/" in script
+    registry_writes = [(script, body) for script, body in remote_writes if "/.registry/" in script]
+    assert registry_writes
+    script, body = registry_writes[-1]
     metadata = json.loads(body or "{}")
     assert metadata["workspace_id"] == spec.workspace_id
     assert metadata["remote_path"] == spec.remote_path
     assert metadata["last_change_count"] == 1
+    assert result["lease"] == {}  # manual/prewarm sync releases its lease
+    assert any("refusing to release a lease owned by another run" in script for script, _ in remote_writes)
 
 
 def test_existing_sync_does_not_write_devtool_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
