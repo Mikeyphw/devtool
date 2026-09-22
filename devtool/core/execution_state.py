@@ -50,6 +50,9 @@ class ExecutionProcessState:
     stdout_events: int = 0
     stderr_events: int = 0
     last_output: str = ""
+    failure_kind: str = ""
+    log_path: str = ""
+    evidence: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -62,6 +65,9 @@ class ExecutionDiagnosticState:
     file: str = ""
     line: int | None = None
     column: int | None = None
+    process_id: str = ""
+    failure_kind: str = ""
+    log_path: str = ""
     evidence: tuple[str, ...] = ()
     timestamp: str = ""
     source: str = ""
@@ -76,6 +82,10 @@ class ExecutionArtifactState:
     size: int | None = None
     artifact_type: str = ""
     producer_task: str = ""
+    producer_node_id: str = ""
+    process_id: str = ""
+    verification_status: str = ""
+    registry_artifact_id: str = ""
     timestamp: str = ""
     source: str = ""
 
@@ -102,6 +112,9 @@ class ExecutionNodeState:
     exit_code: int | None = None
     duration_seconds: float = 0.0
     failure_kind: str = ""
+    failure_process_id: str = ""
+    primary_failure_diagnostic_id: str = ""
+    evidence_refs: list[str] = field(default_factory=list)
     blocked_reason: str = ""
 
 
@@ -444,6 +457,9 @@ class ExecutionNodeSnapshot:
     exit_code: int | None
     duration_seconds: float
     failure_kind: str
+    failure_process_id: str
+    primary_failure_diagnostic_id: str
+    evidence_refs: tuple[str, ...]
     blocked_reason: str
 
     @classmethod
@@ -469,6 +485,9 @@ class ExecutionNodeSnapshot:
             exit_code=state.exit_code,
             duration_seconds=state.duration_seconds,
             failure_kind=state.failure_kind,
+            failure_process_id=state.failure_process_id,
+            primary_failure_diagnostic_id=state.primary_failure_diagnostic_id,
+            evidence_refs=tuple(state.evidence_refs),
             blocked_reason=state.blocked_reason,
         )
 
@@ -494,6 +513,9 @@ class ExecutionNodeSnapshot:
             "exit_code": self.exit_code,
             "duration_seconds": self.duration_seconds,
             "failure_kind": self.failure_kind,
+            "failure_process_id": self.failure_process_id,
+            "primary_failure_diagnostic_id": self.primary_failure_diagnostic_id,
+            "evidence_refs": list(self.evidence_refs),
             "blocked_reason": self.blocked_reason,
         }
 
@@ -513,6 +535,9 @@ class ExecutionProcessSnapshot:
     stdout_events: int
     stderr_events: int
     last_output: str
+    failure_kind: str
+    log_path: str
+    evidence: tuple[str, ...]
 
     @classmethod
     def from_state(cls, state: ExecutionProcessState) -> "ExecutionProcessSnapshot":
@@ -533,6 +558,9 @@ class ExecutionProcessSnapshot:
             "stdout_events": self.stdout_events,
             "stderr_events": self.stderr_events,
             "last_output": self.last_output,
+            "failure_kind": self.failure_kind,
+            "log_path": self.log_path,
+            "evidence": list(self.evidence),
         }
 
 
@@ -546,6 +574,9 @@ class ExecutionDiagnosticSnapshot:
     file: str
     line: int | None
     column: int | None
+    process_id: str
+    failure_kind: str
+    log_path: str
     evidence: tuple[str, ...]
     timestamp: str
     source: str
@@ -569,6 +600,10 @@ class ExecutionArtifactSnapshot:
     size: int | None
     artifact_type: str
     producer_task: str
+    producer_node_id: str
+    process_id: str
+    verification_status: str
+    registry_artifact_id: str
     timestamp: str
     source: str
 
@@ -608,7 +643,7 @@ class ExecutionSnapshot:
     @classmethod
     def from_state(cls, state: ExecutionRunState) -> "ExecutionSnapshot":
         return cls(
-            schema_version=2,
+            schema_version=3,
             run_id=state.run_id,
             status=state.status.value,
             command=state.command,

@@ -247,6 +247,18 @@ class ExecutionReducer:
         node.exit_code = int(event.exit_code)
         node.duration_seconds += float(event.duration_seconds or 0.0)
         node.failure_kind = str(event.failure_kind or "")
+        node.failure_process_id = str(event.process_id or node.failure_process_id or "")
+        if event.diagnostic_ids:
+            for diagnostic_id in event.diagnostic_ids:
+                diagnostic_id = str(diagnostic_id)
+                if diagnostic_id and diagnostic_id not in node.diagnostic_ids:
+                    node.diagnostic_ids.append(diagnostic_id)
+            if status is ExecutionStatus.FAILED and not node.primary_failure_diagnostic_id:
+                node.primary_failure_diagnostic_id = str(event.diagnostic_ids[0])
+        for evidence in event.evidence:
+            evidence = str(evidence)
+            if evidence and evidence not in node.evidence_refs:
+                node.evidence_refs.append(evidence)
         node.finished_at = event.timestamp
         node.metadata.update(dict(event.metadata or {}))
 
@@ -299,12 +311,25 @@ class ExecutionReducer:
             run.processes[process_id] = process
         process.exit_code = int(event.exit_code)
         process.duration_seconds = float(event.duration_seconds or 0.0)
+        process.failure_kind = str(event.failure_kind or process.failure_kind or "")
+        process.log_path = str(event.log_path or process.log_path or "")
+        process.evidence = tuple(dict.fromkeys((*process.evidence, *(str(value) for value in event.evidence if str(value)))))
         process.finished_at = event.timestamp
         process.status = "succeeded" if process.exit_code == 0 else ("cancelled" if process.exit_code == 130 else "failed")
+        if process.node_id and process.node_id in run.nodes and process.exit_code != 0:
+            node = run.nodes[process.node_id]
+            node.failure_process_id = process_id
+            if process.failure_kind:
+                node.failure_kind = process.failure_kind
+            for evidence in process.evidence:
+                if evidence not in node.evidence_refs:
+                    node.evidence_refs.append(evidence)
+            if process.log_path and process.log_path not in node.evidence_refs:
+                node.evidence_refs.append(process.log_path)
 
     def _diagnostic(self, run: ExecutionRunState, event: "DiagnosticEmitted") -> None:
         node_id = self._resolve_existing_node_id(run, event, allow_active_match=True)
-        diagnostic_id = f"{event.event_id}:diagnostic"
+        diagnostic_id = str(event.diagnostic_id or "").strip() or f"{event.event_id}:diagnostic"
         diagnostic = ExecutionDiagnosticState(
             diagnostic_id=diagnostic_id,
             node_id=node_id,
@@ -314,6 +339,9 @@ class ExecutionReducer:
             file=str(event.file or ""),
             line=event.line,
             column=event.column,
+            process_id=str(event.process_id or ""),
+            failure_kind=str(event.failure_kind or ""),
+            log_path=str(event.log_path or ""),
             evidence=tuple(str(value) for value in event.evidence),
             timestamp=event.timestamp,
             source=str(event.source or ""),
@@ -323,27 +351,61 @@ class ExecutionReducer:
             node = run.nodes[node_id]
             if diagnostic_id not in node.diagnostic_ids:
                 node.diagnostic_ids.append(diagnostic_id)
+            if diagnostic.process_id and diagnostic.process_id not in node.process_ids:
+                # The process may be reduced slightly later through a legacy
+                # bridge; retaining the reference here keeps failure ownership
+                # explicit without fabricating a process record.
+                pass
+            if diagnostic.failure_kind and not node.failure_kind:
+                node.failure_kind = diagnostic.failure_kind
+            for evidence in (*diagnostic.evidence, diagnostic.log_path):
+                if evidence and evidence not in node.evidence_refs:
+                    node.evidence_refs.append(evidence)
+            if diagnostic.severity in {"error", "fatal"} and not node.primary_failure_diagnostic_id:
+                node.primary_failure_diagnostic_id = diagnostic_id
+            if diagnostic.severity in {"error", "fatal"} and diagnostic.process_id:
+                node.failure_process_id = diagnostic.process_id
 
     def _artifact(self, run: ExecutionRunState, event: "ArtifactProduced") -> None:
-        node_id = self._resolve_existing_node_id(
-            run,
-            event,
-            label=str(event.producer_task or ""),
-            allow_active_match=True,
-        )
-        artifact_id = str(event.artifact_id or "").strip() or f"{event.event_id}:artifact"
-        artifact = ExecutionArtifactState(
-            artifact_id=artifact_id,
-            node_id=node_id,
-            path=str(event.path or ""),
-            sha256=str(event.sha256 or ""),
-            size=event.size,
-            artifact_type=str(event.artifact_type or ""),
-            producer_task=str(event.producer_task or ""),
-            timestamp=event.timestamp,
-            source=str(event.source or ""),
-        )
-        run.artifacts[artifact_id] = artifact
+        producer_node_id = str(event.producer_node_id or event.node_id or "")
+        if producer_node_id and producer_node_id in run.nodes:
+            node_id = producer_node_id
+        else:
+            node_id = self._resolve_existing_node_id(
+                run,
+                event,
+                label=str(event.producer_task or ""),
+                allow_active_match=True,
+            )
+        requested_id = str(event.artifact_id or "").strip()
+        # A live Gradle artifact event may be followed by the persistent artifact
+        # registry event for the same producer/path. Merge those observations
+        # instead of showing the UI two artifacts for one file.
+        artifact = None
+        if event.path:
+            for candidate in run.artifacts.values():
+                if candidate.path == str(event.path) and candidate.producer_node_id == str(node_id or producer_node_id):
+                    artifact = candidate
+                    break
+        if artifact is None:
+            artifact_id = requested_id or f"{event.event_id}:artifact"
+            artifact = ExecutionArtifactState(artifact_id=artifact_id)
+            run.artifacts[artifact_id] = artifact
+        else:
+            artifact_id = artifact.artifact_id
+            if requested_id and requested_id != artifact_id:
+                artifact.registry_artifact_id = requested_id
+        artifact.node_id = str(node_id or "")
+        artifact.producer_node_id = str(producer_node_id or node_id or "")
+        artifact.path = str(event.path or artifact.path or "")
+        artifact.sha256 = str(event.sha256 or artifact.sha256 or "")
+        artifact.size = event.size if event.size is not None else artifact.size
+        artifact.artifact_type = str(event.artifact_type or artifact.artifact_type or "")
+        artifact.producer_task = str(event.producer_task or artifact.producer_task or "")
+        artifact.process_id = str(event.process_id or artifact.process_id or "")
+        artifact.verification_status = str(event.verification_status or artifact.verification_status or "")
+        artifact.timestamp = event.timestamp or artifact.timestamp
+        artifact.source = str(event.source or artifact.source or "")
         if node_id:
             node = run.nodes[node_id]
             if artifact_id not in node.artifact_ids:

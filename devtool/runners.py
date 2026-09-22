@@ -1571,6 +1571,16 @@ def _run_process_live(
             _close_live_log()
             return 127, str(exc)
 
+    if execution_adapter is not None:
+        try:
+            process_id = execution_adapter.process_started(pid=int(proc.pid), argv=argv, cwd=cwd)
+            if structured_state is not None:
+                structured_state["execution_process_id"] = process_id
+                structured_state["execution_pid"] = int(proc.pid)
+        except Exception:
+            # Execution telemetry must never make the child process itself fail.
+            pass
+
     output_parts: list[str] = []
     go_test_stream = None
     if progress_parser == "go-test-json":
@@ -2542,6 +2552,7 @@ def run_specs(
                         heartbeat_callback=heartbeat_callback,
                         progress_callback=_capture_progress,
                         structured_state=structured_process_state,
+                        execution_adapter=execution_adapter,
                     )
                 else:
                     returncode, output = _run_process_live(
@@ -2574,6 +2585,7 @@ def run_specs(
                         heartbeat_callback=heartbeat_callback,
                         progress_callback=_capture_progress,
                         structured_state=structured_process_state,
+                        execution_adapter=execution_adapter,
                     )
         finally:
             if cleanup_dir:
@@ -3089,10 +3101,39 @@ def run_specs(
                 result_metadata["workflow_node_state"] = "running"
             result_metadata["workflow_node_statuses"] = dict(workflow_node_status)
 
-        result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind, metadata=result_metadata)
-        results.append(result)
+        diagnostic_ids: list[str] = []
+        if execution_adapter is not None:
+            try:
+                execution_adapter.process_exited(
+                    exit_code=returncode,
+                    duration_seconds=duration,
+                    failure_kind=failure_kind,
+                    log_path=log_file,
+                    evidence=(log_file,) if log_file else (),
+                )
+            except Exception:
+                pass
+        has_error_diagnostic = False
         for issue in issues:
-            if str(issue.severity).lower() == "warning":
+            severity = str(issue.severity or "warning").strip().lower()
+            if severity in {"error", "fatal"}:
+                has_error_diagnostic = True
+            if execution_adapter is not None:
+                try:
+                    diagnostic_ids.append(execution_adapter.diagnostic(
+                        severity=severity,
+                        code=str(issue.code or ""),
+                        message=str(issue.message or ""),
+                        file=str(issue.file or ""),
+                        line=issue.line,
+                        failure_kind=failure_kind if severity in {"error", "fatal"} else "",
+                        log_path=log_file,
+                        evidence=(log_file,) if log_file else (),
+                    ))
+                    continue
+                except Exception:
+                    pass
+            if severity == "warning":
                 publish_event(WarningDetected(
                     run_id=event_run_id,
                     message=str(issue.message or ""),
@@ -3104,6 +3145,24 @@ def run_specs(
                     source="runner",
                     metadata={"task": spec.name},
                 ))
+
+        if returncode not in {0, 130} and not has_error_diagnostic and execution_adapter is not None:
+            try:
+                diagnostic_ids.append(execution_adapter.diagnostic(
+                    severity="error",
+                    code="PROCESS_EXIT",
+                    message=f"{spec.name} exited with code {returncode}",
+                    failure_kind=failure_kind,
+                    log_path=log_file,
+                    evidence=(log_file,) if log_file else (),
+                ))
+            except Exception:
+                pass
+
+        result_metadata["execution_process_id"] = execution_adapter.active_process_id if execution_adapter is not None else ""
+        result_metadata["execution_diagnostic_ids"] = list(diagnostic_ids)
+        result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind, metadata=result_metadata)
+        results.append(result)
         command_status = "cancelled" if returncode == 130 else "succeeded" if returncode == 0 else "failed"
         if command_part_node_id:
             publish_event(NodeFinished(
@@ -3114,6 +3173,9 @@ def run_specs(
                 exit_code=returncode,
                 duration_seconds=duration,
                 failure_kind=failure_kind,
+                process_id=execution_adapter.active_process_id if execution_adapter is not None else "",
+                diagnostic_ids=tuple(diagnostic_ids),
+                evidence=(log_file,) if log_file else (),
                 source="runner",
                 metadata={"part_index": workflow_part_index, "part_total": workflow_part_total},
             ))
@@ -3125,6 +3187,9 @@ def run_specs(
             exit_code=returncode,
             duration_seconds=duration,
             failure_kind=failure_kind,
+            process_id=(execution_adapter.active_process_id if execution_adapter is not None and not command_part_node_id else ""),
+            diagnostic_ids=(tuple(diagnostic_ids) if not command_part_node_id else ()),
+            evidence=((log_file,) if log_file and not command_part_node_id else ()),
             node_id=event_node_id,
             parent_id=workflow_parent_id,
             source="runner",

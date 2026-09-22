@@ -163,12 +163,17 @@ class NodeFinished(DevtoolEvent):
     exit_code: int = 0
     duration_seconds: float = 0.0
     failure_kind: str = ""
+    process_id: str = ""
+    diagnostic_ids: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = ()
 
     protocol_type: ClassVar[str] = "node.finished"
 
     def __post_init__(self) -> None:
         fallback = ExecutionStatus.SUCCEEDED if int(self.exit_code or 0) == 0 else ExecutionStatus.FAILED
         self.status = canonical_status_value(self.status, default=fallback)
+        self.diagnostic_ids = tuple(str(value) for value in (self.diagnostic_ids or ()))
+        self.evidence = tuple(str(value) for value in (self.evidence or ()))
 
 
 @dataclass(slots=True)
@@ -211,18 +216,28 @@ class ProcessExited(DevtoolEvent):
     process_id: str = ""
     exit_code: int = 0
     duration_seconds: float = 0.0
+    failure_kind: str = ""
+    log_path: str = ""
+    evidence: tuple[str, ...] = ()
 
     protocol_type: ClassVar[str] = "process.exited"
+
+    def __post_init__(self) -> None:
+        self.evidence = tuple(str(value) for value in (self.evidence or ()))
 
 
 @dataclass(slots=True)
 class DiagnosticEmitted(DevtoolEvent):
+    diagnostic_id: str = ""
     severity: str = "warning"
     code: str = ""
     message: str = ""
     file: str = ""
     line: int | None = None
     column: int | None = None
+    process_id: str = ""
+    failure_kind: str = ""
+    log_path: str = ""
     evidence: tuple[str, ...] = ()
 
     protocol_type: ClassVar[str] = "diagnostic.emitted"
@@ -244,6 +259,9 @@ class ArtifactProduced(DevtoolEvent):
     size: int | None = None
     artifact_type: str = ""
     producer_task: str = ""
+    producer_node_id: str = ""
+    process_id: str = ""
+    verification_status: str = ""
 
     protocol_type: ClassVar[str] = "artifact.produced"
 
@@ -361,6 +379,9 @@ class ArtifactCreated(ArtifactProduced):
                 self.size = int(self.metadata["size"])
             self.artifact_type = self.artifact_type or str(self.metadata.get("type") or "")
             self.producer_task = self.producer_task or str(self.metadata.get("producer_task") or "")
+            self.producer_node_id = self.producer_node_id or str(self.metadata.get("producer_node_id") or self.metadata.get("node_id") or self.metadata.get("workflow_node_key") or "")
+            self.process_id = self.process_id or str(self.metadata.get("process_id") or self.metadata.get("execution_process_id") or "")
+            self.verification_status = self.verification_status or str(self.metadata.get("verification_status") or "")
         ArtifactProduced.__post_init__(self)
 
 
@@ -430,7 +451,7 @@ _EVENT_BY_PROTOCOL_TYPE: dict[str, type[DevtoolEvent]] = {}
 for _event_type in _EVENT_CLASSES:
     _EVENT_BY_PROTOCOL_TYPE.setdefault(_event_type.protocol_type, _event_type)
 
-_TUPLE_FIELDS = {"argv", "depends_on", "blocked_by", "evidence"}
+_TUPLE_FIELDS = {"argv", "depends_on", "blocked_by", "diagnostic_ids", "evidence"}
 
 
 def event_from_dict(payload: dict[str, Any], *, allow_unknown: bool = True) -> DevtoolEvent:
