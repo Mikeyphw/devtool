@@ -1040,7 +1040,9 @@ def _stage_support_files_for_spec(
     staged: list[tuple[Path, str]] = []
     seen: dict[Path, str] = {}
     remote_support_dir = _remote_join(_operation_stage_root(config, session), "support")
-    helper_values = {str(metadata.get("android_builder") or "").strip()} - {""}
+    android_builder_value = str(metadata.get("android_builder") or "").strip()
+    helper_values = {android_builder_value} - {""}
+    android_builder_path = Path(android_builder_value).expanduser() if android_builder_value else None
     raw_helpers = metadata.get("ssh_local_helper_files")
     if isinstance(raw_helpers, (list, tuple)):
         helper_values.update(str(value).strip() for value in raw_helpers if str(value).strip())
@@ -1072,6 +1074,21 @@ def _stage_support_files_for_spec(
             remote = _remote_join(remote_support_dir, f"{digest}-{path.name}")
             seen[path] = remote
             staged.append((path, remote))
+            if android_builder_path is not None:
+                try:
+                    is_android_builder = path.resolve() == android_builder_path.resolve()
+                except OSError:
+                    is_android_builder = path == android_builder_path
+                if is_android_builder:
+                    companion = path.with_name("termux_toolchains.py")
+                    if not companion.is_file():
+                        raise ValueError(
+                            "SSH Android builder runtime is incomplete: missing local toolchain companion "
+                            f"{companion}. Re-stage the Android builder before remote execution."
+                        )
+                    companion_remote = _remote_join(remote_support_dir, "termux_toolchains.py")
+                    if not any(existing_remote == companion_remote for _local, existing_remote in staged):
+                        staged.append((companion, companion_remote))
         rewritten.append(remote)
     if staged and not dry_run:
         _ensure_remote_dir(config, remote_support_dir)
