@@ -22,6 +22,8 @@ from typing import Any
 from .xdg import state_dir
 
 from .ipc import IpcPublisher, ensure_ipc_server
+from .core.events.runtime import get_event_bus
+from .core.execution_subscribers import ExecutionProjectionSubscriber
 
 from .console_utils import resolve_cli_path
 from .models import OperationResult
@@ -890,6 +892,7 @@ class TaskerProgressSink:
     _heartbeat_thread: threading.Thread | None = None
     _cancel_requested: threading.Event = field(default_factory=threading.Event)
     _ipc_publisher: IpcPublisher | None = None
+    _execution_projection: ExecutionProjectionSubscriber | None = None
 
     @property
     def state_file(self) -> Path:
@@ -1000,6 +1003,23 @@ class TaskerProgressSink:
             self._ipc_publisher = publisher
         publisher.publish(state)
 
+    def _attach_execution_projection(self) -> None:
+        if self._execution_projection is not None:
+            return
+        bus = get_event_bus()
+        self._execution_projection = ExecutionProjectionSubscriber(
+            store=bus.execution_store, run_id=self.run_id, directory=self.directory, ipc_publish=self._publish_ipc
+        )
+        bus.subscribe_all(self._execution_projection)
+
+    def _detach_execution_projection(self) -> None:
+        projection = self._execution_projection
+        if projection is None:
+            return
+        get_event_bus().unsubscribe_all(projection)
+        projection.close()
+        self._execution_projection = None
+
     def prepare_hud(self) -> None:
         """Publish the new run identity before a singleton HUD follows it.
 
@@ -1019,6 +1039,7 @@ class TaskerProgressSink:
 
     def started(self, *, message: str = "started") -> None:
         self.reset_run_files()
+        self._attach_execution_projection()
         self.emit("started", status="running", message=message, force=True, notify=True)
         self._start_heartbeat()
 
@@ -1418,6 +1439,7 @@ class TaskerProgressSink:
         if self._ipc_publisher is not None:
             self._ipc_publisher.close(unregister=True)
             self._ipc_publisher = None
+        self._detach_execution_projection()
 
     def emit(
         self,
