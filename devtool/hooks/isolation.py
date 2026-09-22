@@ -165,10 +165,12 @@ class RepositoryMutationSnapshot:
                 if self.fallback_states.get(path, ("missing", 0, ""))
                 != after.get(path, ("missing", 0, ""))
             }
-            if self.git_paths is not None:
-                after_paths = git_changed_paths(repo_root)
-                if after_paths is not None:
-                    fallback_changed |= set(self.git_paths or set()) | set(after_paths)
+            # The filesystem snapshot is authoritative for hook-time mutation
+            # detection. Git dirty paths may already contain the overlay being
+            # applied (especially for before_commit hooks), so unioning the
+            # pre/post Git dirty sets here incorrectly attributes those existing
+            # changes to the hook itself. Only paths whose captured filesystem
+            # state actually changed during the hook belong in this delta.
             return sorted(fallback_changed)
         after_paths = git_changed_paths(repo_root)
         if after_paths is None:
