@@ -7,6 +7,10 @@ import json, os, tempfile
 from .events.listeners import event_to_dict
 from ..logstore import redact_sensitive_value
 from .execution_state import ExecutionSnapshot
+from .execution_limits import (
+    MAX_JOURNAL_PROCESS_OUTPUT_CHARS,
+    bound_event_reference_fields,
+)
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -24,9 +28,13 @@ def canonical_execution_document(snapshot: ExecutionSnapshot) -> dict[str, Any]:
             "sequence": snapshot.last_sequence, "event_id": snapshot.last_event_id,
             "status": snapshot.status, "execution": snapshot.to_dict()}
 
-def compact_event_document(event: Any, *, max_output_chars: int = 2048) -> dict[str, Any]:
+def compact_event_document(
+    event: Any,
+    *,
+    max_output_chars: int = MAX_JOURNAL_PROCESS_OUTPUT_CHARS,
+) -> dict[str, Any]:
     """Bound and redact the durable journal representation of one event."""
-    payload = redact_sensitive_value(event_to_dict(event))
+    payload = bound_event_reference_fields(redact_sensitive_value(event_to_dict(event)))
     if str(payload.get("event_type") or "") == "process.output":
         text = str(payload.get("text") or "")
         if len(text) > max_output_chars:

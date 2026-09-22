@@ -2360,7 +2360,15 @@ def run_specs(
                     node_id=workflow_node_key,
                     parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
                     source="runner",
-                    metadata={"skipped": True, "workflow_state": synthetic_state, "returncode": 0},
+                    transition_origin="scheduler_inferred",
+                    transition_reason=synthetic_reason,
+                    metadata={
+                        "skipped": True,
+                        "workflow_state": synthetic_state,
+                        "workflow_skip_reason": synthetic_reason,
+                        "workflow_transition_origin": "scheduler_inferred",
+                        "returncode": 0,
+                    },
                 ))
                 if tasker_progress is not None and not dry_run:
                     tasker_progress.phase_finished(synthetic_result)

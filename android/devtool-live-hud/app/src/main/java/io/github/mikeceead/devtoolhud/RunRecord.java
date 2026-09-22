@@ -49,8 +49,8 @@ final class RunRecord {
     long durationMs = 0L;
 
     boolean terminal() {
-        return status.equals("ok") || status.equals("failed") || status.equals("cancelled")
-                || status.equals("interrupted") || status.equals("skipped");
+        return status.equals("ok") || status.equals("failed") || status.equals("blocked")
+                || status.equals("cancelled") || status.equals("interrupted") || status.equals("skipped");
     }
 
     JSONObject toJson() throws JSONException {

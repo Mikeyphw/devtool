@@ -166,6 +166,8 @@ class NodeFinished(DevtoolEvent):
     process_id: str = ""
     diagnostic_ids: tuple[str, ...] = ()
     evidence: tuple[str, ...] = ()
+    transition_origin: str = "observed"
+    transition_reason: str = ""
 
     protocol_type: ClassVar[str] = "node.finished"
 
@@ -174,6 +176,8 @@ class NodeFinished(DevtoolEvent):
         self.status = canonical_status_value(self.status, default=fallback)
         self.diagnostic_ids = tuple(str(value) for value in (self.diagnostic_ids or ()))
         self.evidence = tuple(str(value) for value in (self.evidence or ()))
+        self.transition_origin = str(self.transition_origin or "observed").strip().lower() or "observed"
+        self.transition_reason = str(self.transition_reason or "")
 
 
 @dataclass(slots=True)
@@ -364,6 +368,19 @@ class TaskFinished(NodeFinished):
             self.failure_kind = str(self.metadata.get("failure_kind") or "")
         if not self.duration_seconds and isinstance(self.metadata, dict):
             self.duration_seconds = float(self.metadata.get("duration_seconds") or 0.0)
+        if isinstance(self.metadata, dict):
+            if self.transition_origin == "observed":
+                self.transition_origin = str(
+                    self.metadata.get("transition_origin")
+                    or self.metadata.get("workflow_transition_origin")
+                    or "observed"
+                )
+            if not self.transition_reason:
+                self.transition_reason = str(
+                    self.metadata.get("transition_reason")
+                    or self.metadata.get("workflow_skip_reason")
+                    or ""
+                )
         NodeFinished.__post_init__(self)
 
 

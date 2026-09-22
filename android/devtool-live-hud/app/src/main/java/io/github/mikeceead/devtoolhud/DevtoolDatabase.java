@@ -14,7 +14,7 @@ import java.util.Set;
 
 final class DevtoolDatabase extends SQLiteOpenHelper {
     private static final String NAME = "devtool_android.db";
-    private static final int VERSION = 10;
+    private static final int VERSION = 11;
 
     static int schemaVersion() { return VERSION; }
     private static volatile DevtoolDatabase instance;
@@ -49,7 +49,9 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
                 + "stderr TEXT NOT NULL, error TEXT NOT NULL, launch_log TEXT NOT NULL, launch_mode TEXT NOT NULL,"
                 + "last_progress_at_ms INTEGER NOT NULL, progress INTEGER NOT NULL, current_value INTEGER NOT NULL,"
                 + "total_value INTEGER NOT NULL, unit_label TEXT NOT NULL, warnings INTEGER NOT NULL, errors INTEGER NOT NULL,"
-                + "steps_json TEXT NOT NULL, indeterminate INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0,"
+                + "steps_json TEXT NOT NULL, execution_json TEXT NOT NULL DEFAULT '{}',"
+                + "execution_schema_version INTEGER NOT NULL DEFAULT 0, execution_sequence INTEGER NOT NULL DEFAULT -1,"
+                + "execution_event_id TEXT NOT NULL DEFAULT '', indeterminate INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0,"
                 + "started_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL,"
                 + "artifact TEXT NOT NULL DEFAULT '',"
                 + "commit_hash TEXT NOT NULL DEFAULT '', transaction_backup TEXT NOT NULL DEFAULT '',"
@@ -198,6 +200,12 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
         }
         if (oldVersion < 10) {
             createDebugTables(db);
+        }
+        if (oldVersion < 11) {
+            addColumn(db, "runs", "execution_json TEXT NOT NULL DEFAULT '{}'");
+            addColumn(db, "runs", "execution_schema_version INTEGER NOT NULL DEFAULT 0");
+            addColumn(db, "runs", "execution_sequence INTEGER NOT NULL DEFAULT -1");
+            addColumn(db, "runs", "execution_event_id TEXT NOT NULL DEFAULT ''");
         }
     }
 
@@ -921,6 +929,8 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
         value.put("last_progress_at_ms", run.lastProgressAtMs); value.put("progress", run.progress);
         value.put("current_value", run.current); value.put("total_value", run.total); value.put("unit_label", run.unitLabel);
         value.put("warnings", run.warnings); value.put("errors", run.errors); value.put("steps_json", run.stepsJson);
+        value.put("execution_json", run.executionJson); value.put("execution_schema_version", run.executionSchemaVersion);
+        value.put("execution_sequence", run.executionSequence); value.put("execution_event_id", run.executionEventId);
         value.put("indeterminate", run.indeterminate ? 1 : 0); value.put("pinned", run.pinned ? 1 : 0);
         value.put("started_at_ms", run.startedAtMs);
         value.put("updated_at_ms", run.updatedAtMs); value.put("duration_ms", run.durationMs);
@@ -942,7 +952,12 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
         run.lastProgressAtMs = number(cursor, "last_progress_at_ms"); run.progress = integer(cursor, "progress");
         run.current = integer(cursor, "current_value"); run.total = integer(cursor, "total_value");
         run.unitLabel = string(cursor, "unit_label"); run.warnings = integer(cursor, "warnings"); run.errors = integer(cursor, "errors");
-        run.stepsJson = string(cursor, "steps_json"); run.indeterminate = integer(cursor, "indeterminate") != 0;
+        run.stepsJson = string(cursor, "steps_json");
+        run.executionJson = string(cursor, "execution_json");
+        run.executionSchemaVersion = integer(cursor, "execution_schema_version");
+        run.executionSequence = number(cursor, "execution_sequence");
+        run.executionEventId = string(cursor, "execution_event_id");
+        run.indeterminate = integer(cursor, "indeterminate") != 0;
         run.pinned = integer(cursor, "pinned") != 0; run.startedAtMs = number(cursor, "started_at_ms"); run.updatedAtMs = number(cursor, "updated_at_ms");
         run.durationMs = number(cursor, "duration_ms"); run.artifact = string(cursor, "artifact");
         run.commitHash = string(cursor, "commit_hash"); run.transactionBackup = string(cursor, "transaction_backup");

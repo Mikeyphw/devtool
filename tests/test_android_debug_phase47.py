@@ -49,7 +49,7 @@ def test_phase47_debug_recorder_schema_and_problem_notifications_are_sealed() ->
     recorder = read_java("DebugRecorder.java")
     record = read_java("DebugEventRecord.java")
     for symbol in (
-        "private static final int VERSION = 10",
+        "private static final int VERSION = 11",
         "CREATE TABLE IF NOT EXISTS debug_events",
         "debug_events_time_idx",
         "debug_events_run_idx",

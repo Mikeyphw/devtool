@@ -5,8 +5,10 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** Canonical EXO execution graph transported by the Python bridge. */
 final class ExecutionGraphState {
@@ -18,9 +20,13 @@ final class ExecutionGraphState {
         final String status;
         final int percent;
         final String detail;
+        final List<String> dependsOn;
+        final List<String> blockedBy;
         final List<String> diagnosticIds;
         final List<String> processIds;
         final List<String> artifactIds;
+        final String transitionOrigin;
+        final String transitionReason;
 
         Node(JSONObject value) {
             id = value.optString("node_id", "");
@@ -31,9 +37,13 @@ final class ExecutionGraphState {
             JSONObject progress = value.optJSONObject("progress");
             percent = clamp(progress == null ? -1 : progress.optDouble("percent", -1.0));
             detail = progress == null ? "" : progress.optString("detail", "");
+            dependsOn = strings(value.optJSONArray("depends_on"));
+            blockedBy = strings(value.optJSONArray("blocked_by"));
             diagnosticIds = strings(value.optJSONArray("diagnostic_ids"));
             processIds = strings(value.optJSONArray("process_ids"));
             artifactIds = strings(value.optJSONArray("artifact_ids"));
+            transitionOrigin = value.optString("transition_origin", "");
+            transitionReason = value.optString("transition_reason", "");
         }
 
         private static String kind(JSONObject value) {
@@ -123,23 +133,36 @@ final class ExecutionGraphState {
     boolean available() { return !runId.isEmpty() && (schemaVersion > 0 || !nodes.isEmpty()); }
 
     Node activeNode() {
-        Node failed = null;
+        Node terminalFailure = null;
         for (Node node : nodes) {
             if (node.status.equals("running")) return node;
-            if (node.status.equals("failed")) failed = node;
+            if (node.status.equals("failed") || node.status.equals("blocked") || node.status.equals("cancelled")) {
+                terminalFailure = node;
+            }
         }
-        return failed;
+        return terminalFailure;
     }
 
     List<HudUpdate.Step> steps() {
         List<HudUpdate.Step> result = new ArrayList<>();
+        Set<String> parentIds = new HashSet<>();
+        for (Node node : nodes) if (!node.parentId.isEmpty()) parentIds.add(node.parentId);
         for (Node node : nodes) {
-            if (node.parentId.isEmpty() && nodes.size() > 1) continue;
+            // Hide only a synthetic top-level aggregate that owns children.
+            // Independent top-level work nodes must remain visible.
+            if (node.parentId.isEmpty() && parentIds.contains(node.id) && nodes.size() > 1) continue;
             result.add(new HudUpdate.Step(
                     node.id.isEmpty() ? "operation" : node.id,
                     node.label.isEmpty() ? node.kind : node.label,
                     uiStatus(node.status),
-                    node.percent < 0 ? 0 : node.percent));
+                    node.percent,
+                    node.kind,
+                    node.parentId,
+                    node.dependsOn,
+                    node.blockedBy,
+                    node.detail,
+                    node.transitionOrigin,
+                    node.transitionReason));
         }
         return result;
     }
@@ -194,13 +217,11 @@ final class ExecutionGraphState {
         String status = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
         if (status.equals("succeeded") || status.equals("success") || status.equals("passed")) return "ok";
         if (status.equals("cancelled") || status.equals("canceled")) return "cancelled";
-        if (status.equals("blocked")) return "failed";
         if (status.equals("planned")) return "waiting";
         return status.isEmpty() ? "waiting" : status;
     }
 
     private static String uiStatus(String value) {
-        String status = normalizeStatus(value);
-        return status.equals("ok") ? "ok" : status;
+        return normalizeStatus(value);
     }
 }

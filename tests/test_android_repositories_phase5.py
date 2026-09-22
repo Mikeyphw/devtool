@@ -19,7 +19,7 @@ def read(name: str) -> str:
 def test_phase5_persists_and_recovers_repository_operations() -> None:
     database = read("DevtoolDatabase.java")
     workspace = read("RepositoryWorkspaceStore.java")
-    assert "private static final int VERSION = 10" in database
+    assert "private static final int VERSION = 11" in database
     assert "CREATE TABLE repository_operations" in database
     for method in (
         "upsertRepositoryOperation", "repositoryOperationForRun", "repositoryOperations",

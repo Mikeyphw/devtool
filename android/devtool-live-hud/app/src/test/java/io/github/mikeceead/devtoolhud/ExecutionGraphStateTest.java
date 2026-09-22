@@ -14,7 +14,7 @@ public class ExecutionGraphStateTest {
             + "\"nodes\":["
             + "{\"node_id\":\"build\",\"parent_id\":\"\",\"label\":\"Build\",\"kind\":\"workflow\",\"status\":\"failed\",\"progress\":{\"percent\":43}},"
             + "{\"node_id\":\"download\",\"parent_id\":\"build\",\"label\":\"Download SDK\",\"kind\":\"download\",\"status\":\"succeeded\",\"progress\":{\"percent\":100}},"
-            + "{\"node_id\":\"compile\",\"parent_id\":\"build\",\"label\":\"Compile\",\"kind\":\"gradle-task\",\"status\":\"failed\",\"progress\":{\"percent\":29,\"detail\":\"javac\"},\"diagnostic_ids\":[\"d1\"],\"process_ids\":[\"p1\"]},"
+            + "{\"node_id\":\"compile\",\"parent_id\":\"build\",\"label\":\"Compile\",\"kind\":\"gradle-task\",\"status\":\"failed\",\"depends_on\":[\"download\"],\"progress\":{\"percent\":29,\"detail\":\"javac\"},\"diagnostic_ids\":[\"d1\"],\"process_ids\":[\"p1\"]},"
             + "{\"node_id\":\"zip\",\"parent_id\":\"build\",\"label\":\"Create ZIP\",\"kind\":\"artifact\",\"status\":\"succeeded\",\"progress\":{\"percent\":100}}],"
             + "\"diagnostics\":[{\"diagnostic_id\":\"d1\",\"node_id\":\"compile\",\"process_id\":\"p1\",\"severity\":\"error\",\"code\":\"JAVAC\",\"message\":\"Compilation failed\",\"log_path\":\"/tmp/build.log\",\"evidence\":[\"/tmp/build.log\"]}]"
             + "}";
@@ -38,7 +38,25 @@ public class ExecutionGraphStateTest {
         assertEquals("compile", state.steps().get(1).key);
         assertEquals("failed", state.steps().get(1).status);
         assertEquals(29, state.steps().get(1).progress);
+        assertEquals("download", state.steps().get(1).dependsOn.get(0));
+        assertEquals("build", state.steps().get(1).parentId);
+        assertTrue(state.steps().get(1).relationshipText().contains("after download"));
         assertEquals("zip", state.steps().get(2).key);
+    }
+
+
+    @Test public void preservesBlockedAsDistinctTerminalStatus() {
+        ExecutionGraphState state = ExecutionGraphState.parse(
+                "{\"schema_version\":4,\"run_id\":\"blocked\",\"status\":\"blocked\","
+                        + "\"nodes\":[{\"node_id\":\"test\",\"label\":\"Test\",\"status\":\"blocked\","
+                        + "\"blocked_by\":[\"compile\"],\"transition_origin\":\"scheduler_inferred\",\"transition_reason\":\"compile failed\",\"progress\":{\"percent\":17}}]}");
+        assertEquals("blocked", state.status);
+        assertEquals("blocked", state.steps().get(0).status);
+        assertEquals(17, state.steps().get(0).progress);
+        assertEquals("compile", state.steps().get(0).blockedBy.get(0));
+        assertEquals("scheduler_inferred", state.steps().get(0).transitionOrigin);
+        assertEquals("compile failed", state.steps().get(0).transitionReason);
+        assertTrue(state.steps().get(0).relationshipText().contains("compile failed"));
     }
 
     @Test public void malformedGraphFailsClosedToUnavailable() {

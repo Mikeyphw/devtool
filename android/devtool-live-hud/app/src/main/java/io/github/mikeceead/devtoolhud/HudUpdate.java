@@ -3,6 +3,7 @@ package io.github.mikeceead.devtoolhud;
 import android.content.Intent;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
@@ -327,18 +328,62 @@ final class HudUpdate {
         final String label;
         final String status;
         final int progress;
+        final String kind;
+        final String parentId;
+        final List<String> dependsOn;
+        final List<String> blockedBy;
+        final String detail;
+        final String transitionOrigin;
+        final String transitionReason;
 
         Step(String key, String label, String status, int progress) {
+            this(key, label, status, progress, "operation", "", Collections.emptyList(), Collections.emptyList(), "", "", "");
+        }
+
+        Step(String key, String label, String status, int progress, String kind, String parentId,
+             List<String> dependsOn, List<String> blockedBy, String detail,
+             String transitionOrigin, String transitionReason) {
             this.key = clean(key, "step");
             this.label = clean(label, "Step");
             this.status = clean(status, "pending").toLowerCase(Locale.ROOT);
-            this.progress = clamp(progress);
+            this.progress = progress < 0 ? -1 : clamp(progress);
+            this.kind = clean(kind, "operation");
+            this.parentId = clean(parentId, "");
+            this.dependsOn = Collections.unmodifiableList(new ArrayList<>(dependsOn == null ? Collections.emptyList() : dependsOn));
+            this.blockedBy = Collections.unmodifiableList(new ArrayList<>(blockedBy == null ? Collections.emptyList() : blockedBy));
+            this.detail = clean(detail, "");
+            this.transitionOrigin = clean(transitionOrigin, "");
+            this.transitionReason = clean(transitionReason, "");
         }
 
         boolean running() { return status.equals("running"); }
         boolean succeeded() { return status.equals("ok"); }
-        boolean failed() { return status.equals("failed"); }
+        boolean failed() { return status.equals("failed") || status.equals("blocked"); }
+        boolean blocked() { return status.equals("blocked"); }
         boolean skipped() { return status.equals("skipped"); }
+        boolean progressKnown() { return progress >= 0; }
+
+        String relationshipText() {
+            List<String> parts = new ArrayList<>();
+            if (!parentId.isEmpty()) parts.add("parent " + shortId(parentId));
+            if (!dependsOn.isEmpty()) parts.add("after " + joinIds(dependsOn));
+            if (!blockedBy.isEmpty()) parts.add("blocked by " + joinIds(blockedBy));
+            if (!transitionReason.isEmpty()) parts.add(transitionReason);
+            else if (!detail.isEmpty()) parts.add(detail);
+            return String.join(" · ", parts);
+        }
+
+        private static String joinIds(List<String> values) {
+            List<String> shortened = new ArrayList<>();
+            for (String value : values) shortened.add(shortId(value));
+            return String.join(", ", shortened);
+        }
+
+        private static String shortId(String value) {
+            String clean = value == null ? "" : value.trim();
+            if (clean.length() <= 24) return clean;
+            return clean.substring(0, 10) + "…" + clean.substring(clean.length() - 10);
+        }
     }
 
     int resolutionProgress() {
@@ -375,6 +420,13 @@ final class HudUpdate {
                 item.put("label", step.label);
                 item.put("status", step.status);
                 item.put("progress", step.progress);
+                item.put("kind", step.kind);
+                item.put("parent_id", step.parentId);
+                item.put("depends_on", new JSONArray(step.dependsOn));
+                item.put("blocked_by", new JSONArray(step.blockedBy));
+                item.put("detail", step.detail);
+                item.put("transition_origin", step.transitionOrigin);
+                item.put("transition_reason", step.transitionReason);
                 array.put(item);
             } catch (JSONException ignored) {}
         }
@@ -395,7 +447,14 @@ final class HudUpdate {
                             item.optString("key", "step"),
                             item.optString("label", "Step"),
                             item.optString("status", "pending"),
-                            item.optInt("progress", 0)));
+                            item.has("progress") ? item.optInt("progress", -1) : -1,
+                            item.optString("kind", "operation"),
+                            item.optString("parent_id", ""),
+                            stringList(item.optJSONArray("depends_on")),
+                            stringList(item.optJSONArray("blocked_by")),
+                            item.optString("detail", ""),
+                            item.optString("transition_origin", ""),
+                            item.optString("transition_reason", "")));
                 }
             } catch (JSONException | RuntimeException ignored) {
                 result.clear();
@@ -405,6 +464,16 @@ final class HudUpdate {
             String fallback = normalizeStatus(status);
             String stepStatus = fallback.equals("ok") ? "ok" : fallback.equals("failed") ? "failed" : "running";
             result.add(new Step("current", clean(phase, "Working"), stepStatus, progress));
+        }
+        return result;
+    }
+
+    private static List<String> stringList(JSONArray values) {
+        List<String> result = new ArrayList<>();
+        if (values == null) return result;
+        for (int i = 0; i < values.length(); i++) {
+            String value = values.optString(i, "");
+            if (!value.isEmpty()) result.add(value);
         }
         return result;
     }
@@ -424,12 +493,12 @@ final class HudUpdate {
 
     boolean isTerminal() {
         String effective = effectiveStatus();
-        return effective.equals("ok") || effective.equals("failed") || effective.equals("interrupted")
-                || effective.equals("cancelled") || effective.equals("skipped");
+        return effective.equals("ok") || effective.equals("failed") || effective.equals("blocked")
+                || effective.equals("interrupted") || effective.equals("cancelled") || effective.equals("skipped");
     }
 
     boolean succeeded() { return effectiveStatus().equals("ok"); }
-    boolean failedState() { return effectiveStatus().equals("failed"); }
+    boolean failedState() { return effectiveStatus().equals("failed") || effectiveStatus().equals("blocked"); }
     boolean rollbackState() { return phase.toLowerCase(Locale.ROOT).contains("rollback"); }
 
     boolean isApplyOperation() {
@@ -571,13 +640,16 @@ final class HudUpdate {
     }
 
     int pipelineProgress() {
+        if (execution.available()) return displayProgress();
         if (steps.isEmpty()) return displayProgress();
         double totalProgress = 0.0;
+        int measured = 0;
         for (Step step : steps) {
-            if (step.succeeded() || step.failed() || step.skipped()) totalProgress += 100.0;
-            else totalProgress += step.progress;
+            if (!step.progressKnown()) continue;
+            totalProgress += step.progress;
+            measured++;
         }
-        return clamp((int) Math.round(totalProgress / steps.size()));
+        return measured == 0 ? displayProgress() : clamp((int) Math.round(totalProgress / measured));
     }
 
     Step activeStep() {

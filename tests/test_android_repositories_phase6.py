@@ -30,7 +30,7 @@ def test_phase6_retention_preserves_active_and_pinned_runs():
     database = read("DevtoolDatabase.java")
     settings = read("AppSettings.java")
     manager = read("RetentionManager.java")
-    assert "private static final int VERSION = 10" in database
+    assert "private static final int VERSION = 11" in database
     assert "pinned INTEGER NOT NULL DEFAULT 0" in database
     assert "status IN ('ok','failed','cancelled','interrupted','skipped') AND pinned=0" in database
     assert "state NOT IN ('queued','running','orphaned')" in database

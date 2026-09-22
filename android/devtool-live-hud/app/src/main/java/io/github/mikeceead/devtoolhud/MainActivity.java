@@ -1538,8 +1538,10 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         pipelineParams.setMargins(0, ui.dp(12), 0, ui.dp(4));
         pipeline.setLayoutParams(pipelineParams);
-        java.util.List<HudUpdate.Step> steps = HudUpdate.parseSteps(
-                record.stepsJson, record.phase, record.status, record.progress);
+        ExecutionGraphState persistedGraph = ExecutionGraphState.parse(record.executionJson);
+        java.util.List<HudUpdate.Step> steps = persistedGraph.available()
+                ? persistedGraph.steps()
+                : HudUpdate.parseSteps(record.stepsJson, record.phase, record.status, record.progress);
         LinearLayout row = null;
         int rowCount = 0;
         int maxSegmentsPerRow = ui.largeText() ? 2 : 4;
@@ -1560,12 +1562,23 @@ public final class MainActivity extends Activity {
             stepLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
             segment.addView(stepLabel, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            String relationship = step.relationshipText();
+            if (!relationship.isEmpty()) {
+                TextView relationView = ui.text(relationship, UiTypography.Role.CAPTION, ui.palette.muted);
+                relationView.setGravity(Gravity.CENTER);
+                relationView.setMaxLines(2);
+                relationView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                segment.addView(relationView, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            }
             ProgressBar stepProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
             stepProgress.setMax(100);
-            stepProgress.setIndeterminate(step.running() && step.progress <= 0);
-            stepProgress.setProgress((step.succeeded() || step.failed() || step.skipped()) ? 100 : step.progress);
+            stepProgress.setIndeterminate(step.running() && !step.progressKnown());
+            stepProgress.setProgress(step.progressKnown() ? step.progress : 0);
             stepProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
-            stepProgress.setContentDescription(step.label + ", " + step.status + ", " + step.progress + " percent");
+            stepProgress.setContentDescription(step.label + ", " + step.status + ", "
+                    + (step.progressKnown() ? step.progress + " percent" : "progress unknown")
+                    + (relationship.isEmpty() ? "" : ", " + relationship));
             stepProgress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(ui.palette.surfaceRaised));
             segment.addView(stepProgress, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, ui.dp(6)));
@@ -1926,7 +1939,7 @@ public final class MainActivity extends Activity {
 
     private int statusColor(String status) {
         if (status.equals("ok")) return ui.palette.green;
-        if (status.equals("failed") || status.equals("cancelled") || status.equals("interrupted")) return ui.palette.red;
+        if (status.equals("failed") || status.equals("blocked") || status.equals("cancelled") || status.equals("interrupted")) return ui.palette.red;
         if (status.equals("waiting")) return ui.palette.yellow;
         return ui.palette.cyan;
     }

@@ -490,11 +490,22 @@ public final class OverlayHudService extends Service {
             stepLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
             segment.addView(stepLabel, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            String relationship = step.relationshipText();
+            if (!relationship.isEmpty()) {
+                TextView relationView = label(relationship, UiTypography.Role.CAPTION, palette.muted);
+                relationView.setGravity(Gravity.CENTER);
+                relationView.setMaxLines(2);
+                relationView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                segment.addView(relationView, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            }
             ProgressBar stepProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
             stepProgress.setMax(100);
-            stepProgress.setIndeterminate(step.running() && step.progress <= 0);
-            stepProgress.setProgress((step.succeeded() || step.failed() || step.skipped()) ? 100 : step.progress, false);
-            stepProgress.setContentDescription(step.label + ", " + step.status + ", " + step.progress + " percent");
+            stepProgress.setIndeterminate(step.running() && !step.progressKnown());
+            stepProgress.setProgress(step.progressKnown() ? step.progress : 0, false);
+            stepProgress.setContentDescription(step.label + ", " + step.status + ", "
+                    + (step.progressKnown() ? step.progress + " percent" : "progress unknown")
+                    + (relationship.isEmpty() ? "" : ", " + relationship));
             stepProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
             stepProgress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
             segment.addView(stepProgress, new LinearLayout.LayoutParams(

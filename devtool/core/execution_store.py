@@ -8,6 +8,11 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 from .execution_contract import ExecutionStatus, NodeId, RunId, canonical_execution_status
+from .execution_limits import (
+    MAX_PROCESS_LAST_OUTPUT_CHARS,
+    bounded_log_ref,
+    merge_bounded_evidence,
+)
 from .execution_state import (
     ExecutionAccountingScope,
     ExecutionArtifactState,
@@ -195,6 +200,8 @@ class ExecutionReducer:
         node = self._ensure_event_node(run, event, label=event.label, kind=event.kind)
         self._require_nonterminal(node, "start")
         node.status = ExecutionStatus.RUNNING
+        node.transition_origin = "observed"
+        node.transition_reason = ""
         if event.parent_id:
             node.parent_id = str(event.parent_id)
         if event.label:
@@ -225,6 +232,8 @@ class ExecutionReducer:
         self._set_terminal_node_status(node, ExecutionStatus.BLOCKED)
         node.blocked_by = tuple(str(value) for value in event.blocked_by)
         node.blocked_reason = str(event.reason or "")
+        node.transition_origin = "inferred"
+        node.transition_reason = str(event.reason or "dependency blocked")
         node.finished_at = event.timestamp
 
     def _node_finished(self, run: ExecutionRunState, event: "NodeFinished") -> None:
@@ -241,6 +250,8 @@ class ExecutionReducer:
             node.exit_code = int(event.exit_code)
             node.duration_seconds += float(event.duration_seconds or 0.0)
             node.failure_kind = str(event.failure_kind or node.failure_kind or "")
+            node.transition_origin = str(event.transition_origin or "observed")
+            node.transition_reason = str(event.transition_reason or "")
             node.metadata.update(dict(event.metadata or {}))
             return
         self._set_terminal_node_status(node, status)
@@ -248,6 +259,8 @@ class ExecutionReducer:
         node.duration_seconds += float(event.duration_seconds or 0.0)
         node.failure_kind = str(event.failure_kind or "")
         node.failure_process_id = str(event.process_id or node.failure_process_id or "")
+        node.transition_origin = str(event.transition_origin or "observed")
+        node.transition_reason = str(event.transition_reason or "")
         if event.diagnostic_ids:
             for diagnostic_id in event.diagnostic_ids:
                 diagnostic_id = str(diagnostic_id)
@@ -255,10 +268,7 @@ class ExecutionReducer:
                     node.diagnostic_ids.append(diagnostic_id)
             if status is ExecutionStatus.FAILED and not node.primary_failure_diagnostic_id:
                 node.primary_failure_diagnostic_id = str(event.diagnostic_ids[0])
-        for evidence in event.evidence:
-            evidence = str(evidence)
-            if evidence and evidence not in node.evidence_refs:
-                node.evidence_refs.append(evidence)
+        node.evidence_refs[:] = merge_bounded_evidence(node.evidence_refs, event.evidence)
         node.finished_at = event.timestamp
         node.metadata.update(dict(event.metadata or {}))
 
@@ -302,7 +312,7 @@ class ExecutionReducer:
             process.stderr_events += 1
         else:
             process.stdout_events += 1
-        process.last_output = str(event.text or "")[-4096:]
+        process.last_output = str(event.text or "")[-MAX_PROCESS_LAST_OUTPUT_CHARS:]
 
     def _process_exited(self, run: ExecutionRunState, event: "ProcessExited") -> None:
         process_id = str(event.process_id or "").strip()
@@ -315,8 +325,8 @@ class ExecutionReducer:
         process.exit_code = int(event.exit_code)
         process.duration_seconds = float(event.duration_seconds or 0.0)
         process.failure_kind = str(event.failure_kind or process.failure_kind or "")
-        process.log_path = str(event.log_path or process.log_path or "")
-        process.evidence = tuple(dict.fromkeys((*process.evidence, *(str(value) for value in event.evidence if str(value)))))
+        process.log_path = bounded_log_ref(event.log_path or process.log_path or "")
+        process.evidence = merge_bounded_evidence(process.evidence, event.evidence)
         process.finished_at = event.timestamp
         process.status = "succeeded" if process.exit_code == 0 else ("cancelled" if process.exit_code == 130 else "failed")
         if process.node_id and process.node_id in run.nodes and process.exit_code != 0:
@@ -324,11 +334,10 @@ class ExecutionReducer:
             node.failure_process_id = process_id
             if process.failure_kind:
                 node.failure_kind = process.failure_kind
-            for evidence in process.evidence:
-                if evidence not in node.evidence_refs:
-                    node.evidence_refs.append(evidence)
-            if process.log_path and process.log_path not in node.evidence_refs:
-                node.evidence_refs.append(process.log_path)
+            node.evidence_refs[:] = merge_bounded_evidence(
+                node.evidence_refs,
+                (*process.evidence, process.log_path),
+            )
 
     def _diagnostic(self, run: ExecutionRunState, event: "DiagnosticEmitted") -> None:
         node_id = self._resolve_existing_node_id(run, event, allow_active_match=True)
@@ -344,8 +353,8 @@ class ExecutionReducer:
             column=event.column,
             process_id=str(event.process_id or ""),
             failure_kind=str(event.failure_kind or ""),
-            log_path=str(event.log_path or ""),
-            evidence=tuple(str(value) for value in event.evidence),
+            log_path=bounded_log_ref(event.log_path or ""),
+            evidence=merge_bounded_evidence((), event.evidence),
             timestamp=event.timestamp,
             source=str(event.source or ""),
         )
@@ -361,9 +370,10 @@ class ExecutionReducer:
                 pass
             if diagnostic.failure_kind and not node.failure_kind:
                 node.failure_kind = diagnostic.failure_kind
-            for evidence in (*diagnostic.evidence, diagnostic.log_path):
-                if evidence and evidence not in node.evidence_refs:
-                    node.evidence_refs.append(evidence)
+            node.evidence_refs[:] = merge_bounded_evidence(
+                node.evidence_refs,
+                (*diagnostic.evidence, diagnostic.log_path),
+            )
             if diagnostic.severity in {"error", "fatal"} and not node.primary_failure_diagnostic_id:
                 node.primary_failure_diagnostic_id = diagnostic_id
             if diagnostic.severity in {"error", "fatal"} and diagnostic.process_id:

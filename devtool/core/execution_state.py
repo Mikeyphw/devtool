@@ -117,6 +117,8 @@ class ExecutionNodeState:
     primary_failure_diagnostic_id: str = ""
     evidence_refs: list[str] = field(default_factory=list)
     blocked_reason: str = ""
+    transition_origin: str = ""
+    transition_reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -462,6 +464,8 @@ class ExecutionNodeSnapshot:
     primary_failure_diagnostic_id: str
     evidence_refs: tuple[str, ...]
     blocked_reason: str
+    transition_origin: str
+    transition_reason: str
 
     @classmethod
     def from_state(cls, state: ExecutionNodeState) -> "ExecutionNodeSnapshot":
@@ -490,6 +494,8 @@ class ExecutionNodeSnapshot:
             primary_failure_diagnostic_id=state.primary_failure_diagnostic_id,
             evidence_refs=tuple(state.evidence_refs),
             blocked_reason=state.blocked_reason,
+            transition_origin=state.transition_origin,
+            transition_reason=state.transition_reason,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -518,6 +524,8 @@ class ExecutionNodeSnapshot:
             "primary_failure_diagnostic_id": self.primary_failure_diagnostic_id,
             "evidence_refs": list(self.evidence_refs),
             "blocked_reason": self.blocked_reason,
+            "transition_origin": self.transition_origin,
+            "transition_reason": self.transition_reason,
         }
 
 
@@ -646,7 +654,7 @@ class ExecutionSnapshot:
     @classmethod
     def from_state(cls, state: ExecutionRunState) -> "ExecutionSnapshot":
         return cls(
-            schema_version=4,
+            schema_version=5,
             run_id=state.run_id,
             status=state.status.value,
             command=state.command,

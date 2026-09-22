@@ -12,7 +12,7 @@ def read(name: str) -> str:
 
 def test_phase34_schema10_debug_event_recorder_tables_and_accessors() -> None:
     database = read("DevtoolDatabase.java")
-    assert "private static final int VERSION = 10" in database
+    assert "private static final int VERSION = 11" in database
     assert "createDebugTables(db)" in database
     assert "CREATE TABLE IF NOT EXISTS debug_events" in database
     for column in (
