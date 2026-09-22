@@ -178,13 +178,22 @@ tool_rsync="$(find_cmd rsync)"
 tool_git="$(find_cmd git)"
 tool_java="$(find_cmd java)"
 tool_gradle="$(find_cmd gradle)"
+tool_timeout="$(find_cmd timeout)"
 for logical in python tmux rsync git java gradle; do eval "value=\${tool_$logical}"; kv "tool_$logical" "$value"; done
 version_python=""; [ -n "$tool_python" ] && version_python="$("$tool_python" --version 2>&1 | head -n1)"
 version_tmux=""; [ -n "$tool_tmux" ] && version_tmux="$("$tool_tmux" -V 2>/dev/null | head -n1)"
 version_rsync=""; [ -n "$tool_rsync" ] && version_rsync="$("$tool_rsync" --version 2>/dev/null | head -n1)"
 version_git=""; [ -n "$tool_git" ] && version_git="$("$tool_git" --version 2>/dev/null | head -n1)"
-version_java=""; [ -n "$tool_java" ] && version_java="$("$tool_java" -version 2>&1 | head -n1)"
-version_gradle=""; [ -n "$tool_gradle" ] && version_gradle="$("$tool_gradle" --version 2>/dev/null | awk 'NF {print; exit}')"
+# Java/Gradle startup can be expensive or hang on partially configured workers.
+# Never let optional version inventory consume the whole SSH transport timeout.
+version_java=""
+if [ -n "$tool_java" ] && [ -n "$tool_timeout" ]; then
+  version_java="$("$tool_timeout" 5 "$tool_java" -version 2>&1 | awk 'NF {print; exit}')"
+fi
+version_gradle=""
+if [ -n "$tool_gradle" ] && [ -n "$tool_timeout" ]; then
+  version_gradle="$("$tool_timeout" 5 "$tool_gradle" --version 2>&1 | awk 'NF {print; exit}')"
+fi
 for logical in python tmux rsync git java gradle; do eval "value=\${version_$logical}"; kv "version_$logical" "$value"; done
 exit 0
 '''
@@ -210,7 +219,16 @@ def _int_value(value: object) -> int:
 
 
 def probe_worker(config: SSHRunnerConfig) -> SSHWorkerProbe:
-    completed = _run_remote(config, _probe_script())
+    try:
+        completed = _run_remote(config, _probe_script())
+    except subprocess.TimeoutExpired as exc:
+        timeout = exc.timeout if exc.timeout is not None else _transport_timeout()
+        raise ValueError(
+            f"SSH worker capability probe timed out after {timeout:g}s. "
+            "The remote shell or a capability check did not return in time. "
+            "Verify the worker with plain ssh, or temporarily raise "
+            "DEVTOOL_SSH_TRANSPORT_TIMEOUT while diagnosing the remote host."
+        ) from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise ValueError(f"SSH worker probe failed with exit {completed.returncode}: {detail or 'no diagnostic output'}")

@@ -177,10 +177,19 @@ def _remote_gradle_probe(config: SSHRunnerConfig) -> dict[str, Any]:
     script = r'''set +e
 java_cmd="$(command -v java 2>/dev/null || true)"
 gradle_cmd="$(command -v gradle 2>/dev/null || true)"
+timeout_cmd="$(command -v timeout 2>/dev/null || true)"
 printf 'java=%s\n' "$java_cmd"
 printf 'gradle=%s\n' "$gradle_cmd"
-if [ -n "$java_cmd" ]; then "$java_cmd" -version 2>&1 | head -n1 | sed 's/^/java_version=/' ; fi
-if [ -n "$gradle_cmd" ]; then "$gradle_cmd" --version 2>/dev/null | awk '/^Gradle / {print "gradle_version=" $2; exit}' ; fi
+if [ -n "$java_cmd" ]; then
+  if [ -n "$timeout_cmd" ]; then
+    "$timeout_cmd" 10 "$java_cmd" -version 2>&1 | awk 'NF {print "java_version=" $0; exit}'
+  else
+    "$java_cmd" -version 2>&1 | awk 'NF {print "java_version=" $0; exit}'
+  fi
+fi
+if [ -n "$gradle_cmd" ] && [ -n "$timeout_cmd" ]; then
+  "$timeout_cmd" 10 "$gradle_cmd" --version 2>/dev/null | awk '/^Gradle / {print "gradle_version=" $2; exit}'
+fi
 '''
     completed = _run_remote(config, script)
     if completed.returncode != 0:
