@@ -1017,6 +1017,12 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_add.add_argument("--workspace-mode", choices=["managed", "existing", "ephemeral"], default="managed")
     ssh_add.add_argument("--workspace-root", default="~/.cache/devtool/workspaces")
     ssh_add.add_argument("--bootstrap-policy", choices=["missing", "never"], default="missing")
+    ssh_add.add_argument(
+        "--execution-provider",
+        choices=["native", "ssh-native", "proot-oci", "ssh-proot-oci"],
+        default="ssh-native",
+        help="Worker execution provider; OCI-01 accepts proot-oci configuration but does not execute it yet",
+    )
     ssh_add.add_argument("--host-key-policy", choices=["accept-new", "strict", "system"], default="accept-new")
     ssh_add.add_argument("--min-free-mb", type=int, default=1024)
     ssh_add.add_argument("--no-default", dest="ssh_profile_default", action="store_false", help="Do not make this the default SSH worker")
@@ -11617,6 +11623,7 @@ def _main_after_parse(
                     workspace_mode=str(getattr(args, "workspace_mode", "managed") or "managed"),
                     workspace_root=str(getattr(args, "workspace_root", "~/.cache/devtool/workspaces") or "~/.cache/devtool/workspaces"),
                     bootstrap_policy=str(getattr(args, "bootstrap_policy", "missing") or "missing"),
+                    execution_provider=str(getattr(args, "execution_provider", "ssh-native") or "ssh-native"),
                     host_key_policy=str(getattr(args, "host_key_policy", "accept-new") or "accept-new"),
                     min_free_mb=int(getattr(args, "min_free_mb", 1024) or 0),
                 )
@@ -11705,7 +11712,10 @@ def _main_after_parse(
             for item in records:
                 marker = "*" if item.get("default") else " "
                 destination = f"{item.get('user') + '@' if item.get('user') else ''}{item.get('host')}:{item.get('port')}"
-                print(f"{marker} {item.get('name',''):<18} {item.get('scope',''):<6} {destination:<32} {item.get('mode','')} {item.get('workspace_mode','')}")
+                print(
+                    f"{marker} {item.get('name',''):<18} {item.get('scope',''):<6} {destination:<32} "
+                    f"{item.get('mode','')} {item.get('workspace_mode','')} {item.get('execution_provider','ssh-native')}"
+                )
         elif action in {"add", "remove", "rm", "default"}:
             render_status_table([
                 ("profile", payload.get("profile") or "-"),
@@ -11764,6 +11774,8 @@ def _main_after_parse(
                 ("workspace_root", workspace_cfg.get("root") or "-"),
                 ("sync_mode", workspace_cfg.get("sync_mode") or "incremental"),
                 ("sync_delete", "yes" if workspace_cfg.get("sync_delete") else "no"),
+                ("execution_provider", str((execution_cfg.get("provider") or {}).get("name") or "ssh-native")),
+                ("provider_executable", "yes" if (execution_cfg.get("provider") or {}).get("executable") else "no"),
                 ("automatic_sync", "yes" if execution_cfg.get("automatic_sync") else "no"),
                 ("tmux_owned_phases", "yes" if execution_cfg.get("tmux_owned_phases") else "no"),
                 ("toolchain_policy", execution_cfg.get("toolchain_policy") or "target-aware"),

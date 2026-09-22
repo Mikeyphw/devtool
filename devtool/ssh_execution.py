@@ -20,6 +20,7 @@ import subprocess
 import uuid
 from typing import Any, Iterable
 
+from .execution_providers import ensure_execution_provider_ready
 from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_remote_sh_argv, worker_session_name
 from .ssh_worker import SSHWorkerProbe, bootstrap_worker, probe_worker
 from .ssh_workspace import (
@@ -319,6 +320,7 @@ def prepare_ssh_command_execution(
     repo_root: str | Path,
     dry_run: bool = False,
 ) -> SSHExecutionPreparation:
+    ensure_execution_provider_ready(config.execution_provider, remote=True)
     spec_list = list(specs)
     external = _external_specs(spec_list)
     if not external:

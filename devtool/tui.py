@@ -444,6 +444,7 @@ def _workers_page(snapshot: dict[str, Any], profile: TerminalProfile, *, repo_ro
                 ("Scope", item.get("scope") or "-"),
                 ("Host", destination),
                 ("Workspace", item.get("workspace_mode") or "-"),
+                ("Provider", item.get("execution_provider") or "ssh-native"),
             ], profile=profile))
     else:
         table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False)
@@ -451,11 +452,18 @@ def _workers_page(snapshot: dict[str, Any], profile: TerminalProfile, *, repo_ro
         table.add_column("Scope", no_wrap=True)
         table.add_column("Destination", ratio=3, overflow="ellipsis")
         table.add_column("Workspace", no_wrap=True)
+        table.add_column("Provider", no_wrap=True)
         if profile.mode == "wide":
             table.add_column("Default", no_wrap=True)
         for item in records[:8]:
             destination = f"{item.get('user') + '@' if item.get('user') else ''}{item.get('host')}:{item.get('port')}"
-            row = [str(item.get("name") or "-"), str(item.get("scope") or "-"), destination, str(item.get("workspace_mode") or "-")]
+            row = [
+                str(item.get("name") or "-"),
+                str(item.get("scope") or "-"),
+                destination,
+                str(item.get("workspace_mode") or "-"),
+                str(item.get("execution_provider") or "ssh-native"),
+            ]
             if profile.mode == "wide":
                 row.append("yes" if item.get("default") else "")
             table.add_row(*row)

@@ -18,6 +18,7 @@ import tomllib
 from typing import Any, Mapping
 
 from .config import CONFIG_NAME, global_config_path
+from .execution_providers import SSH_NATIVE, normalize_execution_provider
 
 _PROFILE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -100,6 +101,10 @@ def list_profiles(*, repo: str | Path = "", config_path: str | Path = "") -> dic
             "user": str(effective.get("user", "") or ""),
             "mode": str(effective.get("mode", "commands") or "commands"),
             "workspace_mode": str((effective.get("workspace") or {}).get("mode", "") if isinstance(effective.get("workspace"), Mapping) else ""),
+            "execution_provider": normalize_execution_provider(
+                str((effective.get("execution") or {}).get("provider", "") if isinstance(effective.get("execution"), Mapping) else ""),
+                remote=True,
+            ),
             "default": name == (local_default or global_default),
         })
     return {
@@ -226,6 +231,7 @@ def add_profile(
     bootstrap_policy: str = "missing",
     host_key_policy: str = "accept-new",
     min_free_mb: int = 1024,
+    execution_provider: str = SSH_NATIVE,
 ) -> dict[str, Any]:
     name = _validate_name(name)
     host = str(host or "").strip()
@@ -243,6 +249,7 @@ def add_profile(
         raise ValueError("SSH worker host-key policy must be accept-new, strict, or system")
     if int(min_free_mb) < 0:
         raise ValueError("SSH worker minimum free storage cannot be negative")
+    execution_provider = normalize_execution_provider(execution_provider, remote=True)
     path = profile_config_path(repo=repo, config_path=config_path, global_scope=global_scope)
     original = path.read_text(encoding="utf-8") if path.exists() else ""
     parsed = _parse(path)
@@ -279,6 +286,9 @@ def add_profile(
         "delete = true" if workspace_mode != "existing" else "delete = false",
         "default_excludes = true",
         "",
+        f"[ssh.hosts.{name}.execution]",
+        f"provider = {_toml_string(execution_provider)}",
+        "",
         f"[ssh.hosts.{name}.resilience]",
         f"host_key_policy = {_toml_string(host_key_policy)}",
         'run_root = "~/.cache/devtool/ssh-runs"',
@@ -301,6 +311,7 @@ def add_profile(
         "created": not exists,
         "replaced": exists,
         "default": bool(set_default),
+        "execution_provider": execution_provider,
     }
 
 

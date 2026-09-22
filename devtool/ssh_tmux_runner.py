@@ -26,6 +26,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from .execution_providers import SSH_NATIVE, normalize_execution_provider
+
 
 _SSH_VALUE_FLAGS = {
     "--ssh",
@@ -112,6 +114,7 @@ class SSHRunnerConfig:
     run_state_root: str = "~/.cache/devtool/ssh-runs"
     lease_timeout_seconds: int = 900
     min_free_mb: int = 1024
+    execution_provider: str = SSH_NATIVE
 
     @property
     def destination(self) -> str:
@@ -276,6 +279,9 @@ def _ssh_profile_section(data: Mapping[str, Any], profile: str) -> dict[str, Any
                     result["sync_default_excludes"] = sync.get("default_excludes")
                 if "exclude" in sync:
                     result["sync_excludes"] = sync.get("exclude")
+            execution = candidate.get("execution", {})
+            if isinstance(execution, dict) and "provider" in execution:
+                result["execution_provider"] = execution.get("provider")
             return result
     available = sorted({str(name) for container in containers for name in container})
     suffix = f" Available profiles: {', '.join(available)}." if available else ""
@@ -457,6 +463,11 @@ def resolve_ssh_config(
     if known_hosts:
         known_hosts = str(Path(known_hosts).expanduser())
     run_state_root = str(file_options.get("run_state_root", "~/.cache/devtool/ssh-runs") or "~/.cache/devtool/ssh-runs").strip()
+    execution_provider = normalize_execution_provider(
+        str(file_options.get("execution_provider", "") or ""),
+        remote=True,
+    )
+
     try:
         lease_timeout_seconds = int(file_options.get("lease_timeout_seconds", 900) or 900)
         min_free_mb = int(file_options.get("min_free_mb", 1024) or 0)
@@ -501,6 +512,7 @@ def resolve_ssh_config(
         run_state_root=run_state_root,
         lease_timeout_seconds=lease_timeout_seconds,
         min_free_mb=min_free_mb,
+        execution_provider=execution_provider,
     )
 
 

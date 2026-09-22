@@ -1954,6 +1954,8 @@ detached = false # whole-run devtool mode only
 # delete = true # delete stale mirrored source, never excluded remote caches
 # default_excludes = true # .gradle/, build/, Devtool build/stage output
 # exclude = [".idea/", "local-only/"] # optional rsync patterns; .git is synced
+# [ssh.hosts.tablet.execution]
+# provider = "ssh-native" # ssh-native | ssh-proot-oci (OCI execution activates in later OCI overlays)
 # [ssh.hosts.tablet.resilience]
 # host_key_policy = "accept-new" # accept-new | strict | system
 # known_hosts = "" # optional dedicated local known_hosts file

@@ -15,6 +15,7 @@ import shutil
 import subprocess
 from typing import Any, Mapping
 
+from .execution_providers import provider_metadata
 from .ssh_tmux_runner import (
     SSHRunnerConfig,
     build_ssh_remote_sh_argv,
@@ -258,6 +259,7 @@ def probe_worker(config: SSHRunnerConfig) -> SSHWorkerProbe:
 
 def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
     probe = probe_worker(config)
+    provider = provider_metadata(config.execution_provider, remote=True)
     sessions: list[str] = []
     sessions_error = ""
     if probe.tools.get("tmux"):
@@ -283,6 +285,7 @@ def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
             "sync_excludes": list(config.sync_excludes),
         },
         "execution": {
+            "provider": provider,
             "automatic_sync": config.workspace_mode in {"managed", "ephemeral"},
             "tmux_owned_phases": True if config.profile else bool(config.worker_tmux),
             "toolchain_policy": "target-aware",
@@ -302,7 +305,12 @@ def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
         "probe": probe.as_dict(),
         "sessions": sessions,
         "sessions_error": sessions_error,
-        "healthy": probe.ready and not sessions_error and (not probe.tmux_required or bool(probe.tools.get("tmux"))),
+        "healthy": (
+            probe.ready
+            and not sessions_error
+            and (not probe.tmux_required or bool(probe.tools.get("tmux")))
+            and bool(provider.get("executable", False))
+        ),
     }
 
 
