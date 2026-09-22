@@ -23,7 +23,7 @@ import uuid
 from typing import Any, Iterable
 
 from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_base_argv, build_ssh_remote_sh_argv
-from .ssh_worker import probe_worker
+from .ssh_worker import SSHWorkerProbe, probe_worker
 
 _WORKSPACE_MARKER = ".devtool-workspace-id"
 _WORKSPACE_METADATA = ".devtool-remote-workspace.json"
@@ -400,9 +400,10 @@ def _rsync_argv(
     *,
     dry_run: bool,
     destination_override: str = "",
+    worker: SSHWorkerProbe | None = None,
 ) -> list[str]:
-    probe = probe_worker(config)
-    remote_rsync = probe.tools.get("rsync", "")
+    worker = worker or probe_worker(config)
+    remote_rsync = worker.tools.get("rsync", "")
     if not remote_rsync:
         raise ValueError("SSH workspace sync requires rsync on the remote worker; run 'devtool ssh bootstrap' first")
     argv = [
@@ -472,7 +473,12 @@ def _local_missing_workspace_plan(config: SSHRunnerConfig, spec: SSHWorkspaceSpe
         return completed.returncode, completed.stdout, completed.stderr
 
 
-def plan_workspace_sync(config: SSHRunnerConfig, spec: SSHWorkspaceSpec) -> dict[str, Any]:
+def plan_workspace_sync(
+    config: SSHRunnerConfig,
+    spec: SSHWorkspaceSpec,
+    *,
+    worker: SSHWorkerProbe | None = None,
+) -> dict[str, Any]:
     status = workspace_status(config, spec)
     if status.exists and (not status.is_directory or not status.safe):
         raise ValueError(f"Refusing to plan sync for unsafe SSH workspace {spec.remote_path}: {status.detail}")
@@ -488,6 +494,7 @@ def plan_workspace_sync(config: SSHRunnerConfig, spec: SSHWorkspaceSpec) -> dict
             spec,
             dry_run=True,
             destination_override=f"{config.destination}:{canonical.rstrip('/')}/",
+            worker=worker,
         )
         completed = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=300)
         rc, stdout, stderr = completed.returncode, completed.stdout, completed.stderr
@@ -603,15 +610,16 @@ def sync_workspace(
     *,
     dry_run: bool = False,
     retain_lease: bool = False,
+    worker: SSHWorkerProbe | None = None,
 ) -> dict[str, Any]:
+    worker = worker or probe_worker(config)
     if dry_run:
-        return plan_workspace_sync(config, spec)
+        return plan_workspace_sync(config, spec, worker=worker)
 
     # Fail before creating/claiming a managed directory if either side is not
     # ready for synchronization. This keeps bootstrap/tool failures non-mutating.
     _rsync_executable()
-    probe = probe_worker(config)
-    if not probe.tools.get("rsync"):
+    if not worker.tools.get("rsync"):
         raise ValueError("SSH workspace sync requires rsync on the remote worker; run 'devtool ssh bootstrap' first")
 
     lease = None
@@ -637,6 +645,7 @@ def sync_workspace(
             spec,
             dry_run=False,
             destination_override=f"{config.destination}:{canonical.rstrip('/')}/",
+            worker=worker,
         )
         completed = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=None)
         changes = _parse_rsync_changes(completed.stdout)
@@ -735,4 +744,4 @@ def sync_payload(
         operation_id=operation_id or ("preview" if dry_run and config.workspace_mode == "ephemeral" else ""),
         remote_home=probe.home,
     )
-    return sync_workspace(config, spec, dry_run=dry_run)
+    return sync_workspace(config, spec, dry_run=dry_run, worker=probe)

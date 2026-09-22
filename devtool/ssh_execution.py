@@ -370,7 +370,7 @@ def prepare_ssh_command_execution(
                 run_identity = workspace.instance_id
             if dry_run:
                 if worker.tools.get("rsync"):
-                    sync = plan_workspace_sync(config, workspace)
+                    sync = plan_workspace_sync(config, workspace, worker=worker)
                 else:
                     sync = {
                         "schema_version": 1,
@@ -386,7 +386,7 @@ def prepare_ssh_command_execution(
                 remote_root = workspace.remote_path
                 session_prefix = worker_session_name(config, operation="commands", repository=remote_root, run_id=run_identity)
             else:
-                sync = sync_workspace(config, workspace, dry_run=False, retain_lease=True)
+                sync = sync_workspace(config, workspace, dry_run=False, retain_lease=True, worker=worker)
                 if not bool(sync.get("ok")):
                     raise ValueError(str(sync.get("detail") or "SSH managed workspace synchronization failed"))
                 after = dict(sync.get("status_after") or {})
