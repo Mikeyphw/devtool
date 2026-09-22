@@ -38,10 +38,27 @@ class OperationResult:
     failure_kind: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def execution_status(self):
+        """Canonical status while retaining the legacy OperationResult shape."""
+        return self.to_execution_result().status
+
+    @property
+    def run_id(self) -> str:
+        return self.to_execution_result().run_id
+
+    @property
+    def node_id(self) -> str:
+        return self.to_execution_result().node_id
+
+    def to_execution_result(self):
+        from .core.execution_contract import ExecutionResult
+        return ExecutionResult.from_operation(self)
+
     def to_command_result(self):
-        """Return the canonical architecture result without changing legacy fields."""
+        """Return the architecture command result without changing legacy fields."""
         from .core.results import CommandResult
-        return CommandResult.from_operation(self)
+        return CommandResult.from_execution_result(self.to_execution_result())
 
 
 @dataclass(slots=True, frozen=True)

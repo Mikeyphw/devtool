@@ -25,6 +25,7 @@ from .ipc import IpcPublisher, ensure_ipc_server
 
 from .console_utils import resolve_cli_path
 from .models import OperationResult
+from .core.execution_contract import EventId, NodeId, RunId, legacy_phase_node_id
 from .logstore import redact_sensitive_text, redact_sensitive_value
 from .ui_core.viewmodels import runtime_state_to_ui_snapshot
 from .ui_core.machine import TASKER_SCHEMA_VERSION, machine_state_from_runtime, tasker_fields
@@ -106,7 +107,7 @@ def _process_start_token(pid: int) -> str:
 
 
 def _default_run_id() -> str:
-    return os.environ.get("DEVTOOL_RUN_ID", "").strip() or uuid.uuid4().hex
+    return str(RunId.current(create=True))
 
 
 def hud_registry_dir() -> Path:
@@ -489,7 +490,7 @@ def _result_to_json(result: OperationResult) -> dict[str, Any]:
             "line": issue.line,
             "phase": result.name,
             "cause": result.failure_kind or "",
-            "related_node": str((result.metadata or {}).get("workflow_node_key") or ""),
+            "related_node": result.node_id,
             "technical_details": f"{result.name} exited {result.returncode}" if result.returncode else "",
             "evidence": {"exit_code": result.returncode, "failure_kind": result.failure_kind or ""},
         })
@@ -1033,39 +1034,94 @@ class TaskerProgressSink:
 
     def plan_phases(self, phases: list[dict[str, Any]], *, append: bool = True) -> None:
         planned = list(self.planned_phases) if append else []
-        existing = {(str(item.get("name") or ""), str(item.get("target") or ""), str(item.get("workspace") or "")) for item in planned}
-        for item in phases:
+        existing_node_ids = {str(item.get("node_id") or "").strip() for item in planned if str(item.get("node_id") or "").strip()}
+        occurrence_by_signature: dict[tuple[str, str, str, str, str], int] = {}
+        for source_index, item in enumerate(phases, 1):
             name = str(item.get("name") or "").strip()
             if not name:
                 continue
             target = str(item.get("target") or "").strip()
             workspace = str(item.get("workspace") or "").strip()
-            key = (name, target, workspace)
-            if key in existing:
+            workflow = str(item.get("workflow") or item.get("workflow_name") or "").strip()
+            parent_id = str(item.get("parent_id") or item.get("workflow_parent_id") or "").strip()
+            explicit_node_id = str(item.get("node_id") or item.get("workflow_node_key") or "").strip()
+            signature = (name, target, workspace, workflow, parent_id)
+            occurrence_by_signature[signature] = occurrence_by_signature.get(signature, 0) + 1
+            plan_index = int(item.get("index") or source_index)
+            if explicit_node_id:
+                node_id = str(NodeId.workflow(explicit_node_id))
+            else:
+                occurrence = occurrence_by_signature[signature]
+                node_id = str(legacy_phase_node_id(
+                    name=name,
+                    target=target,
+                    workspace=workspace,
+                    workflow=workflow,
+                    parent_id=parent_id,
+                    instance=f"{plan_index}:{occurrence}",
+                ))
+            if node_id in existing_node_ids:
                 continue
-            existing.add(key)
+            existing_node_ids.add(node_id)
             planned.append({
                 "name": name,
                 "target": target,
                 "workspace": workspace,
                 "workspace_root": str(item.get("workspace_root") or "").strip(),
-                "workflow": str(item.get("workflow") or item.get("workflow_name") or "").strip(),
-                "node_id": str(item.get("node_id") or item.get("workflow_node_key") or "").strip(),
-                "parent_id": str(item.get("parent_id") or "").strip(),
+                "workflow": workflow,
+                "node_id": node_id,
+                "parent_id": parent_id,
                 "runner": str(item.get("runner") or item.get("workflow_runner") or "").strip(),
                 "execution_environment": str(item.get("execution_environment") or "").strip(),
                 "depends_on": [str(value) for value in item.get("depends_on", []) or [] if str(value).strip()],
+                "index": plan_index,
+                "identity_source": "workflow" if explicit_node_id else "legacy-plan",
             })
         self.planned_phases = planned
         self.set_targets([str(item.get("target") or item.get("workspace") or "") for item in planned] + self.targets)
 
-    @staticmethod
-    def _phase_progress_key(phase: dict[str, Any] | None) -> str:
+    def _resolve_phase_node_id(self, phase: dict[str, Any]) -> str:
+        explicit = str(phase.get("node_id") or phase.get("workflow_node_key") or "").strip()
+        if explicit:
+            return str(NodeId.workflow(explicit))
+        name = str(phase.get("name") or "").strip()
+        target = str(phase.get("target") or "").strip()
+        workspace = str(phase.get("workspace") or "").strip()
+        workflow = str(phase.get("workflow") or "").strip()
+        index = int(phase.get("index") or 0)
+        matches = [
+            item for item in self.planned_phases
+            if str(item.get("name") or "").strip() == name
+            and str(item.get("target") or "").strip() == target
+            and str(item.get("workspace") or "").strip() == workspace
+            and (not workflow or str(item.get("workflow") or "").strip() == workflow)
+        ]
+        if index:
+            indexed = [item for item in matches if int(item.get("index") or 0) == index]
+            if len(indexed) == 1:
+                return str(indexed[0].get("node_id") or "")
+        if len(matches) == 1:
+            return str(matches[0].get("node_id") or "")
+        parent_id = str(phase.get("parent_id") or "").strip()
+        return str(legacy_phase_node_id(
+            name=name or "operation",
+            target=target,
+            workspace=workspace,
+            workflow=workflow,
+            parent_id=parent_id,
+            instance=str(index or 1),
+        ))
+
+    def _phase_progress_key(self, phase: dict[str, Any] | None) -> str:
         phase = phase or {}
+        node_id = self._resolve_phase_node_id(phase)
+        if node_id:
+            return f"node:{node_id}"
         name = str(phase.get("name") or "").strip()
         workspace = str(phase.get("workspace") or "").strip()
         target = str(phase.get("target") or "").strip()
-        return "\x1f".join((name, workspace, target))
+        index = str(phase.get("index") or "")
+        return "\x1f".join((name, workspace, target, index))
 
     def _record_phase_progress(
         self,
@@ -1196,8 +1252,8 @@ class TaskerProgressSink:
             "workspace": workspace,
             "workspace_root": str(metadata.get("workspace_root") or "").strip(),
             "workflow": str(metadata.get("workflow_name") or "").strip(),
-            "node_id": str(metadata.get("workflow_node_key") or "").strip(),
-            "parent_id": str(metadata.get("workflow_parent_id") or "").strip(),
+            "node_id": str(metadata.get("node_id") or metadata.get("workflow_node_key") or "").strip(),
+            "parent_id": str(metadata.get("parent_id") or metadata.get("workflow_parent_id") or "").strip(),
             "runner": str(metadata.get("workflow_runner") or metadata.get("runner") or "").strip(),
             "execution_environment": str(metadata.get("execution_environment") or metadata.get("effective_execution_environment") or "").strip(),
             "depends_on": [str(value) for value in metadata.get("workflow_depends_on", []) or [] if str(value).strip()],
@@ -1205,6 +1261,8 @@ class TaskerProgressSink:
             "validation_phase_key": str(metadata.get("validation_phase_key") or "").strip(),
             "started_at": utc_now_iso(),
         }
+        self.current_phase["node_id"] = self._resolve_phase_node_id(self.current_phase)
+        self.current_phase["identity_source"] = "workflow" if str(metadata.get("node_id") or metadata.get("workflow_node_key") or "").strip() else "legacy-plan"
         self._record_phase_progress(phase=self.current_phase, status="running", completed=0)
         self.emit("phase_started", status="running", phase=self.current_phase, progress={"percent": None, "current": 0, "completed": 0, "total": None, "target": target}, message=_human_event_message("phase_started", phase_name=display_name, metadata=metadata), force=True, notify=True)
 
@@ -1381,7 +1439,8 @@ class TaskerProgressSink:
             return
         self.sequence += 1
         timestamp = utc_now_iso()
-        event_id = f"{self.run_id}-{self.sequence:05d}"
+        # Keep the v1 wire spelling while making event identity explicit/validated.
+        event_id = str(EventId(f"{self.run_id}-{self.sequence:05d}"))
         if phase is not None:
             self.current_phase = phase
         current, total = _progress_current_total(progress)

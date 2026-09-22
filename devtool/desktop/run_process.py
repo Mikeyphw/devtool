@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .gtk_runtime import gtk_log_dir, redact_text
+from ..core.execution_contract import ProcessId, RunId
 
 OutputCallback = Callable[..., None]
 ExitCallback = Callable[["DesktopRunHandle"], None]
@@ -73,6 +74,10 @@ class DesktopRunHandle:
     current_phase: str = ""
 
     @property
+    def process_id(self) -> str:
+        return str(ProcessId.for_pid(self.run_id, self.process.pid))
+
+    @property
     def running(self) -> bool:
         return self.process.poll() is None
 
@@ -128,13 +133,16 @@ class DesktopRunLauncher:
         clean_argv = [str(part) for part in argv]
         if not clean_argv or not clean_argv[0]:
             raise ValueError("Cannot launch an empty command argv.")
-        run_id = f"desktop-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        run_id = str(RunId(f"desktop-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"))
         cwd_path = Path(cwd).expanduser().resolve()
         if not cwd_path.is_dir():
             raise FileNotFoundError(f"Run cwd does not exist: {cwd_path}")
         env = os.environ.copy()
         env.update({str(key): str(value) for key, value in (environment or {}).items() if str(key)})
         env["DEVTOOL_CONTROL_CENTER_ACTIVE"] = "1"
+        # EXO-01: desktop launch identity and core runtime identity are the same.
+        # Keep the old variable as a compatibility alias for existing scripts.
+        env["DEVTOOL_RUN_ID"] = run_id
         env["DEVTOOL_DESKTOP_RUN_ID"] = run_id
         log_path = self.state_dir / f"{run_id}.log"
         fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

@@ -3,10 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
+from .execution_contract import ExecutionResult, ExecutionStatus
+
 
 @dataclass(slots=True)
 class CommandResult:
-    """Structured result shared by devtool subsystems."""
+    """Structured command result retained as a compatibility facade.
+
+    EXO-01 establishes :class:`ExecutionResult` as the canonical execution
+    result vocabulary while preserving this public shape for existing callers.
+    """
 
     success: bool
     exit_code: int = 0
@@ -20,38 +26,40 @@ class CommandResult:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def to_execution_result(self, *, name: str = "") -> ExecutionResult:
+        return ExecutionResult.from_command(self, name=name)
 
     @classmethod
-    def from_operation(cls, operation: Any) -> "CommandResult":
-        issues = list(getattr(operation, "issues", []) or [])
-        warnings = [str(getattr(item, "message", item)) for item in issues if str(getattr(item, "severity", "")).lower() == "warning"]
-        errors = [
-            str(getattr(item, "message", item))
-            for item in issues
-            if str(getattr(item, "severity", "")).lower() in {"error", "fatal"}
-        ]
-        returncode = int(getattr(operation, "returncode", 1) or 0)
-        if errors and returncode == 0:
-            returncode = 1
-        metadata = dict(getattr(operation, "metadata", {}) or {})
-        metadata.setdefault("name", str(getattr(operation, "name", "") or ""))
-        metadata.setdefault("argv", list(getattr(operation, "argv", []) or []))
-        metadata.setdefault("skipped", bool(getattr(operation, "skipped", False)))
-        metadata.setdefault("log_path", str(getattr(operation, "log_path", "") or ""))
-        metadata.setdefault("failure_kind", str(getattr(operation, "failure_kind", "") or ""))
+    def from_execution_result(cls, result: ExecutionResult) -> "CommandResult":
+        metadata = dict(result.metadata)
+        metadata.setdefault("name", result.name)
+        metadata.setdefault("argv", list(result.argv))
+        metadata.setdefault("skipped", result.skipped)
+        metadata.setdefault("execution_status", result.status.value)
+        metadata.setdefault("run_id", result.run_id)
+        metadata.setdefault("node_id", result.node_id)
+        metadata.setdefault("parent_id", result.parent_id)
+        metadata.setdefault("log_path", result.log_path)
+        metadata.setdefault("failure_kind", result.failure_kind)
         return cls(
-            success=returncode == 0,
-            exit_code=returncode,
-            stdout=str(getattr(operation, "output", "") or ""),
-            stderr="",
-            duration=float(getattr(operation, "duration_seconds", 0.0) or 0.0),
-            warnings=warnings,
-            errors=errors,
+            success=result.success,
+            exit_code=int(result.exit_code),
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration=float(result.duration_seconds),
+            warnings=list(result.warnings),
+            errors=list(result.errors),
             metadata=metadata,
         )
 
     @classmethod
+    def from_operation(cls, operation: Any) -> "CommandResult":
+        return cls.from_execution_result(ExecutionResult.from_operation(operation))
+
+    @classmethod
     def from_completed_process(cls, process: Any, *, duration: float = 0.0, metadata: dict[str, Any] | None = None) -> "CommandResult":
+        # Preserve the historical facade exactly; callers can opt into the
+        # canonical contract through ``to_execution_result``.
         returncode = int(getattr(process, "returncode", 1) or 0)
         return cls(
             success=returncode == 0,
