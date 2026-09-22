@@ -9,7 +9,8 @@ for those same node identities plus dynamically discovered child operations.
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
+import math
 
 from .execution_contract import ExecutionStatus, canonical_execution_status
 
@@ -153,6 +154,9 @@ class ExecutionRunState:
     last_event_id: str = ""
     applied_event_ids: set[str] = field(default_factory=set)
     graph_sources: list[dict[str, Any]] = field(default_factory=list)
+    graph_sealed: bool = False
+    graph_sealed_at: str = ""
+    graph_seal_reason: str = ""
 
     def counts(self) -> ExecutionCounts:
         values = list(self.nodes.values())
@@ -173,6 +177,218 @@ class ExecutionRunState:
             cancelled=by_status[ExecutionStatus.CANCELLED],
             terminal=terminal,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionMeasuredProgress:
+    """Measured work progress, deliberately separate from lifecycle resolution.
+
+    ``measured_percent`` is computed only from explicit progress telemetry. A
+    failed/blocked/skipped terminal node is never rewritten to 100% merely
+    because its lifecycle resolved. ``coverage_percent`` tells consumers how
+    much of the selected scope has measurable telemetry.
+    """
+
+    measured_percent: float | None = None
+    coverage_percent: float | None = None
+    resolution_percent: float | None = None
+    measured_nodes: int = 0
+    indeterminate_nodes: int = 0
+    unmeasured_nodes: int = 0
+    determinate: bool = False
+    total_weight: float = 0.0
+    measured_weight: float = 0.0
+    graph_sealed: bool = False
+    total_is_final: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "measured_percent": self.measured_percent,
+            "coverage_percent": self.coverage_percent,
+            "resolution_percent": self.resolution_percent,
+            "measured_nodes": self.measured_nodes,
+            "indeterminate_nodes": self.indeterminate_nodes,
+            "unmeasured_nodes": self.unmeasured_nodes,
+            "determinate": self.determinate,
+            "total_weight": self.total_weight,
+            "measured_weight": self.measured_weight,
+            "graph_sealed": self.graph_sealed,
+            "total_is_final": self.total_is_final,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionAccountingScope:
+    scope: str
+    parent_id: str
+    counts: ExecutionCounts
+    progress: ExecutionMeasuredProgress
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope,
+            "parent_id": self.parent_id,
+            "counts": self.counts.to_dict(),
+            "progress": self.progress.to_dict(),
+        }
+
+
+def _counts_for_nodes(nodes: Iterable[ExecutionNodeState]) -> ExecutionCounts:
+    values = list(nodes)
+    by_status = {status: 0 for status in ExecutionStatus}
+    for node in values:
+        by_status[node.status] += 1
+    terminal = sum(1 for node in values if node.status.terminal)
+    return ExecutionCounts(
+        total=len(values),
+        planned=by_status[ExecutionStatus.PLANNED],
+        pending=by_status[ExecutionStatus.PENDING],
+        ready=by_status[ExecutionStatus.READY],
+        running=by_status[ExecutionStatus.RUNNING],
+        succeeded=by_status[ExecutionStatus.SUCCEEDED],
+        failed=by_status[ExecutionStatus.FAILED],
+        blocked=by_status[ExecutionStatus.BLOCKED],
+        skipped=by_status[ExecutionStatus.SKIPPED],
+        cancelled=by_status[ExecutionStatus.CANCELLED],
+        terminal=terminal,
+    )
+
+
+def _progress_weight(node: ExecutionNodeState) -> float:
+    raw = node.metadata.get("progress_weight", 1.0)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(value) or value <= 0:
+        return 1.0
+    return value
+
+
+def _explicit_percent(node: ExecutionNodeState) -> float | None:
+    progress = node.progress
+    if progress.percent is not None:
+        return max(0.0, min(100.0, float(progress.percent)))
+    if progress.current is not None and progress.total is not None and float(progress.total) > 0:
+        return max(0.0, min(100.0, float(progress.current) / float(progress.total) * 100.0))
+    return None
+
+
+def scoped_execution_nodes(
+    run: ExecutionRunState,
+    *,
+    scope: str = "recursive",
+    parent_id: str = "",
+) -> list[ExecutionNodeState]:
+    """Select direct, recursive, or leaf work units without implicit double counting."""
+
+    mode = str(scope or "recursive").strip().lower()
+    if mode not in {"direct", "recursive", "leaf"}:
+        raise ValueError(f"Unknown execution accounting scope: {scope!r}")
+
+    children: dict[str, list[ExecutionNodeState]] = {}
+    for node in run.nodes.values():
+        children.setdefault(str(node.parent_id or ""), []).append(node)
+
+    if parent_id:
+        roots = list(children.get(parent_id, ()))
+    else:
+        roots = list(children.get("", ()))
+        # Legacy/planned workflow nodes can all be root-level. If no explicit
+        # roots exist, retain all known nodes rather than returning an empty
+        # summary for a partially migrated producer.
+        if not roots and run.nodes:
+            roots = list(run.nodes.values())
+
+    if mode == "direct":
+        return roots
+
+    selected: list[ExecutionNodeState] = []
+    seen: set[str] = set()
+    stack = list(reversed(roots))
+    while stack:
+        node = stack.pop()
+        if node.node_id in seen:
+            continue
+        seen.add(node.node_id)
+        selected.append(node)
+        stack.extend(reversed(children.get(node.node_id, ())))
+
+    if not parent_id and len(selected) < len(run.nodes):
+        # Preserve disconnected dynamic nodes in whole-run recursive/leaf views.
+        for node in run.nodes.values():
+            if node.node_id not in seen:
+                selected.append(node)
+                seen.add(node.node_id)
+
+    if mode == "leaf":
+        return [node for node in selected if not children.get(node.node_id)]
+    return selected
+
+
+def execution_accounting_scope(
+    run: ExecutionRunState,
+    *,
+    scope: str = "recursive",
+    parent_id: str = "",
+) -> ExecutionAccountingScope:
+    nodes = scoped_execution_nodes(run, scope=scope, parent_id=parent_id)
+    counts = _counts_for_nodes(nodes)
+    total_weight = sum(_progress_weight(node) for node in nodes)
+    measured_weight = 0.0
+    weighted_sum = 0.0
+    measured_nodes = 0
+    indeterminate_nodes = 0
+
+    for node in nodes:
+        pct = _explicit_percent(node)
+        weight = _progress_weight(node)
+        if pct is not None:
+            measured_nodes += 1
+            measured_weight += weight
+            weighted_sum += pct * weight
+        elif node.progress.indeterminate or node.status is ExecutionStatus.RUNNING:
+            indeterminate_nodes += 1
+
+    measured_percent = weighted_sum / measured_weight if measured_weight > 0 else None
+    coverage_percent = measured_weight / total_weight * 100.0 if total_weight > 0 else None
+    resolution_percent = counts.terminal / counts.total * 100.0 if counts.total > 0 else None
+    progress = ExecutionMeasuredProgress(
+        measured_percent=measured_percent,
+        coverage_percent=coverage_percent,
+        resolution_percent=resolution_percent,
+        measured_nodes=measured_nodes,
+        indeterminate_nodes=indeterminate_nodes,
+        unmeasured_nodes=max(0, counts.total - measured_nodes),
+        determinate=bool(counts.total > 0 and measured_weight >= total_weight and indeterminate_nodes == 0),
+        total_weight=total_weight,
+        measured_weight=measured_weight,
+        graph_sealed=bool(run.graph_sealed),
+        total_is_final=bool(run.graph_sealed),
+    )
+    return ExecutionAccountingScope(scope=scope, parent_id=parent_id, counts=counts, progress=progress)
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionAccountingSnapshot:
+    direct: ExecutionAccountingScope
+    recursive: ExecutionAccountingScope
+    leaf: ExecutionAccountingScope
+
+    @classmethod
+    def from_state(cls, state: ExecutionRunState) -> "ExecutionAccountingSnapshot":
+        return cls(
+            direct=execution_accounting_scope(state, scope="direct"),
+            recursive=execution_accounting_scope(state, scope="recursive"),
+            leaf=execution_accounting_scope(state, scope="leaf"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "direct": self.direct.to_dict(),
+            "recursive": self.recursive.to_dict(),
+            "leaf": self.leaf.to_dict(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,6 +588,7 @@ class ExecutionSnapshot:
     command: str
     project: str
     counts: ExecutionCounts
+    accounting: ExecutionAccountingSnapshot
     nodes: tuple[ExecutionNodeSnapshot, ...]
     processes: tuple[ExecutionProcessSnapshot, ...]
     diagnostics: tuple[ExecutionDiagnosticSnapshot, ...]
@@ -384,16 +601,20 @@ class ExecutionSnapshot:
     last_sequence: int
     last_event_id: str
     graph_sources: tuple[dict[str, Any], ...]
+    graph_sealed: bool
+    graph_sealed_at: str
+    graph_seal_reason: str
 
     @classmethod
     def from_state(cls, state: ExecutionRunState) -> "ExecutionSnapshot":
         return cls(
-            schema_version=1,
+            schema_version=2,
             run_id=state.run_id,
             status=state.status.value,
             command=state.command,
             project=state.project,
             counts=state.counts(),
+            accounting=ExecutionAccountingSnapshot.from_state(state),
             nodes=tuple(ExecutionNodeSnapshot.from_state(item) for item in state.nodes.values()),
             processes=tuple(ExecutionProcessSnapshot.from_state(item) for item in state.processes.values()),
             diagnostics=tuple(ExecutionDiagnosticSnapshot.from_state(item) for item in state.diagnostics.values()),
@@ -406,6 +627,9 @@ class ExecutionSnapshot:
             last_sequence=state.last_sequence,
             last_event_id=state.last_event_id,
             graph_sources=tuple(deepcopy(item) for item in state.graph_sources),
+            graph_sealed=bool(state.graph_sealed),
+            graph_sealed_at=state.graph_sealed_at,
+            graph_seal_reason=state.graph_seal_reason,
         )
 
     def node(self, node_id: str) -> ExecutionNodeSnapshot | None:
@@ -419,6 +643,7 @@ class ExecutionSnapshot:
             "command": self.command,
             "project": self.project,
             "counts": self.counts.to_dict(),
+            "accounting": self.accounting.to_dict(),
             "nodes": [item.to_dict() for item in self.nodes],
             "processes": [item.to_dict() for item in self.processes],
             "diagnostics": [item.to_dict() for item in self.diagnostics],
@@ -431,6 +656,9 @@ class ExecutionSnapshot:
             "last_sequence": self.last_sequence,
             "last_event_id": self.last_event_id,
             "graph_sources": [deepcopy(item) for item in self.graph_sources],
+            "graph_sealed": self.graph_sealed,
+            "graph_sealed_at": self.graph_sealed_at,
+            "graph_seal_reason": self.graph_seal_reason,
         }
 
 
@@ -446,6 +674,11 @@ __all__ = [
     "ExecutionNodeState",
     "ExecutionRunState",
     "ExecutionCounts",
+    "ExecutionMeasuredProgress",
+    "ExecutionAccountingScope",
+    "ExecutionAccountingSnapshot",
+    "scoped_execution_nodes",
+    "execution_accounting_scope",
     "ExecutionProgressSnapshot",
     "ExecutionNodeSnapshot",
     "ExecutionProcessSnapshot",

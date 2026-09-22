@@ -6,6 +6,7 @@ from typing import Any, Iterable
 from .state import UIOperationState, UIProgressState
 
 PROGRESS_SCHEMA_VERSION = 1
+PROGRESS_SEMANTICS_VERSION = 2
 _TERMINAL = {"ok", "passed", "success", "completed", "failed", "rollback-failed", "rollback_failed", "skipped", "cancelled", "interrupted", "blocked", "cached", "warning", "warnings"}
 _SUCCESS = {"ok", "passed", "success", "completed", "cached"}
 _PROBLEM = {"failed", "rollback-failed", "rollback_failed"}
@@ -43,6 +44,7 @@ class UIProgressTreeNode:
 class UIProgressSummary:
     total_nodes: int = 0
     completed_nodes: int = 0
+    succeeded_nodes: int = 0
     running_nodes: int = 0
     pending_nodes: int = 0
     failed_nodes: int = 0
@@ -50,26 +52,41 @@ class UIProgressSummary:
     skipped_nodes: int = 0
     cancelled_nodes: int = 0
     overall_percent: int | None = None
+    measured_percent: int | None = None
+    measurement_coverage_percent: int | None = None
+    resolution_percent: int | None = None
     active_ids: list[str] = field(default_factory=list)
     schema_version: int = PROGRESS_SCHEMA_VERSION
+    semantics_version: int = PROGRESS_SEMANTICS_VERSION
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 def summarize_progress(nodes: Iterable[UIProgressState]) -> UIProgressSummary:
+    """Summarize lifecycle resolution separately from measured work progress.
+
+    Terminal status no longer implies 100% measured work. A node contributes to
+    measured progress only when its producer supplied ``percent``. Consumers
+    can use ``resolution_percent`` for lifecycle completion and
+    ``measurement_coverage_percent`` to judge how representative the measured
+    percentage is. ``overall_percent`` remains as a compatibility alias for
+    measured progress rather than the old synthetic terminal percentage.
+    """
     rows = list(nodes)
     summary = UIProgressSummary(total_nodes=len(rows))
-    weighted: list[int] = []
+    measured: list[int] = []
     for node in rows:
         status = str(node.status or "pending").lower()
         if status in _TERMINAL:
             summary.completed_nodes += 1
+        if status in _SUCCESS:
+            summary.succeeded_nodes += 1
         if status == "running":
             summary.running_nodes += 1
             if node.id not in summary.active_ids:
                 summary.active_ids.append(node.id)
-        elif status in {"pending", "ready", "idle", "waiting"}:
+        elif status in {"pending", "ready", "idle", "waiting", "planned"}:
             summary.pending_nodes += 1
         elif status in _PROBLEM:
             summary.failed_nodes += 1
@@ -80,15 +97,15 @@ def summarize_progress(nodes: Iterable[UIProgressState]) -> UIProgressSummary:
         elif status in _CANCELLED:
             summary.cancelled_nodes += 1
         if node.percent is not None:
-            weighted.append(max(0, min(100, int(node.percent))))
-        elif status in _SUCCESS or status in _PROBLEM or status in {"skipped", "cancelled", "interrupted", "blocked", "warning", "warnings"}:
-            weighted.append(100)
-        else:
-            weighted.append(0)
-    if weighted:
-        summary.overall_percent = int(round(sum(weighted) / len(weighted)))
-    return summary
+            measured.append(max(0, min(100, int(node.percent))))
 
+    if measured:
+        summary.measured_percent = int(round(sum(measured) / len(measured)))
+        summary.overall_percent = summary.measured_percent
+    if rows:
+        summary.measurement_coverage_percent = int(round(len(measured) / len(rows) * 100))
+        summary.resolution_percent = int(round(summary.completed_nodes / len(rows) * 100))
+    return summary
 
 def _tree_node(item: UIProgressState) -> UIProgressTreeNode:
     return UIProgressTreeNode(

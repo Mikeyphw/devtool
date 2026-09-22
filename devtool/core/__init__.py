@@ -12,12 +12,17 @@ from .execution_contract import (
 )
 from .execution_state import (
     ExecutionArtifactSnapshot,
+    ExecutionAccountingScope,
+    ExecutionAccountingSnapshot,
     ExecutionCounts,
+    ExecutionMeasuredProgress,
     ExecutionDiagnosticSnapshot,
     ExecutionNodeSnapshot,
     ExecutionProcessSnapshot,
     ExecutionProgressSnapshot,
     ExecutionSnapshot,
+    execution_accounting_scope,
+    scoped_execution_nodes,
 )
 from .execution_store import (
     ExecutionReducer,
@@ -42,6 +47,11 @@ __all__ = [
     "canonical_status_value",
     "legacy_phase_node_id",
     "ExecutionCounts",
+    "ExecutionMeasuredProgress",
+    "ExecutionAccountingScope",
+    "ExecutionAccountingSnapshot",
+    "execution_accounting_scope",
+    "scoped_execution_nodes",
     "ExecutionProgressSnapshot",
     "ExecutionNodeSnapshot",
     "ExecutionProcessSnapshot",

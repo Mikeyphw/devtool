@@ -9,12 +9,14 @@ from typing import TYPE_CHECKING, Any
 
 from .execution_contract import ExecutionStatus, NodeId, RunId, canonical_execution_status
 from .execution_state import (
+    ExecutionAccountingScope,
     ExecutionArtifactState,
     ExecutionDiagnosticState,
     ExecutionNodeState,
     ExecutionProcessState,
     ExecutionRunState,
     ExecutionSnapshot,
+    execution_accounting_scope,
 )
 if TYPE_CHECKING:
     from ..workflow_graph import ExecutionGraph
@@ -46,6 +48,7 @@ class ExecutionReducer:
         from .events.events import (
             ArtifactProduced,
             DiagnosticEmitted,
+            GraphSealed,
             MetricChanged,
             NodeBlocked,
             NodeDiscovered,
@@ -72,6 +75,8 @@ class ExecutionReducer:
             self._run_started(run, event)
         elif isinstance(event, RunFinished):
             self._run_finished(run, event)
+        elif isinstance(event, GraphSealed):
+            self._graph_sealed(run, event)
         elif isinstance(event, NodeDiscovered):
             self._node_discovered(run, event)
         elif isinstance(event, NodeStarted):
@@ -105,6 +110,13 @@ class ExecutionReducer:
         Node ids are the workflow graph keys verbatim. Dependency edges are
         copied only as mutable runtime state so status/progress can evolve.
         """
+        if run.graph_sealed:
+            incoming = {str(NodeId.workflow(node.key)) for node in graph.nodes}
+            unknown = sorted(incoming.difference(run.nodes))
+            if unknown:
+                raise ExecutionTransitionError(
+                    f"execution graph {run.run_id!r} is sealed; cannot add planned node(s): {', '.join(unknown)}"
+                )
         source = {
             "target": str(graph.target),
             "workflow": str(graph.workflow),
@@ -153,6 +165,18 @@ class ExecutionReducer:
         run.exit_code = int(event.exit_code)
         run.duration_seconds = float(event.duration_seconds or 0.0)
         run.finished_at = event.timestamp
+
+    def _graph_sealed(self, run: ExecutionRunState, event: "GraphSealed") -> None:
+        if run.graph_sealed:
+            # Replayed/duplicate sealing with the same truth is harmless.
+            if run.graph_seal_reason and event.reason and run.graph_seal_reason != str(event.reason):
+                raise ExecutionTransitionError(
+                    f"execution graph {run.run_id!r} already sealed for {run.graph_seal_reason!r}"
+                )
+            return
+        run.graph_sealed = True
+        run.graph_sealed_at = event.timestamp
+        run.graph_seal_reason = str(event.reason or "discovery complete")
 
     def _node_discovered(self, run: ExecutionRunState, event: "NodeDiscovered") -> None:
         node = self._ensure_event_node(run, event, label=event.label, kind=event.kind)
@@ -373,6 +397,10 @@ class ExecutionReducer:
             event.node_id = node_id
         node = run.nodes.get(node_id)
         if node is None:
+            if run.graph_sealed:
+                raise ExecutionTransitionError(
+                    f"execution graph {run.run_id!r} is sealed; cannot discover node {node_id!r}"
+                )
             node = ExecutionNodeState(
                 node_id=node_id,
                 parent_id=str(event.parent_id or ""),
@@ -454,6 +482,19 @@ class ExecutionStore:
             self._runs[run_id] = candidate
             self._last_run_id = run_id
             return ExecutionSnapshot.from_state(candidate)
+
+    def accounting(
+        self,
+        run_id: str | None = None,
+        *,
+        scope: str = "recursive",
+        parent_id: str = "",
+    ) -> ExecutionAccountingScope:
+        with self._lock:
+            resolved = str(run_id or self._last_run_id or "").strip()
+            if not resolved or resolved not in self._runs:
+                raise KeyError(f"Unknown execution run: {resolved or '<none>'}")
+            return execution_accounting_scope(self._runs[resolved], scope=scope, parent_id=parent_id)
 
     def apply_many(self, events: Iterable["DevtoolEvent"]) -> ExecutionSnapshot | None:
         snapshot: ExecutionSnapshot | None = None

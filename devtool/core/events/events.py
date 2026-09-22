@@ -107,6 +107,13 @@ class RunFinished(DevtoolEvent):
 
 
 @dataclass(slots=True)
+class GraphSealed(DevtoolEvent):
+    reason: str = ""
+
+    protocol_type: ClassVar[str] = "graph.sealed"
+
+
+@dataclass(slots=True)
 class NodeDiscovered(DevtoolEvent):
     label: str = ""
     kind: str = "operation"
@@ -396,6 +403,7 @@ class UnknownExecutionEvent(DevtoolEvent):
 _EVENT_CLASSES = (
     RunStarted,
     RunFinished,
+    GraphSealed,
     NodeDiscovered,
     NodeStarted,
     NodeProgressChanged,
@@ -462,6 +470,7 @@ __all__ = [
     "DevtoolEvent",
     "RunStarted",
     "RunFinished",
+    "GraphSealed",
     "NodeDiscovered",
     "NodeStarted",
     "NodeProgressChanged",
