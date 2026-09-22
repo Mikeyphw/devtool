@@ -11,6 +11,7 @@ identity and publishes process ownership, diagnostics, provenance, and truthful
 
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -21,13 +22,15 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .core.events import (
     ArtifactProduced, GraphSealed, NodeBlocked, NodeDiscovered, NodeFinished, NodeProgressChanged,
-    NodeStarted, publish_event,
+    NodeStarted, RunFinished, RunStarted, get_event_bus, publish_event,
 )
 from .core.execution_contract import ExecutionStatus
+from .core.execution_subscribers import ExecutionProjectionSubscriber
 from .logstore import redact_sensitive_text, redact_sensitive_value
 from .oci_image import canonical_android_oci_definition
 from .progress_events import RunnerExecutionAdapter
 from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_remote_sh_argv
+from .xdg import state_dir
 
 _CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _ARCHITECTURES = {
@@ -1293,3 +1296,244 @@ def oci_build_payload(
         "no_cache": bool(no_cache), "validation": validation,
         "detail": "Deterministic Android OCI image built" + (" and capability-validated" if install_as else ""),
     }
+
+# OCI-03 Gate 1 closure -----------------------------------------------------
+
+def _gate1_preflight_script() -> str:
+    return r"""set -eu
+if [ -n "${PROOT_TMP_DIR:-}" ] || [ -n "${PROOT_LOADER:-}" ]; then
+  echo 'OCI-03 Gate 1 refuses a worker already inside PRoot' >&2; exit 125
+fi
+termux_score=0
+if [ -f /system/build.prop ] || [ -d /data/app ]; then termux_score=$((termux_score + 1)); fi
+if [ -n "${TERMUX_APP__APP_VERSION_NAME:-}" ] || [ -n "${TERMUX_VERSION:-}" ]; then termux_score=$((termux_score + 1)); fi
+termux_prefix="${TERMUX__PREFIX:-${PREFIX:-/data/data/com.termux/files/usr}}"
+if [ -r "$termux_prefix" ] && [ -x "$termux_prefix" ]; then termux_score=$((termux_score + 1)); fi
+[ "$termux_score" -ge 2 ] || { echo 'OCI-03 Gate 1 requires a fresh Termux SSH worker' >&2; exit 69; }
+pd_bin="$(command -v proot-distro 2>/dev/null || command -v pd 2>/dev/null || true)"
+proot_bin="${PD_PROOT_BIN:-}"; if [ -z "$proot_bin" ] || [ ! -x "$proot_bin" ]; then proot_bin="$(command -v proot 2>/dev/null || true)"; fi
+[ -n "$pd_bin" ] || { echo 'proot-distro is not installed' >&2; exit 127; }
+[ -n "$proot_bin" ] || { echo 'proot is not installed' >&2; exit 127; }
+arch="$(uname -m 2>/dev/null || true)"
+case "$arch" in aarch64|arm64) ;; *) echo "Gate 1 worker architecture is $arch, expected aarch64/arm64" >&2; exit 69;; esac
+"$pd_bin" list --quiet >/dev/null
+"$pd_bin" list --image --quiet >/dev/null
+printf 'platform=termux\narchitecture=%s\nproot_distro=%s\nproot=%s\n' "$arch" "$pd_bin" "$proot_bin"
+"""
+
+
+def _gate1_run_directory(run_id: str) -> Path:
+    return state_dir() / "oci-gate1" / str(run_id)
+
+
+def _gate1_fail_semantic(*, run_id: str, node_id: str, label: str, code: str, message: str, provenance: Mapping[str, Any]) -> None:
+    _start_node(run_id, node_id, label, "Verifying Gate 1 semantic evidence")
+    adapter = RunnerExecutionAdapter(
+        run_id=run_id, parent_node_id=node_id, tool="oci-gate1", source="oci-gate1",
+        provenance=dict(redact_sensitive_value(dict(provenance))),
+    )
+    diagnostic_id = adapter.diagnostic(
+        severity="error", code=code, message=_safe_text(message), failure_kind="gate_evidence_mismatch"
+    )
+    _finish_node(
+        run_id, node_id, status=ExecutionStatus.FAILED.value, exit_code=65,
+        diagnostic_ids=(diagnostic_id,), reason="Gate 1 evidence contract mismatch",
+    )
+    raise ValueError(message)
+
+
+def oci_gate1_payload(
+    config: SSHRunnerConfig,
+    *,
+    run_id: str,
+    container: str = "",
+    tag: str = "",
+) -> dict[str, Any]:
+    """Execute OCI-03 external Gate 1 as one durable canonical EXO run."""
+    definition = canonical_android_oci_definition()
+    container = _validate_name(container or f"devtool-android-api36-gate-{run_id[:12]}")
+    if not container:
+        raise ValueError("OCI-03 Gate 1 requires a valid installed container name")
+    tag = str(tag or definition.reference).strip()
+    if not tag or any(ch.isspace() for ch in tag):
+        raise ValueError("OCI-03 Gate 1 image reference cannot be empty or contain whitespace")
+
+    preflight = _stable_node_id(config, "gate1-preflight", definition.definition_digest)
+    stage = _stable_node_id(config, "gate1-stage-definition", definition.context_sha256)
+    build = _stable_node_id(config, "gate1-build-image", f"{definition.definition_digest}|{tag}|no-cache")
+    verify_artifact = _stable_node_id(config, "gate1-verify-image-evidence", tag)
+    install = _stable_node_id(config, "gate1-install-image", f"{definition.context_sha256}|{container}")
+    validate = _stable_node_id(config, "gate1-validate-capabilities", f"{container}|{definition.definition_digest}")
+    verify_provenance = _stable_node_id(config, "gate1-verify-provenance", definition.definition_digest)
+    seal = _stable_node_id(config, "gate1-seal", f"{definition.definition_digest}|{container}")
+    nodes = (
+        (preflight, "Gate 1 fresh Termux worker preflight", ()),
+        (stage, "Stage canonical Android OCI image definition", (preflight,)),
+        (build, f"Build Android OCI image {tag} without cache", (stage,)),
+        (verify_artifact, "Verify OCI image digest and archive evidence", (build,)),
+        (install, f"Install built OCI image as {container}", (verify_artifact,)),
+        (validate, f"Validate Android OCI capabilities in {container}", (install,)),
+        (verify_provenance, "Verify Gate 1 image provenance", (validate,)),
+        (seal, "Seal OCI-03 Validation Gate 1 evidence", (verify_provenance,)),
+    )
+
+    run_dir = _gate1_run_directory(run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    bus = get_event_bus()
+    projection = ExecutionProjectionSubscriber(
+        store=bus.execution_store, run_id=run_id, directory=run_dir,
+        history_directory=state_dir() / "history", checkpoint_interval=1,
+    )
+    bus.subscribe_all(projection)
+    started = time.monotonic()
+    provenance = _provenance(config, operation="OCI-03 Validation Gate 1", extra={
+        "container": container, "image_reference": tag,
+        "definition_digest": definition.definition_digest, "context_sha256": definition.context_sha256,
+        "validation_gate": "oci03-gate1",
+    })
+    node_ids = [item[0] for item in nodes]
+    node_dependencies = {node_id: tuple(deps) for node_id, _label, deps in nodes}
+    try:
+        publish_event(RunStarted(
+            run_id=run_id, command="oci gate1", project="devtool", source="oci-gate1",
+            metadata={"provenance": provenance, "validation_gate": "oci03-gate1"},
+        ))
+        _discover_nodes(run_id, nodes)
+
+        _run_process(
+            config, run_id=run_id, node_id=preflight, label="Gate 1 fresh Termux worker preflight",
+            argv=build_ssh_remote_sh_argv(config, _gate1_preflight_script(), tty=False),
+            detail="Checking fresh Termux ARM64 worker and PRoot-Distro inventories",
+            timeout=max(_transport_timeout(), 20.0), diagnostic_code="OCI_GATE1_PREFLIGHT",
+            provenance_extra={"validation_gate": "oci03-gate1"},
+        )
+        _run_process(
+            config, run_id=run_id, node_id=stage, label="Stage canonical Android OCI image definition",
+            argv=build_ssh_remote_sh_argv(config, _oci_stage_definition_script(definition.definition_digest, definition.context_sha256), tty=False),
+            detail="Uploading content-addressed deterministic OCI build context", timeout=_transfer_timeout(),
+            stdin_bytes=definition.context_bytes, diagnostic_code="OCI_GATE1_CONTEXT",
+            provenance_extra={"definition_digest": definition.definition_digest, "context_sha256": definition.context_sha256, "validation_gate": "oci03-gate1"},
+        )
+        completed = _run_process(
+            config, run_id=run_id, node_id=build, label=f"Build Android OCI image {tag} without cache",
+            argv=build_ssh_remote_sh_argv(config, _oci_build_script(
+                definition_digest=definition.definition_digest, context_sha256=definition.context_sha256, tag=tag, no_cache=True,
+            ), tty=False),
+            detail="Building pinned Android ARM64 image with PRoot-Distro cache disabled", timeout=_oci_timeout(),
+            diagnostic_code="OCI_GATE1_BUILD",
+            provenance_extra={"image_reference": tag, "architecture": definition.architecture, "definition_digest": definition.definition_digest, "context_sha256": definition.context_sha256, "validation_gate": "oci03-gate1"},
+            publish_remote_artifacts=True,
+        )
+        values = _parse_key_values(completed.stdout)
+        artifacts = _remote_artifact_records(completed.stdout)
+        image_digest = values.get("image_digest", "")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest) or len(artifacts) != 1:
+            _gate1_fail_semantic(
+                run_id=run_id, node_id=verify_artifact, label="Verify OCI image digest and archive evidence", code="OCI_GATE1_IMAGE_EVIDENCE",
+                message="Gate 1 build did not produce exactly one verified OCI archive plus OCI manifest digest",
+                provenance=provenance,
+            )
+        _start_node(run_id, verify_artifact, "Verify OCI image digest and archive evidence", "Checking OCI manifest/archive identities")
+        _finish_node(run_id, verify_artifact, status=ExecutionStatus.SUCCEEDED.value, exit_code=0)
+        image_artifact = artifacts[0]
+
+        _run_process(
+            config, run_id=run_id, node_id=install, label=f"Install built OCI image as {container}",
+            argv=build_ssh_remote_sh_argv(config, _oci_install_built_script(
+                definition_digest=definition.definition_digest, context_sha256=definition.context_sha256, name=container,
+            ), tty=False),
+            detail="Installing the exact freshly built OCI archive through PRoot-Distro", timeout=_oci_timeout(),
+            diagnostic_code="OCI_GATE1_INSTALL",
+            provenance_extra={"container": container, "image_reference": tag, "image_digest": image_digest, "image_sha256": image_artifact["sha256"], "validation_gate": "oci03-gate1"},
+        )
+        validated = _run_process(
+            config, run_id=run_id, node_id=validate, label=f"Validate Android OCI capabilities in {container}",
+            argv=build_ssh_remote_sh_argv(config, _oci_validate_container_script(container, definition.definition_digest, definition.context_sha256), tty=False),
+            detail="Running immutable Android toolchain and real NDK compile/link probes", timeout=_oci_timeout(),
+            diagnostic_code="OCI_GATE1_CAPABILITY",
+            provenance_extra={"container": container, "image_reference": tag, "image_digest": image_digest, "definition_digest": definition.definition_digest, "validation_gate": "oci03-gate1"},
+        )
+        parsed = _parse_key_values(validated.stdout)
+        metadata_raw = parsed.get("DEVTOOL_OCI_METADATA", "")
+        try:
+            metadata = json.loads(metadata_raw) if metadata_raw else {}
+        except (TypeError, ValueError):
+            metadata = {}
+        capabilities = {k: v for k, v in parsed.items() if k != "DEVTOOL_OCI_METADATA"}
+        expected = {"status": "ready", "api": "36", "build_tools": "36.0.0", "ndk": "29.0.14206865", "ndk_host": "qemu-x86_64-wrapped-verified"}
+        errors = [f"{k}={capabilities.get(k)!r}, expected {want!r}" for k, want in expected.items() if str(capabilities.get(k) or "") != want]
+        arch = str(capabilities.get("architecture") or "")
+        if arch not in {"aarch64", "arm64"}:
+            errors.append(f"architecture={arch!r}, expected aarch64/arm64")
+        if not isinstance(metadata, dict) or metadata.get("definition_digest") != definition.definition_digest:
+            errors.append("definition_digest provenance mismatch")
+        if not isinstance(metadata, dict) or metadata.get("context_sha256") != definition.context_sha256:
+            errors.append("context_sha256 provenance mismatch")
+        wrapped = ((metadata.get("toolchains") or {}).get("ndk_wrapped_host_binaries") if isinstance(metadata, dict) else 0)
+        try:
+            wrapped_count = int(wrapped or 0)
+        except (TypeError, ValueError):
+            wrapped_count = 0
+        if wrapped_count <= 0:
+            errors.append("transparent NDK host wrapper inventory is empty")
+        if errors:
+            _gate1_fail_semantic(
+                run_id=run_id, node_id=verify_provenance, label="Verify Gate 1 image provenance", code="OCI_GATE1_PROVENANCE",
+                message="Gate 1 provenance/capability mismatch: " + "; ".join(errors), provenance=provenance,
+            )
+        _start_node(run_id, verify_provenance, "Verify Gate 1 image provenance", "Checking definition/context/toolchain identities")
+        _finish_node(run_id, verify_provenance, status=ExecutionStatus.SUCCEEDED.value, exit_code=0)
+
+        _start_node(run_id, seal, "Seal OCI-03 Validation Gate 1 evidence", "Writing bounded machine-readable Gate 1 evidence artifact")
+        evidence = dict(redact_sensitive_value({
+            "schema_version": 1, "kind": "devtool.oci03.gate1.evidence", "status": "passed", "run_id": run_id,
+            "profile": config.profile, "destination": config.destination, "provider": "ssh-proot-oci", "container": container,
+            "image_reference": tag, "image_digest": image_digest, "archive_sha256": image_artifact["sha256"],
+            "archive_size": image_artifact["size"], "definition_digest": definition.definition_digest,
+            "context_sha256": definition.context_sha256, "capabilities": capabilities, "build_metadata": metadata,
+        }))
+        evidence_path = run_dir / "gate1-evidence.json"
+        evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        adapter = RunnerExecutionAdapter(
+            run_id=run_id, parent_node_id=seal, tool="oci-gate1", source="oci-gate1", provenance=provenance,
+        )
+        artifact_id = adapter.artifact(path=str(evidence_path), producer_node_id=seal, producer_task="oci03-gate1-seal", verification_status="verified")
+        _finish_node(run_id, seal, status=ExecutionStatus.SUCCEEDED.value, exit_code=0)
+        duration = time.monotonic() - started
+        publish_event(RunFinished(run_id=run_id, status=ExecutionStatus.SUCCEEDED.value, exit_code=0, duration_seconds=duration, source="oci-gate1"))
+        return {
+            "schema_version": 1, "kind": "oci03-gate1", "ok": True, "status": "passed", "run_id": run_id,
+            "profile": config.profile, "destination": config.destination, "provider": "ssh-proot-oci", "container": container,
+            "reference": tag, "image_digest": image_digest, "archive_sha256": image_artifact["sha256"], "archive_size": image_artifact["size"],
+            "definition_digest": definition.definition_digest, "context_sha256": definition.context_sha256,
+            "capabilities": capabilities, "execution_dir": str(run_dir), "execution_json": str(run_dir / "execution.json"),
+            "journal": str(run_dir / "execution-events.jsonl"), "checkpoint": str(run_dir / "execution-checkpoint.json"),
+            "evidence_artifact": str(evidence_path), "evidence_artifact_id": artifact_id, "node_ids": node_ids,
+            "detail": "OCI-03 Validation Gate 1 passed with canonical EXO evidence",
+        }
+    except Exception:
+        snap = bus.execution_store.snapshot(run_id)
+        failed = ""
+        if snap is not None:
+            failed_nodes = [node for node in snap.nodes if node.status == ExecutionStatus.FAILED.value]
+            failed = failed_nodes[-1].node_id if failed_nodes else ""
+            status_by_id = {node.node_id: node.status for node in snap.nodes}
+            for node_id in node_ids:
+                if status_by_id.get(node_id) in {ExecutionStatus.PLANNED.value, ExecutionStatus.PENDING.value, ExecutionStatus.READY.value}:
+                    dependencies = node_dependencies.get(node_id, ())
+                    blocked_by = dependencies or ((failed,) if failed else ())
+                    _block_node(
+                        run_id, node_id, blocked_by=blocked_by,
+                        reason=(f"Gate 1 dependency {blocked_by[0]} did not succeed" if blocked_by else "Gate 1 stopped after an earlier failure"),
+                    )
+        try:
+            publish_event(RunFinished(
+                run_id=run_id, status=ExecutionStatus.FAILED.value, exit_code=1, duration_seconds=time.monotonic() - started,
+                source="oci-gate1", metadata={"failed_node_id": failed},
+            ))
+        except Exception:
+            pass
+        raise
+    finally:
+        bus.unsubscribe_all(projection)
+        projection.close()

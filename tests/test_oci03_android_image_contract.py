@@ -258,13 +258,133 @@ def test_validation_success_is_owned_by_remote_validator_not_optional_status_par
     assert snap.node(payload["node_id"]).status == "succeeded"
 
 
-def test_oci03_external_gate_harness_is_no_cache_and_checks_real_provenance() -> None:
+def test_oci03_external_gate_harness_delegates_to_one_canonical_exo_gate() -> None:
     script = Path("tools/oci03-fresh-worker-smoke.sh").read_text(encoding="utf-8")
-    assert "oci build" in script
-    assert "--install-as" in script and "--no-cache" in script
-    assert "image_digest" in script and "image_sha256" in script
-    assert "definition_digest" in script and "context_sha256" in script
-    assert "ndk_wrapped_host_binaries" in script
-    assert 'p.get("ok")' in script
-    assert 'p.get("healthy")' not in script
+    assert "oci gate1" in script
+    assert "exec" in script
+    assert "oci build" not in script
+    assert "oci doctor" not in script
     assert "/tmp" not in script
+
+
+def test_gate1_cli_surface_is_first_class() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["oci", "gate1", "tablet", "--container", "android36", "--format", "json"])
+    assert args.oci_command == "gate1"
+    assert args.profile == "tablet"
+    assert args.oci_gate1_container == "android36"
+
+
+def test_gate1_is_one_durable_exo_run_with_owned_processes_and_evidence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    bus = EventBus()
+    monkeypatch.setattr(proot_oci, "publish_event", bus.publish)
+    monkeypatch.setattr(proot_oci, "get_event_bus", lambda: bus)
+    monkeypatch.setattr("devtool.progress_events.publish_event", bus.publish)
+    monkeypatch.setenv("DEVTOOL_XDG_DIR", str(tmp_path / "xdg"))
+    definition = canonical_android_oci_definition()
+    image_sha = "a" * 64
+    metadata = json.dumps({
+        "schema_version": 1,
+        "definition_digest": definition.definition_digest,
+        "context_sha256": definition.context_sha256,
+        "toolchains": {"ndk_wrapped_host_binaries": 7},
+    }, separators=(",", ":"), sort_keys=True)
+    _QueuePopen.calls.clear(); _QueuePopen.kwargs_calls.clear()
+    _QueuePopen.outputs = [
+        (b"platform=termux\narchitecture=aarch64\nproot_distro=/usr/bin/proot-distro\nproot=/usr/bin/proot\n", b"", 0),
+        (f"context_sha256={definition.context_sha256}\n".encode(), b"", 0),
+        ((f"image_reference={definition.reference}\n"
+          f"image_digest=sha256:{'b' * 64}\n"
+          f"image_archive=/home/u/.cache/devtool/oci/builds/image.oci.tar\n"
+          f"image_sha256={image_sha}\nimage_size=1234\n"
+          f"DEVTOOL_OCI_ARTIFACT\t/home/u/.cache/devtool/oci/builds/image.oci.tar\t{image_sha}\t1234\toci-archive\n").encode(), b"", 0),
+        (b"installed_container=android36\n", b"", 0),
+        (("status=ready\narchitecture=aarch64\npython=3.12.3\nnode=v22.20.0\napi=36\n"
+          "build_tools=36.0.0\nndk=29.0.14206865\nndk_host=qemu-x86_64-wrapped-verified\n"
+          "DEVTOOL_OCI_METADATA=" + metadata + "\n").encode(), b"", 0),
+    ]
+    monkeypatch.setattr(proot_oci.subprocess, "Popen", _QueuePopen)
+    payload = proot_oci.oci_gate1_payload(_config(), run_id="gate-run", container="android36")
+    assert payload["ok"] is True and payload["status"] == "passed"
+    assert payload["image_digest"] == "sha256:" + "b" * 64
+    assert payload["archive_sha256"] == image_sha
+    assert Path(payload["execution_json"]).is_file()
+    assert Path(payload["journal"]).is_file()
+    assert Path(payload["checkpoint"]).is_file()
+    assert Path(payload["evidence_artifact"]).is_file()
+    doc = json.loads(Path(payload["execution_json"]).read_text(encoding="utf-8"))
+    execution = doc["execution"]
+    assert execution["status"] == "succeeded"
+    assert execution["graph_sealed"] is True
+    assert len(execution["nodes"]) == 8
+    assert all(node["status"] == "succeeded" for node in execution["nodes"])
+    assert len(execution["processes"]) == 5
+    assert any(a["producer_node_id"] == payload["node_ids"][-1] for a in execution["artifacts"])
+    assert all(p["provenance"]["execution_provider"] == "ssh-proot-oci" for p in execution["processes"])
+    from devtool.core.execution_recovery import recover_event_bus
+    recovered_bus, report = recover_event_bus(Path(payload["execution_dir"]))
+    recovered = recovered_bus.execution_store.snapshot("gate-run")
+    assert report.events_replayed > 0
+    assert recovered is not None and recovered.status == "succeeded"
+    assert len(recovered.nodes) == 8
+
+
+def test_gate1_failure_persists_failed_run_and_blocks_remaining_nodes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    bus = EventBus()
+    monkeypatch.setattr(proot_oci, "publish_event", bus.publish)
+    monkeypatch.setattr(proot_oci, "get_event_bus", lambda: bus)
+    monkeypatch.setattr("devtool.progress_events.publish_event", bus.publish)
+    monkeypatch.setenv("DEVTOOL_XDG_DIR", str(tmp_path / "xdg"))
+    _QueuePopen.outputs = [(b"", b"not a fresh Termux worker", 69)]
+    monkeypatch.setattr(proot_oci.subprocess, "Popen", _QueuePopen)
+    with pytest.raises(ValueError, match="failed with exit 69"):
+        proot_oci.oci_gate1_payload(_config(), run_id="gate-fail", container="android36")
+    execution_path = tmp_path / "xdg" / "oci-gate1" / "gate-fail" / "execution.json"
+    doc = json.loads(execution_path.read_text(encoding="utf-8"))["execution"]
+    assert doc["status"] == "failed"
+    statuses = [node["status"] for node in doc["nodes"]]
+    assert statuses.count("failed") == 1
+    assert statuses.count("blocked") == 7
+    by_id = {node["node_id"]: node for node in doc["nodes"]}
+    ordered = [by_id[node_id] for node_id in [node["node_id"] for node in doc["nodes"]]]
+    for index, node in enumerate(doc["nodes"][1:], start=1):
+        assert node["blocked_by"] == [doc["nodes"][index - 1]["node_id"]]
+    assert all(node.get("transition_origin") in {"observed", "inferred"} for node in doc["nodes"])
+    assert (tmp_path / "xdg" / "history" / "gate-fail" / "execution.json").is_file()
+
+
+def test_gate1_redacts_secret_bearing_inputs_before_durable_persistence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    bus = EventBus()
+    monkeypatch.setattr(proot_oci, "publish_event", bus.publish)
+    monkeypatch.setattr(proot_oci, "get_event_bus", lambda: bus)
+    monkeypatch.setattr("devtool.progress_events.publish_event", bus.publish)
+    monkeypatch.setenv("DEVTOOL_XDG_DIR", str(tmp_path / "xdg"))
+    monkeypatch.setenv("PD_DOCKER_AUTH", "super-secret-registry-token")
+    _QueuePopen.outputs = [(b"", b"token=super-secret-registry-token", 69)]
+    monkeypatch.setattr(proot_oci.subprocess, "Popen", _QueuePopen)
+    with pytest.raises(ValueError):
+        proot_oci.oci_gate1_payload(_config(), run_id="gate-secret", container="android36")
+    root = tmp_path / "xdg" / "oci-gate1" / "gate-secret"
+    durable = (root / "execution.json").read_text(encoding="utf-8") + (root / "execution-events.jsonl").read_text(encoding="utf-8")
+    assert "super-secret-registry-token" not in durable
+
+
+def test_gate1_default_container_name_is_run_scoped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    bus = EventBus()
+    monkeypatch.setattr(proot_oci, "publish_event", bus.publish)
+    monkeypatch.setattr(proot_oci, "get_event_bus", lambda: bus)
+    monkeypatch.setattr("devtool.progress_events.publish_event", bus.publish)
+    monkeypatch.setenv("DEVTOOL_XDG_DIR", str(tmp_path / "xdg"))
+    definition = canonical_android_oci_definition()
+    image_sha = "a" * 64
+    metadata = json.dumps({"definition_digest": definition.definition_digest, "context_sha256": definition.context_sha256, "toolchains": {"ndk_wrapped_host_binaries": 1}}, separators=(",", ":"))
+    _QueuePopen.outputs = [
+        (b"platform=termux\narchitecture=aarch64\n", b"", 0),
+        (f"context_sha256={definition.context_sha256}\n".encode(), b"", 0),
+        ((f"image_digest=sha256:{'b'*64}\nimage_archive=/x.oci.tar\nimage_sha256={image_sha}\nimage_size=1\nDEVTOOL_OCI_ARTIFACT\t/x.oci.tar\t{image_sha}\t1\toci-archive\n").encode(), b"", 0),
+        (b"installed_container=ok\n", b"", 0),
+        (("status=ready\narchitecture=aarch64\napi=36\nbuild_tools=36.0.0\nndk=29.0.14206865\nndk_host=qemu-x86_64-wrapped-verified\nDEVTOOL_OCI_METADATA=" + metadata + "\n").encode(), b"", 0),
+    ]
+    monkeypatch.setattr(proot_oci.subprocess, "Popen", _QueuePopen)
+    payload = proot_oci.oci_gate1_payload(_config(), run_id="1234567890abcdef")
+    assert payload["container"] == "devtool-android-api36-gate-1234567890ab"

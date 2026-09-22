@@ -1102,6 +1102,11 @@ def build_parser() -> argparse.ArgumentParser:
     oci_build.add_argument("--no-cache", action="store_true", dest="oci_no_cache", help="Disable PRoot-Distro build cache for this image build")
     oci_build.add_argument("--dry-run", action="store_true", dest="oci_dry_run")
     oci_build.add_argument("--format", choices=["text", "json"], default="text")
+    oci_gate1 = oci_sub.add_parser("gate1", help="Run OCI-03 Validation Gate 1 as one durable canonical EXO execution")
+    oci_gate1.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_gate1.add_argument("--container", default="", dest="oci_gate1_container", help="Installed PRoot-Distro container name; defaults to a RunId-derived Gate-1 name")
+    oci_gate1.add_argument("--tag", default="", dest="oci_tag", help="Image tag/reference; defaults to the canonical contract reference")
+    oci_gate1.add_argument("--format", choices=["text", "json"], default="text")
     oci_validate_image = oci_sub.add_parser("validate-image", help="Validate an installed container against the canonical Android OCI image contract")
     oci_validate_image.add_argument("profile", help="Named SSH worker")
     oci_validate_image.add_argument("container", help="Installed PRoot-Distro container name")
@@ -11960,7 +11965,7 @@ def _main_after_parse(
         from .oci_image import android_oci_definition_payload
         from .proot_oci import (
             oci_bootstrap_payload, oci_build_payload, oci_containers_payload, oci_doctor_payload,
-            oci_images_payload, oci_install_payload, oci_remove_payload, oci_validate_image_payload,
+            oci_gate1_payload, oci_images_payload, oci_install_payload, oci_remove_payload, oci_validate_image_payload,
         )
 
         action = str(getattr(args, "oci_command", "") or "")
@@ -11984,6 +11989,12 @@ def _main_after_parse(
                     install_as=str(getattr(args, "oci_install_as", "") or ""),
                     dry_run=bool(getattr(args, "oci_dry_run", False)),
                     no_cache=bool(getattr(args, "oci_no_cache", False)),
+                )
+            elif action == "gate1":
+                payload = oci_gate1_payload(
+                    worker, run_id=run_id,
+                    container=str(getattr(args, "oci_gate1_container", "") or ""),
+                    tag=str(getattr(args, "oci_tag", "") or ""),
                 )
             elif action == "validate-image":
                 payload = oci_validate_image_payload(
@@ -12039,6 +12050,22 @@ def _main_after_parse(
                 ("ndk", str(android.get("ndk", "-"))),
                 ("gradle", str(contract.get("gradle", {}).get("policy", "-"))),
                 ("ordinary_validation_mutates_toolchains", str(contract.get("immutability", {}).get("ordinary_validation_mutates_toolchains", False)).lower()),
+            ])
+        elif action == "gate1":
+            render_status_table([
+                ("run_id", payload.get("run_id") or "-"),
+                ("profile", payload.get("profile") or "-"),
+                ("status", "PASS" if payload.get("ok") else "FAIL"),
+                ("provider", payload.get("provider") or "-"),
+                ("container", payload.get("container") or "-"),
+                ("image_digest", payload.get("image_digest") or "-"),
+                ("archive_sha256", payload.get("archive_sha256") or "-"),
+                ("definition_sha256", payload.get("definition_digest") or "-"),
+                ("context_sha256", payload.get("context_sha256") or "-"),
+                ("execution_json", payload.get("execution_json") or "-"),
+                ("journal", payload.get("journal") or "-"),
+                ("evidence", payload.get("evidence_artifact") or "-"),
+                ("detail", payload.get("detail") or "-"),
             ])
         elif action == "build":
             render_status_table([

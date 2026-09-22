@@ -677,3 +677,17 @@ tools/oci03-fresh-worker-smoke.sh PROFILE devtool-android-api36
 Gate 1 also includes the OCI-01/OCI-02 provider/lifecycle regressions and native
 SSH execution-contract tests. Passing static/unit tests without this live worker
 smoke does not by itself qualify OCI-03's external validation gate.
+
+### OCI-03 Gate 1 canonical EXO execution
+
+`devtool oci gate1 [PROFILE] --container devtool-android-api36` is the authoritative
+fresh-worker validation surface for OCI-03. It runs preflight, deterministic
+context staging, no-cache image build, digest/archive verification, install,
+capability validation, provenance verification, and evidence sealing under one
+canonical EXO `RunId` and one sealed dependency graph.
+
+Durable truth is written under the Devtool state directory at
+`oci-gate1/<run_id>/execution.json`, with the compact redacted event journal,
+checkpoint, terminal history snapshot, and `gate1-evidence.json`. The legacy
+`tools/oci03-fresh-worker-smoke.sh` helper is only a compatibility launcher and
+must not maintain an independent lifecycle state machine.
