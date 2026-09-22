@@ -7260,7 +7260,13 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         except Exception:
             args._devtool_history_paths = [".devtool/artifacts.json"]
         if status == "ok":
-            publish_event(OverlayApplied(artifact=str(artifact), metadata={"commit": commit_hash, "validation_status": validation_status}))
+            publish_event(OverlayApplied(
+                artifact=str(artifact),
+                commit=str(commit_hash or ""),
+                validation_status=str(validation_status or ""),
+                source="cli.overlay",
+                metadata={"commit": commit_hash, "validation_status": validation_status},
+            ))
     except Exception as exc:
         args._devtool_history_error = f"{type(exc).__name__}: {exc}"
         console.print(f"[yellow]Could not write artifact history: {exc}[/yellow]")
@@ -11331,7 +11337,12 @@ def main(argv: list[str] | None = None) -> int:
         command = str(getattr(args, "command", "") or "devtool")
         emit_build = command in PROGRESS_CAPABLE_COMMANDS
         if emit_build:
-            publish_event(BuildStarted(project=str(getattr(args, "repo", "") or Path.cwd()), metadata={"command": command}))
+            publish_event(BuildStarted(
+                command=command,
+                project=str(getattr(args, "repo", "") or Path.cwd()),
+                source="cli",
+                metadata={"command": command},
+            ))
         try:
             if bool(getattr(args, "quiet", False)) and not universal_json:
                 with redirect_stdout(io.StringIO()):
@@ -11340,10 +11351,22 @@ def main(argv: list[str] | None = None) -> int:
                 code = int(_main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args))
         except BaseException:
             if emit_build:
-                publish_event(BuildFinished(success=False, metadata={"command": command, "exception": True}))
+                publish_event(BuildFinished(
+                    success=False,
+                    status="failed",
+                    exit_code=1,
+                    source="cli",
+                    metadata={"command": command, "exception": True},
+                ))
             raise
         if emit_build:
-            publish_event(BuildFinished(success=code == 0, metadata={"command": command, "exit_code": code}))
+            publish_event(BuildFinished(
+                success=code == 0,
+                status="succeeded" if code == 0 else ("cancelled" if code == 130 else "failed"),
+                exit_code=code,
+                source="cli",
+                metadata={"command": command, "exit_code": code},
+            ))
         return code
 
     if universal_json:

@@ -366,6 +366,15 @@ def register_paths(
             registered.append(record)
             publish_event(ArtifactCreated(
                 path=display,
+                artifact_id=str(record["id"]),
+                sha256=sha256,
+                size=int(record["size"]),
+                artifact_type=str(record["type"]),
+                producer_task=str(record.get("producer_task") or ""),
+                run_id=str(run_id or ""),
+                node_id=str(combined_metadata.get("node_id") or combined_metadata.get("workflow_node_key") or ""),
+                parent_id=str(combined_metadata.get("parent_id") or combined_metadata.get("workflow_parent_id") or ""),
+                source="artifact_registry",
                 metadata={
                     "id": record["id"], "sha256": sha256,
                     "size": record["size"], "type": record["type"],

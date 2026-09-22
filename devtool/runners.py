@@ -2206,7 +2206,14 @@ def run_specs(
                     workflow_node_status[workflow_node_key] = synthetic_state
                 if tasker_progress is not None and not dry_run:
                     tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=spec.argv, metadata=spec.metadata)
-                publish_event(TaskStarted(task=spec.name, metadata={"index": spec_index, "total": len(specs), "argv": list(spec.argv), **dict(spec.metadata)}))
+                publish_event(TaskStarted(
+                    task=spec.name,
+                    argv=tuple(str(value) for value in spec.argv),
+                    node_id=workflow_node_key,
+                    parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+                    source="runner",
+                    metadata={"index": spec_index, "total": len(specs), "argv": list(spec.argv), **dict(spec.metadata)},
+                ))
                 synthetic_result, synthetic_raw = _workflow_synthetic_result(
                     spec,
                     state=synthetic_state,
@@ -2229,7 +2236,16 @@ def run_specs(
                         pass
                 results.append(synthetic_result)
                 raw_sections.append(synthetic_raw)
-                publish_event(TaskFinished(task=spec.name, success=True, metadata={"skipped": True, "workflow_state": synthetic_state, "returncode": 0}))
+                publish_event(TaskFinished(
+                    task=spec.name,
+                    success=synthetic_state not in {"failed", "blocked", "cancelled"},
+                    status=synthetic_state,
+                    exit_code=0,
+                    node_id=workflow_node_key,
+                    parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+                    source="runner",
+                    metadata={"skipped": True, "workflow_state": synthetic_state, "returncode": 0},
+                ))
                 if tasker_progress is not None and not dry_run:
                     tasker_progress.phase_finished(synthetic_result)
                 continue
@@ -2248,7 +2264,14 @@ def run_specs(
         )
         if tasker_progress is not None and not dry_run:
             tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=effective_argv, metadata=spec.metadata)
-        publish_event(TaskStarted(task=spec.name, metadata={"index": spec_index, "total": len(specs), "argv": list(effective_argv), **dict(spec.metadata)}))
+        publish_event(TaskStarted(
+            task=spec.name,
+            argv=tuple(str(value) for value in effective_argv),
+            node_id=workflow_node_key,
+            parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+            source="runner",
+            metadata={"index": spec_index, "total": len(specs), "argv": list(effective_argv), **dict(spec.metadata)},
+        ))
 
         if dry_run:
             output = "$ " + " ".join(effective_argv)
@@ -2260,7 +2283,16 @@ def run_specs(
                 dry_metadata["workflow_node_statuses"] = dict(workflow_node_status)
             dry_result = OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_file, metadata=dry_metadata)
             results.append(dry_result)
-            publish_event(TaskFinished(task=spec.name, success=True, metadata={"skipped": True, "dry_run": True, "returncode": 0}))
+            publish_event(TaskFinished(
+                task=spec.name,
+                success=True,
+                status="skipped",
+                exit_code=0,
+                node_id=workflow_node_key,
+                parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+                source="runner",
+                metadata={"skipped": True, "dry_run": True, "returncode": 0},
+            ))
             raw_sections.append(output)
             if cleanup_dir:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
@@ -2931,8 +2963,28 @@ def run_specs(
         results.append(result)
         for issue in issues:
             if str(issue.severity).lower() == "warning":
-                publish_event(WarningDetected(message=str(issue.message or ""), metadata={"task": spec.name, "code": str(issue.code or ""), "file": str(issue.file or ""), "line": issue.line}))
-        publish_event(TaskFinished(task=spec.name, success=returncode == 0, metadata={"returncode": returncode, "duration_seconds": duration, "failure_kind": failure_kind}))
+                publish_event(WarningDetected(
+                    message=str(issue.message or ""),
+                    code=str(issue.code or ""),
+                    file=str(issue.file or ""),
+                    line=issue.line,
+                    node_id=workflow_node_key,
+                    parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+                    source="runner",
+                    metadata={"task": spec.name},
+                ))
+        publish_event(TaskFinished(
+            task=spec.name,
+            success=returncode == 0,
+            status=str(result_metadata.get("workflow_node_state") or ("cancelled" if returncode == 130 else "succeeded" if returncode == 0 else "failed")),
+            exit_code=returncode,
+            duration_seconds=duration,
+            failure_kind=failure_kind,
+            node_id=workflow_node_key,
+            parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+            source="runner",
+            metadata={"returncode": returncode, "duration_seconds": duration, "failure_kind": failure_kind},
+        ))
         if tasker_progress is not None and not dry_run:
             tasker_progress.phase_finished(result)
         raw_sections.append(raw_text)

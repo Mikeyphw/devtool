@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import asdict, is_dataclass
+from enum import Enum
 import json
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ from ..logging import get_logger
 def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+    if isinstance(value, Enum):
+        return _json_safe(value.value)
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, bytes):
@@ -33,7 +36,11 @@ def _json_safe(value: Any) -> Any:
 def event_to_dict(event: DevtoolEvent) -> dict[str, Any]:
     payload = asdict(event) if is_dataclass(event) else {"value": str(event)}
     payload = _json_safe(payload)
-    return {"type": type(event).__name__, **payload}
+    return {
+        "type": type(event).__name__,
+        "event_type": str(getattr(event, "protocol_type", "execution.event")),
+        **payload,
+    }
 
 
 class JsonEventListener:
