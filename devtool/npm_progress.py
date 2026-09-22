@@ -101,6 +101,7 @@ class NpmProgressTracker:
     live: Live | None = field(init=False, default=None)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
+    script_event_callback: Callable[[dict[str, Any]], None] | None = None
     detail: str = field(init=False, default="Starting npm script")
     returncode: int | None = field(init=False, default=None)
     last_line: str = field(init=False, default="")
@@ -176,6 +177,16 @@ class NpmProgressTracker:
 
     def finish(self, returncode: int) -> None:
         self.returncode = returncode
+        if self.current_script and self.script_event_callback is not None:
+            try:
+                self.script_event_callback({
+                    "kind": "script-finish",
+                    "label": self.current_script,
+                    "status": "cancelled" if returncode == 130 else "succeeded" if returncode == 0 else "failed",
+                    "exit_code": int(returncode),
+                })
+            except Exception:
+                pass
         if returncode == 0 and self.total is not None:
             self.completed = self.total
             self.percent = 100.0
@@ -226,7 +237,21 @@ class NpmProgressTracker:
     def _script_started(self, banner: tuple[str, str | None]) -> None:
         script, package_name = banner
         label = f"{package_name}:{script}" if package_name else script
+        previous = self.current_script
+        # Every npm lifecycle banner is a new invocation boundary. Consecutive
+        # invocations may legitimately share the same display label; identity
+        # comes from the planned occurrence, never from display text.
+        if previous and self.script_event_callback is not None:
+            try:
+                self.script_event_callback({"kind": "script-finish", "label": previous, "status": "succeeded", "exit_code": 0})
+            except Exception:
+                pass
         self.current_script = label
+        if self.script_event_callback is not None:
+            try:
+                self.script_event_callback({"kind": "script-start", "label": label})
+            except Exception:
+                pass
         self.detail = f"running {label}"
         if self.plan is None:
             return

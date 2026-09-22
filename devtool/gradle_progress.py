@@ -95,6 +95,7 @@ class GradleProgressTracker:
     live: Live | None = field(init=False, default=None)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
+    structured_event_callback: Callable[[dict[str, Any]], None] | None = None
     detail: str = field(init=False, default="Preparing Gradle environment")
     completed: int | None = field(init=False, default=0)
     total: int | None = field(init=False, default=None)
@@ -344,6 +345,11 @@ class GradleProgressTracker:
             self.detail = "Gradle build completed" if event.get("success") else "Gradle build failed"
             if not event.get("success"):
                 self.errors = max(1, self.errors)
+        if self.structured_event_callback is not None:
+            try:
+                self.structured_event_callback(dict(event))
+            except Exception:
+                pass
         self._publish(force=kind in {"task-graph", "build-finish"})
         # Structured DEVTOOL_EVENT lines are machine telemetry. Keep them in the
         # raw evidence log, but they do not need to be echoed as human console

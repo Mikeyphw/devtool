@@ -79,6 +79,7 @@ class DotnetProgressTracker:
     warnings: int = field(init=False, default=0)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
+    unit_event_callback: Callable[[dict[str, Any]], None] | None = None
     detail: str = field(init=False, default="")
     completed: int | None = field(init=False, default=None)
     total: int | None = field(init=False, default=None)
@@ -131,7 +132,7 @@ class DotnetProgressTracker:
 
     def update_from_line(self, line: str) -> None:
         self.inspection.append_line(line)
-        if self.plan is None or (not self.enabled and self.update_callback is None):
+        if self.plan is None or (not self.enabled and self.update_callback is None and self.unit_event_callback is None):
             return
         text = line.strip()
         if not text:
@@ -140,6 +141,7 @@ class DotnetProgressTracker:
         assembly_match = _TEST_RUN_FOR_RE.search(text)
         if assembly_match:
             self.current_test_assembly = _repo_relative(assembly_match.group(1), self.cwd)
+        test_result_match = _TEST_RESULT_RE.search(text)
         self._update_issue_counts(text)
 
         event = self._event_for_line(text)
@@ -149,6 +151,16 @@ class DotnetProgressTracker:
             total = event.get("total")
             if unit:
                 self.seen_units.add(unit)
+                if self.unit_event_callback is not None and unit != "test:summary":
+                    try:
+                        self.unit_event_callback({
+                            "kind": "unit-start" if unit.startswith("test:") else "unit-finish",
+                            "unit": unit,
+                            "label": detail or unit,
+                            "status": "succeeded",
+                        })
+                    except Exception:
+                        pass
                 completed = len(self.seen_units)
                 current_total = self.total if self.total is not None else self.plan.total
                 # When the initial estimate is too low, do not chase the
@@ -163,7 +175,34 @@ class DotnetProgressTracker:
                     self._set_progress(completed=completed, total=current_total, detail=detail)
             else:
                 self._set_progress(total=total if isinstance(total, int) else None, detail=detail)
+            if test_result_match is not None and self.current_test_assembly and self.unit_event_callback is not None:
+                try:
+                    failed = int(test_result_match.group("failed") or 0)
+                    unit_name = _test_unit_from_assembly(self.current_test_assembly)
+                    self.unit_event_callback({
+                        "kind": "unit-finish",
+                        "unit": f"test:{unit_name}",
+                        "label": f"testing {self.current_test_assembly}",
+                        "status": "failed" if failed else "succeeded",
+                        "exit_code": 1 if failed else 0,
+                    })
+                except Exception:
+                    pass
             return
+
+        if test_result_match is not None and self.current_test_assembly and self.unit_event_callback is not None:
+            try:
+                failed = int(test_result_match.group("failed") or 0)
+                unit_name = _test_unit_from_assembly(self.current_test_assembly)
+                self.unit_event_callback({
+                    "kind": "unit-finish",
+                    "unit": f"test:{unit_name}",
+                    "label": f"testing {self.current_test_assembly}",
+                    "status": "failed" if failed else "succeeded",
+                    "exit_code": 1 if failed else 0,
+                })
+            except Exception:
+                pass
 
         if "All projects are up-to-date" in text and self.plan.total:
             self._set_progress(completed=self.plan.total, total=self.plan.total, detail="all projects up-to-date")
@@ -174,7 +213,7 @@ class DotnetProgressTracker:
             self._set_progress(detail=detail)
 
     def finish(self, returncode: int) -> None:
-        if self.plan is None or (not self.enabled and self.update_callback is None):
+        if self.plan is None or (not self.enabled and self.update_callback is None and self.unit_event_callback is None):
             return
         self.returncode = returncode
         if returncode == 0:

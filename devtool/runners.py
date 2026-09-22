@@ -50,6 +50,7 @@ from .dotnet_progress import DotnetProgressTracker, dotnet_progress_plan
 from .generic_progress import GenericProgressTracker
 from .npm_progress import NpmProgressTracker, npm_progress_plan
 from .gradle_progress import GradleProgressTracker
+from .progress_events import RunnerExecutionAdapter
 from .gradle_reports import collect_report_metadata
 from .test_adapters import (
     compatibility_counts as _canonical_test_counts,
@@ -62,8 +63,8 @@ from .test_adapters import (
 from .transactions import create_apply_transaction, rollback_transaction, checkpoint_transaction_applied
 from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
-from .core.events import NodeDiscovered, TaskFinished, TaskStarted, WarningDetected, publish_event
-from .core.execution_contract import RunId
+from .core.events import NodeDiscovered, NodeFinished, NodeStarted, TaskFinished, TaskStarted, WarningDetected, publish_event
+from .core.execution_contract import NodeId, RunId
 from .xdg import state_dir
 from .project_runners import (
     DotnetRunner as _DotnetRunner,
@@ -1458,6 +1459,7 @@ def _run_process_live(
     heartbeat_callback: Callable[[], None] | None = None,
     progress_callback: Callable[[dict], None] | None = None,
     structured_state: dict[str, object] | None = None,
+    execution_adapter: RunnerExecutionAdapter | None = None,
 ) -> tuple[int, str]:
     live_log_handle = None
     if live_log_path is not None:
@@ -1640,13 +1642,28 @@ def _run_process_live(
                 target_phase_index=target_phase_index,
                 target_phase_total=target_phase_total,
             )
+    if tracker is not None and execution_adapter is not None:
+        if isinstance(tracker, GradleProgressTracker):
+            tracker.structured_event_callback = execution_adapter.gradle_event
+        elif isinstance(tracker, NpmProgressTracker):
+            if tracker.plan is not None:
+                execution_adapter.register_npm_plan(tracker.plan.steps)
+            tracker.script_event_callback = execution_adapter.npm_script_event
+        elif isinstance(tracker, DotnetProgressTracker):
+            tracker.unit_event_callback = execution_adapter.dotnet_unit_event
+
     if tracker is not None and verbose:
         # In verbose mode stdout is already streamed as raw text. Keep the
         # parser active only for Tasker/progress events; do not render a second
         # Rich live display over the raw output.
         tracker.enabled = False
-    if tracker is not None and (tasker_progress is not None or progress_callback is not None):
+    if tracker is not None and (tasker_progress is not None or progress_callback is not None or execution_adapter is not None):
         def _progress_update(snapshot: dict) -> None:
+            if execution_adapter is not None:
+                try:
+                    execution_adapter.progress_snapshot(dict(snapshot))
+                except Exception:
+                    pass
             if tasker_progress is not None:
                 phase = tasker_progress.current_phase or {}
                 display_target_value = str(phase.get("target") or phase.get("workspace") or snapshot.get("target") or "")
@@ -2223,6 +2240,22 @@ def run_specs(
         ]
         workflow_part_index = _metadata_int(spec.metadata.get("workflow_node_spec_index"), 1)
         workflow_part_total = _metadata_int(spec.metadata.get("workflow_node_spec_total"), 1)
+        workflow_parent_id = str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or "")
+        event_node_id = workflow_node_key or str(NodeId.dynamic(
+            parent_id=f"{event_run_id}:run",
+            kind="command",
+            key=spec.name,
+            instance=spec_index,
+        ))
+        command_part_node_id = ""
+        if workflow_node_key and workflow_part_total > 1:
+            command_part_node_id = str(NodeId.dynamic(
+                parent_id=workflow_node_key,
+                kind="command-part",
+                key=spec.name,
+                instance=workflow_part_index,
+            ))
+        progress_parent_node_id = command_part_node_id or event_node_id
         if workflow_node_key:
             blocked_dependencies = [
                 key for key in workflow_dependencies
@@ -2298,10 +2331,19 @@ def run_specs(
 
         effective_argv, cleanup_dir = _prepare_termux_dotnet(spec.argv)
         last_progress_snapshot: dict[str, object] = {}
+        execution_adapter: RunnerExecutionAdapter | None = None
 
         def _capture_progress(snapshot: dict) -> None:
             last_progress_snapshot.clear()
             last_progress_snapshot.update(snapshot)
+            # Intermediate tracker snapshots have already passed through the
+            # in-process adapter inside _run_process_live. The outer callback
+            # owns only the authoritative post-processing terminal update.
+            if execution_adapter is not None and snapshot.get("final"):
+                try:
+                    execution_adapter.progress_snapshot(dict(snapshot))
+                except Exception:
+                    pass
             if progress_callback is not None:
                 progress_callback(dict(snapshot))
         display_target, target_phase_index, target_phase_total = dotnet_layout.get(
@@ -2313,11 +2355,31 @@ def run_specs(
                     run_id=event_run_id,
             task=spec.name,
             argv=tuple(str(value) for value in effective_argv),
-            node_id=workflow_node_key,
-            parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+            node_id=event_node_id,
+            parent_id=workflow_parent_id,
             source="runner",
             metadata={"index": spec_index, "total": len(specs), "argv": list(effective_argv), **dict(spec.metadata)},
         ))
+        if command_part_node_id:
+            publish_event(NodeDiscovered(
+                run_id=event_run_id,
+                node_id=command_part_node_id,
+                parent_id=workflow_node_key,
+                label=spec.name,
+                kind="command-part",
+                source="runner",
+                metadata={"part_index": workflow_part_index, "part_total": workflow_part_total},
+            ))
+            publish_event(NodeStarted(
+                run_id=event_run_id,
+                node_id=command_part_node_id,
+                parent_id=workflow_node_key,
+                label=spec.name,
+                kind="command-part",
+                argv=tuple(str(value) for value in effective_argv),
+                source="runner",
+                metadata={"part_index": workflow_part_index, "part_total": workflow_part_total},
+            ))
 
         if dry_run:
             output = "$ " + " ".join(effective_argv)
@@ -2329,14 +2391,19 @@ def run_specs(
                 dry_metadata["workflow_node_statuses"] = dict(workflow_node_status)
             dry_result = OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_file, metadata=dry_metadata)
             results.append(dry_result)
+            if command_part_node_id:
+                publish_event(NodeFinished(
+                    run_id=event_run_id, node_id=command_part_node_id, parent_id=workflow_node_key,
+                    status="skipped", exit_code=0, source="runner", metadata={"dry_run": True},
+                ))
             publish_event(TaskFinished(
                     run_id=event_run_id,
                 task=spec.name,
                 success=True,
                 status="skipped",
                 exit_code=0,
-                node_id=workflow_node_key,
-                parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+                node_id=event_node_id,
+                parent_id=workflow_parent_id,
                 source="runner",
                 metadata={"skipped": True, "dry_run": True, "returncode": 0},
             ))
@@ -2388,6 +2455,21 @@ def run_specs(
             progress_cwd = str(spec.metadata.get("progress_cwd") or cwd)
             progress_parser = str(spec.metadata.get("progress_parser") or "")
             requested_gradle_tasks = _requested_gradle_tasks_for_spec(spec, progress_argv)
+            dotnet_plan = dotnet_progress_plan(progress_argv, progress_cwd)
+            npm_plan = npm_progress_plan(progress_argv, progress_cwd)
+            if progress_parser == "gradle":
+                execution_tool = "gradle"
+            elif dotnet_plan:
+                execution_tool = "dotnet"
+            elif progress_parser == "npm" or npm_plan:
+                execution_tool = "npm"
+            else:
+                execution_tool = str(spec.metadata.get("runner") or progress_parser or "generic")
+            execution_adapter = RunnerExecutionAdapter(
+                run_id=event_run_id,
+                parent_node_id=progress_parent_node_id,
+                tool=execution_tool,
+            )
             try:
                 overall_phase_index = _metadata_int(spec.metadata.get("validation_phase_index"), spec_index)
             except (TypeError, ValueError):
@@ -2432,9 +2514,10 @@ def run_specs(
                     heartbeat_callback=heartbeat_callback,
                     progress_callback=_capture_progress,
                     structured_state=structured_process_state,
+                    execution_adapter=execution_adapter,
                 )
             else:
-                if progress_parser == "gradle" or dotnet_progress_plan(progress_argv, progress_cwd):
+                if progress_parser == "gradle" or dotnet_plan:
                     returncode, output = _run_process_live(
                         effective_argv,
                         cwd=cwd,
@@ -3016,21 +3099,34 @@ def run_specs(
                     code=str(issue.code or ""),
                     file=str(issue.file or ""),
                     line=issue.line,
-                    node_id=workflow_node_key,
-                    parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+                    node_id=progress_parent_node_id,
+                    parent_id=workflow_node_key or workflow_parent_id,
                     source="runner",
                     metadata={"task": spec.name},
                 ))
+        command_status = "cancelled" if returncode == 130 else "succeeded" if returncode == 0 else "failed"
+        if command_part_node_id:
+            publish_event(NodeFinished(
+                run_id=event_run_id,
+                node_id=command_part_node_id,
+                parent_id=workflow_node_key,
+                status=command_status,
+                exit_code=returncode,
+                duration_seconds=duration,
+                failure_kind=failure_kind,
+                source="runner",
+                metadata={"part_index": workflow_part_index, "part_total": workflow_part_total},
+            ))
         publish_event(TaskFinished(
                     run_id=event_run_id,
             task=spec.name,
             success=returncode == 0,
-            status=str(result_metadata.get("workflow_node_state") or ("cancelled" if returncode == 130 else "succeeded" if returncode == 0 else "failed")),
+            status=str(result_metadata.get("workflow_node_state") or command_status),
             exit_code=returncode,
             duration_seconds=duration,
             failure_kind=failure_kind,
-            node_id=workflow_node_key,
-            parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+            node_id=event_node_id,
+            parent_id=workflow_parent_id,
             source="runner",
             metadata={"returncode": returncode, "duration_seconds": duration, "failure_kind": failure_kind},
         ))
