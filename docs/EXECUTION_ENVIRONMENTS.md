@@ -550,3 +550,61 @@ automatic bootstrap behavior unless `[bootstrap]` or CLI flags change it.
 ## Path isolation
 
 Before guest execution, Devtool translates shared paths and rejects any remaining native Termux path in command arguments, working directories, or environment values. Host-only toolchain variables are removed when they point into `/data/data/com.termux`. A versioned Termux Python executable is resolved through guest `python3` rather than assuming the same minor version exists in Ubuntu.
+
+## PRoot-Distro OCI worker lifecycle (OCI-02)
+
+Named SSH workers can manage a rootless PRoot-Distro OCI runtime before OCI
+repository execution is enabled. OCI-02 is lifecycle-only: normal repository
+commands still use `ssh-native`, and `ssh-proot-oci` remains fail-closed as an
+execution provider until the later roadmap overlay activates command wrapping.
+
+```sh
+devtool oci doctor tablet
+devtool oci images tablet
+devtool oci containers tablet
+devtool oci bootstrap tablet
+devtool oci install tablet ubuntu:24.04 --name devtool-android --architecture aarch64
+devtool oci install tablet ./devtool-android.oci.tar --name devtool-android
+devtool oci remove tablet devtool-android
+devtool oci remove tablet ubuntu:24.04 --image
+```
+
+`oci doctor` discovers the PRoot-Distro/proot executables, versions, host
+architecture, free storage, runtime/cache roots, installed containers, cached
+OCI image references, cache size, and nested-PROot refusal state. `ssh doctor`
+projects the same runtime discovery alongside the existing worker toolchain.
+On native Termux, the runtime root follows the Termux prefix. On regular Linux,
+discovery follows PRoot-Distro's XDG data/cache roots (`XDG_DATA_HOME` and
+`XDG_CACHE_HOME`, with their standard home-directory fallbacks).
+
+`oci bootstrap` is intentionally restricted to a native Termux worker and uses
+`pkg install -y proot-distro`, which supplies the `proot` dependency. A regular
+Linux SSH worker can still be discovered and managed after PRoot-Distro/proot
+have been provisioned outside Devtool. Bootstrap, inventory, install, archive
+staging, and remove refuse to invoke PRoot-Distro from an already nested PRoot
+environment.
+
+Registry references are installed directly by the remote PRoot-Distro. A local
+archive must be expressed as an explicit path (`/`, `./`, `../`, or `~` prefix),
+matching PRoot-Distro's distinction between registry references and local
+archives. Devtool hashes a local archive before execution, streams it to a
+temporary worker file, verifies the transferred SHA-256, and atomically publishes
+it under the full digest in the worker cache before `proot-distro install` uses
+it. A failed upload blocks its dependent install node instead of leaving it
+planned as if it could still run.
+
+OCI lifecycle operations participate in the canonical EXO run. Known steps are
+published with stable node IDs and dependency edges before execution, real SSH
+subprocesses are process-owned by those nodes, progress remains indeterminate
+when Devtool has no measured transfer/install fraction, and failures emit typed
+diagnostics. Dry-run nodes are planned then skipped without entering `running`
+or publishing process progress. Provider/runtime provenance is attached to the
+EXO process rather than maintained as a separate OCI lifecycle state machine.
+Diagnostic/evidence text emitted by this lifecycle is redacted before
+persistence.
+
+OCI-02 deliberately strips the controller's `PD_DOCKER_AUTH` from every SSH
+subprocess environment. Private-registry credential transport is deferred to the
+later OCI resilience/security overlay; public registry images and worker-local
+authentication remain usable now.
+

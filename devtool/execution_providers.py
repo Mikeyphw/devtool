@@ -244,8 +244,8 @@ def ensure_execution_provider_ready(value: str | None, *, remote: bool = False) 
     provider = execution_provider(value, remote=remote)
     if not provider.executable:
         raise ValueError(
-            f"Execution provider {provider.name!r} is configured but not executable in OCI-01. "
-            "Keep provider='native'/'ssh-native' for current builds; PRoot-Distro OCI execution is activated in a later OCI roadmap overlay."
+            f"Execution provider {provider.name!r} is configured but repository command execution is not active yet. "
+            "Keep provider='native'/'ssh-native' for current builds; PRoot-Distro OCI command execution is activated in a later OCI roadmap overlay."
         )
     return provider
 

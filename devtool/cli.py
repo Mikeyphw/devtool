@@ -264,6 +264,7 @@ PROGRESS_CAPABLE_COMMANDS = {
     "validation-events", "vevents", "validation-report", "vreport",
     "run", "rn", "package", "pkg", "clean", "cl",
     "apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as", "batch", "commit", "ci", "tag",
+    "oci",
 }
 
 RUNNER_PASSTHROUGH_COMMANDS = {
@@ -1089,6 +1090,36 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_recover.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_recover.add_argument("--run-id", default="", help="Restrict stale-run recovery to one run")
     ssh_recover.add_argument("--format", choices=["text", "json"], default="text")
+
+    oci_cmd = subparsers.add_parser("oci", help="Manage PRoot-Distro OCI runtime state on named SSH workers")
+    oci_sub = oci_cmd.add_subparsers(dest="oci_command", required=True)
+    oci_doctor = oci_sub.add_parser("doctor", help="Discover PRoot-Distro, proot, containers, and cached OCI images")
+    oci_doctor.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_doctor.add_argument("--format", choices=["text", "json"], default="text")
+    oci_images = oci_sub.add_parser("images", help="List cached OCI image references on a worker")
+    oci_images.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_images.add_argument("--format", choices=["text", "json"], default="text")
+    oci_containers = oci_sub.add_parser("containers", aliases=["list"], help="List installed PRoot-Distro containers on a worker")
+    oci_containers.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_containers.add_argument("--format", choices=["text", "json"], default="text")
+    oci_bootstrap = oci_sub.add_parser("bootstrap", help="Install or repair PRoot-Distro on a Termux SSH worker")
+    oci_bootstrap.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_bootstrap.add_argument("--dry-run", action="store_true", dest="oci_dry_run")
+    oci_bootstrap.add_argument("--force", action="store_true", dest="oci_force")
+    oci_bootstrap.add_argument("--format", choices=["text", "json"], default="text")
+    oci_install = oci_sub.add_parser("install", help="Install a registry image or local OCI archive on a worker")
+    oci_install.add_argument("profile", help="Named SSH worker")
+    oci_install.add_argument("source", help="OCI registry reference or local OCI/rootfs archive path")
+    oci_install.add_argument("--name", default="", dest="oci_name", help="Explicit local container name")
+    oci_install.add_argument("--architecture", default="", dest="oci_architecture", help="Target architecture, e.g. aarch64 or linux/arm64")
+    oci_install.add_argument("--dry-run", action="store_true", dest="oci_dry_run")
+    oci_install.add_argument("--format", choices=["text", "json"], default="text")
+    oci_remove = oci_sub.add_parser("remove", aliases=["rm"], help="Remove an installed container or cached OCI image")
+    oci_remove.add_argument("profile", help="Named SSH worker")
+    oci_remove.add_argument("target", help="Container name or cached image reference")
+    oci_remove.add_argument("--image", action="store_true", dest="oci_remove_image", help="Remove a cached OCI image instead of a container")
+    oci_remove.add_argument("--dry-run", action="store_true", dest="oci_dry_run")
+    oci_remove.add_argument("--format", choices=["text", "json"], default="text")
 
     bootstrap_cmd = subparsers.add_parser("bootstrap", help="Provision reusable destination-specific build toolchains")
     bootstrap_sub = bootstrap_cmd.add_subparsers(dest="bootstrap_command", required=True)
@@ -11004,7 +11035,7 @@ def _maybe_delegate_ssh(raw_argv: list[str], args: argparse.Namespace) -> int | 
     """Select SSH whole-run or local-devtool/remote-command mode."""
     # ``devtool ssh ...`` manages the transport itself and must never recurse
     # through whole-run SSH delegation, even when the project defaults to SSH.
-    if str(getattr(args, "command", "") or "") == "ssh":
+    if str(getattr(args, "command", "") or "") in {"ssh", "oci"}:
         return None
     ssh_profile = str(getattr(args, "ssh_profile", "") or "").strip()
     if ssh_profile:
@@ -11047,7 +11078,7 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
     native app HUD bridge, clipboard, and command summary on Android.  The old whole-
     devtool delegation remains available with DEVTOOL_AUTO_CHROOT_MODE=full.
     """
-    if str(getattr(args, "command", "") or "") in {"validation-menu", "ssh"}:
+    if str(getattr(args, "command", "") or "") in {"validation-menu", "ssh", "oci"}:
         return None
     if bool(getattr(args, "no_auto_chroot", False)) or inside_chroot():
         return None
@@ -11776,6 +11807,19 @@ def _main_after_parse(
                 ("sync_delete", "yes" if workspace_cfg.get("sync_delete") else "no"),
                 ("execution_provider", str((execution_cfg.get("provider") or {}).get("name") or "ssh-native")),
                 ("provider_executable", "yes" if (execution_cfg.get("provider") or {}).get("executable") else "no"),
+                ("proot_distro", str((execution_cfg.get("proot_oci_runtime") or {}).get("proot_distro") or "MISSING")),
+                ("proot_distro_version", str((execution_cfg.get("proot_oci_runtime") or {}).get("proot_distro_version") or "-")),
+                ("proot", str((execution_cfg.get("proot_oci_runtime") or {}).get("proot") or "MISSING")),
+                ("oci_runtime_ready", "yes" if (execution_cfg.get("proot_oci_runtime") or {}).get("ready") else "no"),
+                ("oci_inventory_healthy", "yes" if (execution_cfg.get("proot_oci_runtime") or {}).get("inventory_healthy") else "no"),
+                ("oci_nested_proot", "yes" if (execution_cfg.get("proot_oci_runtime") or {}).get("nested_proot") else "no"),
+                ("oci_containers", str((execution_cfg.get("proot_oci_runtime") or {}).get("container_count", 0))),
+                ("oci_cached_images", str((execution_cfg.get("proot_oci_runtime") or {}).get("image_count", 0))),
+                ("oci_cache_kib", str((execution_cfg.get("proot_oci_runtime") or {}).get("cache_kib", 0))),
+                ("oci_runtime_root", str((execution_cfg.get("proot_oci_runtime") or {}).get("runtime_root") or "-")),
+                ("oci_cache_root", str((execution_cfg.get("proot_oci_runtime") or {}).get("cache_root") or "-")),
+                ("oci_container_error", str((execution_cfg.get("proot_oci_runtime") or {}).get("container_error") or "-")),
+                ("oci_image_error", str((execution_cfg.get("proot_oci_runtime") or {}).get("image_error") or "-")),
                 ("automatic_sync", "yes" if execution_cfg.get("automatic_sync") else "no"),
                 ("tmux_owned_phases", "yes" if execution_cfg.get("tmux_owned_phases") else "no"),
                 ("toolchain_policy", execution_cfg.get("toolchain_policy") or "target-aware"),
@@ -11897,6 +11941,106 @@ def _main_after_parse(
             if len(changes) > 100:
                 print(f"... {len(changes) - 100} more change(s)")
         return 0 if bool(payload.get("healthy", payload.get("ok", True))) else 1
+
+    if args.command == "oci":
+        from .ssh_worker import resolve_worker_profile
+        from .proot_oci import (
+            oci_bootstrap_payload, oci_containers_payload, oci_doctor_payload,
+            oci_images_payload, oci_install_payload, oci_remove_payload,
+        )
+
+        action = str(getattr(args, "oci_command", "") or "")
+        output_format = str(getattr(args, "format", "text") or "text")
+        profile = str(getattr(args, "profile", "") or "").strip()
+        run_id = _ensure_run_id(args)
+        repo_arg = str(getattr(args, "repo", "") or "")
+        config_arg = str(getattr(args, "config", "") or "")
+        try:
+            worker = resolve_worker_profile(profile, repo=repo_arg, config_path=config_arg)
+            if action == "doctor":
+                payload = oci_doctor_payload(worker, run_id=run_id)
+            elif action == "images":
+                payload = oci_images_payload(worker, run_id=run_id)
+            elif action in {"containers", "list"}:
+                payload = oci_containers_payload(worker, run_id=run_id)
+            elif action == "bootstrap":
+                payload = oci_bootstrap_payload(
+                    worker, run_id=run_id, dry_run=bool(getattr(args, "oci_dry_run", False)),
+                    force=bool(getattr(args, "oci_force", False)),
+                )
+            elif action == "install":
+                payload = oci_install_payload(
+                    worker, str(getattr(args, "source", "") or ""), run_id=run_id,
+                    name=str(getattr(args, "oci_name", "") or ""),
+                    architecture=str(getattr(args, "oci_architecture", "") or ""),
+                    dry_run=bool(getattr(args, "oci_dry_run", False)),
+                )
+            elif action in {"remove", "rm"}:
+                payload = oci_remove_payload(
+                    worker, str(getattr(args, "target", "") or ""), run_id=run_id,
+                    image=bool(getattr(args, "oci_remove_image", False)),
+                    dry_run=bool(getattr(args, "oci_dry_run", False)),
+                )
+            else:
+                parser.error(f"Unknown oci command: {action}")
+                return 2
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            if output_format == "json":
+                print(json.dumps({"schema_version": 1, "ok": False, "run_id": run_id, "error": str(exc)}, indent=2, ensure_ascii=False))
+            else:
+                print(f"Error: {exc}", file=sys.stderr)
+            return 2
+
+        if output_format == "json":
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        elif action == "doctor":
+            runtime = payload.get("runtime", {})
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("destination", payload.get("destination") or "-"),
+                ("status", "READY" if payload.get("ok") else "BLOCKED"),
+                ("platform", runtime.get("platform") or "unknown"),
+                ("architecture", runtime.get("architecture") or "unknown"),
+                ("free_storage_kib", str(runtime.get("free_storage_kib", 0))),
+                ("proot_distro", runtime.get("proot_distro") or "MISSING"),
+                ("proot_distro_version", runtime.get("proot_distro_version") or "-"),
+                ("proot", runtime.get("proot") or "MISSING"),
+                ("proot_version", runtime.get("proot_version") or "-"),
+                ("nested_proot", "yes" if runtime.get("nested_proot") else "no"),
+                ("inventory_healthy", "yes" if runtime.get("inventory_healthy") else "no"),
+                ("containers", str(runtime.get("container_count", 0))),
+                ("cached_images", str(runtime.get("image_count", 0))),
+                ("cache_kib", str(runtime.get("cache_kib", 0))),
+                ("runtime_root", runtime.get("runtime_root") or "-"),
+                ("cache_root", runtime.get("cache_root") or "-"),
+                ("container_error", runtime.get("container_error") or "-"),
+                ("image_error", runtime.get("image_error") or "-"),
+                ("detail", payload.get("detail") or "-"),
+            ])
+        elif action == "images":
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("images", str(payload.get("count", 0))),
+                ("cache_kib", str(payload.get("cache_kib", 0))),
+            ])
+            for item in payload.get("records", []):
+                print(str(item.get("reference") or ""))
+        elif action in {"containers", "list"}:
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("containers", str(payload.get("count", 0))),
+            ])
+            for item in payload.get("records", []):
+                print(str(item.get("name") or ""))
+        else:
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("status", "OK" if payload.get("ok") else "BLOCKED"),
+                ("dry_run", "yes" if payload.get("dry_run") else "no"),
+                ("changed", str(payload.get("changed", "-"))),
+                ("detail", payload.get("detail") or "-"),
+            ])
+        return 0 if bool(payload.get("ok", False)) else 1
 
     if args.command == "bootstrap":
         try:

@@ -1,0 +1,952 @@
+from __future__ import annotations
+
+"""PRoot-Distro / OCI lifecycle management for named SSH workers.
+
+OCI-02 adds read-only discovery plus explicit bootstrap/install/remove lifecycle
+operations. Repository command execution remains fail-closed until a later OCI
+overlay. All executable OCI lifecycle work uses the caller's canonical EXO run
+identity and publishes process ownership, diagnostics, provenance, and truthful
+(indeterminate when unmeasured) progress through the canonical event stream.
+"""
+
+from dataclasses import dataclass
+import hashlib
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import time
+from typing import Any, Iterable, Mapping, Sequence
+
+from .core.events import (
+    GraphSealed, NodeBlocked, NodeDiscovered, NodeFinished, NodeProgressChanged,
+    NodeStarted, publish_event,
+)
+from .core.execution_contract import ExecutionStatus
+from .logstore import redact_sensitive_text
+from .progress_events import RunnerExecutionAdapter
+from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_remote_sh_argv
+
+_CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_ARCHITECTURES = {
+    "aarch64", "arm", "i686", "riscv64", "x86_64",
+    "linux/arm64", "linux/amd64", "linux/arm/v7", "linux/386", "linux/riscv64",
+}
+_LOCAL_PREFIXES = ("/", "./", "../", "~")
+
+
+@dataclass(frozen=True, slots=True)
+class ProotOciRuntimeProbe:
+    available: bool
+    proot_distro: str
+    proot: str
+    proot_distro_version: str
+    proot_version: str
+    platform: str
+    architecture: str
+    free_storage_kib: int
+    containers: tuple[str, ...]
+    images: tuple[str, ...]
+    container_rc: int
+    image_rc: int
+    container_error: str
+    image_error: str
+    nested_proot: bool
+    cache_kib: int
+    runtime_root: str
+    cache_root: str
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.available and self.proot_distro and self.proot and not self.nested_proot)
+
+    @property
+    def inventory_healthy(self) -> bool:
+        return bool(self.container_rc == 0 and self.image_rc == 0)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "available": self.available,
+            "ready": self.ready,
+            "proot_distro": self.proot_distro,
+            "proot": self.proot,
+            "proot_distro_version": self.proot_distro_version,
+            "proot_version": self.proot_version,
+            "platform": self.platform,
+            "architecture": self.architecture,
+            "free_storage_kib": self.free_storage_kib,
+            "containers": list(self.containers),
+            "images": list(self.images),
+            "container_count": len(self.containers),
+            "image_count": len(self.images),
+            "container_rc": self.container_rc,
+            "image_rc": self.image_rc,
+            "inventory_healthy": self.inventory_healthy,
+            "container_error": self.container_error,
+            "image_error": self.image_error,
+            "nested_proot": self.nested_proot,
+            "cache_kib": self.cache_kib,
+            "runtime_root": self.runtime_root,
+            "cache_root": self.cache_root,
+        }
+
+
+def _timeout(name: str, default: float, maximum: float = 7200.0) -> float:
+    raw = str(os.environ.get(name, str(default)) or default).strip()
+    try:
+        return max(1.0, min(float(raw), maximum))
+    except ValueError:
+        return default
+
+
+def _transport_timeout() -> float:
+    return _timeout("DEVTOOL_SSH_TRANSPORT_TIMEOUT", 30.0, 3600.0)
+
+
+def _oci_timeout() -> float:
+    return _timeout("DEVTOOL_OCI_OPERATION_TIMEOUT", 1800.0, 14400.0)
+
+
+def _transfer_timeout() -> float:
+    return _timeout("DEVTOOL_OCI_TRANSFER_TIMEOUT", 1800.0, 14400.0)
+
+
+def _sanitized_subprocess_env() -> dict[str, str]:
+    """Return a child environment that cannot implicitly forward registry auth.
+
+    OCI-02 intentionally defers private-registry credential transport to OCI-06.
+    OpenSSH can forward variables configured through SendEnv, so simply keeping
+    PD_DOCKER_AUTH out of argv/provenance is not sufficient. Strip it before
+    every SSH subprocess in this module.
+    """
+    env = dict(os.environ)
+    env.pop("PD_DOCKER_AUTH", None)
+    return env
+
+
+def _provenance(config: SSHRunnerConfig, *, operation: str = "") -> dict[str, Any]:
+    return {
+        "transport": "ssh",
+        "host": config.host,
+        "profile": config.profile,
+        "port": config.port,
+        "execution_provider": "ssh-proot-oci",
+        "runtime": "proot-distro",
+        "operation": operation,
+    }
+
+
+def _stable_node_id(config: SSHRunnerConfig, action: str, key: str = "") -> str:
+    profile = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(config.profile or config.host or "worker")).strip("-._") or "worker"
+    action = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(action or "operation")).strip("-._") or "operation"
+    if not key:
+        return f"oci:{profile}:{action}"
+    digest = hashlib.sha256(str(key).encode("utf-8")).hexdigest()[:12]
+    return f"oci:{profile}:{action}:{digest}"
+
+
+def _safe_text(value: object) -> str:
+    return redact_sensitive_text(str(value or ""))
+
+
+def _discover_nodes(run_id: str, nodes: Sequence[tuple[str, str, tuple[str, ...]]]) -> None:
+    for node_id, label, depends_on in nodes:
+        publish_event(NodeDiscovered(
+            run_id=run_id,
+            node_id=node_id,
+            label=_safe_text(label),
+            kind="oci-lifecycle",
+            depends_on=depends_on,
+            source="oci-proot",
+            metadata={"runtime": "proot-distro"},
+        ))
+    publish_event(GraphSealed(run_id=run_id, reason="OCI lifecycle operation plan is complete", source="oci-proot"))
+
+
+def _start_node(run_id: str, node_id: str, label: str, detail: str) -> None:
+    publish_event(NodeStarted(
+        run_id=run_id,
+        node_id=node_id,
+        label=_safe_text(label),
+        kind="oci-lifecycle",
+        source="oci-proot",
+    ))
+    publish_event(NodeProgressChanged(
+        run_id=run_id,
+        node_id=node_id,
+        indeterminate=True,
+        detail=_safe_text(detail),
+        source="oci-proot",
+    ))
+
+
+def _block_node(run_id: str, node_id: str, *, blocked_by: Iterable[str], reason: str) -> None:
+    publish_event(NodeBlocked(
+        run_id=run_id,
+        node_id=node_id,
+        blocked_by=tuple(str(value) for value in blocked_by if str(value)),
+        reason=_safe_text(reason),
+        source="oci-proot",
+    ))
+
+
+def _finish_node(
+    run_id: str,
+    node_id: str,
+    *,
+    status: str,
+    exit_code: int,
+    duration: float = 0.0,
+    diagnostic_ids: Iterable[str] = (),
+    reason: str = "",
+) -> None:
+    publish_event(NodeFinished(
+        run_id=run_id,
+        node_id=node_id,
+        status=status,
+        exit_code=exit_code,
+        duration_seconds=duration,
+        diagnostic_ids=tuple(diagnostic_ids),
+        transition_origin="observed",
+        transition_reason=_safe_text(reason),
+        source="oci-proot",
+    ))
+
+
+def _run_process(
+    config: SSHRunnerConfig,
+    *,
+    run_id: str,
+    node_id: str,
+    label: str,
+    argv: Sequence[str],
+    detail: str,
+    timeout: float,
+    stdin_path: Path | None = None,
+    diagnostic_code: str,
+) -> subprocess.CompletedProcess[str]:
+    safe_label = _safe_text(label)
+    _start_node(run_id, node_id, safe_label, detail)
+    adapter = RunnerExecutionAdapter(
+        run_id=run_id,
+        parent_node_id=node_id,
+        tool="proot-distro",
+        source="oci-proot",
+        provenance=_provenance(config, operation=safe_label),
+    )
+    started = time.monotonic()
+    handle: Any = subprocess.DEVNULL
+    proc: subprocess.Popen[bytes] | None = None
+
+    def _fail_before_or_during_process(
+        exc: BaseException,
+        *,
+        code_suffix: str,
+        failure_kind: str,
+        exit_code: int,
+    ) -> ValueError:
+        duration = time.monotonic() - started
+        message = _safe_text(f"{safe_label} {failure_kind.replace('_', ' ')}: {exc}")
+        if proc is not None:
+            try:
+                if proc.returncode is None:
+                    proc.kill()
+                    proc.communicate()
+            except Exception:
+                pass
+            adapter.process_exited(
+                exit_code=exit_code,
+                duration_seconds=duration,
+                failure_kind=failure_kind,
+                evidence=(message[-2048:],),
+            )
+        diagnostic_id = adapter.diagnostic(
+            severity="error",
+            code=f"{diagnostic_code}_{code_suffix}",
+            message=message,
+            failure_kind=failure_kind,
+            evidence=(message[-2048:],),
+        )
+        _finish_node(
+            run_id,
+            node_id,
+            status=ExecutionStatus.FAILED.value,
+            exit_code=exit_code,
+            duration=duration,
+            diagnostic_ids=(diagnostic_id,),
+            reason=failure_kind.replace("_", " "),
+        )
+        return ValueError(message)
+
+    try:
+        if stdin_path is not None:
+            try:
+                handle = stdin_path.open("rb")
+            except OSError as exc:
+                raise _fail_before_or_during_process(
+                    exc,
+                    code_suffix="SOURCE",
+                    failure_kind="input_open_error",
+                    exit_code=66,
+                ) from exc
+        try:
+            proc = subprocess.Popen(
+                list(argv),
+                stdin=handle,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=False,
+                env=_sanitized_subprocess_env(),
+            )
+        except OSError as exc:
+            raise _fail_before_or_during_process(
+                exc,
+                code_suffix="SPAWN",
+                failure_kind="process_launch_error",
+                exit_code=127,
+            ) from exc
+
+        adapter.process_started(pid=proc.pid, argv=argv, cwd=str(Path.cwd()))
+        try:
+            out_b, err_b = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out_b, err_b = proc.communicate()
+            duration = time.monotonic() - started
+            stdout = (out_b or b"").decode("utf-8", errors="replace")
+            stderr = (err_b or b"").decode("utf-8", errors="replace")
+            safe_evidence = _safe_text(stderr[-2048:] or stdout[-2048:] or f"timeout:{timeout:g}s")
+            adapter.process_exited(
+                exit_code=124,
+                duration_seconds=duration,
+                failure_kind="timeout",
+                evidence=(safe_evidence,),
+            )
+            diagnostic_id = adapter.diagnostic(
+                severity="error",
+                code=f"{diagnostic_code}_TIMEOUT",
+                message=f"{safe_label} timed out after {timeout:g}s",
+                failure_kind="timeout",
+                evidence=(safe_evidence,),
+            )
+            _finish_node(
+                run_id, node_id, status=ExecutionStatus.FAILED.value, exit_code=124,
+                duration=duration, diagnostic_ids=(diagnostic_id,), reason="process timeout",
+            )
+            raise ValueError(f"{safe_label} timed out after {timeout:g}s")
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise _fail_before_or_during_process(
+                exc,
+                code_suffix="IO",
+                failure_kind="process_io_error",
+                exit_code=1,
+            ) from exc
+    finally:
+        if stdin_path is not None and handle is not subprocess.DEVNULL:
+            try:
+                handle.close()
+            except OSError:
+                pass
+
+    duration = time.monotonic() - started
+    stdout = (out_b or b"").decode("utf-8", errors="replace")
+    stderr = (err_b or b"").decode("utf-8", errors="replace")
+    safe_evidence = _safe_text(stderr[-2048:] or stdout[-2048:])
+    adapter.process_exited(
+        exit_code=int(proc.returncode or 0),
+        duration_seconds=duration,
+        failure_kind="" if proc.returncode == 0 else "oci_runtime_error",
+        evidence=(safe_evidence,) if proc.returncode else (),
+    )
+    if proc.returncode != 0:
+        raw_message = (stderr or stdout or "no diagnostic output").strip()
+        message = _safe_text(raw_message)
+        diagnostic_id = adapter.diagnostic(
+            severity="error",
+            code=diagnostic_code,
+            message=f"{safe_label} failed with exit {proc.returncode}: {message[:4000]}",
+            failure_kind="oci_runtime_error",
+            evidence=(safe_evidence,),
+        )
+        _finish_node(
+            run_id, node_id, status=ExecutionStatus.FAILED.value, exit_code=proc.returncode,
+            duration=duration, diagnostic_ids=(diagnostic_id,), reason="remote process exited nonzero",
+        )
+        raise ValueError(f"{safe_label} failed with exit {proc.returncode}: {message}")
+    _finish_node(run_id, node_id, status=ExecutionStatus.SUCCEEDED.value, exit_code=0, duration=duration)
+    return subprocess.CompletedProcess(list(argv), proc.returncode, stdout=stdout, stderr=stderr)
+
+def _run_remote_plain(config: SSHRunnerConfig, script: str, *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        build_ssh_remote_sh_argv(config, script, tty=False),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=_transport_timeout() if timeout is None else timeout,
+        env=_sanitized_subprocess_env(),
+    )
+
+
+def _runtime_probe_script(proot_distro: str = "", *, strict_inventory: str = "") -> str:
+    preferred = shlex.quote(str(proot_distro or ""))
+    strict = str(strict_inventory or "").strip().lower()
+    if strict not in {"", "containers", "images"}:
+        raise ValueError(f"Unknown OCI inventory strictness: {strict_inventory}")
+    strict_q = shlex.quote(strict)
+    template = r'''set +e
+pd=__PD__
+strict_inventory=__STRICT__
+if [ -z "$pd" ] || [ ! -x "$pd" ]; then
+  pd="$(command -v proot-distro 2>/dev/null || command -v pd 2>/dev/null || true)"
+fi
+proot_bin="${PD_PROOT_BIN:-}"
+if [ -z "$proot_bin" ] || [ ! -x "$proot_bin" ]; then
+  proot_bin="$(command -v proot 2>/dev/null || true)"
+fi
+printf 'proot_distro=%s\n' "$pd"
+printf 'proot=%s\n' "$proot_bin"
+nested_proot=0
+if [ -n "${PROOT_TMP_DIR:-}" ] || [ -n "${PROOT_LOADER:-}" ]; then nested_proot=1; fi
+printf 'nested_proot=%s\n' "$nested_proot"
+termux_score=0
+if [ -f /system/build.prop ] || [ -d /data/app ]; then termux_score=$((termux_score + 1)); fi
+if [ -n "${TERMUX_APP__APP_VERSION_NAME:-}" ] || [ -n "${TERMUX_VERSION:-}" ]; then termux_score=$((termux_score + 1)); fi
+termux_prefix="${TERMUX__PREFIX:-${PREFIX:-/data/data/com.termux/files/usr}}"
+if [ -r "$termux_prefix" ] && [ -x "$termux_prefix" ]; then termux_score=$((termux_score + 1)); fi
+platform=linux
+if [ "$termux_score" -ge 2 ]; then platform=termux; fi
+printf 'platform=%s\n' "$platform"
+printf 'architecture=%s\n' "$(uname -m 2>/dev/null || printf unknown)"
+free="$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2 {print $4; exit}')"
+case "$free" in ''|*[!0-9]*) free=0;; esac
+printf 'free_storage_kib=%s\n' "$free"
+pd_version=""
+python_bin="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+if [ -n "$pd" ] && [ -n "$python_bin" ]; then
+  pd_version="$($python_bin -c 'import importlib.metadata as m; print(m.version("proot-distro"))' 2>/dev/null | awk 'NF {print; exit}')"
+fi
+printf 'proot_distro_version=%s\n' "$pd_version"
+proot_version=""
+if [ -n "$proot_bin" ]; then proot_version="$($proot_bin --version 2>&1 | awk 'NF {print; exit}')"; fi
+printf 'proot_version=%s\n' "$proot_version"
+runtime_root=""
+cache_root=""
+if [ "$platform" = termux ]; then
+  runtime_root="$termux_prefix/var/lib/proot-distro"
+  cache_root="$runtime_root/cache"
+else
+  data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  cache_home="${XDG_CACHE_HOME:-$HOME/.cache}"
+  runtime_root="$data_home/proot-distro"
+  cache_root="$cache_home/proot-distro"
+fi
+printf 'runtime_root=%s\n' "$runtime_root"
+printf 'cache_root=%s\n' "$cache_root"
+cache_kib=0
+if [ -n "$cache_root" ] && [ -d "$cache_root" ]; then
+  cache_kib="$(du -sk "$cache_root" 2>/dev/null | awk '{print $1; exit}')"
+fi
+case "$cache_kib" in ''|*[!0-9]*) cache_kib=0;; esac
+printf 'cache_kib=%s\n' "$cache_kib"
+if [ "$nested_proot" = 1 ]; then
+  printf 'containers_rc=125\n'
+  printf 'container=Refusing PRoot-Distro inventory inside an existing PRoot environment\n'
+  printf 'images_rc=125\n'
+  printf 'image=Refusing PRoot-Distro inventory inside an existing PRoot environment\n'
+  case "$strict_inventory" in containers|images) exit 125;; esac
+  exit 0
+fi
+if [ -z "$pd" ]; then
+  printf 'containers_rc=127\nimages_rc=127\n'
+  case "$strict_inventory" in containers|images) exit 127;; esac
+  exit 0
+fi
+containers="$($pd list --quiet 2>&1)"; containers_rc=$?
+printf 'containers_rc=%s\n' "$containers_rc"
+printf '%s\n' "$containers" | while IFS= read -r line; do [ -n "$line" ] && printf 'container=%s\n' "$line"; done
+images="$($pd list --image --quiet 2>&1)"; images_rc=$?
+printf 'images_rc=%s\n' "$images_rc"
+printf '%s\n' "$images" | while IFS= read -r line; do [ -n "$line" ] && printf 'image=%s\n' "$line"; done
+case "$strict_inventory" in
+  containers) exit "$containers_rc";;
+  images) exit "$images_rc";;
+esac
+exit 0
+'''
+    return template.replace("__PD__", preferred, 1).replace("__STRICT__", strict_q, 1)
+
+def _parse_runtime_probe(stdout: str) -> ProotOciRuntimeProbe:
+    scalar: dict[str, str] = {}
+    containers: list[str] = []
+    images: list[str] = []
+    for raw in str(stdout or "").splitlines():
+        if "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key == "container":
+            containers.append(value)
+        elif key == "image":
+            images.append(value)
+        else:
+            scalar[key] = value
+    def _rc(name: str) -> int:
+        try:
+            return int(scalar.get(name, "127") or 127)
+        except (TypeError, ValueError):
+            return 127
+
+    containers_rc = _rc("containers_rc")
+    images_rc = _rc("images_rc")
+    container_error = "" if containers_rc == 0 else "\n".join(containers)
+    image_error = "" if images_rc == 0 else "\n".join(images)
+    if containers_rc != 0:
+        containers = []
+    if images_rc != 0:
+        images = []
+    combined = (container_error + "\n" + image_error).lower()
+    nested = scalar.get("nested_proot", "0") == "1" or (
+        "proot" in combined and ("nested" in combined or "another proot" in combined or "inside proot" in combined)
+    )
+    try:
+        cache_kib = max(0, int(scalar.get("cache_kib", "0") or 0))
+    except ValueError:
+        cache_kib = 0
+    try:
+        free_storage_kib = max(0, int(scalar.get("free_storage_kib", "0") or 0))
+    except ValueError:
+        free_storage_kib = 0
+    pd = scalar.get("proot_distro", "")
+    proot = scalar.get("proot", "")
+    return ProotOciRuntimeProbe(
+        available=bool(pd),
+        proot_distro=pd,
+        proot=proot,
+        proot_distro_version=scalar.get("proot_distro_version", ""),
+        proot_version=scalar.get("proot_version", ""),
+        platform=scalar.get("platform", "unknown") or "unknown",
+        architecture=scalar.get("architecture", "unknown") or "unknown",
+        free_storage_kib=free_storage_kib,
+        containers=tuple(containers),
+        images=tuple(images),
+        container_rc=containers_rc,
+        image_rc=images_rc,
+        container_error=container_error,
+        image_error=image_error,
+        nested_proot=nested,
+        cache_kib=cache_kib,
+        runtime_root=scalar.get("runtime_root", ""),
+        cache_root=scalar.get("cache_root", ""),
+    )
+
+
+def probe_proot_oci_runtime(config: SSHRunnerConfig, *, proot_distro: str = "") -> ProotOciRuntimeProbe:
+    completed = _run_remote_plain(config, _runtime_probe_script(proot_distro), timeout=max(_transport_timeout(), 20.0))
+    if completed.returncode != 0:
+        detail = _safe_text((completed.stderr or completed.stdout or "").strip())
+        raise ValueError(f"PRoot-Distro runtime probe failed with exit {completed.returncode}: {detail or 'no diagnostic output'}")
+    return _parse_runtime_probe(completed.stdout)
+
+
+def _probe_runtime_exo(
+    config: SSHRunnerConfig,
+    run_id: str,
+    *,
+    action: str,
+    strict_inventory: str = "",
+) -> tuple[ProotOciRuntimeProbe, str]:
+    node_id = _stable_node_id(config, f"{action}-runtime-probe")
+    _discover_nodes(run_id, ((node_id, "Discover PRoot-Distro runtime", ()),))
+    completed = _run_process(
+        config,
+        run_id=run_id,
+        node_id=node_id,
+        label="PRoot-Distro runtime discovery",
+        argv=build_ssh_remote_sh_argv(
+            config, _runtime_probe_script(strict_inventory=strict_inventory), tty=False
+        ),
+        detail="Discovering PRoot-Distro, containers, and cached OCI images",
+        timeout=max(_transport_timeout(), 20.0),
+        diagnostic_code="OCI_RUNTIME_PROBE",
+    )
+    probe = _parse_runtime_probe(completed.stdout)
+    if not strict_inventory and probe.available and not probe.nested_proot:
+        warning_adapter = RunnerExecutionAdapter(
+            run_id=run_id,
+            parent_node_id=node_id,
+            tool="proot-distro",
+            source="oci-proot",
+            provenance=_provenance(config, operation="PRoot-Distro runtime discovery"),
+        )
+        if probe.container_rc != 0:
+            detail = _safe_text(probe.container_error or f"proot-distro list exited {probe.container_rc}")
+            warning_adapter.diagnostic(
+                severity="warning",
+                code="OCI_CONTAINER_INVENTORY",
+                message=f"PRoot-Distro container inventory was incomplete: {detail[:2000]}",
+                failure_kind="oci_inventory_error",
+                evidence=(detail[-2048:],),
+            )
+        if probe.image_rc != 0:
+            detail = _safe_text(probe.image_error or f"proot-distro list --image exited {probe.image_rc}")
+            warning_adapter.diagnostic(
+                severity="warning",
+                code="OCI_IMAGE_INVENTORY",
+                message=f"PRoot-Distro image inventory was incomplete: {detail[:2000]}",
+                failure_kind="oci_inventory_error",
+                evidence=(detail[-2048:],),
+            )
+    return probe, node_id
+
+
+def oci_doctor_payload(config: SSHRunnerConfig, *, run_id: str) -> dict[str, Any]:
+    probe, node_id = _probe_runtime_exo(config, run_id, action="doctor")
+    return {
+        "schema_version": 1,
+        "kind": "oci-doctor",
+        "ok": bool(probe.ready and probe.inventory_healthy),
+        "profile": config.profile,
+        "destination": config.destination,
+        "port": config.port,
+        "run_id": run_id,
+        "node_id": node_id,
+        "runtime": probe.as_dict(),
+        "bootstrap_supported": bool(probe.platform == "termux" and config.profile and not probe.nested_proot),
+        "detail": (
+            "PRoot-Distro runtime ready"
+            if probe.ready and probe.inventory_healthy
+            else (
+                "PRoot-Distro runtime is ready but container/image inventory is incomplete"
+                if probe.ready
+                else (
+                    "PRoot-Distro runtime is blocked inside an existing nested PRoot environment"
+                    if probe.nested_proot
+                    else (
+                        "PRoot-Distro runtime is not ready; run devtool oci bootstrap PROFILE"
+                        if probe.platform == "termux"
+                        else "PRoot-Distro runtime is not ready; provision proot-distro/proot on this Linux worker"
+                    )
+                )
+            )
+        ),
+    }
+
+
+def oci_images_payload(config: SSHRunnerConfig, *, run_id: str) -> dict[str, Any]:
+    probe, node_id = _probe_runtime_exo(config, run_id, action="images", strict_inventory="images")
+    if not probe.available:
+        raise ValueError("PRoot-Distro is not installed on this worker; run devtool oci bootstrap")
+    if probe.image_error:
+        raise ValueError(f"Unable to list cached OCI images: {probe.image_error}")
+    return {
+        "schema_version": 1,
+        "kind": "oci-images",
+        "ok": True,
+        "profile": config.profile,
+        "destination": config.destination,
+        "run_id": run_id,
+        "node_id": node_id,
+        "records": [{"reference": value} for value in probe.images],
+        "count": len(probe.images),
+        "cache_kib": probe.cache_kib,
+        "cache_root": probe.cache_root,
+    }
+
+
+def oci_containers_payload(config: SSHRunnerConfig, *, run_id: str) -> dict[str, Any]:
+    probe, node_id = _probe_runtime_exo(config, run_id, action="containers", strict_inventory="containers")
+    if not probe.available:
+        raise ValueError("PRoot-Distro is not installed on this worker; run devtool oci bootstrap")
+    if probe.container_error:
+        raise ValueError(f"Unable to list PRoot-Distro containers: {probe.container_error}")
+    return {
+        "schema_version": 1,
+        "kind": "oci-containers",
+        "ok": True,
+        "profile": config.profile,
+        "destination": config.destination,
+        "run_id": run_id,
+        "node_id": node_id,
+        "records": [{"name": value} for value in probe.containers],
+        "count": len(probe.containers),
+        "runtime_root": probe.runtime_root,
+    }
+
+
+def _validate_architecture(value: str) -> str:
+    arch = str(value or "").strip()
+    if arch and arch not in _ARCHITECTURES:
+        raise ValueError(
+            f"Unsupported OCI architecture {arch!r}; expected one of: {', '.join(sorted(_ARCHITECTURES))}"
+        )
+    return arch
+
+
+def _validate_name(value: str) -> str:
+    name = str(value or "").strip()
+    if name and not _CONTAINER_RE.fullmatch(name):
+        raise ValueError("OCI container name must start with a letter/digit and contain only letters, digits, '_', '.', '-'")
+    return name
+
+
+def _source_kind(source: str) -> tuple[str, Path | None]:
+    text = str(source or "").strip()
+    if not text:
+        raise ValueError("OCI image reference or archive path cannot be empty")
+    # Match PRoot-Distro's own source classification: only explicit path-like
+    # operands are local archives. A bare token such as ``ubuntu`` remains an
+    # OCI registry reference even if a controller-side file named ``ubuntu``
+    # happens to exist in the current directory.
+    if text.startswith(_LOCAL_PREFIXES):
+        path = Path(text).expanduser()
+        if path.is_file():
+            return "local-archive", path.resolve()
+        raise ValueError(f"Local OCI archive does not exist: {path}")
+    return "registry", None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def oci_bootstrap_payload(
+    config: SSHRunnerConfig,
+    *,
+    run_id: str,
+    dry_run: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
+    node_id = _stable_node_id(config, "bootstrap-proot-distro")
+    _discover_nodes(run_id, ((node_id, "Bootstrap PRoot-Distro", ()),))
+    command = r'''set -eu
+if [ -n "${PROOT_TMP_DIR:-}" ] || [ -n "${PROOT_LOADER:-}" ]; then
+  echo 'Refusing OCI bootstrap inside an existing PRoot environment' >&2
+  exit 125
+fi
+termux_score=0
+if [ -f /system/build.prop ] || [ -d /data/app ]; then termux_score=$((termux_score + 1)); fi
+if [ -n "${TERMUX_APP__APP_VERSION_NAME:-}" ] || [ -n "${TERMUX_VERSION:-}" ]; then termux_score=$((termux_score + 1)); fi
+termux_prefix="${TERMUX__PREFIX:-${PREFIX:-/data/data/com.termux/files/usr}}"
+if [ -r "$termux_prefix" ] && [ -x "$termux_prefix" ]; then termux_score=$((termux_score + 1)); fi
+if [ "$termux_score" -lt 2 ]; then
+  echo 'OCI bootstrap is supported only on a native Termux worker; install proot-distro/proot manually on regular Linux' >&2
+  exit 126
+fi
+changed=0
+existing_proot="${PD_PROOT_BIN:-}"
+if [ -z "$existing_proot" ] || [ ! -x "$existing_proot" ]; then existing_proot="$(command -v proot 2>/dev/null || true)"; fi
+if [ -n "$(command -v proot-distro 2>/dev/null || command -v pd 2>/dev/null || true)" ] && [ -n "$existing_proot" ] && [ "${DEVTOOL_OCI_FORCE_BOOTSTRAP:-0}" != 1 ]; then
+  :
+else
+  command -v pkg >/dev/null 2>&1 || { echo 'Termux pkg is required for OCI bootstrap' >&2; exit 126; }
+  pkg install -y proot-distro
+  changed=1
+fi
+pd_bin="$(command -v proot-distro 2>/dev/null || command -v pd 2>/dev/null || true)"
+proot_bin="${PD_PROOT_BIN:-}"
+if [ -z "$proot_bin" ] || [ ! -x "$proot_bin" ]; then proot_bin="$(command -v proot 2>/dev/null || true)"; fi
+[ -n "$pd_bin" ] || { echo 'proot-distro is still unavailable after bootstrap' >&2; exit 127; }
+[ -n "$proot_bin" ] || { echo 'proot is still unavailable after bootstrap' >&2; exit 127; }
+printf 'changed=%s\nproot_distro=%s\nproot=%s\n' "$changed" "$pd_bin" "$proot_bin"
+'''
+    if dry_run:
+        _finish_node(run_id, node_id, status=ExecutionStatus.SKIPPED.value, exit_code=0, reason="dry-run")
+        return {
+            "schema_version": 1, "kind": "oci-bootstrap", "ok": True, "changed": False,
+            "dry_run": True, "profile": config.profile, "destination": config.destination,
+            "run_id": run_id, "node_ids": [node_id], "command": "pkg install -y proot-distro",
+            "detail": "PRoot-Distro bootstrap plan ready",
+        }
+    if force:
+        command = "DEVTOOL_OCI_FORCE_BOOTSTRAP=1; export DEVTOOL_OCI_FORCE_BOOTSTRAP; " + command
+    completed = _run_process(
+        config, run_id=run_id, node_id=node_id, label="Bootstrap PRoot-Distro",
+        argv=build_ssh_remote_sh_argv(config, command, tty=False),
+        detail="Ensuring proot-distro and proot are installed through Termux pkg",
+        timeout=_oci_timeout(), diagnostic_code="OCI_BOOTSTRAP",
+    )
+    values: dict[str, str] = {}
+    for raw in completed.stdout.splitlines():
+        if "=" in raw:
+            key, value = raw.split("=", 1)
+            values[key.strip()] = value.strip()
+    return {
+        "schema_version": 1, "kind": "oci-bootstrap", "ok": True,
+        "changed": values.get("changed") == "1",
+        "profile": config.profile, "destination": config.destination, "run_id": run_id,
+        "node_ids": [node_id],
+        "runtime": {"proot_distro": values.get("proot_distro", ""), "proot": values.get("proot", "")},
+        "detail": "PRoot-Distro runtime ready",
+    }
+
+def oci_install_payload(
+    config: SSHRunnerConfig,
+    source: str,
+    *,
+    run_id: str,
+    name: str = "",
+    architecture: str = "",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    name = _validate_name(name)
+    architecture = _validate_architecture(architecture)
+    source_kind, local_path = _source_kind(source)
+    safe_source = _safe_text(source)
+    upload_node = ""
+    digest = ""
+    source_size: int | None = None
+    staged_source = str(source)
+    nodes: list[tuple[str, str, tuple[str, ...]]] = []
+    if local_path is not None:
+        # Capture immutable controller-side source evidence before planning any
+        # remote mutation. The full SHA-256 is the remote cache identity.
+        source_size = local_path.stat().st_size
+        digest = _sha256_file(local_path)
+        staged_source = f"$HOME/.cache/devtool/oci/uploads/sha256-{digest}"
+        upload_node = _stable_node_id(config, "upload-archive", digest)
+        nodes.append((upload_node, f"Upload OCI archive {local_path.name}", ()))
+    install_identity = digest if local_path is not None else str(source)
+    install_key = f"{source_kind}|{install_identity}|{name}|{architecture}"
+    install_node = _stable_node_id(config, "install", install_key)
+    nodes.append((install_node, f"Install OCI image {safe_source}", (upload_node,) if upload_node else ()))
+    _discover_nodes(run_id, tuple(nodes))
+
+    if dry_run:
+        # Planned work that never executes must never transition through RUNNING
+        # or claim measured/indeterminate process progress.
+        for node_id, _label, _deps in nodes:
+            _finish_node(run_id, node_id, status=ExecutionStatus.SKIPPED.value, exit_code=0, reason="dry-run")
+        return {
+            "schema_version": 1, "kind": "oci-install", "ok": True, "dry_run": True,
+            "profile": config.profile, "destination": config.destination, "run_id": run_id,
+            "node_ids": [item[0] for item in nodes], "source": source, "source_kind": source_kind,
+            "source_sha256": digest, "source_size": source_size,
+            "name": name, "architecture": architecture, "staged_source": staged_source if local_path else "",
+            "detail": "OCI installation plan ready",
+        }
+
+    if local_path is not None:
+        filename = staged_source.rsplit("/", 1)[-1]
+        # Refuse the use case before any remote filesystem mutation. Stream into
+        # a temporary file, verify the complete SHA-256, then atomically publish
+        # it under its full content identity. A failed upload therefore cannot
+        # poison the content-addressed cache or leave the install node runnable.
+        script = (
+            "set -eu; "
+            "if [ -n \"${PROOT_TMP_DIR:-}\" ] || [ -n \"${PROOT_LOADER:-}\" ]; then "
+            "echo 'Refusing OCI archive staging inside an existing PRoot environment' >&2; exit 125; fi; "
+            "d=\"$HOME/.cache/devtool/oci/uploads\"; mkdir -p \"$d\"; "
+            f"p=\"$d/{filename}\"; tmp=\"$p.part.$$\"; "
+            "trap 'rm -f \"$tmp\"' EXIT HUP INT TERM; cat > \"$tmp\"; "
+            "command -v sha256sum >/dev/null 2>&1 || { echo 'sha256sum is required for OCI archive verification' >&2; exit 127; }; "
+            "actual=\"$(sha256sum \"$tmp\" | awk '{print $1}')\"; "
+            f"expected={shlex.quote(digest)}; "
+            "[ \"$actual\" = \"$expected\" ] || { echo 'OCI archive SHA-256 mismatch after SSH transfer' >&2; exit 65; }; "
+            "mv -f \"$tmp\" \"$p\"; trap - EXIT HUP INT TERM; printf 'staged=%s\\n' \"$p\""
+        )
+        try:
+            _run_process(
+                config, run_id=run_id, node_id=upload_node, label=f"Upload OCI archive {local_path.name}",
+                argv=build_ssh_remote_sh_argv(config, script, tty=False), detail="Uploading and verifying local OCI archive on worker",
+                timeout=_transfer_timeout(), stdin_path=local_path, diagnostic_code="OCI_ARCHIVE_UPLOAD",
+            )
+        except (OSError, subprocess.SubprocessError, ValueError):
+            _block_node(
+                run_id,
+                install_node,
+                blocked_by=(upload_node,),
+                reason="OCI install blocked because archive staging did not succeed",
+            )
+            raise
+
+    args = ["install"]
+    if name:
+        args += ["--name", name]
+    if architecture:
+        args += ["--architecture", architecture]
+    # Registry refs are shell-quoted literally. Staged local archives use a
+    # shell variable to preserve HOME expansion without credential-bearing argv.
+    if local_path is not None:
+        filename = staged_source.rsplit("/", 1)[-1]
+        source_expr = f'"$HOME/.cache/devtool/oci/uploads/{filename}"'
+    else:
+        source_expr = shlex.quote(str(source))
+    args_text = " ".join(shlex.quote(item) for item in args)
+    install_script = (
+        "set -eu; "
+        "if [ -n \"${PROOT_TMP_DIR:-}\" ] || [ -n \"${PROOT_LOADER:-}\" ]; then "
+        "echo 'Refusing OCI install inside an existing PRoot environment' >&2; exit 125; fi; "
+        "pd_bin=\"$(command -v proot-distro 2>/dev/null || command -v pd 2>/dev/null || true)\"; "
+        "[ -n \"$pd_bin\" ] || { echo 'PRoot-Distro is not installed; run devtool oci bootstrap' >&2; exit 127; }; "
+        "proot_bin=\"${PD_PROOT_BIN:-}\"; if [ -z \"$proot_bin\" ] || [ ! -x \"$proot_bin\" ]; then proot_bin=\"$(command -v proot 2>/dev/null || true)\"; fi; "
+        "[ -n \"$proot_bin\" ] || { echo 'proot is not installed; run devtool oci bootstrap' >&2; exit 127; }; "
+        f"\"$pd_bin\" {args_text} {source_expr}"
+    )
+    _run_process(
+        config, run_id=run_id, node_id=install_node, label=f"Install OCI image {safe_source}",
+        argv=build_ssh_remote_sh_argv(config, install_script, tty=False),
+        detail="Installing OCI image through PRoot-Distro", timeout=_oci_timeout(), diagnostic_code="OCI_INSTALL",
+    )
+    return {
+        "schema_version": 1, "kind": "oci-install", "ok": True,
+        "profile": config.profile, "destination": config.destination, "run_id": run_id,
+        "node_ids": [item[0] for item in nodes], "source": source, "source_kind": source_kind,
+        "source_sha256": digest, "source_size": source_size,
+        "staged_source": staged_source if local_path else "",
+        "name": name, "architecture": architecture,
+        "detail": "OCI image installed",
+    }
+
+
+def oci_remove_payload(
+    config: SSHRunnerConfig,
+    target: str,
+    *,
+    run_id: str,
+    image: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    target = str(target or "").strip()
+    if not target:
+        raise ValueError("OCI remove target cannot be empty")
+    if not image:
+        target = _validate_name(target)
+    safe_target = _safe_text(target)
+    node_id = _stable_node_id(config, "remove-image" if image else "remove-container", target)
+    label = f"Remove cached OCI image {safe_target}" if image else f"Remove PRoot-Distro container {safe_target}"
+    _discover_nodes(run_id, ((node_id, label, ()),))
+    if dry_run:
+        _finish_node(run_id, node_id, status=ExecutionStatus.SKIPPED.value, exit_code=0, reason="dry-run")
+        return {
+            "schema_version": 1, "kind": "oci-remove", "ok": True, "dry_run": True,
+            "profile": config.profile, "destination": config.destination, "run_id": run_id,
+            "node_id": node_id, "target": target, "target_kind": "image" if image else "container",
+            "detail": "OCI removal plan ready",
+        }
+    flag = " --image" if image else ""
+    script = (
+        "set -eu; "
+        "if [ -n \"${PROOT_TMP_DIR:-}\" ] || [ -n \"${PROOT_LOADER:-}\" ]; then "
+        "echo 'Refusing OCI remove inside an existing PRoot environment' >&2; exit 125; fi; "
+        "pd_bin=\"$(command -v proot-distro 2>/dev/null || command -v pd 2>/dev/null || true)\"; "
+        "[ -n \"$pd_bin\" ] || { echo 'PRoot-Distro is not installed; run devtool oci bootstrap' >&2; exit 127; }; "
+        f"\"$pd_bin\" remove{flag} {shlex.quote(target)}"
+    )
+    _run_process(
+        config, run_id=run_id, node_id=node_id, label=label,
+        argv=build_ssh_remote_sh_argv(config, script, tty=False),
+        detail="Removing OCI runtime state", timeout=_oci_timeout(), diagnostic_code="OCI_REMOVE",
+    )
+    return {
+        "schema_version": 1, "kind": "oci-remove", "ok": True,
+        "profile": config.profile, "destination": config.destination, "run_id": run_id,
+        "node_id": node_id, "target": target, "target_kind": "image" if image else "container",
+        "detail": "OCI runtime state removed",
+    }
+

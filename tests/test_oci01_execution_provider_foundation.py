@@ -104,7 +104,7 @@ def test_remote_provider_aliases_are_canonical_and_native_means_ssh_native() -> 
 def test_proot_oci_provider_is_configuration_visible_but_fail_closed_for_execution() -> None:
     provider = execution_provider("proot-oci", remote=True)
     assert provider.name == SSH_PROOT_OCI
-    with pytest.raises(ValueError, match="configured but not executable in OCI-01"):
+    with pytest.raises(ValueError, match="repository command execution is not active yet"):
         ensure_execution_provider_ready(provider.name, remote=True)
 
 
@@ -181,7 +181,7 @@ def test_command_execution_rejects_proot_provider_before_remote_mutation(tmp_pat
         raise AssertionError("probe should not run for an unavailable provider")
 
     monkeypatch.setattr(ssh_execution, "probe_worker", unexpected_probe)
-    with pytest.raises(ValueError, match="not executable in OCI-01"):
+    with pytest.raises(ValueError, match="repository command execution is not active yet"):
         ssh_execution.prepare_ssh_command_execution(cfg, [], repo_root=tmp_path)
     assert called is False
 

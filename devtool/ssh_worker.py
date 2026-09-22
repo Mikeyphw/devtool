@@ -180,7 +180,10 @@ tool_git="$(find_cmd git)"
 tool_java="$(find_cmd java)"
 tool_gradle="$(find_cmd gradle)"
 tool_timeout="$(find_cmd timeout)"
-for logical in python tmux rsync git java gradle; do eval "value=\${tool_$logical}"; kv "tool_$logical" "$value"; done
+tool_proot_distro="$(find_cmd proot-distro)"; [ -n "$tool_proot_distro" ] || tool_proot_distro="$(find_cmd pd)"
+tool_proot="${PD_PROOT_BIN:-}"
+if [ -z "$tool_proot" ] || [ ! -x "$tool_proot" ]; then tool_proot="$(find_cmd proot)"; fi
+for logical in python tmux rsync git java gradle proot_distro proot; do eval "value=\${tool_$logical}"; kv "tool_$logical" "$value"; done
 version_python=""; [ -n "$tool_python" ] && version_python="$("$tool_python" --version 2>&1 | head -n1)"
 version_tmux=""; [ -n "$tool_tmux" ] && version_tmux="$("$tool_tmux" -V 2>/dev/null | head -n1)"
 version_rsync=""; [ -n "$tool_rsync" ] && version_rsync="$("$tool_rsync" --version 2>/dev/null | head -n1)"
@@ -195,7 +198,15 @@ version_gradle=""
 if [ -n "$tool_gradle" ] && [ -n "$tool_timeout" ]; then
   version_gradle="$("$tool_timeout" 5 "$tool_gradle" --version 2>&1 | awk 'NF {print; exit}')"
 fi
-for logical in python tmux rsync git java gradle; do eval "value=\${version_$logical}"; kv "version_$logical" "$value"; done
+version_proot_distro=""
+if [ -n "$tool_proot_distro" ] && [ -n "$tool_python" ] && [ -n "$tool_timeout" ]; then
+  version_proot_distro="$($tool_timeout 5 "$tool_python" -c 'import importlib.metadata as m; print(m.version("proot-distro"))' 2>/dev/null | awk 'NF {print; exit}')"
+fi
+version_proot=""
+if [ -n "$tool_proot" ] && [ -n "$tool_timeout" ]; then
+  version_proot="$($tool_timeout 5 "$tool_proot" --version 2>&1 | awk 'NF {print; exit}')"
+fi
+for logical in python tmux rsync git java gradle proot_distro proot; do eval "value=\${version_$logical}"; kv "version_$logical" "$value"; done
 exit 0
 '''
 
@@ -234,8 +245,8 @@ def probe_worker(config: SSHRunnerConfig) -> SSHWorkerProbe:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise ValueError(f"SSH worker probe failed with exit {completed.returncode}: {detail or 'no diagnostic output'}")
     values = _parse_kv(completed.stdout)
-    tools = {name: values.get(f"tool_{name}", "") for name in ("python", "tmux", "rsync", "git", "java", "gradle")}
-    versions = {name: values.get(f"version_{name}", "") for name in ("python", "tmux", "rsync", "git", "java", "gradle")}
+    tools = {name: values.get(f"tool_{name}", "") for name in ("python", "tmux", "rsync", "git", "java", "gradle", "proot_distro", "proot")}
+    versions = {name: values.get(f"version_{name}", "") for name in ("python", "tmux", "rsync", "git", "java", "gradle", "proot_distro", "proot")}
     return SSHWorkerProbe(
         profile=config.profile,
         destination=config.destination,
@@ -260,6 +271,22 @@ def probe_worker(config: SSHRunnerConfig) -> SSHWorkerProbe:
 def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
     probe = probe_worker(config)
     provider = provider_metadata(config.execution_provider, remote=True)
+    from .proot_oci import probe_proot_oci_runtime
+    oci_runtime: dict[str, Any] = {
+        "available": bool(probe.tools.get("proot_distro")),
+        "ready": False,
+        "proot_distro": probe.tools.get("proot_distro", ""),
+        "proot": probe.tools.get("proot", ""),
+        "containers": [],
+        "images": [],
+    }
+    if probe.tools.get("proot_distro"):
+        try:
+            oci_runtime = probe_proot_oci_runtime(
+                config, proot_distro=probe.tools.get("proot_distro", "")
+            ).as_dict()
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            oci_runtime["error"] = str(exc)
     sessions: list[str] = []
     sessions_error = ""
     if probe.tools.get("tmux"):
@@ -286,6 +313,7 @@ def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
         },
         "execution": {
             "provider": provider,
+            "proot_oci_runtime": oci_runtime,
             "automatic_sync": config.workspace_mode in {"managed", "ephemeral"},
             "tmux_owned_phases": True if config.profile else bool(config.worker_tmux),
             "toolchain_policy": "target-aware",
