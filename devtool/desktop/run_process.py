@@ -8,12 +8,12 @@ import signal
 import subprocess
 import threading
 import time
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .gtk_runtime import gtk_log_dir, redact_text
+from .execution_truth import desktop_runtime_payload
 from ..core.execution_contract import ProcessId, RunId
 
 OutputCallback = Callable[..., None]
@@ -72,6 +72,38 @@ class DesktopRunHandle:
     stderr_lines: list[str] = field(default_factory=list)
     diagnostics: list[dict[str, str]] = field(default_factory=list)
     current_phase: str = ""
+    runtime_state: dict[str, Any] = field(default_factory=dict)
+    last_truth_refresh: float = 0.0
+
+    def apply_runtime_state(self, payload: Mapping[str, Any] | None) -> bool:
+        runtime = desktop_runtime_payload(payload)
+        if runtime.get("desktop_truth") != "canonical":
+            return False
+        if str(runtime.get("run_id") or "") != self.run_id:
+            return False
+        self.runtime_state = runtime
+        self.last_truth_refresh = time.monotonic()
+        return True
+
+    @property
+    def semantic_status(self) -> str:
+        if self.runtime_state.get("desktop_truth") == "canonical":
+            return str(self.runtime_state.get("status") or self.status)
+        return self.status
+
+    @property
+    def semantic_phase(self) -> str:
+        if self.runtime_state.get("desktop_truth") == "canonical":
+            phase = self.runtime_state.get("phase") if isinstance(self.runtime_state.get("phase"), dict) else {}
+            return str(phase.get("name") or self.runtime_state.get("phase_name") or "")
+        return self.current_phase
+
+    @property
+    def semantic_diagnostics(self) -> list[dict[str, Any]]:
+        if self.runtime_state.get("desktop_truth") == "canonical":
+            values = self.runtime_state.get("diagnostics") if isinstance(self.runtime_state.get("diagnostics"), list) else []
+            return [dict(item) for item in values if isinstance(item, dict)]
+        return [dict(item) for item in self.diagnostics]
 
     @property
     def process_id(self) -> str:
@@ -87,18 +119,33 @@ class DesktopRunHandle:
 
     def summary(self) -> str:
         rc = self.returncode if self.returncode is not None else self.process.poll()
-        phase = f" · {self.current_phase}" if self.current_phase else ""
+        semantic_phase = self.semantic_phase
+        phase = f" · {semantic_phase}" if semantic_phase else ""
         elapsed = f" · {self.elapsed_seconds:.1f}s"
+        semantic_status = self.semantic_status
+        if self.runtime_state.get("desktop_truth") == "canonical":
+            label = {
+                "ok": "succeeded",
+                "success": "succeeded",
+                "succeeded": "succeeded",
+                "failed": "failed",
+                "blocked": "blocked",
+                "cancelled": "cancelled",
+                "canceled": "cancelled",
+                "skipped": "skipped",
+                "running": "running",
+            }.get(semantic_status, semantic_status or "running")
+            return f"{self.run_id} · {label}{phase}{elapsed}"
         if rc is None:
             return f"{self.run_id} · running{phase}{elapsed}"
-        if self.status == "cancelled":
+        if semantic_status in {"cancelled", "canceled"}:
             return f"{self.run_id} · cancelled{phase}{elapsed}"
         return f"{self.run_id} · exit {rc}{phase}{elapsed}"
 
     def failure_summary(self) -> str:
-        if self.status == "cancelled":
+        if self.semantic_status in {"cancelled", "canceled"}:
             return "Desktop-launched run was cancelled."
-        for item in reversed(self.diagnostics):
+        for item in reversed(self.semantic_diagnostics):
             if item.get("severity") == "error":
                 return item.get("message") or f"Run exited {self.returncode}"
         if self.returncode and self.returncode != 0:
@@ -133,7 +180,7 @@ class DesktopRunLauncher:
         clean_argv = [str(part) for part in argv]
         if not clean_argv or not clean_argv[0]:
             raise ValueError("Cannot launch an empty command argv.")
-        run_id = str(RunId(f"desktop-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"))
+        run_id = str(RunId.new(prefix="desktop"))
         cwd_path = Path(cwd).expanduser().resolve()
         if not cwd_path.is_dir():
             raise FileNotFoundError(f"Run cwd does not exist: {cwd_path}")
@@ -223,6 +270,7 @@ class DesktopRunLauncher:
                 handle.status = "completed" if handle.returncode == 0 else "failed"
             with handle.log_path.open("a", encoding="utf-8") as log:
                 log.write(f"\nexit={handle.returncode}\nelapsed_seconds={handle.elapsed_seconds:.3f}\n")
+            self.refresh_truth(handle, force=True)
         finally:
             if on_exit is not None:
                 try:
@@ -261,6 +309,22 @@ class DesktopRunLauncher:
                 return
         except Exception:
             return
+
+    def refresh_truth(self, handle_or_id: DesktopRunHandle | str, *, force: bool = False) -> dict[str, Any]:
+        handle = self.get(handle_or_id) if isinstance(handle_or_id, str) else handle_or_id
+        if handle is None:
+            return {}
+        now = time.monotonic()
+        if not force and handle.runtime_state and now - handle.last_truth_refresh < 0.25:
+            return dict(handle.runtime_state)
+        try:
+            from .ipc_client import DesktopIpcClient
+            runtime = DesktopIpcClient().run(handle.run_id)
+        except Exception:
+            runtime = {}
+        if runtime:
+            handle.apply_runtime_state(runtime)
+        return dict(handle.runtime_state)
 
     def get(self, run_id: str) -> DesktopRunHandle | None:
         with self._lock:

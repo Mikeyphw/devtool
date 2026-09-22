@@ -24,6 +24,7 @@ from ..workspace import workspace_group_memberships
 from ..ui_core.viewmodels import runtime_state_to_ui_snapshot
 from ..tasker import DEFAULT_TASKER_DIR
 from .history_store import DesktopHistoryStore
+from .execution_truth import desktop_runtime_payload
 from .hud_store import load_hud_snapshot
 from .ipc_client import DesktopIpcClient
 from .ui_semantics import build_desktop_semantic_view
@@ -147,11 +148,11 @@ class DesktopControlCenterModel:
         history = DesktopHistoryStore(config.repo_root).load(limit=self.history_limit)
         hud = load_hud_snapshot(self.state_dir, follow_active=self.follow_active, recent_events=self.recent_events)
         ipc = DesktopIpcClient(socket_path=self.ipc_socket).snapshot()
-        raw_state = _read_raw_hud_state(hud.directory) or hud.state
-        # Prefer live IPC when available; local HUD files are fallback/cache.
-        # This prevents a stale state.json from shadowing an active broker run.
-        raw_runs = _raw_runs_from_ipc_or_hud(ipc, raw_state or hud.state)
-        diagnostic_runs = _raw_runs_from_ipc_or_hud(ipc, raw_state or hud.state)
+        # EXO-09: the desktop HUD reader already prefers execution.json. Raw
+        # state.json is recovery-only and may not override canonical execution.
+        raw_state = desktop_runtime_payload(hud.state) or _read_raw_hud_state(hud.directory)
+        raw_runs = _raw_runs_from_ipc_or_hud(ipc, raw_state)
+        diagnostic_runs = _raw_runs_from_ipc_or_hud(ipc, raw_state)
         active_runs = [_run_summary_dict(item) for item in raw_runs]
         diagnostics = _diagnostics_from_runs_and_events(diagnostic_runs, hud.events)
         memberships = workspace_group_memberships(config.workspace, config.targets)
@@ -307,13 +308,14 @@ def _target_summary_dict(
 
 def _raw_runs_from_ipc_or_hud(ipc: dict[str, Any], hud_state: dict[str, Any]) -> list[dict[str, Any]]:
     raw_runs = ipc.get("runs") if isinstance(ipc.get("runs"), list) else []
-    runs = [dict(item) for item in raw_runs if isinstance(item, dict)]
+    runs = [desktop_runtime_payload(item) for item in raw_runs if isinstance(item, dict)]
+    hud_run = desktop_runtime_payload(hud_state) if hud_state else {}
     if runs:
-        if hud_state and str(hud_state.get("run_id") or hud_state.get("id") or "") not in {str(item.get("run_id") or item.get("id") or "") for item in runs}:
-            runs.append(dict(hud_state))
+        if hud_run and str(hud_run.get("run_id") or hud_run.get("id") or "") not in {str(item.get("run_id") or item.get("id") or "") for item in runs}:
+            runs.append(hud_run)
         return sorted(runs, key=_run_order, reverse=True)
-    if hud_state:
-        return [dict(hud_state)]
+    if hud_run:
+        return [hud_run]
     return []
 
 
@@ -329,11 +331,19 @@ def _field_text(value: Any, *keys: str) -> str:
 
 
 def _run_summary_dict(item: dict[str, Any]) -> dict[str, Any]:
+    item = desktop_runtime_payload(item)
     state = parse_hud_state(item)
     events = item.get("events") if isinstance(item.get("events"), list) else []
     steps = [step.to_dict() for step in operation_steps(state, events)]
     errors, warnings = live_issue_counts(events, state)
-    percent = item.get("percent")
+    progress = item.get("progress") if isinstance(item.get("progress"), dict) else {}
+    percent = progress.get("measured_percent")
+    if percent is None:
+        percent = progress.get("overall_percent")
+    if percent is None:
+        percent = progress.get("percent")
+    if percent is None:
+        percent = item.get("percent")
     try:
         number = float(percent) if percent is not None and str(percent) != "" else None
         percent_value = int(number) if number is not None and math.isfinite(number) else None
@@ -391,6 +401,7 @@ def _diagnostics_from_runs_and_events(runs: list[dict[str, Any]], events: list[d
     for run in runs:
         if not isinstance(run, dict):
             continue
+        run = desktop_runtime_payload(run)
         state = parse_hud_state(run)
         run_events = run.get("events") if isinstance(run.get("events"), list) else []
         if not run_events:

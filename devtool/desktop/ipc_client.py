@@ -49,3 +49,9 @@ class DesktopIpcClient:
             payload.setdefault("socket", str(path))
             return payload
         return {"ok": False, "runs": [], "socket": str(path), "error": "unexpected ipc payload"}
+
+    def run(self, run_id: str) -> dict[str, Any]:
+        """Return one run normalized to canonical EXO truth when available."""
+        from .execution_truth import canonical_run_from_ipc
+
+        return canonical_run_from_ipc(self.snapshot(), run_id)

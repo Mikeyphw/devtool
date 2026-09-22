@@ -442,7 +442,12 @@ class Gtk4CompactHud:
                 desktop_view = build_desktop_semantic_view(semantic_ui).as_dict()
                 semantic_operation = desktop_view.get("operation", {}) if isinstance(desktop_view.get("operation"), dict) else {}
                 semantic_progress = desktop_view.get("progress_summary", {}) if isinstance(desktop_view.get("progress_summary"), dict) else {}
-                pct = semantic_progress.get("percent")
+                pct = semantic_progress.get("measured_percent")
+                if pct is None:
+                    pct = semantic_progress.get("overall_percent")
+                if pct is None:
+                    progress_state = state.get("progress") if isinstance(state.get("progress"), dict) else {}
+                    pct = progress_state.get("measured_percent")
                 if pct is None:
                     pct = state.get("percent")
                 if pct is None:

@@ -2204,18 +2204,22 @@ def _render_run_workflow(
         if handle is None:
             diagnostics_view.get_buffer().set_text("No diagnostics yet.")
             return
-        diagnostics = handle.diagnostics
+        launcher.refresh_truth(handle)
+        diagnostics = handle.semantic_diagnostics
         if diagnostics:
             diagnostics_view.get_buffer().set_text("\n".join(f"{item.get('severity', 'info')}: {item.get('message', '')}" for item in diagnostics[-100:]))
+        elif handle.diagnostics:
+            diagnostics_view.get_buffer().set_text("Output observations (non-authoritative):\n" + "\n".join(f"{item.get('severity', 'info')}: {item.get('message', '')}" for item in handle.diagnostics[-100:]))
         else:
-            diagnostics_view.get_buffer().set_text("No parsed errors or warnings.")
+            diagnostics_view.get_buffer().set_text("No canonical diagnostics yet.")
         evidence_lines = [
             f"run_id: {handle.run_id}",
-            f"status: {handle.status}",
+            f"status: {handle.semantic_status}",
             f"pid: {handle.process.pid}",
             f"cwd: {handle.cwd}",
             f"log: {handle.log_path}",
             f"elapsed_seconds: {handle.elapsed_seconds:.3f}",
+            f"truth: {'canonical' if handle.runtime_state.get('desktop_truth') == 'canonical' else 'process-observation'}",
             "argv:",
             *[f"  {shlex.quote(part)}" for part in handle.argv],
         ]
