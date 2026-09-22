@@ -19,6 +19,14 @@ def get_event_bus() -> EventBus:
     return _BUS
 
 
+def get_execution_store():
+    return _BUS.execution_store
+
+
+def execution_snapshot(run_id: str | None = None):
+    return _BUS.execution_store.snapshot(run_id)
+
+
 def publish_event(event: DevtoolEvent) -> None:
     _BUS.publish(event)
 
@@ -47,4 +55,4 @@ def collect_json_events() -> Iterator[JsonEventListener]:
         _BUS.unsubscribe_all(listener)
 
 
-__all__ = ["get_event_bus", "publish_event", "configure_event_console", "tui_event_snapshot", "collect_json_events"]
+__all__ = ["get_event_bus", "get_execution_store", "execution_snapshot", "publish_event", "configure_event_console", "tui_event_snapshot", "collect_json_events"]

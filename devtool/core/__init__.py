@@ -10,6 +10,22 @@ from .execution_contract import (
     canonical_status_value,
     legacy_phase_node_id,
 )
+from .execution_state import (
+    ExecutionArtifactSnapshot,
+    ExecutionCounts,
+    ExecutionDiagnosticSnapshot,
+    ExecutionNodeSnapshot,
+    ExecutionProcessSnapshot,
+    ExecutionProgressSnapshot,
+    ExecutionSnapshot,
+)
+from .execution_store import (
+    ExecutionReducer,
+    ExecutionSequenceError,
+    ExecutionStore,
+    ExecutionStoreError,
+    ExecutionTransitionError,
+)
 from .results import CommandResult
 from .runtime import result_from_completed_process, result_from_exception, result_from_operation, result_to_dict
 from .logging import LoggingMode, configure_logging, get_logger, logging_mode
@@ -25,6 +41,18 @@ __all__ = [
     "canonical_execution_status",
     "canonical_status_value",
     "legacy_phase_node_id",
+    "ExecutionCounts",
+    "ExecutionProgressSnapshot",
+    "ExecutionNodeSnapshot",
+    "ExecutionProcessSnapshot",
+    "ExecutionDiagnosticSnapshot",
+    "ExecutionArtifactSnapshot",
+    "ExecutionSnapshot",
+    "ExecutionStore",
+    "ExecutionReducer",
+    "ExecutionStoreError",
+    "ExecutionSequenceError",
+    "ExecutionTransitionError",
     "CommandResult",
     "result_from_exception",
     "result_from_operation",

@@ -322,3 +322,42 @@ def test_plugin_doctor_failure_is_reported_not_raised(monkeypatch: pytest.Monkey
     assert report["ok"] is False
     assert report["checks"][0]["name"] == "doctor"
     assert "doctor exploded" in report["checks"][0]["detail"]
+
+
+def test_hook_write_boundary_ignores_preexisting_dirty_paths(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Devtool Test"], cwd=repo, check=True)
+    dirty = repo / "overlay.py"
+    dirty.write_text("baseline\n", encoding="utf-8")
+    subprocess.run(["git", "add", "overlay.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "baseline"], cwd=repo, check=True, stdout=subprocess.DEVNULL)
+    dirty.write_text("overlay payload\n", encoding="utf-8")
+
+    script = b'''set -eu\n: # observational hook; pre-existing overlay dirt must not be attributed to it\n'''
+    archive, manifest = _archive_with_validator(tmp_path / "preexisting-dirty.zip", script, write_paths=["declared.txt"])
+    result = run_artifact_validation_script(repo, archive, manifest=manifest)
+    assert result and result.returncode == 0, result.output if result else ""
+    assert result.metadata["hook_event"]["write_violations"] == []
+    assert dirty.read_text(encoding="utf-8") == "overlay payload\n"
+
+
+def test_hook_write_boundary_still_detects_mutation_of_preexisting_dirty_path(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Devtool Test"], cwd=repo, check=True)
+    dirty = repo / "overlay.py"
+    dirty.write_text("baseline\n", encoding="utf-8")
+    subprocess.run(["git", "add", "overlay.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "baseline"], cwd=repo, check=True, stdout=subprocess.DEVNULL)
+    dirty.write_text("overlay payload\n", encoding="utf-8")
+
+    script = b'''set -eu\nprintf hook-mutated > "$DEVTOOL_REPO_ROOT/overlay.py"\n'''
+    archive, manifest = _archive_with_validator(tmp_path / "mutate-preexisting-dirty.zip", script, write_paths=["declared.txt"])
+    result = run_artifact_validation_script(repo, archive, manifest=manifest)
+    assert result and result.returncode == 1, result.output if result else ""
+    assert "overlay.py" in result.metadata["hook_event"]["write_violations"]

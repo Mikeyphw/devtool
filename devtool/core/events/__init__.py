@@ -1,6 +1,6 @@
 from .bus import EventBus
 from .listeners import ConsoleEventListener, JsonEventListener, LoggingEventListener, TuiEventListener, event_to_dict
-from .runtime import collect_json_events, configure_event_console, get_event_bus, publish_event, tui_event_snapshot
+from .runtime import collect_json_events, configure_event_console, execution_snapshot, get_event_bus, get_execution_store, publish_event, tui_event_snapshot
 from .events import (
     EXECUTION_EVENT_SCHEMA_VERSION,
     ArtifactCreated,
@@ -62,6 +62,8 @@ __all__ = [
     "collect_json_events",
     "configure_event_console",
     "get_event_bus",
+    "get_execution_store",
+    "execution_snapshot",
     "publish_event",
     "tui_event_snapshot",
 ]

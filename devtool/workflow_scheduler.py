@@ -14,6 +14,7 @@ from pathlib import Path
 import threading
 from typing import Any, Iterable, Mapping, Sequence
 
+from .core.execution_contract import RunId
 from .models import CommandSpec, OperationResult, ProjectConfig
 from .reservations import paths_overlap
 from .workflow_graph import ExecutionGraph, WorkflowNode
@@ -606,8 +607,10 @@ def run_workflow_specs(
     execution runs each workflow node atomically (its command parts remain
     sequential) and never starts a node until all dependency states are known.
     """
-    from .runners import run_specs
+    from .runners import _publish_workflow_plan_events, run_specs
 
+    workflow_run_id = str(RunId.current(create=False) or RunId.new(prefix="workflow"))
+    _publish_workflow_plan_events(specs, workflow_run_id)
     plan = build_execution_plan_from_specs(
         config,
         specs,
@@ -627,6 +630,8 @@ def run_workflow_specs(
             supervisor_probe=supervisor_probe,
             heartbeat_callback=heartbeat_callback,
             progress_callback=progress_callback,
+            event_run_id=workflow_run_id,
+            publish_workflow_plan=False,
         )
         return results, raw, plan
 
@@ -689,6 +694,8 @@ def run_workflow_specs(
                 workflow_initial_statuses=dict(statuses),
                 workflow_initial_fail_fast=fail_fast,
                 workflow_initial_cancelled=cancelled,
+                event_run_id=workflow_run_id,
+                publish_workflow_plan=False,
             )
             return key, local_results, local_raw
         except BaseException as exc:

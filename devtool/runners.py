@@ -62,7 +62,8 @@ from .test_adapters import (
 from .transactions import create_apply_transaction, rollback_transaction, checkpoint_transaction_applied
 from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
-from .core.events import TaskFinished, TaskStarted, WarningDetected, publish_event
+from .core.events import NodeDiscovered, TaskFinished, TaskStarted, WarningDetected, publish_event
+from .core.execution_contract import RunId
 from .xdg import state_dir
 from .project_runners import (
     DotnetRunner as _DotnetRunner,
@@ -2100,6 +2101,39 @@ def _workflow_synthetic_result(
     return result, output
 
 
+
+def _publish_workflow_plan_events(specs: Sequence[CommandSpec], event_run_id: str) -> None:
+    """Publish the existing workflow DAG nodes before command execution starts."""
+    discovered: set[str] = set()
+    for spec in specs:
+        node_id = str(spec.metadata.get("workflow_node_key") or "").strip()
+        if not node_id or node_id in discovered:
+            continue
+        discovered.add(node_id)
+        raw_dependencies = spec.metadata.get("workflow_depends_on") or ()
+        dependencies = raw_dependencies if isinstance(raw_dependencies, (list, tuple, set)) else ()
+        node_label = str(
+            spec.metadata.get("workflow_node_id")
+            or spec.metadata.get("workflow_ref")
+            or spec.name
+        ).strip() or spec.name
+        publish_event(NodeDiscovered(
+            run_id=event_run_id,
+            node_id=node_id,
+            parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
+            source="workflow",
+            label=node_label,
+            kind=str(spec.metadata.get("workflow_ref_kind") or "operation"),
+            depends_on=tuple(str(value) for value in dependencies if str(value).strip()),
+            metadata={
+                "target": str(spec.metadata.get("workflow_target") or ""),
+                "workflow": str(spec.metadata.get("workflow_name") or ""),
+                "index": spec.metadata.get("workflow_node_index"),
+                "runner": str(spec.metadata.get("workflow_runner") or ""),
+                "action": str(spec.metadata.get("workflow_action") or ""),
+            },
+        ))
+
 def run_specs(
     config: ProjectConfig,
     specs: list[CommandSpec],
@@ -2116,7 +2150,13 @@ def run_specs(
     workflow_initial_statuses: dict[str, str] | None = None,
     workflow_initial_fail_fast: bool = False,
     workflow_initial_cancelled: bool = False,
+    event_run_id: str = "",
+    publish_workflow_plan: bool = True,
 ) -> tuple[list[OperationResult], str]:
+    # CLI executions already own DEVTOOL_RUN_ID. Direct/library run_specs()
+    # calls still need an isolated execution identity so the authoritative
+    # event store never merges separate invocations into one fallback run.
+    event_run_id = str(event_run_id or os.environ.get("DEVTOOL_RUN_ID") or RunId.new(prefix="runner"))
     results: list[OperationResult] = []
     raw_sections: list[str] = []
     used_dotnet = any(_contains_dotnet_cli(spec.argv) for spec in specs)
@@ -2156,6 +2196,9 @@ def run_specs(
         if isinstance(value, (list, tuple, set)):
             return tuple(value)
         return ()
+
+    if publish_workflow_plan:
+        _publish_workflow_plan_events(specs, event_run_id)
 
     if tasker_progress is not None and not dry_run:
         tasker_progress.plan_phases([
@@ -2207,6 +2250,7 @@ def run_specs(
                 if tasker_progress is not None and not dry_run:
                     tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=spec.argv, metadata=spec.metadata)
                 publish_event(TaskStarted(
+                    run_id=event_run_id,
                     task=spec.name,
                     argv=tuple(str(value) for value in spec.argv),
                     node_id=workflow_node_key,
@@ -2237,6 +2281,7 @@ def run_specs(
                 results.append(synthetic_result)
                 raw_sections.append(synthetic_raw)
                 publish_event(TaskFinished(
+                    run_id=event_run_id,
                     task=spec.name,
                     success=synthetic_state not in {"failed", "blocked", "cancelled"},
                     status=synthetic_state,
@@ -2265,6 +2310,7 @@ def run_specs(
         if tasker_progress is not None and not dry_run:
             tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=effective_argv, metadata=spec.metadata)
         publish_event(TaskStarted(
+                    run_id=event_run_id,
             task=spec.name,
             argv=tuple(str(value) for value in effective_argv),
             node_id=workflow_node_key,
@@ -2284,6 +2330,7 @@ def run_specs(
             dry_result = OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_file, metadata=dry_metadata)
             results.append(dry_result)
             publish_event(TaskFinished(
+                    run_id=event_run_id,
                 task=spec.name,
                 success=True,
                 status="skipped",
@@ -2964,6 +3011,7 @@ def run_specs(
         for issue in issues:
             if str(issue.severity).lower() == "warning":
                 publish_event(WarningDetected(
+                    run_id=event_run_id,
                     message=str(issue.message or ""),
                     code=str(issue.code or ""),
                     file=str(issue.file or ""),
@@ -2974,6 +3022,7 @@ def run_specs(
                     metadata={"task": spec.name},
                 ))
         publish_event(TaskFinished(
+                    run_id=event_run_id,
             task=spec.name,
             success=returncode == 0,
             status=str(result_metadata.get("workflow_node_state") or ("cancelled" if returncode == 130 else "succeeded" if returncode == 0 else "failed")),

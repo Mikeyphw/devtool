@@ -11336,8 +11336,10 @@ def main(argv: list[str] | None = None) -> int:
     def _invoke() -> int:
         command = str(getattr(args, "command", "") or "devtool")
         emit_build = command in PROGRESS_CAPABLE_COMMANDS
+        event_run_id = _ensure_run_id(args) if emit_build else ""
         if emit_build:
             publish_event(BuildStarted(
+                run_id=event_run_id,
                 command=command,
                 project=str(getattr(args, "repo", "") or Path.cwd()),
                 source="cli",
@@ -11352,6 +11354,7 @@ def main(argv: list[str] | None = None) -> int:
         except BaseException:
             if emit_build:
                 publish_event(BuildFinished(
+                    run_id=event_run_id,
                     success=False,
                     status="failed",
                     exit_code=1,
@@ -11361,6 +11364,7 @@ def main(argv: list[str] | None = None) -> int:
             raise
         if emit_build:
             publish_event(BuildFinished(
+                run_id=event_run_id,
                 success=code == 0,
                 status="succeeded" if code == 0 else ("cancelled" if code == 130 else "failed"),
                 exit_code=code,
