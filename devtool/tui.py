@@ -98,11 +98,16 @@ def _repo_snapshot(repo_root: Path) -> dict[str, Any]:
     try:
         from .hud import snapshot_from_directory
         from .tasker import DEFAULT_TASKER_DIR
-        hud_payload = snapshot_from_directory(Path(DEFAULT_TASKER_DIR).expanduser(), recent_events=3)
-        state = hud_payload.get("state") if isinstance(hud_payload, dict) else {}
+        hud_payload = snapshot_from_directory(Path(DEFAULT_TASKER_DIR).expanduser(), recent_events=3, prefer_execution=True)
+        state = hud_payload.get("runtime_state") if isinstance(hud_payload, dict) else {}
+        if not isinstance(state, dict) or not state:
+            state = hud_payload.get("state") if isinstance(hud_payload, dict) else {}
         if isinstance(state, dict):
             state_repo = str(state.get("repo_root") or "").strip()
-            if not state_repo or Path(state_repo).expanduser().resolve(strict=False) == repo_root.resolve(strict=False):
+            project = str((state.get("execution") or {}).get("project") or "") if isinstance(state.get("execution"), dict) else ""
+            repo_matches = not state_repo or Path(state_repo).expanduser().resolve(strict=False) == repo_root.resolve(strict=False)
+            project_matches = not project or project == repo_root.name
+            if repo_matches and project_matches:
                 live = state
     except Exception:
         live = {}

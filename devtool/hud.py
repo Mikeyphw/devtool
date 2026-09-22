@@ -357,6 +357,102 @@ def _payload_progress_score(payload: dict[str, Any] | None) -> float:
     return -1.0
 
 
+
+def _execution_snapshot_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return the canonical EXO execution snapshot embedded in a transport payload."""
+    if not isinstance(payload, dict):
+        return None
+    execution = payload.get("execution")
+    if isinstance(execution, dict) and isinstance(execution.get("nodes"), list):
+        return execution
+    if isinstance(payload.get("nodes"), list) and "run_id" in payload and "accounting" in payload:
+        return payload
+    return None
+
+
+def _execution_leaf_progress(execution: dict[str, Any]) -> dict[str, Any]:
+    accounting = execution.get("accounting") if isinstance(execution.get("accounting"), dict) else {}
+    leaf = accounting.get("leaf") if isinstance(accounting.get("leaf"), dict) else {}
+    return leaf.get("progress") if isinstance(leaf.get("progress"), dict) else {}
+
+
+def _execution_leaf_counts(execution: dict[str, Any]) -> dict[str, Any]:
+    accounting = execution.get("accounting") if isinstance(execution.get("accounting"), dict) else {}
+    leaf = accounting.get("leaf") if isinstance(accounting.get("leaf"), dict) else {}
+    return leaf.get("counts") if isinstance(leaf.get("counts"), dict) else {}
+
+
+def _execution_active_node(execution: dict[str, Any]) -> dict[str, Any] | None:
+    nodes = [item for item in execution.get("nodes", []) if isinstance(item, dict)]
+    for status in ("running", "failed", "blocked", "cancelled", "ready", "pending", "planned"):
+        matches = [item for item in nodes if str(item.get("status") or "") == status]
+        if matches:
+            return matches[-1]
+    return nodes[-1] if nodes else None
+
+
+def _hud_status_from_execution(value: object) -> str:
+    status = str(value or "").strip().lower().replace("_", "-")
+    return {
+        "succeeded": "ok", "success": "ok", "failed": "failed", "blocked": "failed",
+        "cancelled": "cancelled", "skipped": "skipped", "running": "running",
+        "ready": "running", "pending": "running", "planned": "running",
+    }.get(status, status or "running")
+
+
+def _execution_runtime_projection(execution: dict[str, Any], *, notification: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Compatibility view whose semantic truth comes only from canonical execution state."""
+    active = _execution_active_node(execution)
+    leaf_progress = _execution_leaf_progress(execution)
+    leaf_counts = _execution_leaf_counts(execution)
+    measured = leaf_progress.get("measured_percent")
+    resolution = leaf_progress.get("resolution_percent")
+    diagnostics = [dict(item) for item in execution.get("diagnostics", []) if isinstance(item, dict)]
+    nodes = [dict(item) for item in execution.get("nodes", []) if isinstance(item, dict)]
+    notification = notification if isinstance(notification, dict) else {}
+    phase_progress = []
+    for node in nodes:
+        progress = node.get("progress") if isinstance(node.get("progress"), dict) else {}
+        phase_progress.append({
+            "node_id": str(node.get("node_id") or ""), "parent_id": str(node.get("parent_id") or ""),
+            "name": str(node.get("label") or node.get("node_id") or "operation"),
+            "kind": str(node.get("kind") or "operation"), "status": str(node.get("status") or "planned"),
+            "percent": progress.get("percent"), "current": progress.get("current"), "total": progress.get("total"),
+            "detail": str(progress.get("detail") or ""), "failure_kind": str(node.get("failure_kind") or ""),
+            "diagnostic_ids": list(node.get("diagnostic_ids") or []), "process_ids": list(node.get("process_ids") or []),
+            "artifact_ids": list(node.get("artifact_ids") or []),
+        })
+    active_progress = active.get("progress") if isinstance(active, dict) and isinstance(active.get("progress"), dict) else {}
+    title = str(notification.get("title") or execution.get("project") or "devtool")
+    detail = str(active_progress.get("detail") or (active or {}).get("blocked_reason") or notification.get("text") or "")
+    return {
+        "run_id": str(execution.get("run_id") or ""), "sequence": execution.get("last_sequence"),
+        "event_id": str(execution.get("last_event_id") or ""), "status": _hud_status_from_execution(execution.get("status")),
+        "command": str(execution.get("command") or ""), "repo_name": str(execution.get("project") or ""),
+        "title": title, "text": detail, "expanded_title": str(notification.get("expanded_title") or title),
+        "expanded_text": str(notification.get("expanded_text") or detail), "current": measured,
+        "total": 100 if measured is not None else None, "percent": measured,
+        "progress": {"semantics_version": 2, "percent": measured, "measured_percent": measured,
+                     "overall_percent": measured, "resolution_percent": resolution,
+                     "measurement_coverage_percent": leaf_progress.get("coverage_percent"),
+                     "determinate": leaf_progress.get("determinate"), "completed_nodes": leaf_counts.get("terminal"),
+                     "succeeded_nodes": leaf_counts.get("succeeded"), "total_nodes": leaf_counts.get("total")},
+        "phase": {"node_id": str((active or {}).get("node_id") or ""), "name": str((active or {}).get("label") or ""),
+                  "kind": str((active or {}).get("kind") or ""), "status": str((active or {}).get("status") or "")},
+        "phase_name": str((active or {}).get("label") or ""), "phase_progress": phase_progress,
+        "diagnostics": diagnostics,
+        "totals": {"failed": leaf_counts.get("failed", 0),
+                   "errors": sum(1 for item in diagnostics if str(item.get("severity") or "").lower() == "error"),
+                   "warnings": sum(1 for item in diagnostics if str(item.get("severity") or "").lower() == "warning")},
+        "execution": execution, "execution_schema_version": execution.get("schema_version"),
+        "execution_truth": "canonical", "graph_sealed": bool(execution.get("graph_sealed")),
+        "tasker_notification": notification, "notification": notification,
+    }
+
+
+def _hud_state_from_execution(execution: dict[str, Any], *, notification: dict[str, Any] | None = None) -> HudState:
+    return parse_hud_state(_execution_runtime_projection(execution, notification=notification))
+
 def parse_hud_state(payload: dict[str, Any] | None) -> HudState:
     if not payload:
         return HudState()
@@ -910,16 +1006,24 @@ def _diagnostic_message(value: Any) -> str:
     return str(value.get("detail") or value.get("message") or value.get("text") or value.get("summary") or "").strip()
 
 
-def canonical_diagnostics(events: Iterable[dict[str, Any]], state: HudState) -> list[dict[str, str]]:
-    """Return deduplicated canonical diagnostics for desktop and HUD surfaces.
+def canonical_diagnostics(events: Iterable[dict[str, Any]], state: HudState) -> list[dict[str, Any]]:
+    """Return canonical diagnostics, preferring exact EXO ownership when available.
 
-    The state snapshot is the primary source of truth because runners can emit
-    exact diagnostic objects and totals there.  Events are used as a fallback for
-    live compiler/progress lines.  Parser-only summary observations are not
-    mixed into this list unless no structured diagnostic exists for the same
-    message, preventing the HUD from showing one count in the header and another
-    in the details pane.
+    Terminal/TUI canonical mode consumes diagnostics directly from the execution
+    snapshot. Legacy state/event reconstruction remains only as a compatibility
+    fallback for surfaces that have not migrated yet.
     """
+    execution = _execution_snapshot_from_payload(state.raw)
+    if execution is not None:
+        return [
+            {"severity": str(item.get("severity") or "info").lower(), "message": str(item.get("message") or ""),
+             "code": str(item.get("code") or ""), "phase": str(item.get("node_id") or ""),
+             "file": str(item.get("file") or ""), "source": str(item.get("source") or "execution"),
+             "diagnostic_id": str(item.get("diagnostic_id") or ""), "node_id": str(item.get("node_id") or ""),
+             "process_id": str(item.get("process_id") or ""), "log_path": str(item.get("log_path") or ""),
+             "failure_kind": str(item.get("failure_kind") or ""), "evidence": list(item.get("evidence") or [])}
+            for item in execution.get("diagnostics", []) if isinstance(item, dict)
+        ]
     collected: list[HudDiagnostic] = []
     seen: set[tuple[str, str, str, str, str]] = set()
 
@@ -977,6 +1081,12 @@ def canonical_diagnostics(events: Iterable[dict[str, Any]], state: HudState) -> 
 
 def canonical_issue_counts(events: Iterable[dict[str, Any]], state: HudState) -> tuple[int, int]:
     """Return the canonical visible error/warning counts for the current run."""
+    execution = _execution_snapshot_from_payload(state.raw)
+    if execution is not None:
+        diagnostics = [item for item in execution.get("diagnostics", []) if isinstance(item, dict)]
+        errors = sum(1 for item in diagnostics if str(item.get("severity") or "").lower() == "error")
+        warnings = sum(1 for item in diagnostics if str(item.get("severity") or "").lower() == "warning")
+        return max(errors, int(_execution_leaf_counts(execution).get("failed") or 0)), warnings
     events_list = list(events)
     diagnostics = canonical_diagnostics(events_list, state)
     diag_errors = sum(1 for item in diagnostics if item.get("severity") == "error")
@@ -1196,6 +1306,31 @@ def operation_steps(state: HudState, events: Iterable[dict[str, Any]]) -> list[H
     sequence instead of collapsing all targets into one finished-only bar.
     """
     events_list = list(events)
+    execution = _execution_snapshot_from_payload(state.raw)
+    if execution is not None:
+        nodes = [item for item in execution.get("nodes", []) if isinstance(item, dict)]
+        direct = [item for item in nodes if not str(item.get("parent_id") or "")]
+        visible = direct or nodes
+        status_map = {"succeeded": "ok", "failed": "failed", "blocked": "failed", "skipped": "skipped",
+                      "cancelled": "skipped", "running": "running", "ready": "pending", "pending": "pending", "planned": "pending"}
+        result: list[HudOperationStep] = []
+        for node in visible:
+            progress = node.get("progress") if isinstance(node.get("progress"), dict) else {}
+            percent = progress.get("percent")
+            if percent is None:
+                current, total = progress.get("current"), progress.get("total")
+                try:
+                    percent = float(current) / float(total) * 100.0 if current is not None and total is not None and float(total) > 0 else None
+                except (TypeError, ValueError, ZeroDivisionError):
+                    percent = None
+            result.append(HudOperationStep(
+                key=str(node.get("node_id") or "operation"), label=str(node.get("label") or node.get("node_id") or "Operation"),
+                status=status_map.get(str(node.get("status") or "planned"), "pending"),
+                progress=max(0, min(100, int(round(float(percent))))) if percent is not None else 0,
+                detail=str(progress.get("detail") or node.get("blocked_reason") or node.get("failure_kind") or ""),
+            ))
+        return result
+
     command = (state.command or str(state.raw.get("command") or "")).strip().lower().replace("_", "-")
     apply_run = command in {"apply-overlay", "apply-overlays", "apply-snapshot", "ao", "aos", "as"} or any(
         _operation_step_key(_phase_from_event(event)) == "extract" for event in events_list
@@ -1557,7 +1692,7 @@ def _payload_order(payload: dict[str, Any] | None, mtime_ns: int = 0) -> tuple[i
     return (_payload_sequence(payload), _payload_updated_timestamp(payload), int(mtime_ns))
 
 
-def state_from_directory(directory: Path) -> HudState:
+def state_from_directory(directory: Path, *, prefer_execution: bool = False) -> HudState:
     """Read the newest authoritative HUD snapshot without phase rewinds.
 
     Local phase counters restart at each operation (for example build 17/17,
@@ -1566,6 +1701,13 @@ def state_from_directory(directory: Path) -> HudState:
     filesystem mtime. notification.json may decorate the matching rich state,
     but may not replace counters from a newer phase.
     """
+    if prefer_execution:
+        execution_document = _read_json_file(directory / "execution.json")
+        execution = _execution_snapshot_from_payload(execution_document)
+        if execution is not None:
+            notification = _read_json_file(directory / "notification.json")
+            return _hud_state_from_execution(execution, notification=notification)
+
     paths = {
         "state": directory / "state.json",
         "latest": directory / "latest_event.json",
@@ -1646,14 +1788,18 @@ def state_from_directory(directory: Path) -> HudState:
     return parse_hud_state(selected)
 
 
-def snapshot_from_directory(directory: Path, *, recent_events: int = DEFAULT_RECENT_EVENTS) -> dict[str, Any]:
+def snapshot_from_directory(directory: Path, *, recent_events: int = DEFAULT_RECENT_EVENTS, prefer_execution: bool = False) -> dict[str, Any]:
     events = _last_jsonl_events(directory / "events.jsonl", recent_events)
-    state = state_from_directory(directory)
+    state = state_from_directory(directory, prefer_execution=prefer_execution)
     if state.raw == {} and events:
         state = parse_hud_state(events[-1])
+    execution_document = _read_json_file(directory / "execution.json")
+    execution = _execution_snapshot_from_payload(execution_document)
     return {
         "version": 5,
         "state": state.to_dict(),
+        "runtime_state": dict(state.raw) if isinstance(state.raw, dict) else {},
+        "execution": execution,
         "ui": runtime_state_to_ui_snapshot(
             state.raw,
             surface="hud",
@@ -1666,6 +1812,8 @@ def snapshot_from_directory(directory: Path, *, recent_events: int = DEFAULT_REC
             "events": str(directory / "events.jsonl"),
             "latest_event": str(directory / "latest_event.json"),
             "state": str(directory / "state.json"),
+            "execution": str(directory / "execution.json"),
+            "execution_events": str(directory / "execution-events.jsonl"),
         },
         "generated_at": time.time(),
     }
@@ -1773,9 +1921,9 @@ class TerminalHud:
     def run(self, *, directory: Path, interval_s: float, once: bool = False) -> int:
         events_path = directory / "events.jsonl"
         refresh = max(1, min(20, int(1 / max(interval_s, 0.05))))
-        with Live(self.render(state_from_directory(directory), _last_jsonl_events(events_path, self.recent_events)), console=self.console, refresh_per_second=refresh) as live:
+        with Live(self.render(state_from_directory(directory, prefer_execution=True), _last_jsonl_events(events_path, self.recent_events)), console=self.console, refresh_per_second=refresh) as live:
             while True:
-                state = state_from_directory(directory)
+                state = state_from_directory(directory, prefer_execution=True)
                 events = _last_jsonl_events(events_path, self.recent_events)
                 live.update(self.render(state, events))
                 if once:
@@ -2459,10 +2607,10 @@ class StudioHud:
         terminal = TerminalHud(console=console, recent_events=self.recent_events, title="devtool HUD v5 studio")
         refresh = max(1, min(20, int(1 / max(interval_s, 0.05))))
         current_dir = resolve_hud_directory(directory, follow_active=follow_active)
-        with Live(terminal.render(state_from_directory(current_dir), _last_jsonl_events(current_dir / "events.jsonl", self.recent_events)), console=console, refresh_per_second=refresh) as live:
+        with Live(terminal.render(state_from_directory(current_dir, prefer_execution=True), _last_jsonl_events(current_dir / "events.jsonl", self.recent_events)), console=console, refresh_per_second=refresh) as live:
             while True:
                 current_dir = resolve_hud_directory(directory, follow_active=follow_active)
-                state = state_from_directory(current_dir)
+                state = state_from_directory(current_dir, prefer_execution=True)
                 events = _last_jsonl_events(current_dir / "events.jsonl", self.recent_events)
                 live.update(terminal.render(state, events))
                 time.sleep(interval_s)
