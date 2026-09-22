@@ -38,6 +38,10 @@ final class RunRecord {
     int warnings = 0;
     int errors = 0;
     String stepsJson = "";
+    String executionJson = "";
+    int executionSchemaVersion = 0;
+    long executionSequence = -1L;
+    String executionEventId = "";
     boolean indeterminate = true;
     boolean pinned;
     long startedAtMs = System.currentTimeMillis();
@@ -85,6 +89,10 @@ final class RunRecord {
         value.put("warnings", warnings);
         value.put("errors", errors);
         value.put("steps_json", stepsJson);
+        value.put("execution_json", executionJson);
+        value.put("execution_schema_version", executionSchemaVersion);
+        value.put("execution_sequence", executionSequence);
+        value.put("execution_event_id", executionEventId);
         value.put("indeterminate", indeterminate);
         value.put("pinned", pinned);
         value.put("started_at_ms", startedAtMs);
@@ -129,6 +137,10 @@ final class RunRecord {
         record.warnings = value.optInt("warnings", 0);
         record.errors = value.optInt("errors", 0);
         record.stepsJson = value.optString("steps_json", "");
+        record.executionJson = value.optString("execution_json", "");
+        record.executionSchemaVersion = value.optInt("execution_schema_version", 0);
+        record.executionSequence = value.optLong("execution_sequence", -1L);
+        record.executionEventId = value.optString("execution_event_id", "");
         record.indeterminate = value.optBoolean("indeterminate", true);
         record.pinned = value.optBoolean("pinned", false);
         record.startedAtMs = value.optLong("started_at_ms", System.currentTimeMillis());

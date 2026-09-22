@@ -2122,6 +2122,16 @@ class AndroidAppHud:
         return active, index, total
 
     def _payload(self, state: HudState, directory: Path) -> tuple[str, dict[str, Any]]:
+        # EXO-10: Android is now a canonical execution consumer.  If EXO-07 has
+        # persisted an execution graph for this run, project the Android payload
+        # from that graph before any legacy HUD/status inference is performed.
+        execution_document = _read_json_file(directory / "execution.json")
+        execution = _execution_snapshot_from_payload(execution_document)
+        if execution is not None:
+            state = _hud_state_from_execution(
+                execution,
+                notification=_read_json_file(directory / "notification.json"),
+            )
         completion = completion_from_state(state) or {}
         steps = operation_steps(state, [])
         error_count, warning_count = live_issue_counts([], state)
@@ -2188,7 +2198,14 @@ class AndroidAppHud:
                 unit_label = str(item.get("unit_label") or "").strip()
                 break
 
-        overall_percent = self._pipeline_percent(steps, terminal_ok=status in {"ok", "skipped"})
+        canonical_execution = state.raw.get("execution") if isinstance(state.raw.get("execution"), dict) else None
+        overall_percent = (
+            int(round(float(state.raw.get("progress", {}).get("measured_percent"))))
+            if canonical_execution is not None
+            and isinstance(state.raw.get("progress"), dict)
+            and state.raw.get("progress", {}).get("measured_percent") is not None
+            else self._pipeline_percent(steps, terminal_ok=status in {"ok", "skipped"})
+        )
         semantic_android_ui = runtime_state_to_ui_snapshot(
             state.raw,
             surface="android",
@@ -2230,6 +2247,9 @@ class AndroidAppHud:
             "steps_json": json.dumps([step.to_dict() for step in steps], separators=(",", ":")),
             "commit": str(completion.get("commit_hash") or ""),
             "summary": completion_copy_text(state),
+            "execution_schema_version": int(_coerce_int(state.raw.get("execution_schema_version")) or 0),
+            "execution_json": json.dumps(canonical_execution or {}, separators=(",", ":")),
+            "execution_truth": "canonical" if canonical_execution is not None else "legacy",
             "ui_schema_version": UI_SCHEMA_VERSION,
             "ui_token_schema_version": TOKEN_SCHEMA_VERSION,
             "ui_icon_schema_version": ICON_SCHEMA_VERSION,

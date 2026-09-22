@@ -46,12 +46,13 @@ final class HudUpdate {
     final int testAssemblies;
     final int warnings;
     final int errors;
-    final List<Step> steps;
+    List<Step> steps;
     final String stepsJson;
     final long startedAtMs;
     final long durationMs;
     final boolean overlayRequested;
     final UiSemanticState ui;
+    ExecutionGraphState execution;
 
     private HudUpdate(
             String runId, long sequence, long generation, long updatedAtMs,
@@ -99,6 +100,7 @@ final class HudUpdate {
         this.warnings = Math.max(0, warnings);
         this.errors = Math.max(0, errors);
         this.ui = ui == null ? UiSemanticState.empty() : ui;
+        this.execution = ExecutionGraphState.empty();
         this.stepsJson = clean(stepsJson, "");
         List<Step> semanticSteps = this.ui.progressSteps();
         this.steps = semanticSteps.isEmpty() ? parseSteps(this.stepsJson, this.phase, this.status, this.phaseProgress) : semanticSteps;
@@ -119,7 +121,7 @@ final class HudUpdate {
             phasePercent = (int) Math.round((current * 100.0) / total);
         }
         boolean indeterminate = intent.getBooleanExtra("indeterminate", percent < 0);
-        return new HudUpdate(
+        HudUpdate update = new HudUpdate(
                 intent.getStringExtra("run_id"),
                 intent.getLongExtra("sequence", 0L),
                 intent.getLongExtra("generation", intent.getLongExtra("execution_generation", 0L)),
@@ -154,6 +156,15 @@ final class HudUpdate {
                 intent.getLongExtra("started_at_ms", 0L),
                 intent.getLongExtra("duration_ms", 0L),
                 intent.getBooleanExtra("overlay", false), UiSemanticState.fromIntent(intent));
+        update.execution = ExecutionGraphState.parse(intent.getStringExtra("execution_json"));
+        if (update.execution.available() && !update.execution.runId.equals(update.runId)) {
+            update.execution = ExecutionGraphState.empty();
+        }
+        if (update.execution.available()) {
+            List<Step> canonicalSteps = update.execution.steps();
+            if (!canonicalSteps.isEmpty()) update.steps = canonicalSteps;
+        }
+        return update;
     }
 
     static HudUpdate sample() {
@@ -330,9 +341,34 @@ final class HudUpdate {
         boolean skipped() { return status.equals("skipped"); }
     }
 
+    int resolutionProgress() {
+        return execution.available() && execution.resolutionPercent >= 0
+                ? execution.resolutionPercent : (isTerminal() ? 100 : displayProgress());
+    }
+
+    int operationTotal() {
+        return execution.available() ? execution.totalOperations : steps.size();
+    }
+
+    int operationSucceeded() {
+        if (!execution.available()) return 0;
+        return execution.succeededOperations;
+    }
+
+    int operationFailed() {
+        if (!execution.available()) return failed;
+        return execution.failedOperations;
+    }
+
+    String primaryFailureMessage() {
+        String canonical = execution.primaryFailureMessage();
+        return canonical.isEmpty() ? "" : canonical;
+    }
+
     String stepsJsonForStore() {
         JSONArray array = new JSONArray();
-        for (Step step : steps) {
+        List<Step> sourceSteps = execution.available() ? execution.steps() : steps;
+        for (Step step : sourceSteps) {
             JSONObject item = new JSONObject();
             try {
                 item.put("key", step.key);
@@ -382,6 +418,7 @@ final class HudUpdate {
     }
 
     String effectiveStatus() {
+        if (execution.available()) return normalizeStatus(execution.status);
         return normalizeStatus(ui.operationStatus(status));
     }
 
@@ -412,6 +449,7 @@ final class HudUpdate {
     }
 
     int displayProgress() {
+        if (execution.available() && execution.measuredPercent >= 0) return execution.measuredPercent;
         int semantic = ui.progressPercent(-1);
         if (semantic >= 0) return semantic;
         if (succeeded()) return 100;
@@ -424,6 +462,10 @@ final class HudUpdate {
     }
 
     String phaseLabel() {
+        if (execution.available()) {
+            ExecutionGraphState.Node active = execution.activeNode();
+            if (active != null && !active.label.isEmpty()) return active.label;
+        }
         String semantic = ui.operationPhase("");
         if (!semantic.isEmpty()) return semantic;
         if (rollbackState()) return "Rollback";

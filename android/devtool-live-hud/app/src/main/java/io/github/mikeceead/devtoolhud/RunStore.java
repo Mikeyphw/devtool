@@ -92,7 +92,15 @@ final class RunStore {
         record.warnings = update.warnings;
         record.errors = update.errors;
         record.stepsJson = update.stepsJsonForStore();
-        record.indeterminate = update.indeterminate;
+        if (update.execution.available()) {
+            record.executionJson = update.execution.raw.toString();
+            record.executionSchemaVersion = update.execution.schemaVersion;
+            record.executionSequence = update.execution.sequence;
+            record.executionEventId = update.execution.eventId;
+        }
+        record.indeterminate = update.execution.available()
+                ? !update.execution.determinate
+                : update.indeterminate;
         record.startedAtMs = update.startedAtMs;
         record.durationMs = update.durationMs;
         record.updatedAtMs = System.currentTimeMillis();
