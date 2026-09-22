@@ -1093,6 +1093,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     oci_cmd = subparsers.add_parser("oci", help="Manage PRoot-Distro OCI runtime state on named SSH workers")
     oci_sub = oci_cmd.add_subparsers(dest="oci_command", required=True)
+    oci_definition = oci_sub.add_parser("definition", help="Show the canonical deterministic Android ARM64 OCI image contract")
+    oci_definition.add_argument("--format", choices=["text", "json"], default="text")
+    oci_build = oci_sub.add_parser("build", help="Build the canonical Android ARM64 OCI image through PRoot-Distro")
+    oci_build.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_build.add_argument("--tag", default="", dest="oci_tag", help="Local image tag/reference; defaults to the canonical contract reference")
+    oci_build.add_argument("--install-as", default="", dest="oci_install_as", help="Install the built image as this PRoot-Distro container and validate it")
+    oci_build.add_argument("--no-cache", action="store_true", dest="oci_no_cache", help="Disable PRoot-Distro build cache for this image build")
+    oci_build.add_argument("--dry-run", action="store_true", dest="oci_dry_run")
+    oci_build.add_argument("--format", choices=["text", "json"], default="text")
+    oci_validate_image = oci_sub.add_parser("validate-image", help="Validate an installed container against the canonical Android OCI image contract")
+    oci_validate_image.add_argument("profile", help="Named SSH worker")
+    oci_validate_image.add_argument("container", help="Installed PRoot-Distro container name")
+    oci_validate_image.add_argument("--format", choices=["text", "json"], default="text")
     oci_doctor = oci_sub.add_parser("doctor", help="Discover PRoot-Distro, proot, containers, and cached OCI images")
     oci_doctor.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
     oci_doctor.add_argument("--format", choices=["text", "json"], default="text")
@@ -11944,9 +11957,10 @@ def _main_after_parse(
 
     if args.command == "oci":
         from .ssh_worker import resolve_worker_profile
+        from .oci_image import android_oci_definition_payload
         from .proot_oci import (
-            oci_bootstrap_payload, oci_containers_payload, oci_doctor_payload,
-            oci_images_payload, oci_install_payload, oci_remove_payload,
+            oci_bootstrap_payload, oci_build_payload, oci_containers_payload, oci_doctor_payload,
+            oci_images_payload, oci_install_payload, oci_remove_payload, oci_validate_image_payload,
         )
 
         action = str(getattr(args, "oci_command", "") or "")
@@ -11956,8 +11970,26 @@ def _main_after_parse(
         repo_arg = str(getattr(args, "repo", "") or "")
         config_arg = str(getattr(args, "config", "") or "")
         try:
-            worker = resolve_worker_profile(profile, repo=repo_arg, config_path=config_arg)
-            if action == "doctor":
+            if action == "definition":
+                payload = android_oci_definition_payload()
+                payload["run_id"] = run_id
+                worker = None
+            else:
+                worker = resolve_worker_profile(profile, repo=repo_arg, config_path=config_arg)
+            if action == "definition":
+                pass
+            elif action == "build":
+                payload = oci_build_payload(
+                    worker, run_id=run_id, tag=str(getattr(args, "oci_tag", "") or ""),
+                    install_as=str(getattr(args, "oci_install_as", "") or ""),
+                    dry_run=bool(getattr(args, "oci_dry_run", False)),
+                    no_cache=bool(getattr(args, "oci_no_cache", False)),
+                )
+            elif action == "validate-image":
+                payload = oci_validate_image_payload(
+                    worker, str(getattr(args, "container", "") or ""), run_id=run_id,
+                )
+            elif action == "doctor":
                 payload = oci_doctor_payload(worker, run_id=run_id)
             elif action == "images":
                 payload = oci_images_payload(worker, run_id=run_id)
@@ -11993,6 +12025,52 @@ def _main_after_parse(
 
         if output_format == "json":
             print(json.dumps(payload, indent=2, ensure_ascii=False))
+        elif action == "definition":
+            contract = payload.get("contract", {})
+            android = contract.get("toolchains", {}).get("android", {})
+            render_status_table([
+                ("definition", payload.get("definition_id") or "-"),
+                ("reference", payload.get("reference") or "-"),
+                ("architecture", payload.get("architecture") or "-"),
+                ("definition_sha256", payload.get("definition_digest") or "-"),
+                ("context_sha256", payload.get("context_sha256") or "-"),
+                ("android_api", str(android.get("api", "-"))),
+                ("build_tools", str(android.get("build_tools", "-"))),
+                ("ndk", str(android.get("ndk", "-"))),
+                ("gradle", str(contract.get("gradle", {}).get("policy", "-"))),
+                ("ordinary_validation_mutates_toolchains", str(contract.get("immutability", {}).get("ordinary_validation_mutates_toolchains", False)).lower()),
+            ])
+        elif action == "build":
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("status", "READY" if payload.get("ok") else "BLOCKED"),
+                ("definition", payload.get("definition_id") or "-"),
+                ("definition_sha256", payload.get("definition_digest") or "-"),
+                ("context_sha256", payload.get("context_sha256") or "-"),
+                ("reference", payload.get("reference") or "-"),
+                ("image_digest", payload.get("image_digest") or "-"),
+                ("archive_sha256", payload.get("image_sha256") or "-"),
+                ("image_archive", payload.get("image_archive") or "-"),
+                ("install_as", payload.get("install_as") or "-"),
+                ("dry_run", "yes" if payload.get("dry_run") else "no"),
+                ("detail", payload.get("detail") or "-"),
+            ])
+        elif action == "validate-image":
+            caps = payload.get("capabilities", {})
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("container", payload.get("container") or "-"),
+                ("status", "READY" if payload.get("ok") else "BLOCKED"),
+                ("definition_sha256", payload.get("definition_digest") or "-"),
+                ("architecture", caps.get("architecture") or "-"),
+                ("python", caps.get("python") or "-"),
+                ("node", caps.get("node") or "-"),
+                ("api", caps.get("api") or "-"),
+                ("build_tools", caps.get("build_tools") or "-"),
+                ("ndk", caps.get("ndk") or "-"),
+                ("ndk_host", caps.get("ndk_host") or "-"),
+                ("detail", payload.get("detail") or "-"),
+            ])
         elif action == "doctor":
             runtime = payload.get("runtime", {})
             render_status_table([

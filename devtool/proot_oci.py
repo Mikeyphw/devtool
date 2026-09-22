@@ -20,11 +20,12 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from .core.events import (
-    GraphSealed, NodeBlocked, NodeDiscovered, NodeFinished, NodeProgressChanged,
+    ArtifactProduced, GraphSealed, NodeBlocked, NodeDiscovered, NodeFinished, NodeProgressChanged,
     NodeStarted, publish_event,
 )
 from .core.execution_contract import ExecutionStatus
-from .logstore import redact_sensitive_text
+from .logstore import redact_sensitive_text, redact_sensitive_value
+from .oci_image import canonical_android_oci_definition
 from .progress_events import RunnerExecutionAdapter
 from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_remote_sh_argv
 
@@ -125,8 +126,13 @@ def _sanitized_subprocess_env() -> dict[str, str]:
     return env
 
 
-def _provenance(config: SSHRunnerConfig, *, operation: str = "") -> dict[str, Any]:
-    return {
+def _provenance(
+    config: SSHRunnerConfig,
+    *,
+    operation: str = "",
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    value: dict[str, Any] = {
         "transport": "ssh",
         "host": config.host,
         "profile": config.profile,
@@ -135,6 +141,10 @@ def _provenance(config: SSHRunnerConfig, *, operation: str = "") -> dict[str, An
         "runtime": "proot-distro",
         "operation": operation,
     }
+    for key, item in dict(extra or {}).items():
+        if item not in (None, "", (), [], {}):
+            value[str(key)] = item
+    return dict(redact_sensitive_value(value))
 
 
 def _stable_node_id(config: SSHRunnerConfig, action: str, key: str = "") -> str:
@@ -214,6 +224,32 @@ def _finish_node(
     ))
 
 
+def _remote_artifact_records(text: str) -> tuple[dict[str, Any], ...]:
+    records: list[dict[str, Any]] = []
+    for raw in str(text or "").splitlines():
+        if not raw.startswith("DEVTOOL_OCI_ARTIFACT\t"):
+            continue
+        parts = raw.split("\t", 4)
+        if len(parts) != 5:
+            continue
+        _, remote_path, digest, size_raw, artifact_type = parts
+        if not remote_path or not re.fullmatch(r"[0-9a-f]{64}", digest or ""):
+            continue
+        try:
+            remote_size = int(size_raw)
+        except ValueError:
+            continue
+        if remote_size < 0:
+            continue
+        records.append({
+            "path": _safe_text(remote_path),
+            "sha256": digest,
+            "size": remote_size,
+            "artifact_type": _safe_text(artifact_type or "oci-archive"),
+        })
+    return tuple(records)
+
+
 def _run_process(
     config: SSHRunnerConfig,
     *,
@@ -224,7 +260,10 @@ def _run_process(
     detail: str,
     timeout: float,
     stdin_path: Path | None = None,
+    stdin_bytes: bytes | None = None,
     diagnostic_code: str,
+    provenance_extra: Mapping[str, Any] | None = None,
+    publish_remote_artifacts: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     safe_label = _safe_text(label)
     _start_node(run_id, node_id, safe_label, detail)
@@ -233,9 +272,11 @@ def _run_process(
         parent_node_id=node_id,
         tool="proot-distro",
         source="oci-proot",
-        provenance=_provenance(config, operation=safe_label),
+        provenance=_provenance(config, operation=safe_label, extra=provenance_extra),
     )
     started = time.monotonic()
+    if stdin_path is not None and stdin_bytes is not None:
+        raise ValueError("OCI process input cannot use both stdin_path and stdin_bytes")
     handle: Any = subprocess.DEVNULL
     proc: subprocess.Popen[bytes] | None = None
 
@@ -293,7 +334,7 @@ def _run_process(
         try:
             proc = subprocess.Popen(
                 list(argv),
-                stdin=handle,
+                stdin=(subprocess.PIPE if stdin_bytes is not None else handle),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=False,
@@ -309,7 +350,10 @@ def _run_process(
 
         adapter.process_started(pid=proc.pid, argv=argv, cwd=str(Path.cwd()))
         try:
-            out_b, err_b = proc.communicate(timeout=timeout)
+            if stdin_bytes is None:
+                out_b, err_b = proc.communicate(timeout=timeout)
+            else:
+                out_b, err_b = proc.communicate(input=stdin_bytes, timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
             out_b, err_b = proc.communicate()
@@ -353,6 +397,57 @@ def _run_process(
     stdout = (out_b or b"").decode("utf-8", errors="replace")
     stderr = (err_b or b"").decode("utf-8", errors="replace")
     safe_evidence = _safe_text(stderr[-2048:] or stdout[-2048:])
+    remote_artifacts = _remote_artifact_records(stdout) if publish_remote_artifacts else ()
+    if proc.returncode == 0 and publish_remote_artifacts and not remote_artifacts:
+        message = f"{safe_label} completed without required SHA-verified artifact evidence"
+        adapter.process_exited(
+            exit_code=65,
+            duration_seconds=duration,
+            failure_kind="artifact_evidence_missing",
+            evidence=(_safe_text(stdout[-2048:] or message),),
+        )
+        diagnostic_id = adapter.diagnostic(
+            severity="error",
+            code=f"{diagnostic_code}_ARTIFACT",
+            message=message,
+            failure_kind="artifact_evidence_missing",
+            evidence=(_safe_text(stdout[-2048:] or message),),
+        )
+        _finish_node(
+            run_id, node_id, status=ExecutionStatus.FAILED.value, exit_code=65,
+            duration=duration, diagnostic_ids=(diagnostic_id,), reason="required artifact evidence missing",
+        )
+        raise ValueError(message)
+    if proc.returncode == 0:
+        for record in remote_artifacts:
+            remote_path = record["path"]
+            digest = record["sha256"]
+            remote_size = record["size"]
+            artifact_type = record["artifact_type"]
+            safe_path = _safe_text(remote_path)
+            producer = node_id
+            stable_key = "\x1f".join((run_id, producer, safe_path, digest))
+            publish_event(ArtifactProduced(
+                run_id=run_id,
+                node_id=producer,
+                path=safe_path,
+                artifact_id="oci-" + hashlib.sha256(stable_key.encode("utf-8")).hexdigest()[:20],
+                sha256=digest,
+                size=remote_size,
+                artifact_type=_safe_text(artifact_type or "oci-archive"),
+                producer_task=safe_label,
+                producer_node_id=producer,
+                process_id=adapter.active_process_id,
+                verification_status="sha256-verified",
+                source="oci-proot",
+                metadata={
+                    "tool": "proot-distro",
+                    "remote": True,
+                    **({"image_digest": _safe_text(_parse_key_values(stdout).get("image_digest", ""))} if _parse_key_values(stdout).get("image_digest") else {}),
+                    **({"image_reference": _safe_text(str((provenance_extra or {}).get("image_reference", "")))} if (provenance_extra or {}).get("image_reference") else {}),
+                    **({"architecture": _safe_text(str((provenance_extra or {}).get("architecture", "")))} if (provenance_extra or {}).get("architecture") else {}),
+                },
+            ))
     adapter.process_exited(
         exit_code=int(proc.returncode or 0),
         duration_seconds=duration,
@@ -892,6 +987,7 @@ def oci_install_payload(
         config, run_id=run_id, node_id=install_node, label=f"Install OCI image {safe_source}",
         argv=build_ssh_remote_sh_argv(config, install_script, tty=False),
         detail="Installing OCI image through PRoot-Distro", timeout=_oci_timeout(), diagnostic_code="OCI_INSTALL",
+        provenance_extra={"image_source": safe_source, "source_kind": source_kind, "architecture": architecture, "container": name},
     )
     return {
         "schema_version": 1, "kind": "oci-install", "ok": True,
@@ -950,3 +1046,250 @@ def oci_remove_payload(
         "detail": "OCI runtime state removed",
     }
 
+
+
+
+def _oci_stage_definition_script(definition_digest: str, context_sha256: str) -> str:
+    return f'''set -eu
+if [ -n "${{PROOT_TMP_DIR:-}}" ] || [ -n "${{PROOT_LOADER:-}}" ]; then
+  echo 'Refusing OCI image definition staging inside an existing PRoot environment' >&2; exit 125
+fi
+command -v sha256sum >/dev/null 2>&1 || {{ echo 'sha256sum is required for OCI context verification' >&2; exit 127; }}
+command -v tar >/dev/null 2>&1 || {{ echo 'tar is required for OCI context staging' >&2; exit 127; }}
+root="$HOME/.cache/devtool/oci/definitions"
+archive="$root/context-{context_sha256}.tar"
+dst="$root/sha256-{definition_digest}"
+mkdir -p "$root"
+tmp="$archive.part.$$"; trap 'rm -rf "$tmp" "$dst.part.$$"' EXIT HUP INT TERM
+cat > "$tmp"
+actual="$(sha256sum "$tmp" | awk '{{print $1}}')"
+[ "$actual" = {shlex.quote(context_sha256)} ] || {{ echo 'OCI build-context SHA-256 mismatch after SSH transfer' >&2; exit 65; }}
+mv -f "$tmp" "$archive"
+if [ ! -f "$dst/.context-sha256" ] || [ "$(cat "$dst/.context-sha256" 2>/dev/null || true)" != {shlex.quote(context_sha256)} ]; then
+  work="$dst.part.$$"; rm -rf "$work"; mkdir -p "$work"
+  tar -xf "$archive" -C "$work"
+  printf '%s\n' {shlex.quote(context_sha256)} > "$work/.context-sha256"
+  rm -rf "$dst"; mv "$work" "$dst"
+fi
+trap - EXIT HUP INT TERM
+printf 'context_path=%s\ncontext_sha256=%s\ndefinition_digest=%s\n' "$dst" {shlex.quote(context_sha256)} {shlex.quote(definition_digest)}
+'''
+
+
+def _oci_build_script(*, definition_digest: str, context_sha256: str, tag: str, no_cache: bool) -> str:
+    no_cache_flag = " --no-cache" if no_cache else ""
+    return f'''set -eu
+if [ -n "${{PROOT_TMP_DIR:-}}" ] || [ -n "${{PROOT_LOADER:-}}" ]; then
+  echo 'Refusing OCI image build inside an existing PRoot environment' >&2; exit 125
+fi
+pd_bin="$(command -v proot-distro 2>/dev/null || command -v pd 2>/dev/null || true)"
+[ -n "$pd_bin" ] || {{ echo 'PRoot-Distro is not installed; run devtool oci bootstrap' >&2; exit 127; }}
+proot_bin="${{PD_PROOT_BIN:-}}"; if [ -z "$proot_bin" ] || [ ! -x "$proot_bin" ]; then proot_bin="$(command -v proot 2>/dev/null || true)"; fi
+[ -n "$proot_bin" ] || {{ echo 'proot is not installed; run devtool oci bootstrap' >&2; exit 127; }}
+help="$($pd_bin build --help 2>&1 || true)"
+printf '%s' "$help" | grep -q -- '--architecture' || {{ echo 'Installed PRoot-Distro build command lacks --architecture support' >&2; exit 69; }}
+printf '%s' "$help" | grep -q -- '--build-arg' || {{ echo 'Installed PRoot-Distro build command lacks --build-arg support' >&2; exit 69; }}
+printf '%s' "$help" | grep -q -- '--output' || {{ echo 'Installed PRoot-Distro build command lacks --output support' >&2; exit 69; }}
+ctx="$HOME/.cache/devtool/oci/definitions/sha256-{definition_digest}"
+[ -f "$ctx/.context-sha256" ] && [ "$(cat "$ctx/.context-sha256")" = {shlex.quote(context_sha256)} ] || {{ echo 'Staged OCI definition is missing or has the wrong context digest' >&2; exit 66; }}
+outdir="$HOME/.cache/devtool/oci/builds"; mkdir -p "$outdir"
+out="$outdir/android-arm64-{context_sha256}.oci.tar"; tmp="$out.part.$$"; trap 'rm -f "$tmp"' EXIT HUP INT TERM
+"$pd_bin" build --architecture aarch64 --file "$ctx/Dockerfile" --tag {shlex.quote(tag)} --build-arg DEVTOOL_DEFINITION_DIGEST={shlex.quote(definition_digest)} --build-arg DEVTOOL_BUILD_CONTEXT_SHA256={shlex.quote(context_sha256)} --output "$tmp"{no_cache_flag} "$ctx"
+[ -s "$tmp" ] || {{ echo 'PRoot-Distro image build did not produce an OCI archive' >&2; exit 74; }}
+command -v python3 >/dev/null 2>&1 || {{ echo 'python3 is required to verify OCI manifest digest evidence' >&2; exit 127; }}
+image_digest="$(python3 -c 'import hashlib,json,sys,tarfile; p=sys.argv[1]; t=tarfile.open(p,"r:*"); i=json.load(t.extractfile("index.json")); m=i.get("manifests") or []; assert len(m)==1,"expected exactly one OCI manifest"; d=str(m[0].get("digest") or ""); a,h=d.split(":",1); assert a=="sha256" and len(h)==64 and all(c in "0123456789abcdef" for c in h),"invalid OCI manifest digest"; b=t.extractfile("blobs/sha256/"+h).read(); assert hashlib.sha256(b).hexdigest()==h,"OCI manifest blob digest mismatch"; print(d)' "$tmp")"
+sha="$(sha256sum "$tmp" | awk '{{print $1}}')"; size="$(wc -c < "$tmp" | tr -d ' ')"; mv -f "$tmp" "$out"; trap - EXIT HUP INT TERM
+printf 'image_reference=%s\nimage_digest=%s\nimage_archive=%s\nimage_sha256=%s\nimage_size=%s\n' {shlex.quote(tag)} "$image_digest" "$out" "$sha" "$size"
+printf 'DEVTOOL_OCI_ARTIFACT\t%s\t%s\t%s\toci-archive\n' "$out" "$sha" "$size"
+'''
+
+
+def _oci_install_built_script(*, definition_digest: str, context_sha256: str, name: str) -> str:
+    return f'''set -eu
+if [ -n "${{PROOT_TMP_DIR:-}}" ] || [ -n "${{PROOT_LOADER:-}}" ]; then echo 'Refusing OCI image install inside an existing PRoot environment' >&2; exit 125; fi
+pd_bin="$(command -v proot-distro 2>/dev/null || command -v pd 2>/dev/null || true)"; [ -n "$pd_bin" ] || {{ echo 'PRoot-Distro is not installed' >&2; exit 127; }}
+archive="$HOME/.cache/devtool/oci/builds/android-arm64-{context_sha256}.oci.tar"; [ -s "$archive" ] || {{ echo 'Built OCI archive is missing' >&2; exit 66; }}
+"$pd_bin" install --name {shlex.quote(name)} --architecture aarch64 "$archive"
+printf 'installed_container=%s\n' {shlex.quote(name)}
+'''
+
+
+def _oci_validate_container_script(container: str, definition_digest: str, context_sha256: str) -> str:
+    verify = (
+        "import json; p='/usr/local/lib/devtool/oci-build-metadata.json'; d=json.load(open(p)); "
+        f"assert d.get('definition_digest') == {definition_digest!r}, 'definition digest mismatch'; "
+        f"assert d.get('context_sha256') == {context_sha256!r}, 'context digest mismatch'; "
+        "print('DEVTOOL_OCI_METADATA='+json.dumps(d,sort_keys=True,separators=(',',':')))"
+    )
+    inner = "/usr/local/lib/devtool/validate-android-oci.sh; python3 -c " + shlex.quote(verify)
+    return f'''set -eu
+if [ -n "${{PROOT_TMP_DIR:-}}" ] || [ -n "${{PROOT_LOADER:-}}" ]; then echo 'Refusing OCI image validation inside an existing PRoot environment' >&2; exit 125; fi
+pd_bin="$(command -v proot-distro 2>/dev/null || command -v pd 2>/dev/null || true)"; [ -n "$pd_bin" ] || {{ echo 'PRoot-Distro is not installed' >&2; exit 127; }}
+"$pd_bin" login {shlex.quote(container)} -- /bin/bash -lc {shlex.quote(inner)}
+'''
+
+
+def _parse_key_values(text: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw in str(text or "").splitlines():
+        if "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        if key:
+            values[key] = value.strip()
+    return values
+
+
+def oci_validate_image_payload(
+    config: SSHRunnerConfig,
+    container: str,
+    *,
+    run_id: str,
+    depends_on: tuple[str, ...] = (),
+    discover_graph: bool = True,
+) -> dict[str, Any]:
+    container = _validate_name(container)
+    if not container:
+        raise ValueError("OCI image validation requires an installed container name")
+    definition = canonical_android_oci_definition()
+    node_id = _stable_node_id(config, "validate-android-image", f"{container}|{definition.definition_digest}")
+    if discover_graph:
+        _discover_nodes(run_id, ((node_id, f"Validate Android OCI image {container}", depends_on),))
+    completed = _run_process(
+        config,
+        run_id=run_id,
+        node_id=node_id,
+        label=f"Validate Android OCI image {container}",
+        argv=build_ssh_remote_sh_argv(config, _oci_validate_container_script(container, definition.definition_digest, definition.context_sha256), tty=False),
+        detail="Validating immutable Android OCI toolchain capabilities and build metadata",
+        timeout=_oci_timeout(),
+        diagnostic_code="OCI_IMAGE_CAPABILITY",
+        provenance_extra={"container": container, "image_definition": definition.contract["definition_id"], "definition_digest": definition.definition_digest},
+    )
+    values = _parse_key_values(completed.stdout)
+    metadata_raw = values.get("DEVTOOL_OCI_METADATA", "")
+    try:
+        import json
+        metadata = json.loads(metadata_raw) if metadata_raw else {}
+    except (TypeError, ValueError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    capability = {key: value for key, value in values.items() if key != "DEVTOOL_OCI_METADATA"}
+    return {
+        "schema_version": 1,
+        "kind": "oci-image-validation",
+        "ok": True,
+        "profile": config.profile,
+        "destination": config.destination,
+        "run_id": run_id,
+        "node_id": node_id,
+        "container": container,
+        "definition_id": definition.contract["definition_id"],
+        "definition_digest": definition.definition_digest,
+        "context_sha256": definition.context_sha256,
+        "capabilities": capability,
+        "build_metadata": metadata,
+        "detail": "Android OCI image capability contract ready",
+    }
+
+
+def oci_build_payload(
+    config: SSHRunnerConfig,
+    *,
+    run_id: str,
+    tag: str = "",
+    install_as: str = "",
+    dry_run: bool = False,
+    no_cache: bool = False,
+) -> dict[str, Any]:
+    definition = canonical_android_oci_definition()
+    tag = str(tag or definition.reference).strip()
+    if not tag or any(ch.isspace() for ch in tag):
+        raise ValueError("OCI image tag/reference cannot be empty or contain whitespace")
+    install_as = _validate_name(install_as)
+    stage_node = _stable_node_id(config, "stage-image-definition", definition.context_sha256)
+    build_node = _stable_node_id(config, "build-android-image", f"{definition.definition_digest}|{tag}|{int(no_cache)}")
+    nodes: list[tuple[str, str, tuple[str, ...]]] = [
+        (stage_node, "Stage canonical Android OCI image definition", ()),
+        (build_node, f"Build Android OCI image {tag}", (stage_node,)),
+    ]
+    install_node = ""
+    validate_node = ""
+    if install_as:
+        install_node = _stable_node_id(config, "install-built-image", f"{definition.context_sha256}|{install_as}")
+        validate_node = _stable_node_id(config, "validate-android-image", f"{install_as}|{definition.definition_digest}")
+        nodes.extend([
+            (install_node, f"Install built Android OCI image as {install_as}", (build_node,)),
+            (validate_node, f"Validate Android OCI image {install_as}", (install_node,)),
+        ])
+    _discover_nodes(run_id, tuple(nodes))
+    if dry_run:
+        for node_id, _label, _deps in nodes:
+            _finish_node(run_id, node_id, status=ExecutionStatus.SKIPPED.value, exit_code=0, reason="dry-run")
+        return {
+            "schema_version": 1, "kind": "oci-image-build", "ok": True, "dry_run": True,
+            "profile": config.profile, "destination": config.destination, "run_id": run_id,
+            "node_ids": [node[0] for node in nodes], "definition_id": definition.contract["definition_id"],
+            "definition_digest": definition.definition_digest, "context_sha256": definition.context_sha256,
+            "reference": tag, "architecture": definition.architecture, "install_as": install_as,
+            "no_cache": bool(no_cache), "detail": "Deterministic Android OCI image build plan ready",
+        }
+    try:
+        _run_process(
+            config, run_id=run_id, node_id=stage_node, label="Stage canonical Android OCI image definition",
+            argv=build_ssh_remote_sh_argv(config, _oci_stage_definition_script(definition.definition_digest, definition.context_sha256), tty=False),
+            detail="Uploading content-addressed deterministic OCI build context", timeout=_transfer_timeout(), stdin_bytes=definition.context_bytes,
+            diagnostic_code="OCI_IMAGE_CONTEXT", provenance_extra={"definition_digest": definition.definition_digest, "context_sha256": definition.context_sha256},
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        _block_node(run_id, build_node, blocked_by=(stage_node,), reason="Image build blocked because canonical context staging failed")
+        if install_node:
+            _block_node(run_id, install_node, blocked_by=(build_node,), reason="Image install blocked because image build did not run")
+            _block_node(run_id, validate_node, blocked_by=(install_node,), reason="Image validation blocked because image install did not run")
+        raise
+    try:
+        completed = _run_process(
+            config, run_id=run_id, node_id=build_node, label=f"Build Android OCI image {tag}",
+            argv=build_ssh_remote_sh_argv(config, _oci_build_script(definition_digest=definition.definition_digest, context_sha256=definition.context_sha256, tag=tag, no_cache=no_cache), tty=False),
+            detail="Building pinned immutable Android ARM64 OCI image through PRoot-Distro", timeout=_oci_timeout(), diagnostic_code="OCI_IMAGE_BUILD",
+            provenance_extra={"image_reference": tag, "architecture": definition.architecture, "definition_digest": definition.definition_digest, "context_sha256": definition.context_sha256},
+            publish_remote_artifacts=True,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        if install_node:
+            _block_node(run_id, install_node, blocked_by=(build_node,), reason="Image install blocked because image build failed")
+            _block_node(run_id, validate_node, blocked_by=(install_node,), reason="Image validation blocked because image install did not run")
+        raise
+    values = _parse_key_values(completed.stdout)
+    artifact_records = _remote_artifact_records(completed.stdout)
+    if not artifact_records:
+        # _run_process already fails this case; keep this defensive assertion so
+        # payload assembly can never invent missing digest evidence.
+        raise RuntimeError("OCI image build succeeded without parsed artifact evidence")
+    image_artifact = artifact_records[0]
+    validation: dict[str, Any] | None = None
+    if install_as:
+        try:
+            _run_process(
+                config, run_id=run_id, node_id=install_node, label=f"Install built Android OCI image as {install_as}",
+                argv=build_ssh_remote_sh_argv(config, _oci_install_built_script(definition_digest=definition.definition_digest, context_sha256=definition.context_sha256, name=install_as), tty=False),
+                detail="Installing locally built OCI archive through PRoot-Distro", timeout=_oci_timeout(), diagnostic_code="OCI_IMAGE_INSTALL",
+                provenance_extra={"container": install_as, "image_reference": tag, "image_sha256": image_artifact["sha256"]},
+            )
+        except (OSError, subprocess.SubprocessError, ValueError):
+            _block_node(run_id, validate_node, blocked_by=(install_node,), reason="Image validation blocked because image install failed")
+            raise
+        validation = oci_validate_image_payload(config, install_as, run_id=run_id, depends_on=(install_node,), discover_graph=False)
+    return {
+        "schema_version": 1, "kind": "oci-image-build", "ok": True,
+        "profile": config.profile, "destination": config.destination, "run_id": run_id,
+        "node_ids": [node[0] for node in nodes], "definition_id": definition.contract["definition_id"],
+        "definition_digest": definition.definition_digest, "context_sha256": definition.context_sha256,
+        "context_size": definition.context_size, "reference": tag, "architecture": definition.architecture,
+        "image_archive": image_artifact["path"], "image_sha256": image_artifact["sha256"],
+        "image_digest": values.get("image_digest", ""), "image_size": image_artifact["size"], "install_as": install_as,
+        "no_cache": bool(no_cache), "validation": validation,
+        "detail": "Deterministic Android OCI image built" + (" and capability-validated" if install_as else ""),
+    }

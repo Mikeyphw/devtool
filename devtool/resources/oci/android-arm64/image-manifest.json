@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "kind": "devtool-android-oci-image-contract",
+  "definition_id": "android-arm64-api36-v1",
+  "reference": "devtool/android-build:arm64-api36-v1",
+  "architecture": {
+    "oci": "linux/arm64",
+    "proot_distro": "aarch64",
+    "uname": [
+      "aarch64",
+      "arm64"
+    ]
+  },
+  "base_image": {
+    "reference": "ubuntu:noble-20260911",
+    "index_digest": "sha256:c5ddb18c368db61a2f5b0971380f0ff1a1bb50e1da176cc48c9e5c2dbf3afb5b",
+    "arm64_manifest_digest": "sha256:11dc1ccb427f0464a2369e645454c272bb0baece7357c892ba69d313b3a332cf"
+  },
+  "apt_snapshot": "20260911T235959Z",
+  "toolchains": {
+    "jdk": [
+      {
+        "major": 17,
+        "package": "openjdk-17-jdk-headless"
+      },
+      {
+        "major": 21,
+        "package": "openjdk-21-jdk-headless",
+        "default": true
+      }
+    ],
+    "python": {
+      "package": "python3",
+      "version_prefix": "3.12.",
+      "minimum": "3.11"
+    },
+    "node": {
+      "version": "22.20.0",
+      "archive": "node-v22.20.0-linux-arm64.tar.xz",
+      "sha256": "06907b9c088ce62305bc1530e5c1ae1510245114645768f7750c349c5b6fe667"
+    },
+    "android": {
+      "sdk_root": "/opt/android-sdk",
+      "command_line_tools_revision": "15859902",
+      "command_line_tools_archive": "commandlinetools-linux-15859902_latest.zip",
+      "command_line_tools_sha256": "4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583",
+      "api": 36,
+      "platform": "platforms;android-36",
+      "build_tools": "36.0.0",
+      "ndk": "29.0.14206865",
+      "arm64_build_tools_release": "platform-tools-36.0.0",
+      "arm64_build_tools": [
+        "aapt2",
+        "aidl",
+        "zipalign",
+        "split-select"
+      ],
+      "arm64_build_tools_source": {
+        "repository": "Commit451/android-arm-build-tools",
+        "release": "platform-tools-36.0.0",
+        "release_commit": "58f06a2",
+        "aosp_source": "android-16.0.0_r1",
+        "verification": "manifest-pinned-asset-sha256",
+        "assets": {
+          "aapt2": "7512ff7e381bea6fd310b6f6e347422c8fda21e07c6e3f0162742e95eb9d7f98",
+          "aidl": "8c97356b8bba8f7aad44cfd408e3ee24c66a1258244b5d08af1c9249f50dd659",
+          "split-select": "fb7f0c3c87dbd4243d7e1277ba64ded2399389244058b6a4c969cc615360766c",
+          "zipalign": "e8856fb24b10095eb6e940c577ce96d89ddbfc45aa0f7eeaef1597ef68f11a12"
+        },
+        "sha256sums_asset_sha256": "59201e95c7092875bf21a77332cf746ba66baf3c0416758ef90590afc411335e"
+      }
+    },
+    "native_packages": [
+      "build-essential",
+      "coreutils",
+      "grep",
+      "clang",
+      "lld",
+      "cmake",
+      "ninja-build",
+      "ccache",
+      "pkg-config",
+      "git",
+      "rsync",
+      "curl",
+      "ca-certificates",
+      "unzip",
+      "zip",
+      "xz-utils",
+      "file",
+      "jq",
+      "bash",
+      "openssh-client",
+      "tmux",
+      "python3-pip",
+      "python3-venv",
+      "qemu-user-static",
+      "python3-rich"
+    ]
+  },
+  "gradle": {
+    "policy": "project-wrapper-first",
+    "baked_distribution": false,
+    "require_complete_wrapper_when_present": true
+  },
+  "devtool_runtime": {
+    "python": ">=3.11",
+    "python_packages": [
+      "rich>=13.7.0"
+    ],
+    "required_commands": [
+      "bash",
+      "git",
+      "rsync",
+      "ssh",
+      "tmux",
+      "python3",
+      "java",
+      "node",
+      "npm",
+      "cmake",
+      "ninja",
+      "clang",
+      "file",
+      "sha256sum",
+      "timeout",
+      "mktemp",
+      "grep",
+      "head"
+    ]
+  },
+  "immutability": {
+    "ordinary_validation_mutates_toolchains": false,
+    "forbidden_validation_mutators": [
+      "apt",
+      "apt-get",
+      "pkg",
+      "sdkmanager",
+      "pip install",
+      "npm install -g"
+    ],
+    "marker": "/usr/local/lib/devtool/oci-immutable-toolchain"
+  },
+  "validation": {
+    "script": "/usr/local/lib/devtool/validate-android-oci.sh",
+    "required_android_tools": [
+      "aapt2",
+      "aidl",
+      "zipalign",
+      "split-select",
+      "apksigner"
+    ],
+    "ndk_host_mode": "qemu-x86_64-wrapped-verified",
+    "build_metadata": "/usr/local/lib/devtool/oci-build-metadata.json"
+  }
+}

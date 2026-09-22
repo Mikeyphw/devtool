@@ -608,3 +608,72 @@ subprocess environment. Private-registry credential transport is deferred to the
 later OCI resilience/security overlay; public registry images and worker-local
 authentication remain usable now.
 
+
+## Rootless OCI image lifecycle on SSH workers
+
+Devtool's OCI roadmap keeps image lifecycle separate from repository command
+execution. `ssh-proot-oci` is configuration-visible but remains fail-closed for
+ordinary build/test/validate execution until the later execution-provider
+activation overlay. OCI-03 adds the canonical **image contract and build gate**.
+
+```sh
+# Local, read-only definition inspection; no worker is contacted.
+devtool oci definition --format json
+
+# Worker lifecycle. Build uses PRoot-Distro's rootless Dockerfile/OCI builder.
+devtool oci doctor PROFILE
+devtool oci build PROFILE --dry-run
+devtool oci build PROFILE --install-as devtool-android-api36
+
+devtool oci validate-image PROFILE devtool-android-api36 --format json
+```
+
+The canonical initial image is `linux/arm64` / `aarch64`. Its contract pins the
+Ubuntu Noble base identity/snapshot, JDK 17 and 21 (21 default), Python 3.12,
+Node 22.20.0, Android API 36, Build Tools 36.0.0 and NDK 29.0.14206865. Google
+ships Linux SDK/NDK host-native binaries primarily for x86_64, so image creation
+performs the required ARM64 build-tools replacement and provisions transparent QEMU x86_64 wrappers for the official NDK host toolchain.
+The original NDK ELF files are preserved behind those wrappers, and `argv[0]`
+is retained for multi-call tools such as clang/clang++. Image validation performs
+a real direct-driver Android ARM64 compile+link rather than treating emulator or
+binary presence as capability proof.
+
+Gradle is deliberately **not** baked into the image. Repositories keep authority
+over their own Gradle Wrapper. The image writes only the user-level ARM64 aapt2
+override needed by modern AGP on Linux ARM64.
+
+Image definition staging is content-addressed by SHA-256. Build, install and
+capability validation are separate dependency-linked EXO nodes under the
+caller's canonical RunId. Remote OCI archives are emitted as EXO artifacts with
+producer process/node identity and verified SHA-256 metadata. An installed image
+also carries `/usr/local/lib/devtool/oci-build-metadata.json`; validation requires
+its definition and build-context digests to match the Devtool resources that
+requested the run.
+
+Ordinary repository validation must never provision toolchains. The image's
+validator is intentionally read-only: it may discover and execute pinned tools,
+but it does not run `apt`, `sdkmanager`, `pip install`, global npm installs, or
+other package mutation. Toolchain changes belong to explicit image-build
+operations and produce a new image/archive identity.
+
+### OCI-03 validation gate 1
+
+The repository includes `tools/oci03-fresh-worker-smoke.sh` for the external
+Termux-worker portion of OCI-03 qualification. It deliberately uses
+`oci build --no-cache --install-as ...`, so one canonical build run owns the
+content-addressed definition staging, PRoot-Distro image build, installation and
+in-image capability validation. The smoke gate then checks the OCI manifest
+digest separately from the exported archive SHA-256 and requires the in-image
+build metadata to match the exact definition/context digests used by Devtool.
+
+```sh
+# Use the configured default SSH worker:
+tools/oci03-fresh-worker-smoke.sh
+
+# Or name an explicit fresh Termux worker and container:
+tools/oci03-fresh-worker-smoke.sh PROFILE devtool-android-api36
+```
+
+Gate 1 also includes the OCI-01/OCI-02 provider/lifecycle regressions and native
+SSH execution-contract tests. Passing static/unit tests without this live worker
+smoke does not by itself qualify OCI-03's external validation gate.
