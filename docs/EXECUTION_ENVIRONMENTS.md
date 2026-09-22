@@ -691,3 +691,62 @@ Durable truth is written under the Devtool state directory at
 checkpoint, terminal history snapshot, and `gate1-evidence.json`. The legacy
 `tools/oci03-fresh-worker-smoke.sh` helper is only a compatibility launcher and
 must not maintain an independent lifecycle state machine.
+
+### OCI-04 managed workspace binds and persistent caches
+
+OCI-04 prepares the filesystem/environment contract that OCI-05 will use for
+normal repository execution. It **does not** activate `ssh-proot-oci` for
+build/test/validate yet; the provider remains fail-closed until OCI-05.
+
+The source of truth remains the existing Devtool-managed SSH workspace. OCI
+preparation requires `workspace.mode = "managed"`, verifies the workspace
+ownership marker plus completed sync metadata, canonicalizes the remote path,
+and binds that directory into the container at the deterministic path
+`/workspace`. Repository source is never copied into the OCI image. The guest
+working directory is explicitly `/workspace`.
+
+Persistent repository-scoped caches live on the Termux worker outside the
+managed source mirror, by default under:
+
+```text
+$HOME/.cache/devtool/oci/workspace-caches/<workspace-id>/
+```
+
+That cache root is bound at `/var/cache/devtool`. The approved cache contract is
+currently Gradle, XDG, npm, pip, and uv, mapped through managed guest variables
+such as `GRADLE_USER_HOME=/var/cache/devtool/gradle`. Cache and workspace host
+paths must be disjoint. Both source and cache bind paths are traversal-checked,
+canonicalized, and rejected if any path component is a symlink.
+
+Environment forwarding is allowlist-only. The default forwarded names are
+`CI`, `TERM`, `COLORTERM`, `LANG`, `LC_ALL`, and `TZ`; Devtool/runtime-managed or
+secret-bearing variable names are rejected. Values are needed only at execution
+time and are not written into the OCI-04 bind-plan evidence. Configure a worker
+with:
+
+```toml
+[ssh.hosts.tablet.workspace]
+mode = "managed"
+
+[ssh.hosts.tablet.execution]
+provider = "ssh-proot-oci"
+
+[ssh.hosts.tablet.oci]
+cache_root = "~/.cache/devtool/oci/workspace-caches"
+env_allowlist = ["CI", "TERM", "LANG", "LC_ALL", "TZ"]
+```
+
+After the normal managed SSH sync has created a complete workspace, inspect or
+prepare the OCI bind contract with:
+
+```sh
+devtool -r /path/to/repo oci workspace tablet --dry-run
+devtool -r /path/to/repo oci workspace tablet
+```
+
+The operation uses one canonical EXO RunId with dependency-linked workspace
+inspection, cache preparation, and bind-contract sealing nodes. Real SSH probes
+are RunnerExecutionAdapter-owned. Durable `execution.json`, event journal,
+checkpoint/history, and a verified `bind-plan.json` evidence artifact are
+persisted under the Devtool state directory. The bind-plan object is provider
+bookkeeping only; EXO remains the sole lifecycle authority.

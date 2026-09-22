@@ -115,6 +115,8 @@ class SSHRunnerConfig:
     lease_timeout_seconds: int = 900
     min_free_mb: int = 1024
     execution_provider: str = SSH_NATIVE
+    oci_cache_root: str = "~/.cache/devtool/oci/workspace-caches"
+    oci_env_allowlist: tuple[str, ...] = ("CI", "TERM", "COLORTERM", "LANG", "LC_ALL", "TZ")
 
     @property
     def destination(self) -> str:
@@ -282,6 +284,12 @@ def _ssh_profile_section(data: Mapping[str, Any], profile: str) -> dict[str, Any
             execution = candidate.get("execution", {})
             if isinstance(execution, dict) and "provider" in execution:
                 result["execution_provider"] = execution.get("provider")
+            oci = candidate.get("oci", {})
+            if isinstance(oci, dict):
+                if "cache_root" in oci:
+                    result["oci_cache_root"] = oci.get("cache_root")
+                if "env_allowlist" in oci:
+                    result["oci_env_allowlist"] = oci.get("env_allowlist")
             return result
     available = sorted({str(name) for container in containers for name in container})
     suffix = f" Available profiles: {', '.join(available)}." if available else ""
@@ -293,7 +301,13 @@ def _ssh_section(data: Mapping[str, Any], target_name: str = "", profile: str = 
     top = data.get("ssh", {})
     if isinstance(top, dict):
         # Do not leak profile containers into scalar runner options.
-        merged.update({k: v for k, v in top.items() if k not in {"hosts", "profiles", "workers", "profile", "default_profile"}})
+        merged.update({k: v for k, v in top.items() if k not in {"hosts", "profiles", "workers", "profile", "default_profile", "oci"}})
+        oci = top.get("oci", {})
+        if isinstance(oci, dict):
+            if "cache_root" in oci:
+                merged["oci_cache_root"] = oci.get("cache_root")
+            if "env_allowlist" in oci:
+                merged["oci_env_allowlist"] = oci.get("env_allowlist")
 
     # A named profile provides the worker baseline. Explicit execution/target
     # settings still override it for backward-compatible per-target tuning.
@@ -318,7 +332,13 @@ def _ssh_section(data: Mapping[str, Any], target_name: str = "", profile: str = 
         if isinstance(target, dict):
             nested = target.get("ssh", {})
             if isinstance(nested, dict):
-                merged.update(nested)
+                merged.update({k: v for k, v in nested.items() if k != "oci"})
+                oci = nested.get("oci", {})
+                if isinstance(oci, dict):
+                    if "cache_root" in oci:
+                        merged["oci_cache_root"] = oci.get("cache_root")
+                    if "env_allowlist" in oci:
+                        merged["oci_env_allowlist"] = oci.get("env_allowlist")
             for key in (
                 "ssh_host", "ssh_port", "ssh_user", "ssh_identity",
                 "ssh_session", "ssh_cwd", "ssh_tool", "ssh_mode", "ssh_stage_dir",
@@ -467,6 +487,14 @@ def resolve_ssh_config(
         str(file_options.get("execution_provider", "") or ""),
         remote=True,
     )
+    oci_cache_root = str(file_options.get("oci_cache_root", "~/.cache/devtool/oci/workspace-caches") or "~/.cache/devtool/oci/workspace-caches").strip()
+    raw_oci_allowlist = file_options.get("oci_env_allowlist", ("CI", "TERM", "COLORTERM", "LANG", "LC_ALL", "TZ"))
+    if isinstance(raw_oci_allowlist, str):
+        oci_env_allowlist = tuple(item.strip() for item in raw_oci_allowlist.split(",") if item.strip())
+    elif isinstance(raw_oci_allowlist, (list, tuple)):
+        oci_env_allowlist = tuple(str(item).strip() for item in raw_oci_allowlist if str(item).strip())
+    else:
+        raise ValueError("SSH OCI env_allowlist must be a comma-separated string or list of variable names")
 
     try:
         lease_timeout_seconds = int(file_options.get("lease_timeout_seconds", 900) or 900)
@@ -513,6 +541,8 @@ def resolve_ssh_config(
         lease_timeout_seconds=lease_timeout_seconds,
         min_free_mb=min_free_mb,
         execution_provider=execution_provider,
+        oci_cache_root=oci_cache_root,
+        oci_env_allowlist=oci_env_allowlist,
     )
 
 

@@ -1107,6 +1107,10 @@ def build_parser() -> argparse.ArgumentParser:
     oci_gate1.add_argument("--container", default="", dest="oci_gate1_container", help="Installed PRoot-Distro container name; defaults to a RunId-derived Gate-1 name")
     oci_gate1.add_argument("--tag", default="", dest="oci_tag", help="Image tag/reference; defaults to the canonical contract reference")
     oci_gate1.add_argument("--format", choices=["text", "json"], default="text")
+    oci_workspace = oci_sub.add_parser("workspace", help="Prepare OCI-04 managed workspace binds, persistent caches, and environment allowlist evidence")
+    oci_workspace.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_workspace.add_argument("--dry-run", action="store_true", dest="oci_dry_run", help="Validate workspace/cache paths without creating cache directories")
+    oci_workspace.add_argument("--format", choices=["text", "json"], default="text")
     oci_validate_image = oci_sub.add_parser("validate-image", help="Validate an installed container against the canonical Android OCI image contract")
     oci_validate_image.add_argument("profile", help="Named SSH worker")
     oci_validate_image.add_argument("container", help="Installed PRoot-Distro container name")
@@ -11860,7 +11864,7 @@ def _main_after_parse(
             rows = [
                 ("profile", payload.get("profile") or "-"),
                 ("destination", payload.get("destination") or "-"),
-                ("status", "READY" if payload.get("ok") else "BLOCKED"),
+                ("status", ("PLANNED" if payload.get("dry_run") and payload.get("ok") else "READY") if payload.get("ok") else "BLOCKED"),
                 ("changed", "yes" if payload.get("changed") else "no"),
                 ("missing_before", ", ".join(payload.get("missing_before", [])) or "none"),
                 ("installed", ", ".join(payload.get("installed", [])) or "none"),
@@ -11967,6 +11971,7 @@ def _main_after_parse(
             oci_bootstrap_payload, oci_build_payload, oci_containers_payload, oci_doctor_payload,
             oci_gate1_payload, oci_images_payload, oci_install_payload, oci_remove_payload, oci_validate_image_payload,
         )
+        from .oci_workspace import oci_workspace_payload
 
         action = str(getattr(args, "oci_command", "") or "")
         output_format = str(getattr(args, "format", "text") or "text")
@@ -11995,6 +12000,11 @@ def _main_after_parse(
                     worker, run_id=run_id,
                     container=str(getattr(args, "oci_gate1_container", "") or ""),
                     tag=str(getattr(args, "oci_tag", "") or ""),
+                )
+            elif action == "workspace":
+                payload = oci_workspace_payload(
+                    worker, repo_root=Path(repo_arg or os.getcwd()), run_id=run_id,
+                    dry_run=bool(getattr(args, "oci_dry_run", False)),
                 )
             elif action == "validate-image":
                 payload = oci_validate_image_payload(
@@ -12067,10 +12077,29 @@ def _main_after_parse(
                 ("evidence", payload.get("evidence_artifact") or "-"),
                 ("detail", payload.get("detail") or "-"),
             ])
+        elif action == "workspace":
+            plan = payload.get("plan", {})
+            render_status_table([
+                ("run_id", payload.get("run_id") or "-"),
+                ("profile", payload.get("profile") or "-"),
+                ("status", ("PLANNED" if payload.get("dry_run") and payload.get("ok") else "READY") if payload.get("ok") else "BLOCKED"),
+                ("workspace_id", plan.get("workspace_id") or "-"),
+                ("remote_workspace", plan.get("remote_workspace") or "-"),
+                ("guest_workspace", plan.get("guest_workspace") or "-"),
+                ("working_directory", plan.get("working_directory") or "-"),
+                ("remote_cache_root", plan.get("remote_cache_root") or "-"),
+                ("guest_cache_root", plan.get("guest_cache_root") or "-"),
+                ("approved_caches", ",".join(plan.get("approved_caches", [])) or "-"),
+                ("forwarded_env", ",".join(plan.get("forwarded_environment_names", [])) or "-"),
+                ("execution_json", payload.get("execution_json") or "-"),
+                ("evidence", payload.get("evidence_artifact") or "-"),
+                ("dry_run", "yes" if payload.get("dry_run") else "no"),
+                ("detail", payload.get("detail") or "-"),
+            ])
         elif action == "build":
             render_status_table([
                 ("profile", payload.get("profile") or "-"),
-                ("status", "READY" if payload.get("ok") else "BLOCKED"),
+                ("status", ("PLANNED" if payload.get("dry_run") and payload.get("ok") else "READY") if payload.get("ok") else "BLOCKED"),
                 ("definition", payload.get("definition_id") or "-"),
                 ("definition_sha256", payload.get("definition_digest") or "-"),
                 ("context_sha256", payload.get("context_sha256") or "-"),
@@ -12087,7 +12116,7 @@ def _main_after_parse(
             render_status_table([
                 ("profile", payload.get("profile") or "-"),
                 ("container", payload.get("container") or "-"),
-                ("status", "READY" if payload.get("ok") else "BLOCKED"),
+                ("status", ("PLANNED" if payload.get("dry_run") and payload.get("ok") else "READY") if payload.get("ok") else "BLOCKED"),
                 ("definition_sha256", payload.get("definition_digest") or "-"),
                 ("architecture", caps.get("architecture") or "-"),
                 ("python", caps.get("python") or "-"),
@@ -12103,7 +12132,7 @@ def _main_after_parse(
             render_status_table([
                 ("profile", payload.get("profile") or "-"),
                 ("destination", payload.get("destination") or "-"),
-                ("status", "READY" if payload.get("ok") else "BLOCKED"),
+                ("status", ("PLANNED" if payload.get("dry_run") and payload.get("ok") else "READY") if payload.get("ok") else "BLOCKED"),
                 ("platform", runtime.get("platform") or "unknown"),
                 ("architecture", runtime.get("architecture") or "unknown"),
                 ("free_storage_kib", str(runtime.get("free_storage_kib", 0))),

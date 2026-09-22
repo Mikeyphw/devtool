@@ -267,6 +267,8 @@ def _run_process(
     diagnostic_code: str,
     provenance_extra: Mapping[str, Any] | None = None,
     publish_remote_artifacts: bool = False,
+    required_output_keys: Sequence[str] = (),
+    required_output_patterns: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     safe_label = _safe_text(label)
     _start_node(run_id, node_id, safe_label, detail)
@@ -401,6 +403,36 @@ def _run_process(
     stderr = (err_b or b"").decode("utf-8", errors="replace")
     safe_evidence = _safe_text(stderr[-2048:] or stdout[-2048:])
     remote_artifacts = _remote_artifact_records(stdout) if publish_remote_artifacts else ()
+    required_patterns = {str(key): str(value) for key, value in (required_output_patterns or {}).items()}
+    required_names = tuple(dict.fromkeys([*(str(key) for key in required_output_keys), *required_patterns]))
+    parsed_output = _parse_key_values(stdout) if (publish_remote_artifacts or required_names) else {}
+    missing_output = [key for key in required_names if not str(parsed_output.get(key) or "").strip()]
+    invalid_output = [
+        key for key, pattern in required_patterns.items()
+        if key not in missing_output and re.fullmatch(pattern, str(parsed_output.get(key) or "")) is None
+    ]
+    if proc.returncode == 0 and (missing_output or invalid_output):
+        if missing_output:
+            message = f"{safe_label} completed without required structured evidence: {', '.join(missing_output)}"
+            failure_kind = "structured_evidence_missing"
+            reason = "required structured evidence missing"
+        else:
+            message = f"{safe_label} completed with invalid structured evidence: {', '.join(invalid_output)}"
+            failure_kind = "structured_evidence_invalid"
+            reason = "required structured evidence invalid"
+        adapter.process_exited(
+            exit_code=65, duration_seconds=duration, failure_kind=failure_kind,
+            evidence=(_safe_text(stdout[-2048:] or message),),
+        )
+        diagnostic_id = adapter.diagnostic(
+            severity="error", code=f"{diagnostic_code}_EVIDENCE", message=message,
+            failure_kind=failure_kind, evidence=(_safe_text(stdout[-2048:] or message),),
+        )
+        _finish_node(
+            run_id, node_id, status=ExecutionStatus.FAILED.value, exit_code=65, duration=duration,
+            diagnostic_ids=(diagnostic_id,), reason=reason,
+        )
+        raise ValueError(message)
     if proc.returncode == 0 and publish_remote_artifacts and not remote_artifacts:
         message = f"{safe_label} completed without required SHA-verified artifact evidence"
         adapter.process_exited(
@@ -446,7 +478,7 @@ def _run_process(
                 metadata={
                     "tool": "proot-distro",
                     "remote": True,
-                    **({"image_digest": _safe_text(_parse_key_values(stdout).get("image_digest", ""))} if _parse_key_values(stdout).get("image_digest") else {}),
+                    **({"image_digest": _safe_text(parsed_output.get("image_digest", ""))} if parsed_output.get("image_digest") else {}),
                     **({"image_reference": _safe_text(str((provenance_extra or {}).get("image_reference", "")))} if (provenance_extra or {}).get("image_reference") else {}),
                     **({"architecture": _safe_text(str((provenance_extra or {}).get("architecture", "")))} if (provenance_extra or {}).get("architecture") else {}),
                 },
