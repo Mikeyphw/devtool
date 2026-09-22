@@ -75,3 +75,5 @@ __all__ = [
 ]
 
 from .execution_subscribers import ExecutionProjectionSubscriber, canonical_execution_document, legacy_execution_projection
+
+from .execution_recovery import JournalReplayReport, load_execution_journal, recover_event_bus

@@ -61,7 +61,7 @@ from .test_adapters import (
     result_from_stdout as _test_result_from_stdout,
 )
 from .transactions import create_apply_transaction, rollback_transaction, checkpoint_transaction_applied
-from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, write_log
+from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, redact_sensitive_value, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .core.events import NodeDiscovered, NodeFinished, NodeStarted, TaskFinished, TaskStarted, WarningDetected, publish_event
 from .core.execution_contract import NodeId, RunId
@@ -98,6 +98,34 @@ def _ssh_execution_provenance(metadata: Mapping[str, object]) -> dict[str, objec
         "return_state": str((metadata.get("ssh_return") or {}).get("state") or "") if isinstance(metadata.get("ssh_return"), Mapping) else "",
         "return_manifest": str(metadata.get("ssh_return_manifest") or ""),
     }
+
+
+def _execution_provenance(metadata: Mapping[str, object], argv: Sequence[str]) -> dict[str, object]:
+    ssh = _ssh_execution_provenance(metadata)
+    if ssh:
+        return ssh
+    mode = str(metadata.get("execution_mode") or "").strip()
+    result: dict[str, object] = {}
+    if mode:
+        result["transport"] = mode
+    environment = str(metadata.get("execution_environment") or "").strip()
+    if environment:
+        result["execution_environment"] = environment
+    if mode == "proot-distro":
+        result["distribution"] = str(
+            metadata.get("proot_distribution")
+            or metadata.get("distribution")
+            or metadata.get("distro")
+            or ""
+        )
+    tokens = [str(value) for value in argv]
+    if not result.get("transport") and _looks_like_chrootctl_exec(tokens):
+        result["transport"] = "chrootctl"
+        for index, token in enumerate(tokens[:-1]):
+            if token in {"--name", "-n"}:
+                result["chroot"] = tokens[index + 1]
+                break
+    return {key: value for key, value in result.items() if value not in ("", None, {}, [])}
 
 
 def _attach_test_provenance(payload: dict[str, object], metadata: Mapping[str, object]) -> dict[str, object]:
@@ -2295,11 +2323,11 @@ def run_specs(
                 publish_event(TaskStarted(
                     run_id=event_run_id,
                     task=spec.name,
-                    argv=tuple(str(value) for value in spec.argv),
+                    argv=tuple(str(value) for value in redact_sensitive_value(list(spec.argv))),
                     node_id=workflow_node_key,
                     parent_id=str(spec.metadata.get("parent_id") or spec.metadata.get("workflow_parent_id") or ""),
                     source="runner",
-                    metadata={"index": spec_index, "total": len(specs), "argv": list(spec.argv), **dict(spec.metadata)},
+                    metadata=redact_sensitive_value({"index": spec_index, "total": len(specs), "argv": list(spec.argv), **dict(spec.metadata)}),
                 ))
                 synthetic_result, synthetic_raw = _workflow_synthetic_result(
                     spec,
@@ -2364,11 +2392,11 @@ def run_specs(
         publish_event(TaskStarted(
                     run_id=event_run_id,
             task=spec.name,
-            argv=tuple(str(value) for value in effective_argv),
+            argv=tuple(str(value) for value in redact_sensitive_value(list(effective_argv))),
             node_id=event_node_id,
             parent_id=workflow_parent_id,
             source="runner",
-            metadata={"index": spec_index, "total": len(specs), "argv": list(effective_argv), **dict(spec.metadata)},
+            metadata=redact_sensitive_value({"index": spec_index, "total": len(specs), "argv": list(effective_argv), **dict(spec.metadata)}),
         ))
         if command_part_node_id:
             publish_event(NodeDiscovered(
@@ -2479,6 +2507,7 @@ def run_specs(
                 run_id=event_run_id,
                 parent_node_id=progress_parent_node_id,
                 tool=execution_tool,
+                provenance=_execution_provenance(spec.metadata, effective_argv),
             )
             try:
                 overall_phase_index = _metadata_int(spec.metadata.get("validation_phase_index"), spec_index)

@@ -5,6 +5,7 @@ from threading import RLock
 from typing import Any, Callable
 import json, os, tempfile
 from .events.listeners import event_to_dict
+from ..logstore import redact_sensitive_value
 from .execution_state import ExecutionSnapshot
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -22,6 +23,17 @@ def canonical_execution_document(snapshot: ExecutionSnapshot) -> dict[str, Any]:
     return {"schema_version": 1, "kind": "devtool.execution.snapshot", "run_id": snapshot.run_id,
             "sequence": snapshot.last_sequence, "event_id": snapshot.last_event_id,
             "status": snapshot.status, "execution": snapshot.to_dict()}
+
+def compact_event_document(event: Any, *, max_output_chars: int = 2048) -> dict[str, Any]:
+    """Bound and redact the durable journal representation of one event."""
+    payload = redact_sensitive_value(event_to_dict(event))
+    if str(payload.get("event_type") or "") == "process.output":
+        text = str(payload.get("text") or "")
+        if len(text) > max_output_chars:
+            payload["text"] = text[-max_output_chars:]
+            payload["output_truncated"] = True
+            payload["original_length"] = len(text)
+    return payload
 
 def legacy_execution_projection(snapshot: ExecutionSnapshot) -> dict[str, Any]:
     accounting = snapshot.accounting.leaf
@@ -45,15 +57,29 @@ class ExecutionProjectionSubscriber:
     directory: Path
     ipc_publish: Callable[[dict[str, Any]], Any] | None = None
     history_directory: Path | None = None
+    checkpoint_interval: int = 50
     _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    _events_written: int = field(default=0, init=False)
     _last_sequence: int = field(default=-1, init=False)
     _closed: bool = field(default=False, init=False)
+    def __post_init__(self) -> None:
+        try:
+            if self.journal_file.is_file():
+                self._events_written = sum(
+                    1 for line in self.journal_file.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                )
+        except OSError:
+            self._events_written = 0
+
     @property
     def snapshot_file(self): return self.directory/"execution.json"
     @property
     def journal_file(self): return self.directory/"execution-events.jsonl"
     @property
     def history_file(self): return (self.history_directory or self.directory/"history")/self.run_id/"execution.json"
+    @property
+    def checkpoint_file(self): return self.directory/"execution-checkpoint.json"
     def __call__(self,event:Any)->None:
         if self._closed or str(getattr(event,"run_id",""))!=self.run_id: return
         snapshot=self.store.snapshot(self.run_id)
@@ -62,10 +88,23 @@ class ExecutionProjectionSubscriber:
             if snapshot.last_sequence<=self._last_sequence: return
             self.directory.mkdir(parents=True,exist_ok=True)
             with self.journal_file.open("a",encoding="utf-8") as h:
-                h.write(json.dumps(event_to_dict(event),ensure_ascii=False,sort_keys=True)+"\n")
+                h.write(json.dumps(compact_event_document(event),ensure_ascii=False,sort_keys=True)+"\n")
+            self._events_written += 1
             doc=canonical_execution_document(snapshot); _atomic_json(self.snapshot_file,doc)
+            terminal = snapshot.status in {"succeeded","failed","blocked","skipped","cancelled"}
+            interval = max(1, int(self.checkpoint_interval or 1))
+            if terminal or self._events_written % interval == 0:
+                _atomic_json(self.checkpoint_file, {
+                    "schema_version": 1,
+                    "kind": "devtool.execution.checkpoint",
+                    "run_id": snapshot.run_id,
+                    "sequence": snapshot.last_sequence,
+                    "event_id": snapshot.last_event_id,
+                    "journal_events": self._events_written,
+                    "execution": doc["execution"],
+                })
             if self.ipc_publish:
                 payload=legacy_execution_projection(snapshot); payload["execution"]=doc["execution"]; self.ipc_publish(payload)
-            if snapshot.status in {"succeeded","failed","blocked","skipped","cancelled"}: _atomic_json(self.history_file,doc)
+            if terminal: _atomic_json(self.history_file,doc)
             self._last_sequence=snapshot.last_sequence
     def close(self)->None: self._closed=True

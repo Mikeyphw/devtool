@@ -357,10 +357,12 @@ def runtime_state_to_ui_snapshot(
     progress_summary = summarize_progress(progress_nodes)
     diagnostic_summary = summarize_diagnostics(diagnostics)
 
+    phase_state = state.get("phase") if isinstance(state.get("phase"), Mapping) else {}
     action_context = ActionContext(
         status=status,
         command=command,
         run_id=operation.run_id,
+        node_id=_text(phase_state.get("node_id") or state.get("node_id")),
         log_path=operation.log_path,
         target=operation.target or (selected_targets[0] if len(selected_targets) == 1 else ""),
         has_diagnostics=bool(diagnostics),

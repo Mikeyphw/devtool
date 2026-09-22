@@ -53,6 +53,7 @@ class ExecutionProcessState:
     failure_kind: str = ""
     log_path: str = ""
     evidence: tuple[str, ...] = ()
+    provenance: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -538,6 +539,7 @@ class ExecutionProcessSnapshot:
     failure_kind: str
     log_path: str
     evidence: tuple[str, ...]
+    provenance: dict[str, Any]
 
     @classmethod
     def from_state(cls, state: ExecutionProcessState) -> "ExecutionProcessSnapshot":
@@ -561,6 +563,7 @@ class ExecutionProcessSnapshot:
             "failure_kind": self.failure_kind,
             "log_path": self.log_path,
             "evidence": list(self.evidence),
+            "provenance": deepcopy(self.provenance),
         }
 
 
@@ -643,7 +646,7 @@ class ExecutionSnapshot:
     @classmethod
     def from_state(cls, state: ExecutionRunState) -> "ExecutionSnapshot":
         return cls(
-            schema_version=3,
+            schema_version=4,
             run_id=state.run_id,
             status=state.status.value,
             command=state.command,

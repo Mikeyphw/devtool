@@ -279,6 +279,9 @@ class ExecutionReducer:
         process.pid = event.pid
         process.argv = tuple(str(value) for value in event.argv)
         process.cwd = str(event.cwd or "")
+        provenance = (event.metadata or {}).get("provenance") if isinstance(event.metadata, dict) else {}
+        if isinstance(provenance, dict):
+            process.provenance = deepcopy(provenance)
         process.status = "running"
         process.started_at = process.started_at or event.timestamp
         if node_id:

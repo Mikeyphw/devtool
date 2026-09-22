@@ -25,6 +25,7 @@ from .core.events import (
     publish_event,
 )
 from .core.execution_contract import ExecutionStatus, NodeId, ProcessId
+from .logstore import redact_sensitive_value
 
 
 def _status_for_gradle_outcome(value: object) -> str:
@@ -53,6 +54,7 @@ class RunnerExecutionAdapter:
     _gradle_test_ids: dict[str, str] = field(default_factory=dict)
     active_process_id: str = ""
     diagnostic_ids: list[str] = field(default_factory=list)
+    provenance: dict[str, Any] = field(default_factory=dict)
 
     def _child_id(self, *, kind: str, key: str, instance: object = "") -> str:
         identity_key = (kind, f"{key}\x1f{instance}")
@@ -138,15 +140,17 @@ class RunnerExecutionAdapter:
 
     def process_started(self, *, pid: int, argv: Iterable[object], cwd: str = "") -> str:
         process_id = str(ProcessId.for_pid(self.run_id, int(pid)))
+        safe_argv = tuple(str(value) for value in redact_sensitive_value(list(argv)))
+        safe_provenance = redact_sensitive_value(dict(self.provenance or {}))
         publish_event(ProcessStarted(
             run_id=self.run_id,
             node_id=self.parent_node_id,
             process_id=process_id,
             pid=int(pid),
-            argv=tuple(str(value) for value in argv),
+            argv=safe_argv,
             cwd=str(cwd or ""),
             source=self.source,
-            metadata={"tool": self.tool},
+            metadata={"tool": self.tool, "provenance": safe_provenance},
         ))
         self.active_process_id = process_id
         return process_id

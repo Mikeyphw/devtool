@@ -58,6 +58,7 @@ class ActionContext:
     status: str = "idle"
     command: str = ""
     run_id: str = ""
+    node_id: str = ""
     log_path: str = ""
     target: str = ""
     has_diagnostics: bool = False
@@ -148,6 +149,8 @@ def _payload(context: ActionContext) -> dict[str, Any]:
     value = dict(context.payload)
     if context.run_id:
         value.setdefault("run_id", context.run_id)
+    if context.node_id:
+        value.setdefault("node_id", context.node_id)
     if context.target:
         value.setdefault("target", context.target)
     if context.log_path:
@@ -161,6 +164,8 @@ def available_action_ids(context: ActionContext) -> list[str]:
         result.append("operation.cancel")
     if context.failed and context.retryable:
         result.append("operation.retry")
+        if context.node_id:
+            result.append("workflow.retry_node")
     elif context.terminal:
         result.append("operation.rerun")
     if context.validation and context.failed:

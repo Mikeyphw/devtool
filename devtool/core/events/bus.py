@@ -79,6 +79,29 @@ class EventBus:
                 self._sequence_by_run[event.run_id] = sequence
         event.complete_envelope(sequence=sequence)
 
+    def replay_event(self, event: DevtoolEvent) -> None:
+        """Restore one already-enveloped event without assigning a new identity.
+
+        Replay updates the authoritative store and advances the per-run sequence
+        cursor so later live publication continues after the recovered journal.
+        Listeners are intentionally not invoked during recovery.
+        """
+        if not isinstance(event, DevtoolEvent):
+            raise TypeError(f"EventBus only accepts DevtoolEvent values, got {type(event).__name__}")
+        if not str(event.run_id or "").strip():
+            raise ValueError("replayed execution event must carry run_id")
+        if int(event.sequence) < 0:
+            raise ValueError("replayed execution event must carry a non-negative sequence")
+        if not str(event.event_id or "").strip():
+            raise ValueError("replayed execution event must carry event_id")
+        with self._publish_lock:
+            self._execution_store.apply(event)
+            with self._sequence_lock:
+                self._sequence_by_run[event.run_id] = max(
+                    int(event.sequence),
+                    int(self._sequence_by_run.get(event.run_id, 0)),
+                )
+
     def publish(self, event: DevtoolEvent) -> None:
         if not isinstance(event, DevtoolEvent):
             raise TypeError(f"EventBus only accepts DevtoolEvent values, got {type(event).__name__}")
