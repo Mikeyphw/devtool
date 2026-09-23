@@ -1135,6 +1135,9 @@ def build_parser() -> argparse.ArgumentParser:
     oci_diagnostics = oci_sub.add_parser("diagnostics", aliases=["diag"], help="Show redacted OCI diagnostics and HUD visibility summary")
     oci_diagnostics.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
     oci_diagnostics.add_argument("--format", choices=["text", "json"], default="text")
+    oci_final_seal = oci_sub.add_parser("final-seal", aliases=["seal"], help="Run the local OCI-10 final roadmap seal without mutating workers")
+    oci_final_seal.add_argument("--format", choices=["text", "json"], default="text")
+    oci_final_seal.add_argument("--strict", action="store_true", dest="oci_strict", help="Exit non-zero when any OCI-10 final seal check fails")
     oci_doctor = oci_sub.add_parser("doctor", help="Discover PRoot-Distro, proot, containers, and cached OCI images")
     oci_doctor.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
     oci_doctor.add_argument("--format", choices=["text", "json"], default="text")
@@ -12000,6 +12003,7 @@ def _main_after_parse(
         )
         from .oci_workspace import oci_workspace_payload
         from .oci_diagnostics import diagnostics_payload as oci_diagnostics_payload, diagnostic_rows as oci_diagnostic_rows
+        from .oci_final_seal import oci10_final_seal_report, render_oci10_final_seal_text
 
         action = str(getattr(args, "oci_command", "") or "")
         output_format = str(getattr(args, "format", "text") or "text")
@@ -12012,10 +12016,15 @@ def _main_after_parse(
                 payload = android_oci_definition_payload()
                 payload["run_id"] = run_id
                 worker = None
+            elif action in {"final-seal", "seal"}:
+                worker = None
             else:
                 worker = resolve_worker_profile(profile, repo=repo_arg, config_path=config_arg)
             if action == "definition":
                 pass
+            elif action in {"final-seal", "seal"}:
+                payload = oci10_final_seal_report(Path(repo_arg or os.getcwd()))
+                payload["run_id"] = run_id
             elif action == "build":
                 payload = oci_build_payload(
                     worker, run_id=run_id, tag=str(getattr(args, "oci_tag", "") or ""),
@@ -12208,6 +12217,10 @@ def _main_after_parse(
                 print(f"{step.get('action','-'):>10}  {step.get('target','-')}  {step.get('policy','-')}  {step.get('reason','-')}")
             for image_ref in payload.get("removable", []):
                 print(f"remove-image  {image_ref}")
+        elif action in {"final-seal", "seal"}:
+            print(render_oci10_final_seal_text(payload), end="")
+            if bool(getattr(args, "oci_strict", False)) and not payload.get("ok"):
+                return 1
         elif action in {"diagnostics", "diag"}:
             render_status_table(oci_diagnostic_rows(payload))
             for card in payload.get("cards", []):

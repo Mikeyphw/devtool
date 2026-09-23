@@ -52,3 +52,12 @@ Registry credentials such as `PD_DOCKER_AUTH` are transported only through
 transient mode-0600 state during the OCI operation. They are redacted before
 metadata, diagnostics, HUD summaries, return manifests, and logs are made
 durable. Diagnostic payloads fail closed if known secret markers are detected.
+
+## Final seal and compatibility
+
+`devtool oci final-seal` (`devtool oci seal`) runs the local OCI-10 roadmap
+seal. It does not connect to the worker or mutate remote state. The seal checks
+that OCI-01 through OCI-09 modules, tests, operator documentation, redacted
+diagnostics, and the top-level CLI help golden remain coherent after the OCI
+command family is introduced. Use `--format json` for CI or artifact finalizers
+and `--strict` when a failing final-seal check should exit non-zero.

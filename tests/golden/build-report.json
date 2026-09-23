@@ -377,11 +377,16 @@
         "cancelled_nodes": 0,
         "completed_nodes": 1,
         "failed_nodes": 0,
+        "measured_percent": 100,
+        "measurement_coverage_percent": 100,
         "overall_percent": 100,
         "pending_nodes": 0,
+        "resolution_percent": 100,
         "running_nodes": 0,
         "schema_version": 1,
+        "semantics_version": 2,
         "skipped_nodes": 0,
+        "succeeded_nodes": 1,
         "total_nodes": 1
       },
       "tree": [
