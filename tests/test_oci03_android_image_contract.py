@@ -60,6 +60,9 @@ def test_canonical_definition_pins_promised_android_arm64_toolchain() -> None:
     assert contract["base_image"]["reference"] == "ubuntu:24.04"
     assert contract["base_image"]["resolution_policy"] == "registry-resolve-stable-lts-tag-at-build-time"
     assert "ubuntu:noble-20260911" in contract["base_image"]["rejected_reference"]
+    assert contract["base_image"]["multiarch_apt_policy"]["arm64_sources"] == "ports.ubuntu.com/ubuntu-ports only"
+    assert contract["base_image"]["multiarch_apt_policy"]["amd64_sources"] == "archive.ubuntu.com/ubuntu plus security.ubuntu.com/ubuntu only"
+    assert "binary-amd64" in contract["base_image"]["multiarch_apt_policy"]["reason"]
     assert contract["apt_snapshot"] == "20260911T235959Z"
     assert {item["major"] for item in contract["toolchains"]["jdk"]} == {17, 21}
     assert next(item for item in contract["toolchains"]["jdk"] if item.get("default"))["major"] == 21
@@ -111,6 +114,12 @@ def test_dockerfile_uses_pinned_inputs_build_only_mutation_and_no_baked_gradle()
     assert "'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.14206865'" in dockerfile
     assert "platform-tools-36.0.0" in dockerfile
     assert "qemu-user-static" in dockerfile and "libc6:amd64" in dockerfile
+    assert "Architectures: arm64" in dockerfile
+    assert "Architectures: amd64" in dockerfile
+    assert "URIs: http://ports.ubuntu.com/ubuntu-ports" in dockerfile
+    assert "URIs: http://archive.ubuntu.com/ubuntu" in dockerfile
+    assert "URIs: http://security.ubuntu.com/ubuntu" in dockerfile
+    assert "binary-amd64" not in dockerfile
     assert "android.aapt2FromMavenOverride" in dockerfile
     assert "gradle" not in [token.strip() for token in dockerfile.split() if token.strip() == "gradle"]
     assert "apt-get" not in validator

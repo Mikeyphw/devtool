@@ -71,6 +71,13 @@ def _validate_contract(value: dict[str, Any]) -> dict[str, Any]:
     rejected = str(base.get("rejected_reference") or "")
     if "ubuntu:noble-20260911" not in rejected or "sha256:c5ddb18c368db61a2f5b0971380f0ff1a1bb50e1da176cc48c9e5c2dbf3afb5b" not in rejected:
         raise ValueError("OCI-03 base-image contract must record the rejected stale pinned Ubuntu reference")
+    multiarch_apt = base.get("multiarch_apt_policy", {})
+    if multiarch_apt.get("arm64_sources") != "ports.ubuntu.com/ubuntu-ports only":
+        raise ValueError("OCI-03 ARM64 apt policy must keep arm64 packages on ubuntu-ports only")
+    if multiarch_apt.get("amd64_sources") != "archive.ubuntu.com/ubuntu plus security.ubuntu.com/ubuntu only":
+        raise ValueError("OCI-03 amd64 apt policy must avoid ubuntu-ports binary-amd64 indexes")
+    if "binary-amd64" not in str(multiarch_apt.get("reason", "")):
+        raise ValueError("OCI-03 multiarch apt policy must document the ports.ubuntu.com binary-amd64 failure mode")
     if value.get("apt_snapshot") != "20260911T235959Z":
         raise ValueError("OCI-03 Ubuntu apt snapshot must remain pinned to 20260911T235959Z")
 

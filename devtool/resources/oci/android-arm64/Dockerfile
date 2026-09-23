@@ -4,7 +4,39 @@ ARG DEVTOOL_APT_SNAPSHOT=20260911T235959Z
 ARG DEVTOOL_DEFINITION_DIGEST=unknown
 ARG DEVTOOL_BUILD_CONTEXT_SHA256=unknown
 ENV ANDROID_SDK_ROOT=/opt/android-sdk ANDROID_HOME=/opt/android-sdk JAVA_HOME=/usr/lib/jvm/java-21-openjdk-arm64 DEVTOOL_OCI_IMMUTABLE=1
-RUN dpkg --add-architecture amd64 \
+RUN set -eux; \
+    dpkg --add-architecture amd64 \
+ && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources \
+ && printf '%s\n' \
+      'Types: deb' \
+      'URIs: http://ports.ubuntu.com/ubuntu-ports' \
+      'Suites: noble noble-updates noble-backports' \
+      'Components: main restricted universe multiverse' \
+      'Architectures: arm64' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      '' \
+      'Types: deb' \
+      'URIs: http://ports.ubuntu.com/ubuntu-ports' \
+      'Suites: noble-security' \
+      'Components: main restricted universe multiverse' \
+      'Architectures: arm64' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/devtool-arm64.sources \
+ && printf '%s\n' \
+      'Types: deb' \
+      'URIs: http://archive.ubuntu.com/ubuntu' \
+      'Suites: noble noble-updates noble-backports' \
+      'Components: main restricted universe multiverse' \
+      'Architectures: amd64' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      '' \
+      'Types: deb' \
+      'URIs: http://security.ubuntu.com/ubuntu' \
+      'Suites: noble-security' \
+      'Components: main restricted universe multiverse' \
+      'Architectures: amd64' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/devtool-amd64.sources \
  && printf 'APT::Snapshot "%s";\n' "$DEVTOOL_APT_SNAPSHOT" > /etc/apt/apt.conf.d/50devtool-snapshot \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
