@@ -732,6 +732,180 @@ def _probe_runtime_exo(
     return probe, node_id
 
 
+def _canonical_image_status(probe: ProotOciRuntimeProbe, config: SSHRunnerConfig) -> dict[str, Any]:
+    definition = canonical_android_oci_definition()
+    container = str(config.oci_container or "devtool-android-api36")
+    cached_images = tuple(str(item) for item in probe.images)
+    containers = tuple(str(item) for item in probe.containers)
+    image_cached = definition.reference in cached_images
+    container_installed = container in containers
+    if container_installed and image_cached:
+        status = "ready"
+        recommended_action = "validate-before-use"
+        changed = False
+    elif container_installed:
+        status = "container-without-cached-image"
+        recommended_action = "rebuild-cache-and-validate"
+        changed = False
+    elif image_cached:
+        status = "image-cached-container-missing"
+        recommended_action = "install-and-validate"
+        changed = False
+    else:
+        status = "missing"
+        recommended_action = "build-install-validate"
+        changed = False
+    return {
+        "schema_version": 1,
+        "kind": "oci-image-status",
+        "ok": True,
+        "profile": config.profile,
+        "destination": config.destination,
+        "definition_id": definition.contract["definition_id"],
+        "reference": definition.reference,
+        "definition_digest": definition.definition_digest,
+        "context_sha256": definition.context_sha256,
+        "container": container,
+        "image_cached": image_cached,
+        "container_installed": container_installed,
+        "status": status,
+        "recommended_action": recommended_action,
+        "changed": changed,
+        "runtime": probe.as_dict(),
+        "detail": "Canonical Android OCI image status evaluated without mutating remote state",
+    }
+
+
+def oci_image_status_payload(config: SSHRunnerConfig, *, run_id: str) -> dict[str, Any]:
+    probe, node_id = _probe_runtime_exo(config, run_id, action="image-status")
+    payload = _canonical_image_status(probe, config)
+    payload["run_id"] = run_id
+    payload["node_id"] = node_id
+    if not probe.ready:
+        payload["ok"] = False
+        payload["status"] = "runtime-blocked"
+        payload["recommended_action"] = "bootstrap-runtime"
+        payload["detail"] = "PRoot-Distro runtime is not ready; run devtool oci bootstrap first"
+    elif not probe.inventory_healthy:
+        payload["ok"] = False
+        payload["status"] = "inventory-blocked"
+        payload["recommended_action"] = "repair-runtime-inventory"
+        payload["detail"] = "PRoot-Distro inventory is incomplete; image update planning is blocked"
+    return payload
+
+
+def _image_update_steps(status: Mapping[str, Any], *, force: bool = False) -> tuple[dict[str, Any], ...]:
+    steps: list[dict[str, Any]] = []
+    reference = str(status.get("reference") or "")
+    container = str(status.get("container") or "")
+    if force or not bool(status.get("image_cached")):
+        steps.append({
+            "action": "build",
+            "target": reference,
+            "policy": "immutable-rebuild",
+            "reason": "canonical image is missing or refresh was forced",
+        })
+    if force or not bool(status.get("container_installed")):
+        steps.append({
+            "action": "install",
+            "target": container,
+            "policy": "replace-container-from-verified-archive",
+            "reason": "canonical container is missing or refresh was forced",
+        })
+    steps.append({
+        "action": "validate",
+        "target": container,
+        "policy": "definition-and-context-digest-match",
+        "reason": "installed image must prove canonical definition, context, archive, and receipt provenance before use",
+    })
+    return tuple(steps)
+
+
+def oci_update_payload(
+    config: SSHRunnerConfig,
+    *,
+    run_id: str,
+    apply: bool = False,
+    force: bool = False,
+    no_cache: bool = False,
+) -> dict[str, Any]:
+    status = oci_image_status_payload(config, run_id=run_id)
+    steps = _image_update_steps(status, force=force)
+    plan = {
+        "schema_version": 1,
+        "kind": "oci-image-update-plan",
+        "ok": bool(status.get("ok", False)),
+        "run_id": run_id,
+        "profile": config.profile,
+        "destination": config.destination,
+        "definition_id": status.get("definition_id"),
+        "reference": status.get("reference"),
+        "definition_digest": status.get("definition_digest"),
+        "context_sha256": status.get("context_sha256"),
+        "container": status.get("container"),
+        "status": status.get("status"),
+        "recommended_action": status.get("recommended_action"),
+        "steps": list(steps),
+        "apply": bool(apply),
+        "force": bool(force),
+        "no_cache": bool(no_cache),
+        "changed": False,
+        "detail": "OCI image update plan ready; pass --apply to build/install/validate",
+    }
+    if not plan["ok"] or not apply:
+        return plan
+    result = oci_build_payload(
+        config,
+        run_id=run_id,
+        tag=str(plan["reference"] or ""),
+        install_as=str(plan["container"] or ""),
+        dry_run=False,
+        no_cache=bool(no_cache or force),
+    )
+    plan["kind"] = "oci-image-update"
+    plan["changed"] = True
+    plan["result"] = result
+    plan["detail"] = "Canonical Android OCI image rebuilt, installed, and validated"
+    return plan
+
+
+def oci_prune_payload(
+    config: SSHRunnerConfig,
+    *,
+    run_id: str,
+    apply: bool = False,
+) -> dict[str, Any]:
+    probe, node_id = _probe_runtime_exo(config, run_id, action="prune-plan", strict_inventory="images")
+    definition = canonical_android_oci_definition()
+    removable = [str(item) for item in probe.images if str(item) != definition.reference]
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "oci-image-prune-plan",
+        "ok": bool(probe.ready and probe.inventory_healthy),
+        "run_id": run_id,
+        "node_id": node_id,
+        "profile": config.profile,
+        "destination": config.destination,
+        "keep": [definition.reference],
+        "removable": removable,
+        "count": len(removable),
+        "apply": bool(apply),
+        "changed": False,
+        "detail": "OCI prune plan ready; pass --apply to remove non-canonical cached images",
+    }
+    if not payload["ok"] or not apply:
+        return payload
+    removed: list[dict[str, Any]] = []
+    for image_ref in removable:
+        removed.append(oci_remove_payload(config, image_ref, run_id=run_id, image=True, dry_run=False))
+    payload["kind"] = "oci-image-prune"
+    payload["removed"] = removed
+    payload["changed"] = bool(removed)
+    payload["detail"] = "Non-canonical cached OCI images removed" if removed else "No non-canonical cached OCI images were present"
+    return payload
+
+
+
 def oci_doctor_payload(config: SSHRunnerConfig, *, run_id: str) -> dict[str, Any]:
     probe, node_id = _probe_runtime_exo(config, run_id, action="doctor")
     return {

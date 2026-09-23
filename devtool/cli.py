@@ -1118,6 +1118,19 @@ def build_parser() -> argparse.ArgumentParser:
     oci_validate_image.add_argument("profile", help="Named SSH worker")
     oci_validate_image.add_argument("container", help="Installed PRoot-Distro container name")
     oci_validate_image.add_argument("--format", choices=["text", "json"], default="text")
+    oci_image_status = oci_sub.add_parser("image-status", aliases=["status"], help="Show canonical Android OCI image/container status without mutating the worker")
+    oci_image_status.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_image_status.add_argument("--format", choices=["text", "json"], default="text")
+    oci_update = oci_sub.add_parser("update", help="Plan or apply immutable canonical Android OCI image refresh")
+    oci_update.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_update.add_argument("--apply", action="store_true", dest="oci_apply", help="Execute the planned build/install/validate update")
+    oci_update.add_argument("--force", action="store_true", dest="oci_force", help="Rebuild/reinstall even when cached image and container are present")
+    oci_update.add_argument("--no-cache", action="store_true", dest="oci_no_cache", help="Disable PRoot-Distro build cache when --apply is used")
+    oci_update.add_argument("--format", choices=["text", "json"], default="text")
+    oci_prune = oci_sub.add_parser("prune", help="Plan or apply removal of non-canonical cached OCI images")
+    oci_prune.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_prune.add_argument("--apply", action="store_true", dest="oci_apply", help="Remove non-canonical cached OCI images")
+    oci_prune.add_argument("--format", choices=["text", "json"], default="text")
     oci_doctor = oci_sub.add_parser("doctor", help="Discover PRoot-Distro, proot, containers, and cached OCI images")
     oci_doctor.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
     oci_doctor.add_argument("--format", choices=["text", "json"], default="text")
@@ -11978,7 +11991,8 @@ def _main_after_parse(
         from .oci_image import android_oci_definition_payload
         from .proot_oci import (
             oci_bootstrap_payload, oci_build_payload, oci_containers_payload, oci_doctor_payload,
-            oci_gate1_payload, oci_images_payload, oci_install_payload, oci_remove_payload, oci_validate_image_payload,
+            oci_gate1_payload, oci_image_status_payload, oci_images_payload, oci_install_payload,
+            oci_prune_payload, oci_remove_payload, oci_update_payload, oci_validate_image_payload,
         )
         from .oci_workspace import oci_workspace_payload
 
@@ -12018,6 +12032,20 @@ def _main_after_parse(
             elif action == "validate-image":
                 payload = oci_validate_image_payload(
                     worker, str(getattr(args, "container", "") or ""), run_id=run_id,
+                )
+            elif action in {"image-status", "status"}:
+                payload = oci_image_status_payload(worker, run_id=run_id)
+            elif action == "update":
+                payload = oci_update_payload(
+                    worker, run_id=run_id,
+                    apply=bool(getattr(args, "oci_apply", False)),
+                    force=bool(getattr(args, "oci_force", False)),
+                    no_cache=bool(getattr(args, "oci_no_cache", False)),
+                )
+            elif action == "prune":
+                payload = oci_prune_payload(
+                    worker, run_id=run_id,
+                    apply=bool(getattr(args, "oci_apply", False)),
                 )
             elif action == "doctor":
                 payload = oci_doctor_payload(worker, run_id=run_id)
@@ -12136,6 +12164,23 @@ def _main_after_parse(
                 ("ndk_host", caps.get("ndk_host") or "-"),
                 ("detail", payload.get("detail") or "-"),
             ])
+        elif action in {"image-status", "status", "update", "prune"}:
+            render_status_table([
+                ("profile", payload.get("profile") or "-"),
+                ("status", payload.get("status") or ("OK" if payload.get("ok") else "BLOCKED")),
+                ("reference", payload.get("reference") or ",".join(payload.get("keep", [])) or "-"),
+                ("container", payload.get("container") or "-"),
+                ("image_cached", "yes" if payload.get("image_cached") else "no"),
+                ("container_installed", "yes" if payload.get("container_installed") else "no"),
+                ("recommended_action", payload.get("recommended_action") or "-"),
+                ("apply", "yes" if payload.get("apply") else "no"),
+                ("changed", str(payload.get("changed", False)).lower()),
+                ("detail", payload.get("detail") or "-"),
+            ])
+            for step in payload.get("steps", []):
+                print(f"{step.get('action','-'):>10}  {step.get('target','-')}  {step.get('policy','-')}  {step.get('reason','-')}")
+            for image_ref in payload.get("removable", []):
+                print(f"remove-image  {image_ref}")
         elif action == "doctor":
             runtime = payload.get("runtime", {})
             render_status_table([
