@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -578,3 +579,107 @@ def test_android_bootstrap_only_returns_before_gradle_tasks(tmp_path: Path, monk
     assert payload["cmake"] == "3.22.1"
     assert set(payload["build_tool_paths"]) == {"aapt2", "aidl", "zipalign", "split-select"}
     assert payload["dry_run"] is True
+
+
+def _complete_build_tool_report(sdk: Path) -> dict[str, object]:
+    build_tools = sdk / "build-tools" / "36.0.0"
+    build_tools.mkdir(parents=True, exist_ok=True)
+    paths: dict[str, str] = {}
+    for name in bootstrap.REQUIRED_ANDROID_BUILD_TOOLS:
+        tool = build_tools / name
+        tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        tool.chmod(0o755)
+        paths[name] = str(tool)
+    return {
+        "architecture": "arm64",
+        "sdk_root": str(sdk),
+        "build_tools": "36.0.0",
+        "build_tool_paths": paths,
+    }
+
+
+def test_chroot_bootstrap_validation_requires_android_build_tool_paths() -> None:
+    destination = BootstrapDestination("chroot:androidos", "chroot", name="androidos", expected_arch="arm64")
+
+    with pytest.raises(RuntimeError, match="Chroot bootstrap report did not include verified Android build-tool paths"):
+        bootstrap._validate_provisioning_report(destination, {"architecture": "arm64", "sdk_root": "/opt/android-sdk"})
+
+
+def test_chroot_receipt_probe_rejects_stale_receipt_without_android_build_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    destination = BootstrapDestination("chroot:androidos", "chroot", name="androidos", expected_arch="arm64")
+    monkeypatch.setattr(bootstrap, "_running_under_termux", lambda: True)
+
+    ready, detail = bootstrap._probe_chroot_receipt(
+        destination,
+        {
+            "destination": destination.canonical,
+            "actual_arch": "arm64",
+            "resolved": {"architecture": "arm64", "sdk_root": "/opt/android-sdk"},
+        },
+    )
+
+    assert ready is False
+    assert "missing verified Android build tools" in detail
+    assert "aapt2" in detail
+    assert "aidl" in detail
+
+
+def test_chroot_bootstrap_validation_checks_tools_inside_chroot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = BootstrapDestination("chroot:androidos", "chroot", name="androidos", expected_arch="arm64")
+    report = _complete_build_tool_report(tmp_path / "sdk")
+    commands: list[str] = []
+
+    monkeypatch.setattr(bootstrap, "_running_under_termux", lambda: True)
+    monkeypatch.setattr(
+        "devtool.execution.build_chroot_exec_argv",
+        lambda command, name: ["chrootctl", name, "--", command],
+    )
+
+    def fake_run(argv, **kwargs):  # type: ignore[no-untyped-def]
+        commands.append(str(argv[-1]))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_run)
+
+    bootstrap._validate_provisioning_report(destination, report)
+
+    command = commands[-1]
+    for name in bootstrap.REQUIRED_ANDROID_BUILD_TOOLS:
+        assert f"test -x" in command
+        assert name in command
+
+
+def test_chroot_receipt_probe_checks_build_tools_are_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = BootstrapDestination("chroot:androidos", "chroot", name="androidos", expected_arch="arm64")
+    report = _complete_build_tool_report(tmp_path / "sdk")
+    receipt = {
+        "destination": destination.canonical,
+        "actual_arch": "arm64",
+        "resolved": report,
+    }
+    commands: list[str] = []
+
+    monkeypatch.setattr(bootstrap, "_running_under_termux", lambda: True)
+    monkeypatch.setattr(
+        "devtool.execution.build_chroot_exec_argv",
+        lambda command, name: ["chrootctl", name, "--", command],
+    )
+
+    def fake_run(argv, **kwargs):  # type: ignore[no-untyped-def]
+        commands.append(str(argv[-1]))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_run)
+
+    ready, detail = bootstrap._probe_chroot_receipt(destination, receipt)
+
+    assert ready is True, detail
+    command = commands[-1]
+    assert "uname -m" in command
+    for name in bootstrap.REQUIRED_ANDROID_BUILD_TOOLS:
+        assert f"test -x" in command
+        assert name in command

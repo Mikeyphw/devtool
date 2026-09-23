@@ -333,22 +333,67 @@ def _run_command(argv: list[str], *, env: Mapping[str, str] | None = None) -> in
     return int(completed.returncode)
 
 
-def _validate_provisioning_report(destination: BootstrapDestination, report: Mapping[str, Any]) -> None:
-    if destination.kind != "termux" or bool(report.get("dry_run")):
-        return
+REQUIRED_ANDROID_BUILD_TOOLS = ("aapt2", "aidl", "zipalign", "split-select")
+
+
+def _bootstrap_build_tool_paths(report: Mapping[str, Any]) -> dict[str, str] | None:
     build_tool_paths = report.get("build_tool_paths")
     if not isinstance(build_tool_paths, dict):
+        return None
+    return {str(name): str(path).strip() for name, path in build_tool_paths.items()}
+
+
+def _missing_bootstrap_build_tools(report: Mapping[str, Any]) -> list[str]:
+    build_tool_paths = _bootstrap_build_tool_paths(report)
+    if build_tool_paths is None:
+        return list(REQUIRED_ANDROID_BUILD_TOOLS)
+    return [name for name in REQUIRED_ANDROID_BUILD_TOOLS if not build_tool_paths.get(name)]
+
+
+def _validate_chroot_android_build_tools(destination: BootstrapDestination, report: Mapping[str, Any]) -> None:
+    build_tool_paths = _bootstrap_build_tool_paths(report)
+    if build_tool_paths is None:
+        raise RuntimeError("Chroot bootstrap report did not include verified Android build-tool paths")
+    missing = _missing_bootstrap_build_tools(report)
+    if missing:
+        raise RuntimeError("Chroot bootstrap completed without required Android build tools: " + ", ".join(missing))
+    if not _running_under_termux():
+        raise RuntimeError("Chroot Android build-tool verification requires native Termux")
+    from .execution import build_chroot_exec_argv
+
+    checks = [f"test -x {shlex.quote(build_tool_paths[name])}" for name in REQUIRED_ANDROID_BUILD_TOOLS]
+    completed = subprocess.run(
+        build_chroot_exec_argv(" && ".join(checks), destination.name),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"
+        raise RuntimeError("Chroot bootstrap completed but Android build tools are not executable in the chroot: " + detail)
+
+
+def _validate_provisioning_report(destination: BootstrapDestination, report: Mapping[str, Any]) -> None:
+    if bool(report.get("dry_run")):
+        return
+    if destination.kind == "chroot":
+        _validate_chroot_android_build_tools(destination, report)
+        return
+    if destination.kind != "termux":
+        return
+    build_tool_paths = _bootstrap_build_tool_paths(report)
+    if build_tool_paths is None:
         raise RuntimeError("Termux bootstrap report did not include verified Android build-tool paths")
-    required = ("aapt2", "aidl", "zipalign", "split-select")
-    missing = [name for name in required if not str(build_tool_paths.get(name) or "").strip()]
+    missing = _missing_bootstrap_build_tools(report)
     if missing:
         raise RuntimeError("Termux bootstrap completed without required Android build tools: " + ", ".join(missing))
     from .android.providers.termux import native_android_build_tool_compatible
 
     broken = [
         name
-        for name in required
-        if not native_android_build_tool_compatible(Path(str(build_tool_paths[name])), name, "arm64")
+        for name in REQUIRED_ANDROID_BUILD_TOOLS
+        if not native_android_build_tool_compatible(Path(build_tool_paths[name]), name, "arm64")
     ]
     if broken:
         raise RuntimeError(
@@ -483,10 +528,23 @@ def _probe_chroot_receipt(destination: BootstrapDestination, receipt: Mapping[st
         return False, "chroot status requires native Termux"
     from .execution import build_chroot_exec_argv
 
+    resolved = receipt.get("resolved")
+    if not isinstance(resolved, dict):
+        return False, "chroot receipt has no resolved provisioning report"
+    missing_tools = _missing_bootstrap_build_tools(resolved)
+    if missing_tools:
+        return False, "chroot receipt is missing verified Android build tools: " + ", ".join(missing_tools)
+    build_tool_paths = _bootstrap_build_tool_paths(resolved) or {}
+
     expected = str(receipt.get("actual_arch") or destination.expected_arch or "")
     tests = []
+    build_tool_values = {str(path) for path in build_tool_paths.values() if str(path).strip()}
     for value in _resolved_paths(receipt):
-        tests.append(f"test -e {shlex.quote(value)}")
+        quoted = shlex.quote(value)
+        if value in build_tool_values:
+            tests.append(f"test -x {quoted}")
+        else:
+            tests.append(f"test -e {quoted}")
     arch_test = ""
     if expected:
         accepted = "aarch64|arm64" if expected == "arm64" else "x86_64|amd64" if expected == "amd64" else re.escape(expected)
