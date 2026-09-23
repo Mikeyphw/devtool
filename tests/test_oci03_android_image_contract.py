@@ -63,7 +63,8 @@ def test_canonical_definition_pins_promised_android_arm64_toolchain() -> None:
     assert contract["base_image"]["multiarch_apt_policy"]["arm64_sources"] == "ports.ubuntu.com/ubuntu-ports only"
     assert contract["base_image"]["multiarch_apt_policy"]["amd64_sources"] == "archive.ubuntu.com/ubuntu plus security.ubuntu.com/ubuntu only"
     assert "binary-amd64" in contract["base_image"]["multiarch_apt_policy"]["reason"]
-    assert contract["apt_snapshot"] == "20260911T235959Z"
+    assert contract["apt_policy"]["mode"] == "live-noble-multiarch"
+    assert contract["apt_policy"]["snapshot"] == "disabled"
     assert {item["major"] for item in contract["toolchains"]["jdk"]} == {17, 21}
     assert next(item for item in contract["toolchains"]["jdk"] if item.get("default"))["major"] == 21
     assert contract["toolchains"]["python"]["version_prefix"] == "3.12."
@@ -108,10 +109,8 @@ def test_dockerfile_uses_pinned_inputs_build_only_mutation_and_no_baked_gradle()
         validator = archive.extractfile("validate-image.sh").read().decode()
     assert "FROM ubuntu:24.04" in dockerfile
     assert "ubuntu:noble-20260911" not in dockerfile
-    assert 'APT::Snapshot' in dockerfile
-    assert "apt-get install -y --no-install-recommends ca-certificates" in dockerfile
-    assert dockerfile.index("apt-get install -y --no-install-recommends ca-certificates") < dockerfile.index('APT::Snapshot')
-    assert dockerfile.index('APT::Snapshot') < dockerfile.index("libc6:amd64")
+    assert 'APT::Snapshot' not in dockerfile
+    assert 'DEVTOOL_APT_POLICY=live-noble-multiarch' in dockerfile
     assert "06907b9c088ce62305bc1530e5c1ae1510245114645768f7750c349c5b6fe667" in dockerfile
     assert "4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583" in dockerfile
     assert "'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.14206865'" in dockerfile
@@ -178,7 +177,7 @@ def test_real_build_owns_processes_publishes_remote_archive_and_validates_instal
         "schema_version": 1,
         "definition_digest": definition.definition_digest,
         "context_sha256": definition.context_sha256,
-        "apt_snapshot": "20260911T235959Z",
+        "apt_policy": "live-noble-multiarch",
         "architecture": "aarch64",
         "packages": {},
     }, separators=(",", ":"), sort_keys=True)

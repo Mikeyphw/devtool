@@ -46,7 +46,7 @@ def _resource_bytes(name: str) -> bytes:
 def _validate_contract(value: dict[str, Any]) -> dict[str, Any]:
     if value.get("schema_version") != 1 or value.get("kind") != "devtool-android-oci-image-contract":
         raise ValueError("Unsupported Devtool Android OCI image-manifest schema")
-    required = ("definition_id", "reference", "architecture", "base_image", "apt_snapshot", "toolchains", "gradle", "devtool_runtime", "immutability", "validation")
+    required = ("definition_id", "reference", "architecture", "base_image", "apt_policy", "toolchains", "gradle", "devtool_runtime", "immutability", "validation")
     missing = [name for name in required if not value.get(name)]
     if missing:
         raise ValueError("Android OCI image manifest is missing required fields: " + ", ".join(missing))
@@ -78,12 +78,15 @@ def _validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("OCI-03 amd64 apt policy must avoid ubuntu-ports binary-amd64 indexes")
     if "binary-amd64" not in str(multiarch_apt.get("reason", "")):
         raise ValueError("OCI-03 multiarch apt policy must document the ports.ubuntu.com binary-amd64 failure mode")
-    if multiarch_apt.get("ca_bootstrap") != "install ca-certificates from default HTTP ARM64 sources before enabling APT::Snapshot":
-        raise ValueError("OCI-03 apt policy must bootstrap CA certificates before enabling the HTTPS snapshot")
-    if "Snapshot HTTPS requires CA certificates" not in str(multiarch_apt.get("reason", "")):
-        raise ValueError("OCI-03 apt policy must document the HTTPS snapshot CA bootstrap failure mode")
-    if value.get("apt_snapshot") != "20260911T235959Z":
-        raise ValueError("OCI-03 Ubuntu apt snapshot must remain pinned to 20260911T235959Z")
+    if multiarch_apt.get("snapshot_policy") != "disabled-live-noble-multiarch":
+        raise ValueError("OCI-03 multiarch APT policy must disable snapshots for live Ubuntu 24.04 libc alignment")
+    if "version-aligned" not in str(multiarch_apt.get("version_alignment", "")):
+        raise ValueError("OCI-03 multiarch APT policy must document arm64/amd64 libc version alignment")
+    apt_policy = value.get("apt_policy", {})
+    if not isinstance(apt_policy, dict) or apt_policy.get("mode") != "live-noble-multiarch" or apt_policy.get("snapshot") != "disabled":
+        raise ValueError("OCI-03 APT policy must use live noble multiarch repositories with snapshot disabled")
+    if "libc version skew" not in str(apt_policy.get("reason", "")):
+        raise ValueError("OCI-03 APT policy must document why APT::Snapshot is disabled for multiarch libc alignment")
 
     toolchains = value["toolchains"]
     jdks = {int(item.get("major", 0)): item for item in toolchains.get("jdk", []) if isinstance(item, dict)}

@@ -16,15 +16,16 @@
     "resolution_policy": "registry-resolve-stable-lts-tag-at-build-time",
     "fallback_reference": "ubuntu:noble",
     "rejected_reference": "ubuntu:noble-20260911@sha256:c5ddb18c368db61a2f5b0971380f0ff1a1bb50e1da176cc48c9e5c2dbf3afb5b",
-    "reason": "Docker Hub does not publish the dated noble-20260911 tag; keep apt/toolchain pinning while using the stable Ubuntu 24.04 multi-arch tag.",
+    "reason": "Docker Hub does not publish the dated noble-20260911 tag. Use the resolvable Ubuntu 24.04 multi-arch tag and live noble repositories for APT so arm64 base packages and amd64 runtime libraries remain version-aligned.",
     "multiarch_apt_policy": {
       "arm64_sources": "ports.ubuntu.com/ubuntu-ports only",
       "amd64_sources": "archive.ubuntu.com/ubuntu plus security.ubuntu.com/ubuntu only",
-      "ca_bootstrap": "install ca-certificates from default HTTP ARM64 sources before enabling APT::Snapshot",
-      "reason": "Ubuntu ports repositories do not publish binary-amd64 indexes; amd64 runtime libraries for qemu-wrapped Google NDK host tools must come from primary Ubuntu amd64 archives. Snapshot HTTPS requires CA certificates before the pinned snapshot apt update."
+      "reason": "Ubuntu ports repositories do not publish binary-amd64 indexes; amd64 runtime libraries for qemu-wrapped Google NDK host tools must come from primary Ubuntu amd64 archives. APT::Snapshot is disabled for this image because the ubuntu:24.04 base layer already contains live ARM64 packages and multiarch libc packages must remain version-aligned across arm64 and amd64.",
+      "ca_bootstrap": "install ca-certificates from default HTTP ARM64 sources before configuring explicit multiarch sources",
+      "snapshot_policy": "disabled-live-noble-multiarch",
+      "version_alignment": "keep arm64 and amd64 libc packages version-aligned on the same live noble pocket set; do not use APT::Snapshot with ubuntu:24.04"
     }
   },
-  "apt_snapshot": "20260911T235959Z",
   "toolchains": {
     "jdk": [
       {
@@ -168,5 +169,10 @@
     ],
     "ndk_host_mode": "qemu-x86_64-wrapped-verified",
     "build_metadata": "/usr/local/lib/devtool/oci-build-metadata.json"
+  },
+  "apt_policy": {
+    "mode": "live-noble-multiarch",
+    "snapshot": "disabled",
+    "reason": "APT::Snapshot caused certificate bootstrap failures and libc version skew with the live ubuntu:24.04 ARM64 base. Reproducibility is enforced by the image context digest plus pinned Node, Android command-line tools, Android API/build-tools/NDK versions, and ARM64 build-tool asset digests."
   }
 }

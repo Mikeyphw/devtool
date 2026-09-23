@@ -1,18 +1,15 @@
 FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
-ARG DEVTOOL_APT_SNAPSHOT=20260911T235959Z
+ARG DEVTOOL_APT_POLICY=live-noble-multiarch
 ARG DEVTOOL_DEFINITION_DIGEST=unknown
 ARG DEVTOOL_BUILD_CONTEXT_SHA256=unknown
 ENV ANDROID_SDK_ROOT=/opt/android-sdk ANDROID_HOME=/opt/android-sdk JAVA_HOME=/usr/lib/jvm/java-21-openjdk-arm64 DEVTOOL_OCI_IMMUTABLE=1
-# Ubuntu snapshot transport uses HTTPS. The minimal Ubuntu base does not ship
-# certificates, so bootstrap CA certificates from the default HTTP ARM64 port
-# repository before enabling the timestamped snapshot policy.
 RUN set -eux; \
     apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && dpkg --add-architecture amd64 \
- && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources \
+ && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/apt.conf.d/50devtool-snapshot \
  && printf '%s\n' \
       'Types: deb' \
       'URIs: http://ports.ubuntu.com/ubuntu-ports' \
@@ -43,7 +40,6 @@ RUN set -eux; \
       'Architectures: amd64' \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
       > /etc/apt/sources.list.d/devtool-amd64.sources \
- && printf 'APT::Snapshot "%s";\n' "$DEVTOOL_APT_SNAPSHOT" > /etc/apt/apt.conf.d/50devtool-snapshot \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
       bash build-essential ca-certificates ccache clang cmake coreutils curl file git grep jq lld ninja-build \
@@ -102,7 +98,7 @@ RUN chmod 0555 /usr/local/lib/devtool/validate-android-oci.sh /usr/local/lib/dev
  && : > /usr/local/lib/devtool/oci-immutable-toolchain \
  && mkdir -p /root/.gradle \
  && printf 'android.aapt2FromMavenOverride=/opt/android-sdk/build-tools/36.0.0/aapt2\n' > /root/.gradle/gradle.properties \
- && DEVTOOL_DEFINITION_DIGEST="$DEVTOOL_DEFINITION_DIGEST" DEVTOOL_BUILD_CONTEXT_SHA256="$DEVTOOL_BUILD_CONTEXT_SHA256" DEVTOOL_APT_SNAPSHOT="$DEVTOOL_APT_SNAPSHOT" python3 -c 'import hashlib,json,os,platform,subprocess; pkg=lambda n: subprocess.check_output(["dpkg-query","-W","-f=${Version}",n],text=True).strip(); sha=lambda p: hashlib.sha256(open(p,"rb").read()).hexdigest(); bt="/opt/android-sdk/build-tools/36.0.0"; data={"schema_version":1,"definition_digest":os.environ["DEVTOOL_DEFINITION_DIGEST"],"context_sha256":os.environ["DEVTOOL_BUILD_CONTEXT_SHA256"],"apt_snapshot":os.environ["DEVTOOL_APT_SNAPSHOT"],"architecture":platform.machine(),"toolchains":{"python":platform.python_version(),"node":subprocess.check_output(["node","--version"],text=True).strip(),"jdk_default":subprocess.run(["java","-version"],text=True,capture_output=True).stderr.splitlines()[0],"android_api":36,"build_tools":"36.0.0","ndk":"29.0.14206865","ndk_host_mode":"qemu-x86_64-wrapped","ndk_wrapped_host_binaries":len(__import__("glob").glob("/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/*.x86_64")),"arm64_build_tools_sha256":{n:sha(bt+"/"+n) for n in ("aapt2","aidl","zipalign","split-select")}},"packages":{n:pkg(n) for n in ("openjdk-17-jdk-headless","openjdk-21-jdk-headless","python3","python3-rich","qemu-user-static","libc6:amd64","libstdc++6:amd64")}}; open("/usr/local/lib/devtool/oci-build-metadata.json","w").write(json.dumps(data,sort_keys=True,separators=(",",":"))+"\\n")' \
+ && DEVTOOL_DEFINITION_DIGEST="$DEVTOOL_DEFINITION_DIGEST" DEVTOOL_BUILD_CONTEXT_SHA256="$DEVTOOL_BUILD_CONTEXT_SHA256" DEVTOOL_APT_POLICY="$DEVTOOL_APT_POLICY" python3 -c 'import hashlib,json,os,platform,subprocess; pkg=lambda n: subprocess.check_output(["dpkg-query","-W","-f=${Version}",n],text=True).strip(); sha=lambda p: hashlib.sha256(open(p,"rb").read()).hexdigest(); bt="/opt/android-sdk/build-tools/36.0.0"; data={"schema_version":1,"definition_digest":os.environ["DEVTOOL_DEFINITION_DIGEST"],"context_sha256":os.environ["DEVTOOL_BUILD_CONTEXT_SHA256"],"apt_policy":os.environ["DEVTOOL_APT_POLICY"],"architecture":platform.machine(),"toolchains":{"python":platform.python_version(),"node":subprocess.check_output(["node","--version"],text=True).strip(),"jdk_default":subprocess.run(["java","-version"],text=True,capture_output=True).stderr.splitlines()[0],"android_api":36,"build_tools":"36.0.0","ndk":"29.0.14206865","ndk_host_mode":"qemu-x86_64-wrapped","ndk_wrapped_host_binaries":len(__import__("glob").glob("/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/*.x86_64")),"arm64_build_tools_sha256":{n:sha(bt+"/"+n) for n in ("aapt2","aidl","zipalign","split-select")}},"packages":{n:pkg(n) for n in ("openjdk-17-jdk-headless","openjdk-21-jdk-headless","python3","python3-rich","qemu-user-static","libc6:amd64","libstdc++6:amd64")}}; open("/usr/local/lib/devtool/oci-build-metadata.json","w").write(json.dumps(data,sort_keys=True,separators=(",",":"))+"\\n")' \
  && /usr/local/lib/devtool/validate-android-oci.sh
 LABEL org.opencontainers.image.title="Devtool Android ARM64 build environment" \
       io.devtool.image.definition="android-arm64-api36-v2" \
