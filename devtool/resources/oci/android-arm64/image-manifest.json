@@ -12,9 +12,11 @@
     ]
   },
   "base_image": {
-    "reference": "ubuntu:noble-20260911",
-    "index_digest": "sha256:c5ddb18c368db61a2f5b0971380f0ff1a1bb50e1da176cc48c9e5c2dbf3afb5b",
-    "arm64_manifest_digest": "sha256:11dc1ccb427f0464a2369e645454c272bb0baece7357c892ba69d313b3a332cf"
+    "reference": "ubuntu:24.04",
+    "resolution_policy": "registry-resolve-stable-lts-tag-at-build-time",
+    "fallback_reference": "ubuntu:noble",
+    "rejected_reference": "ubuntu:noble-20260911@sha256:c5ddb18c368db61a2f5b0971380f0ff1a1bb50e1da176cc48c9e5c2dbf3afb5b",
+    "reason": "Docker Hub does not publish the dated noble-20260911 tag; keep apt/toolchain pinning while using the stable Ubuntu 24.04 multi-arch tag."
   },
   "apt_snapshot": "20260911T235959Z",
   "toolchains": {

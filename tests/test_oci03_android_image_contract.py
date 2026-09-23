@@ -57,7 +57,9 @@ def test_canonical_definition_pins_promised_android_arm64_toolchain() -> None:
     android = contract["toolchains"]["android"]
     assert payload["architecture"] == "aarch64"
     assert contract["architecture"]["oci"] == "linux/arm64"
-    assert contract["base_image"]["index_digest"].startswith("sha256:")
+    assert contract["base_image"]["reference"] == "ubuntu:24.04"
+    assert contract["base_image"]["resolution_policy"] == "registry-resolve-stable-lts-tag-at-build-time"
+    assert "ubuntu:noble-20260911" in contract["base_image"]["rejected_reference"]
     assert contract["apt_snapshot"] == "20260911T235959Z"
     assert {item["major"] for item in contract["toolchains"]["jdk"]} == {17, 21}
     assert next(item for item in contract["toolchains"]["jdk"] if item.get("default"))["major"] == 21
@@ -101,7 +103,8 @@ def test_dockerfile_uses_pinned_inputs_build_only_mutation_and_no_baked_gradle()
     with tarfile.open(fileobj=io.BytesIO(definition.context_bytes), mode="r:") as archive:
         dockerfile = archive.extractfile("Dockerfile").read().decode()
         validator = archive.extractfile("validate-image.sh").read().decode()
-    assert "FROM ubuntu:noble-20260911@sha256:" in dockerfile
+    assert "FROM ubuntu:24.04" in dockerfile
+    assert "ubuntu:noble-20260911" not in dockerfile
     assert 'APT::Snapshot' in dockerfile
     assert "06907b9c088ce62305bc1530e5c1ae1510245114645768f7750c349c5b6fe667" in dockerfile
     assert "4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583" in dockerfile

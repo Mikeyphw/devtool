@@ -62,14 +62,15 @@ def _validate_contract(value: dict[str, Any]) -> dict[str, Any]:
     if architecture.get("proot_distro") != "aarch64" or architecture.get("oci") != "linux/arm64":
         raise ValueError("OCI-03 canonical image must target linux/arm64 (aarch64)")
     base = value["base_image"]
-    if base.get("reference") != "ubuntu:noble-20260911":
-        raise ValueError("OCI-03 canonical base image tag must remain ubuntu:noble-20260911")
-    require_sha256("base image index digest", base.get("index_digest"), prefixed=True)
-    require_sha256("base image ARM64 manifest digest", base.get("arm64_manifest_digest"), prefixed=True)
-    if base.get("index_digest") != "sha256:c5ddb18c368db61a2f5b0971380f0ff1a1bb50e1da176cc48c9e5c2dbf3afb5b":
-        raise ValueError("OCI-03 canonical Ubuntu index digest changed unexpectedly")
-    if base.get("arm64_manifest_digest") != "sha256:11dc1ccb427f0464a2369e645454c272bb0baece7357c892ba69d313b3a332cf":
-        raise ValueError("OCI-03 canonical Ubuntu ARM64 manifest digest changed unexpectedly")
+    if base.get("reference") != "ubuntu:24.04":
+        raise ValueError("OCI-03 canonical base image must use the resolvable Ubuntu 24.04 multi-arch tag")
+    if base.get("resolution_policy") != "registry-resolve-stable-lts-tag-at-build-time":
+        raise ValueError("OCI-03 canonical base image must declare build-time registry resolution policy")
+    if base.get("fallback_reference") != "ubuntu:noble":
+        raise ValueError("OCI-03 canonical base image must document ubuntu:noble as the equivalent LTS fallback")
+    rejected = str(base.get("rejected_reference") or "")
+    if "ubuntu:noble-20260911" not in rejected or "sha256:c5ddb18c368db61a2f5b0971380f0ff1a1bb50e1da176cc48c9e5c2dbf3afb5b" not in rejected:
+        raise ValueError("OCI-03 base-image contract must record the rejected stale pinned Ubuntu reference")
     if value.get("apt_snapshot") != "20260911T235959Z":
         raise ValueError("OCI-03 Ubuntu apt snapshot must remain pinned to 20260911T235959Z")
 

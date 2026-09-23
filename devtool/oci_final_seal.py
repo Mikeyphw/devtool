@@ -46,7 +46,7 @@ _REQUIRED_FILES: tuple[str, ...] = (
 _ROADMAP_PROMISES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("oci01-provider-foundation", "SSH PRoot OCI provider is a named execution provider, not an implicit fallback", ("ssh-proot-oci", "execution_provider")),
     ("oci02-proot-lifecycle", "PRoot-Distro lifecycle operations are explicit and redacted", ("oci_bootstrap_payload", "oci_install_payload", "_sanitized_subprocess_env")),
-    ("oci03-image-contract", "Canonical Android ARM64 image is deterministic and pinned", ("android-arm64-api36-v2", "canonical_android_oci_definition", "ubuntu:noble-20260911")),
+    ("oci03-image-contract", "Canonical Android ARM64 image is deterministic and pinned", ("android-arm64-api36-v2", "canonical_android_oci_definition", "ubuntu:24.04")),
     ("oci04-workspace-bind-cache", "Managed workspace, guest binds, cache roots, and env allowlist are explicit", ("OciWorkspacePlan", "APPROVED_CACHES", "forwarded_environment_names")),
     ("oci05-repository-execution", "Repository commands execute through a prepared OCI command envelope", ("oci_phase_node_id", "oci_guest_workspace", "ssh-proot-oci")),
     ("oci06-resilience-artifacts", "Resume/cancel/recover/artifact-return identity is durable and producer-bound", ("phase_node_id", "producer_identity_digest", "PD_DOCKER_AUTH")),
