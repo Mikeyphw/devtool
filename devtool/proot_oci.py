@@ -163,7 +163,16 @@ def _safe_text(value: object) -> str:
     return redact_sensitive_text(str(value or ""))
 
 
-def _discover_nodes(run_id: str, nodes: Sequence[tuple[str, str, tuple[str, ...]]]) -> None:
+def _seal_graph(run_id: str, *, reason: str = "OCI lifecycle operation plan is complete") -> None:
+    publish_event(GraphSealed(run_id=run_id, reason=reason, source="oci-proot"))
+
+
+def _discover_nodes(
+    run_id: str,
+    nodes: Sequence[tuple[str, str, tuple[str, ...]]],
+    *,
+    seal_graph: bool = True,
+) -> None:
     for node_id, label, depends_on in nodes:
         publish_event(NodeDiscovered(
             run_id=run_id,
@@ -174,7 +183,8 @@ def _discover_nodes(run_id: str, nodes: Sequence[tuple[str, str, tuple[str, ...]
             source="oci-proot",
             metadata={"runtime": "proot-distro"},
         ))
-    publish_event(GraphSealed(run_id=run_id, reason="OCI lifecycle operation plan is complete", source="oci-proot"))
+    if seal_graph:
+        _seal_graph(run_id)
 
 
 def _start_node(run_id: str, node_id: str, label: str, detail: str) -> None:
@@ -687,9 +697,10 @@ def _probe_runtime_exo(
     action: str,
     strict_inventory: str = "",
     depends_on: tuple[str, ...] = (),
+    seal_graph: bool = True,
 ) -> tuple[ProotOciRuntimeProbe, str]:
     node_id = _stable_node_id(config, f"{action}-runtime-probe")
-    _discover_nodes(run_id, ((node_id, "Discover PRoot-Distro runtime", depends_on),))
+    _discover_nodes(run_id, ((node_id, "Discover PRoot-Distro runtime", depends_on),), seal_graph=seal_graph)
     completed = _run_process(
         config,
         run_id=run_id,
@@ -776,8 +787,8 @@ def _canonical_image_status(probe: ProotOciRuntimeProbe, config: SSHRunnerConfig
     }
 
 
-def oci_image_status_payload(config: SSHRunnerConfig, *, run_id: str) -> dict[str, Any]:
-    probe, node_id = _probe_runtime_exo(config, run_id, action="image-status")
+def oci_image_status_payload(config: SSHRunnerConfig, *, run_id: str, seal_graph: bool = True) -> dict[str, Any]:
+    probe, node_id = _probe_runtime_exo(config, run_id, action="image-status", seal_graph=seal_graph)
     payload = _canonical_image_status(probe, config)
     payload["run_id"] = run_id
     payload["node_id"] = node_id
@@ -829,7 +840,7 @@ def oci_update_payload(
     force: bool = False,
     no_cache: bool = False,
 ) -> dict[str, Any]:
-    status = oci_image_status_payload(config, run_id=run_id)
+    status = oci_image_status_payload(config, run_id=run_id, seal_graph=not apply)
     steps = _image_update_steps(status, force=force)
     plan = {
         "schema_version": 1,
@@ -853,6 +864,8 @@ def oci_update_payload(
         "detail": "OCI image update plan ready; pass --apply to build/install/validate",
     }
     if not plan["ok"] or not apply:
+        if apply:
+            _seal_graph(run_id)
         return plan
     result = oci_build_payload(
         config,
@@ -875,7 +888,7 @@ def oci_prune_payload(
     run_id: str,
     apply: bool = False,
 ) -> dict[str, Any]:
-    probe, node_id = _probe_runtime_exo(config, run_id, action="prune-plan", strict_inventory="images")
+    probe, node_id = _probe_runtime_exo(config, run_id, action="prune-plan", strict_inventory="images", seal_graph=not apply)
     definition = canonical_android_oci_definition()
     removable = [str(item) for item in probe.images if str(item) != definition.reference]
     payload: dict[str, Any] = {
@@ -894,10 +907,15 @@ def oci_prune_payload(
         "detail": "OCI prune plan ready; pass --apply to remove non-canonical cached images",
     }
     if not payload["ok"] or not apply:
+        if apply:
+            _seal_graph(run_id)
         return payload
     removed: list[dict[str, Any]] = []
-    for image_ref in removable:
-        removed.append(oci_remove_payload(config, image_ref, run_id=run_id, image=True, dry_run=False))
+    try:
+        for image_ref in removable:
+            removed.append(oci_remove_payload(config, image_ref, run_id=run_id, image=True, dry_run=False, seal_graph=False))
+    finally:
+        _seal_graph(run_id)
     payload["kind"] = "oci-image-prune"
     payload["removed"] = removed
     payload["changed"] = bool(removed)
@@ -906,8 +924,8 @@ def oci_prune_payload(
 
 
 
-def oci_doctor_payload(config: SSHRunnerConfig, *, run_id: str) -> dict[str, Any]:
-    probe, node_id = _probe_runtime_exo(config, run_id, action="doctor")
+def oci_doctor_payload(config: SSHRunnerConfig, *, run_id: str, seal_graph: bool = True) -> dict[str, Any]:
+    probe, node_id = _probe_runtime_exo(config, run_id, action="doctor", seal_graph=seal_graph)
     return {
         "schema_version": 1,
         "kind": "oci-doctor",
@@ -1100,6 +1118,7 @@ def oci_install_payload(
     architecture: str = "",
     dry_run: bool = False,
     depends_on: tuple[str, ...] = (),
+    seal_graph: bool = True,
 ) -> dict[str, Any]:
     name = _validate_name(name)
     architecture = _validate_architecture(architecture)
@@ -1122,7 +1141,7 @@ def oci_install_payload(
     install_key = f"{source_kind}|{install_identity}|{name}|{architecture}"
     install_node = _stable_node_id(config, "install", install_key)
     nodes.append((install_node, f"Install OCI image {safe_source}", (upload_node,) if upload_node else depends_on))
-    _discover_nodes(run_id, tuple(nodes))
+    _discover_nodes(run_id, tuple(nodes), seal_graph=seal_graph)
 
     if dry_run:
         # Planned work that never executes must never transition through RUNNING
@@ -1220,6 +1239,7 @@ def oci_remove_payload(
     image: bool = False,
     dry_run: bool = False,
     depends_on: tuple[str, ...] = (),
+    seal_graph: bool = True,
 ) -> dict[str, Any]:
     target = str(target or "").strip()
     if not target:
@@ -1229,7 +1249,7 @@ def oci_remove_payload(
     safe_target = _safe_text(target)
     node_id = _stable_node_id(config, "remove-image" if image else "remove-container", target)
     label = f"Remove cached OCI image {safe_target}" if image else f"Remove PRoot-Distro container {safe_target}"
-    _discover_nodes(run_id, ((node_id, label, depends_on),))
+    _discover_nodes(run_id, ((node_id, label, depends_on),), seal_graph=seal_graph)
     if dry_run:
         _finish_node(run_id, node_id, status=ExecutionStatus.SKIPPED.value, exit_code=0, reason="dry-run")
         return {

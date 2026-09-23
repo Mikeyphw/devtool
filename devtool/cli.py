@@ -12062,7 +12062,7 @@ def _main_after_parse(
                     apply=bool(getattr(args, "oci_apply", False)),
                 )
             elif action in {"diagnostics", "diag"}:
-                doctor_payload = oci_doctor_payload(worker, run_id=run_id)
+                doctor_payload = oci_doctor_payload(worker, run_id=run_id, seal_graph=False)
                 try:
                     image_payload = oci_image_status_payload(worker, run_id=run_id)
                 except (OSError, subprocess.SubprocessError, ValueError) as exc:
