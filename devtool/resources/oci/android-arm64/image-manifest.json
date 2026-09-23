@@ -20,7 +20,8 @@
     "multiarch_apt_policy": {
       "arm64_sources": "ports.ubuntu.com/ubuntu-ports only",
       "amd64_sources": "archive.ubuntu.com/ubuntu plus security.ubuntu.com/ubuntu only",
-      "reason": "Ubuntu ports repositories do not publish binary-amd64 indexes; amd64 runtime libraries for qemu-wrapped Google NDK host tools must come from primary Ubuntu amd64 archives."
+      "ca_bootstrap": "install ca-certificates from default HTTP ARM64 sources before enabling APT::Snapshot",
+      "reason": "Ubuntu ports repositories do not publish binary-amd64 indexes; amd64 runtime libraries for qemu-wrapped Google NDK host tools must come from primary Ubuntu amd64 archives. Snapshot HTTPS requires CA certificates before the pinned snapshot apt update."
     }
   },
   "apt_snapshot": "20260911T235959Z",

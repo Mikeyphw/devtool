@@ -4,8 +4,14 @@ ARG DEVTOOL_APT_SNAPSHOT=20260911T235959Z
 ARG DEVTOOL_DEFINITION_DIGEST=unknown
 ARG DEVTOOL_BUILD_CONTEXT_SHA256=unknown
 ENV ANDROID_SDK_ROOT=/opt/android-sdk ANDROID_HOME=/opt/android-sdk JAVA_HOME=/usr/lib/jvm/java-21-openjdk-arm64 DEVTOOL_OCI_IMMUTABLE=1
+# Ubuntu snapshot transport uses HTTPS. The minimal Ubuntu base does not ship
+# certificates, so bootstrap CA certificates from the default HTTP ARM64 port
+# repository before enabling the timestamped snapshot policy.
 RUN set -eux; \
-    dpkg --add-architecture amd64 \
+    apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && dpkg --add-architecture amd64 \
  && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources \
  && printf '%s\n' \
       'Types: deb' \

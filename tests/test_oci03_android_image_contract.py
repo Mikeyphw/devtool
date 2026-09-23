@@ -109,6 +109,9 @@ def test_dockerfile_uses_pinned_inputs_build_only_mutation_and_no_baked_gradle()
     assert "FROM ubuntu:24.04" in dockerfile
     assert "ubuntu:noble-20260911" not in dockerfile
     assert 'APT::Snapshot' in dockerfile
+    assert "apt-get install -y --no-install-recommends ca-certificates" in dockerfile
+    assert dockerfile.index("apt-get install -y --no-install-recommends ca-certificates") < dockerfile.index('APT::Snapshot')
+    assert dockerfile.index('APT::Snapshot') < dockerfile.index("libc6:amd64")
     assert "06907b9c088ce62305bc1530e5c1ae1510245114645768f7750c349c5b6fe667" in dockerfile
     assert "4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583" in dockerfile
     assert "'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.14206865'" in dockerfile

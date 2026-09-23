@@ -78,6 +78,10 @@ def _validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("OCI-03 amd64 apt policy must avoid ubuntu-ports binary-amd64 indexes")
     if "binary-amd64" not in str(multiarch_apt.get("reason", "")):
         raise ValueError("OCI-03 multiarch apt policy must document the ports.ubuntu.com binary-amd64 failure mode")
+    if multiarch_apt.get("ca_bootstrap") != "install ca-certificates from default HTTP ARM64 sources before enabling APT::Snapshot":
+        raise ValueError("OCI-03 apt policy must bootstrap CA certificates before enabling the HTTPS snapshot")
+    if "Snapshot HTTPS requires CA certificates" not in str(multiarch_apt.get("reason", "")):
+        raise ValueError("OCI-03 apt policy must document the HTTPS snapshot CA bootstrap failure mode")
     if value.get("apt_snapshot") != "20260911T235959Z":
         raise ValueError("OCI-03 Ubuntu apt snapshot must remain pinned to 20260911T235959Z")
 
