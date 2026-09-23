@@ -240,11 +240,20 @@ for meta in "$root"/*/*/metadata; do
   workspace_path="$(sed -n 's/^workspace_path=//p' "$meta" 2>/dev/null | head -n1)"
   started="$(sed -n 's/^started_unix=//p' "$meta" 2>/dev/null | head -n1)"
   lease_dir="$(sed -n 's/^lease_dir=//p' "$meta" 2>/dev/null | head -n1)"
+  execution_mode="$(sed -n 's/^execution_mode=//p' "$meta" 2>/dev/null | head -n1)"
+  execution_provider="$(sed -n 's/^execution_provider=//p' "$meta" 2>/dev/null | head -n1)"
+  phase_node_id="$(sed -n 's/^oci_phase_node_id=//p' "$meta" 2>/dev/null | head -n1)"
+  source_sync_id="$(sed -n 's/^ssh_source_sync_id=//p' "$meta" 2>/dev/null | head -n1)"
+  oci_container="$(sed -n 's/^oci_container=//p' "$meta" 2>/dev/null | head -n1)"
+  oci_image_reference="$(sed -n 's/^oci_image_reference=//p' "$meta" 2>/dev/null | head -n1)"
+  oci_image_digest="$(sed -n 's/^oci_image_digest=//p' "$meta" 2>/dev/null | head -n1)"
+  oci_definition_digest="$(sed -n 's/^oci_definition_digest=//p' "$meta" 2>/dev/null | head -n1)"
+  oci_build_context_sha256="$(sed -n 's/^oci_build_context_sha256=//p' "$meta" 2>/dev/null | head -n1)"
   active=0
   tmux has-session -t "$session" >/dev/null 2>&1 && active=1
   [ -n "$state" ] || state="$([ "$active" -eq 1 ] && printf running || printf unknown)"
   if [ "$active" -eq 0 ] && [ "$state" = running ] && [ -z "$status" ]; then state=stale; fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$run_id" "$session" "$state" "$status" "$active" "$workspace_id" "$workspace_path" "$started" "$lease_dir"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$run_id" "$session" "$state" "$status" "$active" "$workspace_id" "$workspace_path" "$started" "$lease_dir" "$execution_mode" "$execution_provider" "$phase_node_id" "$source_sync_id" "$oci_container" "$oci_image_reference" "$oci_image_digest" "$oci_definition_digest" "$oci_build_context_sha256"
 done
 '''
 
@@ -257,9 +266,15 @@ def runs_payload(config: SSHRunnerConfig) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
     for line in completed.stdout.splitlines():
         fields = line.split("\t")
-        if len(fields) != 9:
+        if len(fields) < 9:
             continue
-        run_id, session, state, status, active, workspace_id, workspace_path, started, lease_dir = fields
+        fields.extend([""] * (18 - len(fields)))
+        (
+            run_id, session, state, status, active, workspace_id, workspace_path,
+            started, lease_dir, execution_mode, execution_provider, phase_node_id,
+            source_sync_id, oci_container, oci_image_reference, oci_image_digest,
+            oci_definition_digest, oci_build_context_sha256,
+        ) = fields[:18]
         records.append({
             "run_id": run_id,
             "session": session,
@@ -270,6 +285,15 @@ def runs_payload(config: SSHRunnerConfig) -> dict[str, Any]:
             "workspace_path": workspace_path,
             "started_unix": int(started) if started.isdigit() else 0,
             "lease_dir": lease_dir,
+            "execution_mode": execution_mode,
+            "execution_provider": execution_provider,
+            "phase_node_id": phase_node_id,
+            "source_sync_id": source_sync_id,
+            "oci_container": oci_container,
+            "oci_image_reference": oci_image_reference,
+            "oci_image_digest": oci_image_digest,
+            "oci_definition_digest": oci_definition_digest,
+            "oci_build_context_sha256": oci_build_context_sha256,
         })
     records.sort(key=lambda item: (int(item.get("started_unix") or 0), str(item.get("session") or "")), reverse=True)
     return {
@@ -284,13 +308,16 @@ def runs_payload(config: SSHRunnerConfig) -> dict[str, Any]:
     }
 
 
-def _select_records(payload: Mapping[str, Any], *, run_id: str = "", session: str = "") -> list[dict[str, Any]]:
+def _select_records(payload: Mapping[str, Any], *, run_id: str = "", session: str = "", node_id: str = "") -> list[dict[str, Any]]:
     records = [dict(item) for item in payload.get("records", []) if isinstance(item, dict)]
     if run_id:
         records = [item for item in records if str(item.get("run_id") or "") == _safe(run_id)]
     if session:
         records = [item for item in records if str(item.get("session") or "") == _safe(session, "phase")]
-    if not run_id and not session and records:
+    if node_id:
+        wanted = str(node_id).strip()
+        records = [item for item in records if str(item.get("phase_node_id") or "") == wanted]
+    if not run_id and not session and not node_id and records:
         newest = str(records[0].get("run_id") or "")
         records = [item for item in records if str(item.get("run_id") or "") == newest]
     return records
@@ -306,10 +333,11 @@ def resume_remote_run(
     *,
     run_id: str = "",
     session: str = "",
+    node_id: str = "",
     attach: bool = True,
 ) -> dict[str, Any]:
     payload = runs_payload(config)
-    matches = _select_records(payload, run_id=run_id, session=session)
+    matches = _select_records(payload, run_id=run_id, session=session, node_id=node_id)
     if not matches:
         raise ValueError("No SSH worker run/session matched the resume request")
     # Prefer a currently active phase; otherwise report persisted completion.
@@ -386,9 +414,9 @@ fi
 '''
 
 
-def cancel_remote_run(config: SSHRunnerConfig, *, run_id: str = "", session: str = "") -> dict[str, Any]:
+def cancel_remote_run(config: SSHRunnerConfig, *, run_id: str = "", session: str = "", node_id: str = "") -> dict[str, Any]:
     payload = runs_payload(config)
-    matches = _select_records(payload, run_id=run_id, session=session)
+    matches = _select_records(payload, run_id=run_id, session=session, node_id=node_id)
     if not matches:
         raise ValueError("No SSH worker run/session matched the cancel request")
     # Never rewrite already-completed phase history. A run-level cancel targets
@@ -433,9 +461,9 @@ printf 'cancelled\n' > "$state_dir/state.tmp"; mv -f -- "$state_dir/state.tmp" "
     }
 
 
-def recover_stale_runs(config: SSHRunnerConfig, *, run_id: str = "") -> dict[str, Any]:
+def recover_stale_runs(config: SSHRunnerConfig, *, run_id: str = "", node_id: str = "") -> dict[str, Any]:
     payload = runs_payload(config)
-    matches = _select_records(payload, run_id=run_id) if run_id else [item for item in payload["records"] if item.get("state") == "stale"]
+    matches = _select_records(payload, run_id=run_id, node_id=node_id) if (run_id or node_id) else [item for item in payload["records"] if item.get("state") == "stale"]
     stale = [item for item in matches if item.get("state") == "stale"]
     recovered: list[dict[str, Any]] = []
     for item in stale:

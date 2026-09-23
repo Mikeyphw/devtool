@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .execution_providers import SSH_NATIVE, SSH_PROOT_OCI, normalize_execution_provider
+from .oci_resilience import phase_metadata_lines, phase_node_id
 
 
 _SSH_VALUE_FLAGS = {
@@ -1289,6 +1290,7 @@ def _build_remote_phase_script(
     workspace_id: str = "",
     workspace_path: str = "",
     lease_dir: str = "",
+    phase_metadata: Mapping[str, Any] | None = None,
 ) -> str:
     from .ssh_resilience import remote_phase_state_paths
 
@@ -1326,6 +1328,8 @@ def _build_remote_phase_script(
         "lease_dir=" + str(lease_dir or ""),
         "remote_log_path=" + runtime_log,
     ]
+    if phase_metadata:
+        metadata_lines.extend(phase_metadata_lines(phase_metadata, run_id=run_identity, session=session))
     metadata_printf = " ".join(shlex.quote(line) for line in metadata_lines)
     lines = [
         "set -eu",
@@ -1678,6 +1682,12 @@ def wrap_specs_for_ssh_commands(
             if metadata.get("devtool_internal_validation"):
                 wrapped.append(spec)
                 continue
+            metadata.update(preparation_metadata)
+            metadata["execution_mode"] = ("ssh-proot-oci" if config.execution_provider == SSH_PROOT_OCI else "ssh-command")
+            metadata["execution_provider"] = config.execution_provider
+            metadata["ssh_mode"] = "commands"
+            metadata["ssh_destination"] = config.destination
+            metadata["ssh_port"] = config.port
             original_argv = list(getattr(spec, "argv", []) or [])
             host_cwd = str(getattr(spec, "cwd", "") or local_root)
             remote_base_argv = _drop_host_owned_toolchain_paths(original_argv, local_root)
@@ -1696,6 +1706,8 @@ def wrap_specs_for_ssh_commands(
                 remote_base_argv[0] = _remote_resolve_tool_executable(remote_base_argv[0], local_root)
             phase_name = _sanitize_session(str(getattr(spec, "name", "phase") or "phase"))
             session = _sanitize_session(f"{base_session}-{ordinal:02d}-{phase_name}")
+            metadata["ssh_session"] = session
+            metadata["oci_phase_node_id"] = phase_node_id(run_identity, session, provider=config.execution_provider)
             if config.execution_provider == SSH_PROOT_OCI and not dry_run:
                 # Record before staging: _stage_support_files_for_spec may copy one
                 # helper and then fail on a later operand. No tmux phase exists yet
@@ -1723,6 +1735,7 @@ def wrap_specs_for_ssh_commands(
                     project_config=project_config,
                     spec_metadata=metadata,
                     source_sync_id=str(preparation_metadata.get("ssh_source_sync_id") or ""),
+                    provider_metadata={**preparation_metadata, **metadata},
                 )
                 metadata.update(return_bundle.metadata())
                 remote_rsync = preparation.worker.tools.get("rsync", "") if preparation is not None else "rsync"
@@ -1858,9 +1871,15 @@ def wrap_specs_for_ssh_commands(
             workspace_id = str(preparation_metadata.get("ssh_workspace_id") or "")
             lease_meta = preparation_metadata.get("ssh_workspace_lease") or {}
             lease_dir = str(lease_meta.get("lease_dir") or "") if isinstance(lease_meta, dict) else ""
+            phase_meta = {**preparation_metadata, **metadata}
+            phase_meta["execution_mode"] = ("ssh-proot-oci" if config.execution_provider == SSH_PROOT_OCI else "ssh-command")
+            phase_meta["execution_provider"] = config.execution_provider
+            phase_meta["ssh_session"] = session
+            phase_meta["oci_phase_node_id"] = phase_node_id(run_identity, session, provider=str(phase_meta.get("execution_provider") or "ssh-command"))
             remote_script = _build_remote_phase_script(
                 config, session=session, command=command, run_id=run_identity,
                 workspace_id=workspace_id, workspace_path=remote_root, lease_dir=lease_dir,
+                phase_metadata=phase_meta,
             )
             ssh_command = _build_ssh_remote_sh_argv(config, remote_script, tty=True)
 
@@ -1919,10 +1938,12 @@ def wrap_specs_for_ssh_commands(
             local_script += '; exit "$rc"'
             metadata.update(preparation_metadata)
             metadata["execution_mode"] = ("ssh-proot-oci" if config.execution_provider == SSH_PROOT_OCI else "ssh-command")
+            metadata["execution_provider"] = config.execution_provider
             metadata["ssh_mode"] = "commands"
             metadata["ssh_destination"] = config.destination
             metadata["ssh_port"] = config.port
             metadata["ssh_session"] = session
+            metadata["oci_phase_node_id"] = phase_meta.get("oci_phase_node_id", "")
             metadata["ssh_cwd"] = remote_cwd
             metadata["ssh_staged_files"] = [str(local) for local, _remote in staged]
             metadata.setdefault("progress_argv", original_argv)

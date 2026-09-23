@@ -1080,15 +1080,18 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_resume.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_resume.add_argument("--run-id", default="", help="Resume a specific Devtool SSH run; defaults to the newest run")
     ssh_resume.add_argument("--session", default="", help="Resume a specific tmux phase session")
+    ssh_resume.add_argument("--node-id", default="", help="Resume the remote phase that owns this canonical provider node")
     ssh_resume.add_argument("--format", choices=["text", "json"], default="text")
     ssh_cancel = ssh_sub.add_parser("cancel", help="Cancel Devtool-owned tmux phases for a remote run")
     ssh_cancel.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_cancel.add_argument("--run-id", default="", help="Cancel a specific run; defaults to the newest run")
     ssh_cancel.add_argument("--session", default="", help="Cancel only a specific tmux phase session")
+    ssh_cancel.add_argument("--node-id", default="", help="Cancel only the remote phase that owns this canonical provider node")
     ssh_cancel.add_argument("--format", choices=["text", "json"], default="text")
     ssh_recover = ssh_sub.add_parser("recover", help="Reconcile stale remote run records after interrupted SSH sessions")
     ssh_recover.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_recover.add_argument("--run-id", default="", help="Restrict stale-run recovery to one run")
+    ssh_recover.add_argument("--node-id", default="", help="Restrict stale-run recovery to one canonical provider node")
     ssh_recover.add_argument("--format", choices=["text", "json"], default="text")
 
     oci_cmd = subparsers.add_parser("oci", help="Manage PRoot-Distro OCI runtime state on named SSH workers")
@@ -11733,15 +11736,21 @@ def _main_after_parse(
                     payload = resume_remote_run(
                         worker, run_id=str(getattr(args, "run_id", "") or ""),
                         session=str(getattr(args, "session", "") or ""),
+                        node_id=str(getattr(args, "node_id", "") or ""),
                         attach=output_format != "json",
                     )
                 elif action == "cancel":
                     payload = cancel_remote_run(
                         worker, run_id=str(getattr(args, "run_id", "") or ""),
                         session=str(getattr(args, "session", "") or ""),
+                        node_id=str(getattr(args, "node_id", "") or ""),
                     )
                 elif action == "recover":
-                    payload = recover_stale_runs(worker, run_id=str(getattr(args, "run_id", "") or ""))
+                    payload = recover_stale_runs(
+                        worker,
+                        run_id=str(getattr(args, "run_id", "") or ""),
+                        node_id=str(getattr(args, "node_id", "") or ""),
+                    )
                 else:
                     parser.error(f"Unknown ssh command: {action}")
                     return 2

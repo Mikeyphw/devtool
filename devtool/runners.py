@@ -97,6 +97,8 @@ def _ssh_execution_provenance(metadata: Mapping[str, object]) -> dict[str, objec
         "session": str(metadata.get("ssh_session") or ""),
         "return_state": str((metadata.get("ssh_return") or {}).get("state") or "") if isinstance(metadata.get("ssh_return"), Mapping) else "",
         "return_manifest": str(metadata.get("ssh_return_manifest") or ""),
+        "phase_node_id": str(metadata.get("oci_phase_node_id") or metadata.get("ssh_phase_node_id") or ""),
+        "return_producer_sha256": str(metadata.get("ssh_return_producer_sha256") or ""),
     }
     if str(metadata.get("execution_provider") or "") == "ssh-proot-oci" or str(metadata.get("execution_mode") or "") == "ssh-proot-oci":
         result.update({

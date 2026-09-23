@@ -19,9 +19,10 @@ import re
 import shlex
 import shutil
 import subprocess
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_base_argv
+from .oci_resilience import attach_producer_identity, producer_identity, validate_producer_identity
 
 _SCHEMA_VERSION = 1
 _DEFAULT_PATTERNS = (
@@ -56,6 +57,7 @@ class SSHReturnBundle:
     remote_root: str
     patterns: tuple[str, ...]
     source_sync_id: str
+    producer_sha256: str = ""
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -67,6 +69,7 @@ class SSHReturnBundle:
             "ssh_return_patterns": list(self.patterns),
             "ssh_return_remote_root": self.remote_root,
             "ssh_source_sync_id": self.source_sync_id,
+            "ssh_return_producer_sha256": self.producer_sha256,
         }
 
 
@@ -149,6 +152,7 @@ def create_return_bundle(
     project_config: Any,
     spec_metadata: dict[str, Any],
     source_sync_id: str = "",
+    provider_metadata: Mapping[str, Any] | None = None,
 ) -> SSHReturnBundle:
     run_id = _safe(str(os.environ.get("DEVTOOL_RUN_ID") or config.operation_id or "run"))
     session_id = _safe(session, "phase")
@@ -182,10 +186,21 @@ def create_return_bundle(
         "source_sync_id": source_sync_id,
         "state": "pending",
     }
+    producer_meta = dict(provider_metadata or {})
+    producer_meta.update({key: value for key, value in spec_metadata.items() if key not in producer_meta})
+    producer = producer_identity(
+        profile=config.profile,
+        destination=config.destination,
+        run_id=run_id,
+        session=session_id,
+        source_sync_id=source_sync_id,
+        metadata=producer_meta,
+    )
+    attach_producer_identity(payload, producer)
     tmp = manifest.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     os.replace(tmp, manifest)
-    return SSHReturnBundle(run_id, session, root, repo_mirror, project_mirror, manifest, status, remote_root, patterns, source_sync_id)
+    return SSHReturnBundle(run_id, session, root, repo_mirror, project_mirror, manifest, status, remote_root, patterns, source_sync_id, str(payload.get("producer_sha256") or ""))
 
 
 def _local_rsync() -> str:
@@ -282,6 +297,8 @@ def load_return_state(metadata: dict[str, Any]) -> dict[str, Any]:
         "project_root": str(metadata.get("ssh_return_project_root") or manifest.get("local_return_project_root") or ""),
         "remote_root": str(metadata.get("ssh_return_remote_root") or manifest.get("remote_root") or ""),
         "source_sync_id": str(metadata.get("ssh_source_sync_id") or manifest.get("source_sync_id") or ""),
+        "producer": dict(manifest.get("producer") or {}) if isinstance(manifest.get("producer"), Mapping) else {},
+        "producer_sha256": str(manifest.get("producer_sha256") or ""),
     }
 
 
@@ -306,6 +323,7 @@ def _read_manifest(path: Path) -> dict[str, Any]:
         raise ValueError(f"Unable to read SSH return manifest {path}: {exc}") from exc
     if not isinstance(value, dict) or value.get("kind") != "ssh-return-bundle":
         raise ValueError(f"Invalid SSH return manifest: {path}")
+    validate_producer_identity(value)
     return value
 
 
