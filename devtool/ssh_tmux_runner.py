@@ -1657,6 +1657,22 @@ def wrap_specs_for_ssh_commands(
             workspace_planned=bool(dry_run and preparation.sync.get("would_create_workspace")),
         )
         preparation_metadata.update(oci_state.metadata())
+        from .oci_reuse import oci08_execution_metadata
+        preparation_metadata.update(
+            oci08_execution_metadata(
+                config,
+                preparation_metadata=preparation_metadata,
+                plan=oci_state.plan,
+                image_reference=oci_state.image_reference,
+                image_digest=oci_state.image_digest,
+                build_context_sha256=oci_state.build_context_sha256,
+                external_phase_count=len([
+                    item for item in spec_list
+                    if not bool((getattr(item, "metadata", {}) or {}).get("devtool_internal_validation"))
+                ]),
+                dry_run=dry_run,
+            )
+        )
     wrapped: list[Any] = []
     external_ordinals = [
         i for i, item in enumerate(spec_list, 1)
