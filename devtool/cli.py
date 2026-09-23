@@ -1131,6 +1131,10 @@ def build_parser() -> argparse.ArgumentParser:
     oci_prune.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
     oci_prune.add_argument("--apply", action="store_true", dest="oci_apply", help="Remove non-canonical cached OCI images")
     oci_prune.add_argument("--format", choices=["text", "json"], default="text")
+
+    oci_diagnostics = oci_sub.add_parser("diagnostics", aliases=["diag"], help="Show redacted OCI diagnostics and HUD visibility summary")
+    oci_diagnostics.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
+    oci_diagnostics.add_argument("--format", choices=["text", "json"], default="text")
     oci_doctor = oci_sub.add_parser("doctor", help="Discover PRoot-Distro, proot, containers, and cached OCI images")
     oci_doctor.add_argument("profile", nargs="?", default="", help="Named SSH worker; defaults to the configured default profile")
     oci_doctor.add_argument("--format", choices=["text", "json"], default="text")
@@ -11995,6 +11999,7 @@ def _main_after_parse(
             oci_prune_payload, oci_remove_payload, oci_update_payload, oci_validate_image_payload,
         )
         from .oci_workspace import oci_workspace_payload
+        from .oci_diagnostics import diagnostics_payload as oci_diagnostics_payload, diagnostic_rows as oci_diagnostic_rows
 
         action = str(getattr(args, "oci_command", "") or "")
         output_format = str(getattr(args, "format", "text") or "text")
@@ -12046,6 +12051,28 @@ def _main_after_parse(
                 payload = oci_prune_payload(
                     worker, run_id=run_id,
                     apply=bool(getattr(args, "oci_apply", False)),
+                )
+            elif action in {"diagnostics", "diag"}:
+                doctor_payload = oci_doctor_payload(worker, run_id=run_id)
+                try:
+                    image_payload = oci_image_status_payload(worker, run_id=run_id)
+                except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                    image_payload = {
+                        "schema_version": 1,
+                        "kind": "oci-image-status",
+                        "ok": False,
+                        "profile": worker.profile,
+                        "destination": worker.destination,
+                        "status": "image-status-blocked",
+                        "recommended_action": "repair-runtime-inventory",
+                        "detail": str(exc),
+                    }
+                payload = oci_diagnostics_payload(
+                    run_id=run_id,
+                    profile=worker.profile,
+                    destination=worker.destination,
+                    doctor=doctor_payload,
+                    image_status=image_payload,
                 )
             elif action == "doctor":
                 payload = oci_doctor_payload(worker, run_id=run_id)
@@ -12181,6 +12208,12 @@ def _main_after_parse(
                 print(f"{step.get('action','-'):>10}  {step.get('target','-')}  {step.get('policy','-')}  {step.get('reason','-')}")
             for image_ref in payload.get("removable", []):
                 print(f"remove-image  {image_ref}")
+        elif action in {"diagnostics", "diag"}:
+            render_status_table(oci_diagnostic_rows(payload))
+            for card in payload.get("cards", []):
+                print(f"{card.get('status','-'):>9}  {card.get('id','-')}  {card.get('detail','-')}")
+            for diagnostic in payload.get("diagnostics", []):
+                print(f"{diagnostic.get('severity','info'):>9}  {diagnostic.get('token','OCI_DIAGNOSTIC')}  {diagnostic.get('what_happened','')}")
         elif action == "doctor":
             runtime = payload.get("runtime", {})
             render_status_table([

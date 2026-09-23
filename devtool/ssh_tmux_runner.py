@@ -1673,6 +1673,8 @@ def wrap_specs_for_ssh_commands(
                 dry_run=dry_run,
             )
         )
+        from .oci_diagnostics import oci09_phase_metadata
+        preparation_metadata.update(oci09_phase_metadata(preparation_metadata))
     wrapped: list[Any] = []
     external_ordinals = [
         i for i, item in enumerate(spec_list, 1)
