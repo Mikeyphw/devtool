@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "kind": "devtool-android-oci-image-contract",
-  "definition_id": "android-arm64-api36-v1",
-  "reference": "devtool/android-build:arm64-api36-v1",
+  "definition_id": "android-arm64-api36-v2",
+  "reference": "devtool/android-build:arm64-api36-v2",
   "architecture": {
     "oci": "linux/arm64",
     "proot_distro": "aarch64",
@@ -127,7 +127,15 @@
       "mktemp",
       "grep",
       "head"
-    ]
+    ],
+    "embedded_android_builder": {
+      "path": "/usr/local/lib/devtool/build-apk",
+      "sha256": "c35521e80c7f05b734e23c444922fa7b02820d9318c17494d9f0076fc23f70fc",
+      "toolchains_path": "/usr/local/lib/devtool/termux_toolchains.py",
+      "toolchains_sha256": "46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe",
+      "gradle_events_init_path": "/usr/local/lib/devtool/devtool-events.init.gradle",
+      "gradle_events_init_sha256": "da7550a61bae530a8bb407c64574a456f77398db29332470623b47028bd9a50f"
+    }
   },
   "immutability": {
     "ordinary_validation_mutates_toolchains": false,

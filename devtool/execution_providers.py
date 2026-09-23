@@ -3,10 +3,9 @@ from __future__ import annotations
 """Execution-provider contracts shared by local and SSH execution.
 
 OCI-01 deliberately separates *where a command is transported* from *which
-runtime provider executes it*.  Existing SSH workers continue to use the
-``ssh-native`` provider.  ``ssh-proot-oci`` is accepted as configuration and
-reported through diagnostics, but is fail-closed until the later OCI execution
-overlays implement image lifecycle and command wrapping.
+runtime provider executes it*. Existing SSH workers continue to use the
+``ssh-native`` provider. OCI-05 activates ``ssh-proot-oci`` while preserving the
+same canonical EXO / SSH / tmux lifecycle authority.
 """
 
 from dataclasses import dataclass
@@ -190,7 +189,7 @@ _PROVIDER_REGISTRY: dict[str, ExecutionProvider] = {
             containerized=True,
             requires_image=True,
         ),
-        executable=False,
+        executable=True,
     ),
 }
 
@@ -244,8 +243,7 @@ def ensure_execution_provider_ready(value: str | None, *, remote: bool = False) 
     provider = execution_provider(value, remote=remote)
     if not provider.executable:
         raise ValueError(
-            f"Execution provider {provider.name!r} is configured but repository command execution is not active yet. "
-            "Keep provider='native'/'ssh-native' for current builds; PRoot-Distro OCI command execution is activated in a later OCI roadmap overlay."
+            f"Execution provider {provider.name!r} is configured but is not executable in this Devtool build."
         )
     return provider
 

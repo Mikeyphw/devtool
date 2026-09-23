@@ -57,14 +57,17 @@ RUN set -eux; \
   "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2" version
 COPY image-manifest.json /usr/local/lib/devtool/oci-image-manifest.json
 COPY validate-image.sh /usr/local/lib/devtool/validate-android-oci.sh
-RUN chmod 0555 /usr/local/lib/devtool/validate-android-oci.sh \
+COPY build-apk /usr/local/lib/devtool/build-apk
+COPY termux_toolchains.py /usr/local/lib/devtool/termux_toolchains.py
+COPY devtool-events.init.gradle /usr/local/lib/devtool/devtool-events.init.gradle
+RUN chmod 0555 /usr/local/lib/devtool/validate-android-oci.sh /usr/local/lib/devtool/build-apk \
  && : > /usr/local/lib/devtool/oci-immutable-toolchain \
  && mkdir -p /root/.gradle \
  && printf 'android.aapt2FromMavenOverride=/opt/android-sdk/build-tools/36.0.0/aapt2\n' > /root/.gradle/gradle.properties \
  && DEVTOOL_DEFINITION_DIGEST="$DEVTOOL_DEFINITION_DIGEST" DEVTOOL_BUILD_CONTEXT_SHA256="$DEVTOOL_BUILD_CONTEXT_SHA256" DEVTOOL_APT_SNAPSHOT="$DEVTOOL_APT_SNAPSHOT" python3 -c 'import hashlib,json,os,platform,subprocess; pkg=lambda n: subprocess.check_output(["dpkg-query","-W","-f=${Version}",n],text=True).strip(); sha=lambda p: hashlib.sha256(open(p,"rb").read()).hexdigest(); bt="/opt/android-sdk/build-tools/36.0.0"; data={"schema_version":1,"definition_digest":os.environ["DEVTOOL_DEFINITION_DIGEST"],"context_sha256":os.environ["DEVTOOL_BUILD_CONTEXT_SHA256"],"apt_snapshot":os.environ["DEVTOOL_APT_SNAPSHOT"],"architecture":platform.machine(),"toolchains":{"python":platform.python_version(),"node":subprocess.check_output(["node","--version"],text=True).strip(),"jdk_default":subprocess.run(["java","-version"],text=True,capture_output=True).stderr.splitlines()[0],"android_api":36,"build_tools":"36.0.0","ndk":"29.0.14206865","ndk_host_mode":"qemu-x86_64-wrapped","ndk_wrapped_host_binaries":len(__import__("glob").glob("/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/*.x86_64")),"arm64_build_tools_sha256":{n:sha(bt+"/"+n) for n in ("aapt2","aidl","zipalign","split-select")}},"packages":{n:pkg(n) for n in ("openjdk-17-jdk-headless","openjdk-21-jdk-headless","python3","python3-rich","qemu-user-static","libc6:amd64","libstdc++6:amd64")}}; open("/usr/local/lib/devtool/oci-build-metadata.json","w").write(json.dumps(data,sort_keys=True,separators=(",",":"))+"\\n")' \
  && /usr/local/lib/devtool/validate-android-oci.sh
 LABEL org.opencontainers.image.title="Devtool Android ARM64 build environment" \
-      io.devtool.image.definition="android-arm64-api36-v1" \
+      io.devtool.image.definition="android-arm64-api36-v2" \
       io.devtool.android.api="36" \
       io.devtool.android.build-tools="36.0.0" \
       io.devtool.android.ndk="29.0.14206865" \

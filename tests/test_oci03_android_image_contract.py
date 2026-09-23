@@ -82,7 +82,14 @@ def test_build_context_is_byte_deterministic_and_self_describing() -> None:
     import io, tarfile
     with tarfile.open(fileobj=io.BytesIO(first.context_bytes), mode="r:") as archive:
         names = sorted(archive.getnames())
-        assert names == ["Dockerfile", "image-manifest.json", "validate-image.sh"]
+        assert names == [
+            "Dockerfile",
+            "build-apk",
+            "devtool-events.init.gradle",
+            "image-manifest.json",
+            "termux_toolchains.py",
+            "validate-image.sh",
+        ]
         for member in archive.getmembers():
             assert member.mtime == 0
             assert member.uid == member.gid == 0
@@ -210,11 +217,11 @@ def test_image_validation_fails_closed_on_capability_or_provenance_failure(monke
     assert any(diag.code == "OCI_IMAGE_CAPABILITY" for diag in snap.diagnostics)
 
 
-def test_oci03_does_not_activate_repository_execution_provider() -> None:
+def test_oci05_activates_repository_execution_provider_without_changing_image_capabilities() -> None:
     provider = execution_provider(SSH_PROOT_OCI, remote=True)
     assert provider.capabilities.containerized is True
     assert provider.capabilities.requires_image is True
-    assert provider.executable is False
+    assert provider.executable is True
 
 
 def test_build_process_without_sha_verified_artifact_evidence_fails_owned_node(monkeypatch: pytest.MonkeyPatch) -> None:

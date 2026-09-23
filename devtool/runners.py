@@ -83,9 +83,9 @@ console = create_console()
 
 
 def _ssh_execution_provenance(metadata: Mapping[str, object]) -> dict[str, object]:
-    if str(metadata.get("execution_mode") or "") != "ssh-command" and not metadata.get("ssh_destination"):
+    if str(metadata.get("execution_mode") or "") not in {"ssh-command", "ssh-proot-oci"} and not metadata.get("ssh_destination"):
         return {}
-    return {
+    result: dict[str, object] = {
         "transport": "ssh",
         "profile": str(metadata.get("ssh_profile") or ""),
         "destination": str(metadata.get("ssh_destination") or ""),
@@ -98,6 +98,21 @@ def _ssh_execution_provenance(metadata: Mapping[str, object]) -> dict[str, objec
         "return_state": str((metadata.get("ssh_return") or {}).get("state") or "") if isinstance(metadata.get("ssh_return"), Mapping) else "",
         "return_manifest": str(metadata.get("ssh_return_manifest") or ""),
     }
+    if str(metadata.get("execution_provider") or "") == "ssh-proot-oci" or str(metadata.get("execution_mode") or "") == "ssh-proot-oci":
+        result.update({
+            "execution_provider": "ssh-proot-oci",
+            "runtime": str(metadata.get("oci_runtime") or "proot-distro-oci"),
+            "container": str(metadata.get("oci_container") or ""),
+            "image_reference": str(metadata.get("oci_image_reference") or ""),
+            "image_digest": str(metadata.get("oci_image_digest") or ""),
+            "image_archive_sha256": str(metadata.get("oci_image_archive_sha256") or ""),
+            "architecture": str(metadata.get("oci_architecture") or ""),
+            "definition_digest": str(metadata.get("oci_definition_digest") or ""),
+            "build_context_sha256": str(metadata.get("oci_build_context_sha256") or ""),
+            "guest_workspace": str(metadata.get("oci_guest_workspace") or "/workspace"),
+            "guest_cache": str(metadata.get("oci_guest_cache") or "/var/cache/devtool"),
+        })
+    return result
 
 
 def _execution_provenance(metadata: Mapping[str, object], argv: Sequence[str]) -> dict[str, object]:

@@ -686,9 +686,10 @@ def _probe_runtime_exo(
     *,
     action: str,
     strict_inventory: str = "",
+    depends_on: tuple[str, ...] = (),
 ) -> tuple[ProotOciRuntimeProbe, str]:
     node_id = _stable_node_id(config, f"{action}-runtime-probe")
-    _discover_nodes(run_id, ((node_id, "Discover PRoot-Distro runtime", ()),))
+    _discover_nodes(run_id, ((node_id, "Discover PRoot-Distro runtime", depends_on),))
     completed = _run_process(
         config,
         run_id=run_id,
@@ -851,9 +852,10 @@ def oci_bootstrap_payload(
     run_id: str,
     dry_run: bool = False,
     force: bool = False,
+    depends_on: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     node_id = _stable_node_id(config, "bootstrap-proot-distro")
-    _discover_nodes(run_id, ((node_id, "Bootstrap PRoot-Distro", ()),))
+    _discover_nodes(run_id, ((node_id, "Bootstrap PRoot-Distro", depends_on),))
     command = r'''set -eu
 if [ -n "${PROOT_TMP_DIR:-}" ] || [ -n "${PROOT_LOADER:-}" ]; then
   echo 'Refusing OCI bootstrap inside an existing PRoot environment' >&2
@@ -923,6 +925,7 @@ def oci_install_payload(
     name: str = "",
     architecture: str = "",
     dry_run: bool = False,
+    depends_on: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     name = _validate_name(name)
     architecture = _validate_architecture(architecture)
@@ -940,11 +943,11 @@ def oci_install_payload(
         digest = _sha256_file(local_path)
         staged_source = f"$HOME/.cache/devtool/oci/uploads/sha256-{digest}"
         upload_node = _stable_node_id(config, "upload-archive", digest)
-        nodes.append((upload_node, f"Upload OCI archive {local_path.name}", ()))
+        nodes.append((upload_node, f"Upload OCI archive {local_path.name}", depends_on))
     install_identity = digest if local_path is not None else str(source)
     install_key = f"{source_kind}|{install_identity}|{name}|{architecture}"
     install_node = _stable_node_id(config, "install", install_key)
-    nodes.append((install_node, f"Install OCI image {safe_source}", (upload_node,) if upload_node else ()))
+    nodes.append((install_node, f"Install OCI image {safe_source}", (upload_node,) if upload_node else depends_on))
     _discover_nodes(run_id, tuple(nodes))
 
     if dry_run:
@@ -1042,6 +1045,7 @@ def oci_remove_payload(
     run_id: str,
     image: bool = False,
     dry_run: bool = False,
+    depends_on: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     target = str(target or "").strip()
     if not target:
@@ -1051,7 +1055,7 @@ def oci_remove_payload(
     safe_target = _safe_text(target)
     node_id = _stable_node_id(config, "remove-image" if image else "remove-container", target)
     label = f"Remove cached OCI image {safe_target}" if image else f"Remove PRoot-Distro container {safe_target}"
-    _discover_nodes(run_id, ((node_id, label, ()),))
+    _discover_nodes(run_id, ((node_id, label, depends_on),))
     if dry_run:
         _finish_node(run_id, node_id, status=ExecutionStatus.SKIPPED.value, exit_code=0, reason="dry-run")
         return {
@@ -1238,6 +1242,7 @@ def oci_build_payload(
     install_as: str = "",
     dry_run: bool = False,
     no_cache: bool = False,
+    depends_on: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     definition = canonical_android_oci_definition()
     tag = str(tag or definition.reference).strip()
@@ -1247,7 +1252,7 @@ def oci_build_payload(
     stage_node = _stable_node_id(config, "stage-image-definition", definition.context_sha256)
     build_node = _stable_node_id(config, "build-android-image", f"{definition.definition_digest}|{tag}|{int(no_cache)}")
     nodes: list[tuple[str, str, tuple[str, ...]]] = [
-        (stage_node, "Stage canonical Android OCI image definition", ()),
+        (stage_node, "Stage canonical Android OCI image definition", depends_on),
         (build_node, f"Build Android OCI image {tag}", (stage_node,)),
     ]
     install_node = ""

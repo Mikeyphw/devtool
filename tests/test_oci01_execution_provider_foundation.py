@@ -88,7 +88,7 @@ def test_provider_registry_has_stable_native_ssh_and_proot_oci_contracts() -> No
     assert providers[SSH_NATIVE].capabilities.containerized is False
     assert providers[SSH_PROOT_OCI].capabilities.containerized is True
     assert providers[SSH_PROOT_OCI].capabilities.requires_image is True
-    assert providers[SSH_PROOT_OCI].executable is False
+    assert providers[SSH_PROOT_OCI].executable is True
 
 
 def test_remote_provider_aliases_are_canonical_and_native_means_ssh_native() -> None:
@@ -101,11 +101,10 @@ def test_remote_provider_aliases_are_canonical_and_native_means_ssh_native() -> 
         normalize_execution_provider("docker-magic", remote=True)
 
 
-def test_proot_oci_provider_is_configuration_visible_but_fail_closed_for_execution() -> None:
+def test_proot_oci_provider_is_configuration_visible_and_executable() -> None:
     provider = execution_provider("proot-oci", remote=True)
     assert provider.name == SSH_PROOT_OCI
-    with pytest.raises(ValueError, match="repository command execution is not active yet"):
-        ensure_execution_provider_ready(provider.name, remote=True)
+    assert ensure_execution_provider_ready(provider.name, remote=True) is provider
 
 
 def test_named_profile_execution_section_resolves_and_lists_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -148,7 +147,7 @@ def test_ssh_add_cli_accepts_provider_alias() -> None:
     assert args.execution_provider == "proot-oci"
 
 
-def test_doctor_reports_provider_capabilities_and_marks_unimplemented_provider_blocked(
+def test_doctor_reports_active_provider_capabilities(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = SSHRunnerConfig(
@@ -167,21 +166,26 @@ def test_doctor_reports_provider_capabilities_and_marks_unimplemented_provider_b
     payload = ssh_worker.worker_doctor_payload(cfg)
     assert payload["execution"]["provider"]["name"] == SSH_PROOT_OCI
     assert payload["execution"]["provider"]["capabilities"]["containerized"] is True
-    assert payload["execution"]["provider"]["executable"] is False
-    assert payload["healthy"] is False
+    assert payload["execution"]["provider"]["executable"] is True
+    assert payload["healthy"] is True
 
 
-def test_command_execution_rejects_proot_provider_before_remote_mutation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = SSHRunnerConfig(host="tablet", profile="tablet", execution_provider=SSH_PROOT_OCI)
+def test_command_execution_rejects_proot_provider_without_managed_workspace_before_remote_mutation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = SSHRunnerConfig(
+        host="tablet",
+        profile="tablet",
+        execution_provider=SSH_PROOT_OCI,
+        workspace_mode="existing",
+    )
     called = False
 
     def unexpected_probe(_config):
         nonlocal called
         called = True
-        raise AssertionError("probe should not run for an unavailable provider")
+        raise AssertionError("probe should not run before OCI workspace validation")
 
     monkeypatch.setattr(ssh_execution, "probe_worker", unexpected_probe)
-    with pytest.raises(ValueError, match="repository command execution is not active yet"):
+    with pytest.raises(ValueError, match="workspace.mode='managed'"):
         ssh_execution.prepare_ssh_command_execution(cfg, [], repo_root=tmp_path)
     assert called is False
 

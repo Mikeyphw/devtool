@@ -527,6 +527,140 @@ def proot_login_options(plan: OciWorkspacePlan) -> tuple[str, ...]:
     return tuple(result)
 
 
+def prepare_oci_workspace_for_execution(
+    config: SSHRunnerConfig,
+    *,
+    run_id: str,
+    workspace_id: str,
+    remote_root: str,
+    source_sync_id: str,
+    source_revision: Mapping[str, Any] | None = None,
+    dry_run: bool = False,
+    environment: Mapping[str, str] | None = None,
+    workspace_planned: bool = False,
+) -> tuple[OciWorkspacePlan, str]:
+    """Join OCI workspace preparation to an existing canonical EXO run.
+
+    OCI-05 repository execution already owns a RunId through the normal Devtool
+    execution graph. This helper discovers only provider child nodes and never
+    emits a second RunStarted/RunFinished lifecycle.
+    """
+    if config.execution_provider != SSH_PROOT_OCI:
+        raise ValueError("OCI repository execution requires execution provider 'ssh-proot-oci'")
+    if not config.profile:
+        raise ValueError("OCI repository execution requires a named SSH profile")
+    if config.workspace_mode != "managed":
+        raise ValueError("OCI repository execution requires workspace.mode='managed'")
+    workspace_id = str(workspace_id or "").strip()
+    if not workspace_id:
+        raise ValueError("OCI repository execution requires a managed workspace identity")
+    expected_root = str(remote_root or "").strip()
+    if not expected_root:
+        raise ValueError("OCI repository execution requires a synchronized managed workspace path")
+
+    revision = dict(source_revision or {})
+    revision_digest = hashlib.sha256(
+        json.dumps(revision, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest() if revision else ""
+    inspect = _runtime._stable_node_id(config, "oci05-workspace-inspect", workspace_id)
+    caches = _runtime._stable_node_id(config, "oci05-cache-prepare", workspace_id)
+    contract = _runtime._stable_node_id(config, "oci05-bind-contract", workspace_id)
+    _runtime._discover_nodes(run_id, (
+        (inspect, "Inspect synchronized managed workspace for OCI execution", ()),
+        (caches, "Prepare OCI execution persistent caches", (inspect,)),
+        (contract, "Validate OCI execution bind/environment contract", (caches,)),
+    ))
+
+    patterns = {
+        "workspace_id": re.escape(workspace_id),
+        "workspace_real": (r"/.+" if dry_run else re.escape(expected_root)),
+        "sync_id": (r".+" if dry_run or not source_sync_id else re.escape(str(source_sync_id))),
+        "source_revision_digest": (r"[0-9a-f]{64}" if dry_run or not revision_digest else re.escape(revision_digest)),
+    }
+    if dry_run and workspace_planned:
+        # The managed SSH dry-run may truthfully report that synchronization would
+        # create this workspace. Do not mutate it and do not pretend that the
+        # planned sync already happened. Keep the remote-state nodes in the same
+        # canonical graph, but mark them skipped and validate only the deterministic
+        # future bind/environment shape.
+        workspace_real = _normalize_remote_root(expected_root, label="planned OCI workspace root")
+        cache_base = _normalize_remote_root(config.oci_cache_root, label="planned OCI cache root").rstrip("/")
+        cache_real = cache_base + "/" + workspace_id
+        actual_source_sync_id = ""
+        _runtime._finish_node(
+            run_id, inspect, status=ExecutionStatus.SKIPPED.value, exit_code=0,
+            reason="dry-run: managed workspace synchronization is planned, so no existing source state is claimed",
+        )
+        _runtime._finish_node(
+            run_id, caches, status=ExecutionStatus.SKIPPED.value, exit_code=0,
+            reason="dry-run: persistent cache creation/inspection deferred until synchronized workspace exists",
+        )
+    else:
+        try:
+            inspected = _runtime._run_process(
+                config, run_id=run_id, node_id=inspect,
+                label="Inspect synchronized managed workspace for OCI execution",
+                argv=build_ssh_remote_sh_argv(config, _workspace_probe_script(config.workspace_root, workspace_id), tty=False),
+                detail="Verifying canonical managed workspace source-sync identity before OCI execution",
+                timeout=_runtime._transport_timeout(), diagnostic_code="OCI05_WORKSPACE_INSPECT",
+                provenance_extra={"workspace_id": workspace_id, "workspace_mode": config.workspace_mode, "dry_run": dry_run},
+                required_output_keys=("workspace_id", "workspace_real", "sync_id", "source_revision_digest"),
+                required_output_patterns=patterns,
+            )
+        except Exception:
+            _runtime._block_node(run_id, caches, blocked_by=(inspect,), reason="OCI cache preparation blocked because workspace inspection failed")
+            _runtime._block_node(run_id, contract, blocked_by=(caches,), reason="OCI bind contract blocked because cache preparation did not run")
+            raise
+        values = _runtime._parse_key_values(inspected.stdout)
+        workspace_real = str(values.get("workspace_real") or "")
+        actual_source_sync_id = str(values.get("sync_id") or source_sync_id or "")
+
+        try:
+            prepared = _runtime._run_process(
+                config, run_id=run_id, node_id=caches,
+                label="Prepare OCI execution persistent caches",
+                argv=build_ssh_remote_sh_argv(
+                    config, _cache_prepare_script(config.oci_cache_root, workspace_id, workspace_real, dry_run=dry_run), tty=False
+                ),
+                detail=("Validating OCI cache paths without mutation" if dry_run else "Preparing repository-scoped OCI caches"),
+                timeout=_runtime._transport_timeout(), diagnostic_code="OCI05_CACHE_PREPARE",
+                provenance_extra={"workspace_id": workspace_id, "source_sync_id": actual_source_sync_id, "dry_run": dry_run},
+                required_output_keys=("cache_real", "cache_mutated", "cache_exists", "cache_ready"),
+                required_output_patterns={
+                    "cache_real": r"/.+",
+                    "cache_mutated": (r"0" if dry_run else r"[01]"),
+                    "cache_exists": (r"[01]" if dry_run else r"1"),
+                    "cache_ready": (r"[01]" if dry_run else r"1"),
+                },
+            )
+        except Exception:
+            _runtime._block_node(run_id, contract, blocked_by=(caches,), reason="OCI bind contract blocked because cache preparation failed")
+            raise
+        cache_values = _runtime._parse_key_values(prepared.stdout)
+        cache_real = str(cache_values.get("cache_real") or "")
+
+    _runtime._start_node(run_id, contract, "Validate OCI execution bind/environment contract", "Checking minimal workspace/cache binds and environment allowlist")
+    adapter = RunnerExecutionAdapter(
+        run_id=run_id, parent_node_id=contract, tool="oci-workspace", source="oci-execution",
+        provenance=_runtime._provenance(config, operation="OCI-05 bind contract", extra={"workspace_id": workspace_id, "source_sync_id": actual_source_sync_id}),
+    )
+    try:
+        plan = _semantic_plan(
+            config, workspace_id=workspace_id, workspace_real=workspace_real, cache_real=cache_real,
+            source_sync_id=actual_source_sync_id,
+            environment=(environment if environment is not None else os.environ),
+        )
+    except ValueError as exc:
+        message = _runtime._safe_text(f"OCI execution bind contract failed: {exc}")
+        diagnostic_id = adapter.diagnostic(
+            severity="error", code="OCI05_WORKSPACE_CONTRACT", message=message,
+            failure_kind="workspace_contract_error", evidence=(message[-2048:],),
+        )
+        _runtime._finish_node(run_id, contract, status=ExecutionStatus.FAILED.value, exit_code=65, diagnostic_ids=(diagnostic_id,), reason="OCI execution bind contract failed")
+        raise ValueError(message) from exc
+    _runtime._finish_node(run_id, contract, status=ExecutionStatus.SUCCEEDED.value, exit_code=0)
+    return plan, contract
+
 def oci_workspace_payload(
     config: SSHRunnerConfig,
     *,

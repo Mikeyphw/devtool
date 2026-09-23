@@ -10,8 +10,14 @@ import json
 import tarfile
 from typing import Any
 
-_RESOURCE_ROOT = files("devtool").joinpath("resources/oci/android-arm64")
-_REQUIRED = ("Dockerfile", "image-manifest.json", "validate-image.sh")
+_PACKAGE_ROOT = files("devtool")
+_RESOURCE_ROOT = _PACKAGE_ROOT.joinpath("resources").joinpath("oci").joinpath("android-arm64")
+_SOURCE_RUNTIME = {
+    "build-apk": _PACKAGE_ROOT.joinpath("android").joinpath("_standalone.py"),
+    "termux_toolchains.py": _PACKAGE_ROOT.joinpath("termux_toolchains.py"),
+    "devtool-events.init.gradle": _PACKAGE_ROOT.joinpath("resources").joinpath("gradle").joinpath("devtool-events.init.gradle"),
+}
+_REQUIRED = ("Dockerfile", "build-apk", "devtool-events.init.gradle", "image-manifest.json", "termux_toolchains.py", "validate-image.sh")
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +116,32 @@ def _validate_contract(value: dict[str, Any]) -> dict[str, Any]:
     if arm_source.get("release_commit") != "58f06a2":
         raise ValueError("ARM64 Android build-tools release commit changed unexpectedly")
     require_sha256("ARM64 Android build-tools SHA256SUMS asset", arm_source.get("sha256sums_asset_sha256"))
+
+    if value.get("definition_id") != "android-arm64-api36-v2" or value.get("reference") != "devtool/android-build:arm64-api36-v2":
+        raise ValueError("OCI-05 canonical Android image must use the v2 embedded-runtime identity")
+    runtime = value.get("devtool_runtime", {})
+    embedded = runtime.get("embedded_android_builder", {}) if isinstance(runtime, dict) else {}
+    expected_embedded = {
+        "path": "/usr/local/lib/devtool/build-apk",
+        "sha256": "c35521e80c7f05b734e23c444922fa7b02820d9318c17494d9f0076fc23f70fc",
+        "toolchains_path": "/usr/local/lib/devtool/termux_toolchains.py",
+        "toolchains_sha256": "46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe",
+        "gradle_events_init_path": "/usr/local/lib/devtool/devtool-events.init.gradle",
+        "gradle_events_init_sha256": "da7550a61bae530a8bb407c64574a456f77398db29332470623b47028bd9a50f",
+    }
+    if embedded != expected_embedded:
+        raise ValueError("OCI-05 embedded Devtool Android runtime contract changed unexpectedly")
+    for label, resource, digest in (
+        ("Android builder", "build-apk", expected_embedded["sha256"]),
+        ("toolchain companion", "termux_toolchains.py", expected_embedded["toolchains_sha256"]),
+        ("Gradle telemetry init", "devtool-events.init.gradle", expected_embedded["gradle_events_init_sha256"]),
+    ):
+        payload = _resource_bytes(resource)
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise ValueError(f"OCI-05 embedded {label} resource digest mismatch")
+        canonical_source = _SOURCE_RUNTIME[resource].read_bytes()
+        if payload != canonical_source:
+            raise ValueError(f"OCI-05 embedded {label} resource is stale relative to canonical Devtool source")
 
     required_commands = set(value.get("devtool_runtime", {}).get("required_commands", []))
     for command in ("timeout", "mktemp", "grep", "head", "sha256sum"):

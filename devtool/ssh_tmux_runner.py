@@ -26,7 +26,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from .execution_providers import SSH_NATIVE, normalize_execution_provider
+from .execution_providers import SSH_NATIVE, SSH_PROOT_OCI, normalize_execution_provider
 
 
 _SSH_VALUE_FLAGS = {
@@ -117,6 +117,11 @@ class SSHRunnerConfig:
     execution_provider: str = SSH_NATIVE
     oci_cache_root: str = "~/.cache/devtool/oci/workspace-caches"
     oci_env_allowlist: tuple[str, ...] = ("CI", "TERM", "COLORTERM", "LANG", "LC_ALL", "TZ")
+    oci_image: str = "devtool/android-build:arm64-api36-v2"
+    oci_container: str = "devtool-android-api36"
+    oci_architecture: str = "aarch64"
+    oci_pull_policy: str = "if-missing"
+    oci_digest_policy: str = "record"
 
     @property
     def destination(self) -> str:
@@ -290,6 +295,9 @@ def _ssh_profile_section(data: Mapping[str, Any], profile: str) -> dict[str, Any
                     result["oci_cache_root"] = oci.get("cache_root")
                 if "env_allowlist" in oci:
                     result["oci_env_allowlist"] = oci.get("env_allowlist")
+                for key in ("image", "container", "architecture", "pull_policy", "digest_policy"):
+                    if key in oci:
+                        result["oci_" + key] = oci.get(key)
             return result
     available = sorted({str(name) for container in containers for name in container})
     suffix = f" Available profiles: {', '.join(available)}." if available else ""
@@ -308,6 +316,9 @@ def _ssh_section(data: Mapping[str, Any], target_name: str = "", profile: str = 
                 merged["oci_cache_root"] = oci.get("cache_root")
             if "env_allowlist" in oci:
                 merged["oci_env_allowlist"] = oci.get("env_allowlist")
+            for key in ("image", "container", "architecture", "pull_policy", "digest_policy"):
+                if key in oci:
+                    merged["oci_" + key] = oci.get(key)
 
     # A named profile provides the worker baseline. Explicit execution/target
     # settings still override it for backward-compatible per-target tuning.
@@ -339,6 +350,9 @@ def _ssh_section(data: Mapping[str, Any], target_name: str = "", profile: str = 
                         merged["oci_cache_root"] = oci.get("cache_root")
                     if "env_allowlist" in oci:
                         merged["oci_env_allowlist"] = oci.get("env_allowlist")
+                    for key in ("image", "container", "architecture", "pull_policy", "digest_policy"):
+                        if key in oci:
+                            merged["oci_" + key] = oci.get(key)
             for key in (
                 "ssh_host", "ssh_port", "ssh_user", "ssh_identity",
                 "ssh_session", "ssh_cwd", "ssh_tool", "ssh_mode", "ssh_stage_dir",
@@ -495,6 +509,28 @@ def resolve_ssh_config(
         oci_env_allowlist = tuple(str(item).strip() for item in raw_oci_allowlist if str(item).strip())
     else:
         raise ValueError("SSH OCI env_allowlist must be a comma-separated string or list of variable names")
+    oci_image = str(file_options.get("oci_image", "devtool/android-build:arm64-api36-v2") or "devtool/android-build:arm64-api36-v2").strip()
+    oci_container = str(file_options.get("oci_container", "devtool-android-api36") or "devtool-android-api36").strip()
+    oci_architecture = str(file_options.get("oci_architecture", "aarch64") or "aarch64").strip().lower().replace("_", "-")
+    if oci_architecture == "arm64":
+        oci_architecture = "aarch64"
+    if oci_architecture != "aarch64":
+        raise ValueError(f"SSH OCI architecture must be aarch64/arm64, got {oci_architecture!r}")
+    oci_pull_policy = str(file_options.get("oci_pull_policy", "if-missing") or "if-missing").strip().lower().replace("_", "-")
+    if oci_pull_policy not in {"never", "if-missing"}:
+        raise ValueError(f"SSH OCI pull policy must be never or if-missing, got {oci_pull_policy!r}")
+    oci_digest_policy = str(file_options.get("oci_digest_policy", "record") or "record").strip().lower().replace("_", "-")
+    if oci_digest_policy not in {"record", "require"}:
+        raise ValueError(f"SSH OCI digest policy must be record or require, got {oci_digest_policy!r}")
+    explicit_mode = bool(cli_mode or str(env.get("DEVTOOL_SSH_MODE", "") or "").strip() or str(file_options.get("mode", "") or "").strip())
+    if execution_provider == "ssh-proot-oci":
+        if not profile:
+            raise ValueError("ssh-proot-oci requires a named --ssh-profile worker")
+        if workspace_mode != "managed":
+            raise ValueError("ssh-proot-oci requires workspace.mode='managed'")
+        if explicit_mode and mode != "commands":
+            raise ValueError("ssh-proot-oci uses local Devtool orchestration with remote command phases; --ssh-mode must be 'commands'")
+        mode = "commands"
 
     try:
         lease_timeout_seconds = int(file_options.get("lease_timeout_seconds", 900) or 900)
@@ -543,6 +579,11 @@ def resolve_ssh_config(
         execution_provider=execution_provider,
         oci_cache_root=oci_cache_root,
         oci_env_allowlist=oci_env_allowlist,
+        oci_image=oci_image,
+        oci_container=oci_container,
+        oci_architecture=oci_architecture,
+        oci_pull_policy=oci_pull_policy,
+        oci_digest_policy=oci_digest_policy,
     )
 
 
@@ -1103,6 +1144,9 @@ def _stage_support_files_for_spec(
         if mapped != token:
             rewritten.append(mapped)
             continue
+        if config.execution_provider == "ssh-proot-oci" and str(token).startswith("/usr/local/lib/devtool/"):
+            rewritten.append(str(token))
+            continue
         path = Path(token).expanduser()
         explicitly_local = index in helper_indices or token in helper_values
         if not explicitly_local:
@@ -1198,6 +1242,42 @@ def _stage_sensitive_env(
         detail = (completed.stderr or completed.stdout or "").strip()
         raise ValueError(f"SSH sensitive environment staging failed with exit {completed.returncode}: {detail or 'no diagnostic output'}")
     return remote_file
+
+
+def _cleanup_oci_construction_state(
+    config: SSHRunnerConfig,
+    *,
+    secret_files: Iterable[str],
+    operation_roots: Iterable[str],
+) -> None:
+    """Best-effort cleanup when OCI command wrapping fails before tmux owns it.
+
+    Once a wrapped phase is returned, its local/tmux cleanup and recovery rules
+    own these paths. If construction aborts first, there is no resumable phase,
+    so retaining staged helpers or secret files would be both misleading and a
+    secret-lifecycle leak. Cleanup failures never replace the construction error.
+    """
+    files = tuple(dict.fromkeys(str(value) for value in secret_files if str(value).strip()))
+    roots = tuple(dict.fromkeys(str(value) for value in operation_roots if str(value).strip()))
+    if not files and not roots:
+        return
+    fragments: list[str] = ["set +e"]
+    if files:
+        fragments.append("rm -f -- " + " ".join(_remote_shell_path(path) for path in files))
+    if roots:
+        fragments.append("rm -rf -- " + " ".join(_remote_shell_path(path) for path in roots))
+    try:
+        subprocess.run(
+            _build_ssh_remote_sh_argv(config, "; ".join(fragments), tty=False),
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=_transport_timeout(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        # The original construction failure remains authoritative. A transport
+        # outage here is OCI-06 recovery territory and must not mask its cause.
+        pass
 
 
 def _build_remote_phase_script(
@@ -1344,6 +1424,172 @@ def _rewrite_artifact_output_for_remote(
     return rewritten, local_output, remote_output
 
 
+def _oci_replace_option(argv: list[str], flag: str, value: str) -> list[str]:
+    result = list(argv)
+    boundary = result.index("--") if "--" in result else len(result)
+    index = 0
+    while index < boundary:
+        token = result[index]
+        if token == flag:
+            if index + 1 < boundary:
+                result[index + 1] = value
+                return result
+            break
+        if token.startswith(flag + "="):
+            result[index] = flag + "=" + value
+            return result
+        index += 1
+    result[boundary:boundary] = [flag, value]
+    return result
+
+
+def _oci_rewrite_runtime_argv(argv: list[str], metadata: dict[str, Any]) -> list[str]:
+    """Replace standard staged Android runtime inputs with immutable image v2 paths."""
+    if not argv:
+        return []
+    result = list(argv)
+    builder = str(metadata.get("android_builder") or "").strip()
+    if builder:
+        try:
+            builder_resolved = Path(builder).expanduser().resolve()
+        except OSError:
+            builder_resolved = Path(builder).expanduser()
+        for index, token in enumerate(result):
+            try:
+                candidate = Path(str(token)).expanduser().resolve()
+            except (OSError, RuntimeError):
+                candidate = Path(str(token)).expanduser()
+            if candidate == builder_resolved:
+                result[index] = "/usr/local/lib/devtool/build-apk"
+        metadata.pop("android_builder", None)
+        metadata["oci_embedded_android_runtime"] = True
+
+    events_sha = "da7550a61bae530a8bb407c64574a456f77398db29332470623b47028bd9a50f"
+    for index, token in enumerate(result[:-1]):
+        if token != "--init-script":
+            continue
+        candidate = Path(str(result[index + 1])).expanduser()
+        if not candidate.is_file():
+            continue
+        try:
+            digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        if digest == events_sha:
+            result[index + 1] = "/usr/local/lib/devtool/devtool-events.init.gradle"
+            metadata["oci_embedded_gradle_events"] = True
+
+    if metadata.get("oci_embedded_android_runtime"):
+        # The image is the single owner of standard Android toolchain selection.
+        for flag, value in (
+            ("--java-home", "/usr/lib/jvm/java-21-openjdk-arm64"),
+            ("--sdk-root", "/opt/android-sdk"),
+            ("--build-tools", "36.0.0"),
+            ("--ndk-version", "29.0.14206865"),
+            ("--toolchain-downloads", "never"),
+            ("--bootstrap-network", "deny"),
+            ("--system-deps", "never"),
+            ("--qemu-install", "never"),
+            ("--gradle-provider", "wrapper"),
+        ):
+            result = _oci_replace_option(result, flag, value)
+        # Remove setup flags that would contradict image immutability.
+        result = [token for token in result if token not in {"--auto-sdk", "--force-setup"}]
+        boundary = result.index("--") if "--" in result else len(result)
+        if "--skip-sdk-install" not in result[:boundary]:
+            result.insert(boundary, "--skip-sdk-install")
+    return result
+
+
+def _oci_guest_translate(value: str, *, remote_root: str, operation_root: str, operation_guest: str) -> str:
+    text = str(value)
+    root = remote_root.rstrip("/")
+    op = operation_root.rstrip("/")
+    if text == root:
+        return "/workspace"
+    if root and text.startswith(root + "/"):
+        return "/workspace/" + text[len(root) + 1:]
+    if op and text == op:
+        return operation_guest
+    if op and text.startswith(op + "/"):
+        return operation_guest.rstrip("/") + "/" + text[len(op) + 1:]
+    return text
+
+
+def _oci_guest_translate_token(token: str, *, remote_root: str, operation_root: str, operation_guest: str) -> str:
+    text = str(token)
+    if text.startswith("--") and "=" in text:
+        flag, value = text.split("=", 1)
+        mapped = _oci_guest_translate(value, remote_root=remote_root, operation_root=operation_root, operation_guest=operation_guest)
+        return flag + "=" + mapped
+    return _oci_guest_translate(text, remote_root=remote_root, operation_root=operation_root, operation_guest=operation_guest)
+
+
+def _oci_bind_shell_arg(host: str, guest: str) -> str:
+    # Keep HOME-relative sources expandable by the remote shell while passing a
+    # single host:guest operand to proot-distro.
+    return _remote_shell_path(host) + ":" + shlex.quote(guest)
+
+
+def _oci_wrap_guest_command(
+    config: SSHRunnerConfig,
+    *,
+    plan: Any,
+    guest_cwd: str,
+    command: str,
+    public_env: Mapping[str, str],
+    sensitive_keys: Iterable[str],
+    operation_host: str,
+    operation_guest: str,
+    bind_operation: bool,
+    secret_host_dir: str,
+    secret_guest_dir: str,
+) -> str:
+    options: list[str] = []
+    for bind in plan.binds:
+        options.extend(["--bind", bind.host + ":" + bind.guest])
+    if bind_operation:
+        options.extend(["--bind", operation_host + ":" + operation_guest])
+    if secret_host_dir:
+        options.extend(["--bind", secret_host_dir + ":" + secret_guest_dir])
+    options.extend(["--work-dir", guest_cwd])
+
+    env_values = dict(plan.managed_environment)
+    env_values.update(plan.forwarded_environment)
+    env_values.update({str(k): str(v) for k, v in public_env.items()})
+    env_assignments = [f"{key}={value}" for key, value in sorted(env_values.items())]
+    env_shell = " ".join(shlex.quote(item) for item in env_assignments)
+    secret_shell = " ".join(f'{key}="${{{key}-}}"' for key in sorted(set(sensitive_keys)))
+    inner_parts = []
+    if secret_host_dir:
+        inner_parts.append(". " + shlex.quote(secret_guest_dir.rstrip("/") + "/secret-env.sh"))
+    env_command = 'exec env -i HOME="$HOME" PATH="$PATH"'
+    if env_shell:
+        env_command += " " + env_shell
+    if secret_shell:
+        env_command += " " + secret_shell
+    env_command += " /bin/bash -lc " + shlex.quote(command)
+    inner_parts.append(env_command)
+    inner = " && ".join(inner_parts)
+
+    option_shell: list[str] = []
+    index = 0
+    while index < len(options):
+        flag = options[index]
+        value = options[index + 1]
+        if flag == "--bind":
+            host, guest = value.split(":", 1)
+            option_shell.extend([flag, _oci_bind_shell_arg(host, guest)])
+        else:
+            option_shell.extend([flag, shlex.quote(value)])
+        index += 2
+    return (
+        'pd_bin="$(command -v proot-distro 2>/dev/null || command -v pd 2>/dev/null || true)"; '
+        '[ -n "$pd_bin" ] || { echo "PRoot-Distro is unavailable for OCI repository execution" >&2; exit 127; }; '
+        'exec "$pd_bin" login ' + shlex.quote(config.oci_container) + " " + " ".join(option_shell)
+        + " -- /bin/bash -lc " + shlex.quote(inner)
+    )
+
 def wrap_specs_for_ssh_commands(
     specs: Iterable[Any],
     config: SSHRunnerConfig,
@@ -1391,6 +1637,22 @@ def wrap_specs_for_ssh_commands(
         run_identity = str(config.operation_id or os.environ.get("DEVTOOL_RUN_ID") or "").strip()
         base_session = _sanitize_session(config.session or _default_session(config, ["commands"]))
         preparation_metadata = {}
+    oci_state = None
+    if config.execution_provider == SSH_PROOT_OCI:
+        if preparation is None or preparation.workspace is None:
+            raise ValueError("ssh-proot-oci requires a prepared named managed SSH workspace")
+        if not run_identity:
+            raise ValueError("ssh-proot-oci repository execution requires the caller's canonical EXO RunId")
+        from .oci_execution import prepare_oci_execution
+        oci_state = prepare_oci_execution(
+            config, repo_root=str(local_root), run_id=run_identity,
+            workspace_id=str(preparation.workspace.workspace_id), remote_root=remote_root,
+            source_sync_id=str(preparation_metadata.get("ssh_source_sync_id") or ""),
+            source_revision=(preparation_metadata.get("ssh_source_revision") if isinstance(preparation_metadata.get("ssh_source_revision"), Mapping) else {}),
+            dry_run=dry_run, environment=os.environ,
+            workspace_planned=bool(dry_run and preparation.sync.get("would_create_workspace")),
+        )
+        preparation_metadata.update(oci_state.metadata())
     wrapped: list[Any] = []
     external_ordinals = [
         i for i, item in enumerate(spec_list, 1)
@@ -1402,6 +1664,8 @@ def wrap_specs_for_ssh_commands(
         from .ssh_resilience import SSHWorkspaceLease, build_release_lease_ssh_argv
         lease_release_argv = build_release_lease_ssh_argv(config, SSHWorkspaceLease(**preparation.lease))
     wrapping_complete = False
+    oci_construction_secret_files: list[str] = []
+    oci_construction_operation_roots: list[str] = []
     try:
         if not dry_run:
             _preflight_local_transport(config)
@@ -1432,6 +1696,11 @@ def wrap_specs_for_ssh_commands(
                 remote_base_argv[0] = _remote_resolve_tool_executable(remote_base_argv[0], local_root)
             phase_name = _sanitize_session(str(getattr(spec, "name", "phase") or "phase"))
             session = _sanitize_session(f"{base_session}-{ordinal:02d}-{phase_name}")
+            if config.execution_provider == SSH_PROOT_OCI and not dry_run:
+                # Record before staging: _stage_support_files_for_spec may copy one
+                # helper and then fail on a later operand. No tmux phase exists yet
+                # to own cleanup in that construction-failure case.
+                oci_construction_operation_roots.append(_operation_stage_root(config, session))
             remote_cwd = _translate_repo_bound_path(host_cwd, local_root, remote_root)
             if remote_cwd == host_cwd and Path(host_cwd).is_absolute():
                 # A cwd outside the repository has no declared SSH mapping. Use the
@@ -1466,6 +1735,8 @@ def wrap_specs_for_ssh_commands(
                     metadata["ssh_return_disabled_reason"] = str(exc)
                     return_fragment = ""
 
+            if config.execution_provider == SSH_PROOT_OCI:
+                remote_base_argv = _oci_rewrite_runtime_argv(remote_base_argv, metadata)
             artifact_phase = bool(metadata.get("collect_artifacts") or metadata.get("verify_artifacts"))
             explicit_artifact_output = bool(_find_value(remote_base_argv, {"--output-dir", "-o", "--out-dir", "--outdir"}).strip())
             remote_base_argv, local_artifact_dir, remote_artifact_dir = _rewrite_artifact_output_for_remote(
@@ -1489,41 +1760,101 @@ def wrap_specs_for_ssh_commands(
                 metadata=metadata,
             )
             translated_env = _translate_env_for_repo(getattr(spec, "env", {}) or {}, local_root, remote_root)
+            if config.execution_provider == SSH_PROOT_OCI:
+                translated_env = {
+                    key: value for key, value in translated_env.items()
+                    if not str(key).startswith(("PD_", "PROOT_"))
+                }
             from .ssh_resilience import split_sensitive_env
             public_env, sensitive_env = split_sensitive_env(translated_env)
-            assignments = [f"{key}={value}" for key, value in sorted(public_env.items())]
-            env_prefix = "env " + " ".join(shlex.quote(item) for item in assignments) + " " if assignments else ""
+            if config.execution_provider == SSH_PROOT_OCI and sensitive_env and not dry_run:
+                from .ssh_resilience import remote_phase_state_paths
+                expected_secret_file = _remote_join(remote_phase_state_paths(config, run_identity, session)["root"], "secret-env.sh")
+                # Track both final and atomic temporary names before the write so a
+                # failed staging command cannot leave either behind.
+                oci_construction_secret_files.extend((expected_secret_file, expected_secret_file + ".tmp"))
             secret_env_file = _stage_sensitive_env(
                 config, session=session, run_id=run_identity, values=sensitive_env, dry_run=dry_run
             )
-            secret_prefix = (". " + _remote_shell_path(secret_env_file) + " && ") if secret_env_file else ""
-            actual_command = secret_prefix + env_prefix + _shell_join_remote(translated_argv)
             if sensitive_env:
                 metadata["ssh_sensitive_env_keys"] = sorted(sensitive_env)
                 metadata["ssh_sensitive_env_staged"] = True
-            if artifact_phase and not explicit_artifact_output:
-                native_output = _translate_repo_bound_path(str(local_artifact_dir), local_root, remote_root)
-                if native_output == str(local_artifact_dir) and os.path.isabs(str(local_artifact_dir)):
-                    raise ValueError("SSH artifact output without an explicit tool output flag must map inside the declared remote repository")
-                if native_output.rstrip("/") == remote_root.rstrip("/"):
-                    raise ValueError("SSH artifact output directory cannot be the repository root")
-                inner = (
-                    "cd " + _remote_shell_path(remote_cwd)
-                    + " && rm -rf -- " + _remote_shell_path(native_output)
-                    + " && mkdir -p -- " + _remote_shell_path(native_output)
-                    + " && " + actual_command
-                    + '; rc=$?; if [ "$rc" -eq 0 ]; then '
-                    + "rm -rf -- " + _remote_shell_path(remote_artifact_dir)
-                    + " && mkdir -p -- " + _remote_shell_path(remote_artifact_dir)
-                    + " && cp -a -- " + _remote_shell_path(native_output).rstrip("/") + "/. " + _remote_shell_path(remote_artifact_dir)
-                    + ' || rc=$?; fi; exit "$rc"'
+
+            if config.execution_provider == SSH_PROOT_OCI:
+                if oci_state is None:
+                    raise ValueError("OCI command wrapping requires prepared OCI execution state")
+                operation_host = _operation_stage_root(config, session)
+                operation_guest = "/run/devtool/" + session
+                guest_cwd = _oci_guest_translate(remote_cwd, remote_root=remote_root, operation_root=operation_host, operation_guest=operation_guest)
+                translated_argv = [
+                    _oci_guest_translate_token(token, remote_root=remote_root, operation_root=operation_host, operation_guest=operation_guest)
+                    for token in translated_argv
+                ]
+                public_env = {
+                    key: _oci_guest_translate(value, remote_root=remote_root, operation_root=operation_host, operation_guest=operation_guest)
+                    for key, value in public_env.items()
+                }
+                bind_operation = bool(staged) or artifact_phase
+                if bind_operation and not dry_run:
+                    _ensure_remote_dir(config, operation_host)
+                secret_host_dir = secret_env_file.rsplit("/", 1)[0] if secret_env_file else ""
+                secret_guest_dir = "/run/devtool-secret/" + session if secret_env_file else ""
+                command_core = _shell_join_remote(translated_argv)
+                if artifact_phase and not explicit_artifact_output:
+                    native_output_host = _translate_repo_bound_path(str(local_artifact_dir), local_root, remote_root)
+                    if native_output_host == str(local_artifact_dir) and os.path.isabs(str(local_artifact_dir)):
+                        raise ValueError("SSH artifact output without an explicit tool output flag must map inside the declared remote repository")
+                    if native_output_host.rstrip("/") == remote_root.rstrip("/"):
+                        raise ValueError("SSH artifact output directory cannot be the repository root")
+                    native_output = _oci_guest_translate(native_output_host, remote_root=remote_root, operation_root=operation_host, operation_guest=operation_guest)
+                    guest_artifact_dir = _oci_guest_translate(remote_artifact_dir, remote_root=remote_root, operation_root=operation_host, operation_guest=operation_guest)
+                    guest_command = (
+                        "cd " + shlex.quote(guest_cwd)
+                        + " && rm -rf -- " + shlex.quote(native_output)
+                        + " && mkdir -p -- " + shlex.quote(native_output)
+                        + " && " + command_core
+                        + '; rc=$?; if [ "$rc" -eq 0 ]; then '
+                        + "rm -rf -- " + shlex.quote(guest_artifact_dir)
+                        + " && mkdir -p -- " + shlex.quote(guest_artifact_dir)
+                        + " && cp -a -- " + shlex.quote(native_output).rstrip("/") + "/. " + shlex.quote(guest_artifact_dir)
+                        + ' || rc=$?; fi; exit "$rc"'
+                    )
+                else:
+                    guest_command = "cd " + shlex.quote(guest_cwd) + " && " + command_core
+                command = _oci_wrap_guest_command(
+                    config, plan=oci_state.plan, guest_cwd=guest_cwd, command=guest_command,
+                    public_env=public_env, sensitive_keys=sensitive_env.keys(),
+                    operation_host=operation_host, operation_guest=operation_guest, bind_operation=bind_operation,
+                    secret_host_dir=secret_host_dir, secret_guest_dir=secret_guest_dir,
                 )
-                # Keep the tmux wrapper shell alive so _build_remote_phase_script
-                # can persist the nested command's real exit status. Using `exec`
-                # here would bypass its status-file finalizer entirely.
-                command = "sh -c " + shlex.quote(inner)
+                metadata["oci_guest_cwd"] = guest_cwd
+                metadata["oci_operation_bind"] = bool(bind_operation)
+                metadata["oci_secret_bind"] = bool(secret_env_file)
             else:
-                command = "cd " + _remote_shell_path(remote_cwd) + " && " + actual_command
+                assignments = [f"{key}={value}" for key, value in sorted(public_env.items())]
+                env_prefix = "env " + " ".join(shlex.quote(item) for item in assignments) + " " if assignments else ""
+                secret_prefix = (". " + _remote_shell_path(secret_env_file) + " && ") if secret_env_file else ""
+                actual_command = secret_prefix + env_prefix + _shell_join_remote(translated_argv)
+                if artifact_phase and not explicit_artifact_output:
+                    native_output = _translate_repo_bound_path(str(local_artifact_dir), local_root, remote_root)
+                    if native_output == str(local_artifact_dir) and os.path.isabs(str(local_artifact_dir)):
+                        raise ValueError("SSH artifact output without an explicit tool output flag must map inside the declared remote repository")
+                    if native_output.rstrip("/") == remote_root.rstrip("/"):
+                        raise ValueError("SSH artifact output directory cannot be the repository root")
+                    inner = (
+                        "cd " + _remote_shell_path(remote_cwd)
+                        + " && rm -rf -- " + _remote_shell_path(native_output)
+                        + " && mkdir -p -- " + _remote_shell_path(native_output)
+                        + " && " + actual_command
+                        + '; rc=$?; if [ "$rc" -eq 0 ]; then '
+                        + "rm -rf -- " + _remote_shell_path(remote_artifact_dir)
+                        + " && mkdir -p -- " + _remote_shell_path(remote_artifact_dir)
+                        + " && cp -a -- " + _remote_shell_path(native_output).rstrip("/") + "/. " + _remote_shell_path(remote_artifact_dir)
+                        + ' || rc=$?; fi; exit "$rc"'
+                    )
+                    command = "sh -c " + shlex.quote(inner)
+                else:
+                    command = "cd " + _remote_shell_path(remote_cwd) + " && " + actual_command
             workspace_id = str(preparation_metadata.get("ssh_workspace_id") or "")
             lease_meta = preparation_metadata.get("ssh_workspace_lease") or {}
             lease_dir = str(lease_meta.get("lease_dir") or "") if isinstance(lease_meta, dict) else ""
@@ -1587,7 +1918,7 @@ def wrap_specs_for_ssh_commands(
                     local_script += '; if [ "$rc" -ne 0 ] && [ "$rc" -ne 125 ]; then ' + release + ' || rc=$?; fi'
             local_script += '; exit "$rc"'
             metadata.update(preparation_metadata)
-            metadata["execution_mode"] = "ssh-command"
+            metadata["execution_mode"] = ("ssh-proot-oci" if config.execution_provider == SSH_PROOT_OCI else "ssh-command")
             metadata["ssh_mode"] = "commands"
             metadata["ssh_destination"] = config.destination
             metadata["ssh_port"] = config.port
@@ -1600,6 +1931,12 @@ def wrap_specs_for_ssh_commands(
         wrapping_complete = True
         return wrapped
     finally:
+        if not wrapping_complete and config.execution_provider == SSH_PROOT_OCI and not dry_run:
+            _cleanup_oci_construction_state(
+                config,
+                secret_files=oci_construction_secret_files,
+                operation_roots=oci_construction_operation_roots,
+            )
         # Preparation may already have acquired the managed workspace lease. If
         # local wrapping/staging/preflight fails before the shell plan owns that
         # lease, release it here so a construction error cannot deadlock the

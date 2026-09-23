@@ -20,7 +20,7 @@ import subprocess
 import uuid
 from typing import Any, Iterable
 
-from .execution_providers import ensure_execution_provider_ready
+from .execution_providers import SSH_PROOT_OCI, ensure_execution_provider_ready
 from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_remote_sh_argv, worker_session_name
 from .ssh_worker import SSHWorkerProbe, bootstrap_worker, probe_worker
 from .ssh_workspace import (
@@ -321,6 +321,11 @@ def prepare_ssh_command_execution(
     dry_run: bool = False,
 ) -> SSHExecutionPreparation:
     ensure_execution_provider_ready(config.execution_provider, remote=True)
+    if config.execution_provider == SSH_PROOT_OCI:
+        if not config.profile:
+            raise ValueError("ssh-proot-oci repository execution requires a named SSH profile")
+        if config.workspace_mode != "managed":
+            raise ValueError("ssh-proot-oci repository execution requires workspace.mode='managed'")
     spec_list = list(specs)
     external = _external_specs(spec_list)
     if not external:
@@ -401,7 +406,20 @@ def prepare_ssh_command_execution(
                     config, operation="commands", repository=remote_root, run_id=run_identity
                 )
 
-        toolchain = ensure_remote_toolchain(config, external, worker=worker, dry_run=dry_run)
+        if config.execution_provider == SSH_PROOT_OCI:
+            toolchain = {
+                "ok": True,
+                "kind": _execution_kind(external),
+                "owner": "immutable-oci-image",
+                "host_provisioning": False,
+                "persistent_caches": [
+                    "/var/cache/devtool/gradle", "/var/cache/devtool/xdg", "/var/cache/devtool/npm",
+                    "/var/cache/devtool/pip", "/var/cache/devtool/uv",
+                ],
+                "detail": "Repository toolchain owned by immutable OCI image; SSH host toolchain provisioning disabled",
+            }
+        else:
+            toolchain = ensure_remote_toolchain(config, external, worker=worker, dry_run=dry_run)
     except Exception:
         if lease_obj is not None:
             release_workspace_lease(config, lease_obj)

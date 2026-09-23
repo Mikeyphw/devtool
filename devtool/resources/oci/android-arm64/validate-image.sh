@@ -8,6 +8,13 @@ case "$(uname -m)" in aarch64|arm64) ;; *) fail architecture "expected aarch64/a
 [ -f /usr/local/lib/devtool/oci-image-manifest.json ] || fail manifest 'image manifest is missing' 66
 [ -f /usr/local/lib/devtool/oci-build-metadata.json ] || fail build-metadata 'image build metadata is missing' 66
 [ -f /usr/local/lib/devtool/oci-immutable-toolchain ] || fail immutability 'immutable toolchain marker is missing' 66
+[ -x /usr/local/lib/devtool/build-apk ] || fail devtool-runtime 'embedded Android builder is missing or not executable' 66
+[ -f /usr/local/lib/devtool/termux_toolchains.py ] || fail devtool-runtime 'embedded toolchain companion is missing' 66
+[ -f /usr/local/lib/devtool/devtool-events.init.gradle ] || fail devtool-runtime 'embedded Gradle telemetry init script is missing' 66
+echo 'c35521e80c7f05b734e23c444922fa7b02820d9318c17494d9f0076fc23f70fc  /usr/local/lib/devtool/build-apk' | sha256sum -c - >/dev/null || fail devtool-runtime 'embedded Android builder digest mismatch' 65
+echo '46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe  /usr/local/lib/devtool/termux_toolchains.py' | sha256sum -c - >/dev/null || fail devtool-runtime 'embedded toolchain companion digest mismatch' 65
+echo 'da7550a61bae530a8bb407c64574a456f77398db29332470623b47028bd9a50f  /usr/local/lib/devtool/devtool-events.init.gradle' | sha256sum -c - >/dev/null || fail devtool-runtime 'embedded Gradle telemetry init digest mismatch' 65
+python3 -m py_compile /usr/local/lib/devtool/build-apk /usr/local/lib/devtool/termux_toolchains.py || fail devtool-runtime 'embedded Python runtime resources do not compile' 65
 for c in bash git rsync ssh tmux python3 java node npm cmake ninja clang file sha256sum; do command -v "$c" >/dev/null 2>&1 || fail "command:$c" "$c is missing" 127; done
 py="$(python3 -c 'import platform; print(platform.python_version())')"
 case "$py" in 3.12.*) ;; *) fail python "expected pinned Python 3.12.x, got $py" 65;; esac

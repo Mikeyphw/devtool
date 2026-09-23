@@ -90,12 +90,12 @@ def _patch_bus(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> EventBus:
     return bus
 
 
-def test_oci04_cli_surface_and_provider_stays_fail_closed() -> None:
+def test_oci04_cli_surface_remains_compatible_after_provider_activation() -> None:
     parser = build_parser()
     parsed = parser.parse_args(["oci", "workspace", "tablet", "--dry-run", "--format", "json"])
     assert parsed.oci_command == "workspace"
     assert parsed.oci_dry_run is True
-    assert execution_provider(SSH_PROOT_OCI, remote=True).executable is False
+    assert execution_provider(SSH_PROOT_OCI, remote=True).executable is True
 
 
 def test_profile_oci_cache_and_environment_allowlist_are_resolved() -> None:
