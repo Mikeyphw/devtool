@@ -30,6 +30,8 @@ class WrapperConfigError(ValueError):
 WRAPPER_SCHEMA_VERSION = 1
 WRAPPER_OPTION_TYPES = frozenset({"boolean", "string", "integer", "float", "choice", "path"})
 WRAPPER_PATH_BASES = frozenset({"cwd", "repo"})
+WRAPPER_RESERVED_OPTION_SPELLINGS = frozenset({"help", "h", "version"})
+WRAPPER_RESERVED_COMMAND_SPELLINGS = frozenset({"help", "version"})
 # Canonical public action commands.  Aliases are deliberately excluded: the
 # repository contract should not depend on CLI shorthand.
 WRAPPER_NATIVE_COMMANDS = frozenset({
@@ -187,7 +189,9 @@ def _parse_value_contract(raw: Mapping[str, Any], *, path: str, positional: bool
     relative_to = str(raw.get("relative_to") or "").strip().lower()
     if relative_to and option_type != "path":
         raise _fail(f"{path}.relative_to is only valid for type='path'")
-    if option_type == "path" and relative_to and relative_to not in WRAPPER_PATH_BASES:
+    if option_type == "path" and not relative_to:
+        raise _fail(f"{path}.relative_to is required for type='path' and must be one of: {', '.join(sorted(WRAPPER_PATH_BASES))}")
+    if option_type == "path" and relative_to not in WRAPPER_PATH_BASES:
         raise _fail(f"{path}.relative_to must be one of: {', '.join(sorted(WRAPPER_PATH_BASES))}")
 
     default = raw.get("default", _MISSING)
@@ -227,6 +231,11 @@ def _parse_option(name: str, raw_value: object, *, command: str) -> WrapperOptio
     normalized_name = _nonempty_name(name, path=path, option=True)
     values = _parse_value_contract(raw, path=path)
     aliases = _string_list(raw.get("aliases"), path=f"{path}.aliases", option_names=True)
+    reserved = sorted({normalized_name, *aliases} & WRAPPER_RESERVED_OPTION_SPELLINGS)
+    if reserved:
+        raise _fail(
+            f"{path} uses reserved wrapper control spelling(s): {', '.join(reserved)}"
+        )
     conflicts = _string_list(raw.get("conflicts"), path=f"{path}.conflicts", option_names=True)
     requires = _string_list(raw.get("requires"), path=f"{path}.requires", option_names=True)
     return WrapperOptionConfig(
@@ -298,6 +307,8 @@ def _parse_command(
     raw = _table(raw_value, path=path)
     _reject_unknown(raw, _COMMAND_KEYS, path=path)
     command_name = _nonempty_name(name, path=path)
+    if command_name in WRAPPER_RESERVED_COMMAND_SPELLINGS:
+        raise _fail(f"{path} uses reserved wrapper command spelling {command_name!r}")
     devtool = str(raw.get("devtool") or "").strip()
     workflow = str(raw.get("workflow") or "").strip()
     if bool(devtool) == bool(workflow):
@@ -351,6 +362,9 @@ def _parse_command(
             )
 
     aliases = _string_list(raw.get("aliases"), path=f"{path}.aliases")
+    reserved_aliases = sorted(set(aliases) & WRAPPER_RESERVED_COMMAND_SPELLINGS)
+    if reserved_aliases:
+        raise _fail(f"{path}.aliases uses reserved wrapper command spelling(s): {', '.join(reserved_aliases)}")
     options_raw = _table(raw.get("options"), path=f"{path}.options")
     options: dict[str, WrapperOptionConfig] = {}
     option_spellings: dict[str, str] = {}
