@@ -37,7 +37,7 @@ def test_run_started_persists_invocation_origin_in_snapshot() -> None:
 def test_execution_snapshot_defaults_invocation_fields_for_legacy_state() -> None:
     snapshot = ExecutionSnapshot.from_state(ExecutionRunState(run_id="legacy"))
     document = snapshot.to_dict()
-    assert snapshot.schema_version == 6
+    assert snapshot.schema_version == 7
     assert document["invocation_source"] == ""
     assert document["invocation_command"] == ""
     assert document["invocation_metadata"] == {}

@@ -123,6 +123,7 @@ from .config import (
 from .log_commands import choose_active_log, format_log_entries, list_log_entries, open_log, resolve_log_path, tail_log
 from .logstore import latest_log, new_log_path, redact_sensitive_text, redact_sensitive_value, set_log_dir_override, state_dir as log_state_dir, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
+from .repository_identity import RepositoryIdentityError, build_repository_identity
 from .project_runners import resolve_validation_plan
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
@@ -8700,6 +8701,7 @@ def _plan_command_entry(index: int, spec: CommandSpec, config: ProjectConfig) ->
         "name": spec.name,
         "argv": list(spec.argv),
         "cwd": str(spec.cwd or config.repo_root),
+        "repository_identity": dict(metadata.get("repository_identity") or (config.repository_identity.as_dict() if config.repository_identity else {})),
         "node": str(metadata.get("workflow_node_key") or ""),
         "runner": str(metadata.get("workflow_runner") or metadata.get("runner") or ""),
         "workflow_target": str(metadata.get("workflow_target") or ""),
@@ -8779,6 +8781,7 @@ def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
     if config.targets and not candidates:
         payload = {
             "schema_version": 2,
+            "repository_identity": config.repository_identity.as_dict() if config.repository_identity else {},
             "action": action,
             "targets": [],
             "affected": affected_payload,
@@ -8819,6 +8822,7 @@ def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
         summary = _workflow_plan_summary(graph, plan, specs)
         payload = {
             "schema_version": 2,
+            "repository_identity": config.repository_identity.as_dict() if config.repository_identity else {},
             "action": action,
             "targets": list(candidates),
             "affected": affected_payload,
@@ -11695,6 +11699,17 @@ def _write_performance_report(
 
 
 
+def _repository_identity_for_args(args: argparse.Namespace) -> dict[str, object]:
+    repo_arg = str(getattr(args, "repo", "") or "").strip() or None
+    config_arg = str(getattr(args, "config", "") or "").strip() or None
+    repo_root = resolve_repository_root(repo_arg, config_arg)
+    config_path = find_config(repo_root, config_arg)
+    try:
+        return build_repository_identity(repo_root, config_path).as_dict()
+    except RepositoryIdentityError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
 def _safe_internal_invocation_token(value: object, *, field: str) -> str:
     return _shared_safe_internal_invocation_token(value, field=field)
 
@@ -12051,7 +12066,11 @@ def main(argv: list[str] | None = None) -> int:
                 command=command,
                 project=str(getattr(args, "repo", "") or Path.cwd()),
                 source=invocation_source,
-                metadata={"command": command, **invocation_metadata},
+                metadata={
+                    "command": command,
+                    "repository_identity": _repository_identity_for_args(args),
+                    **invocation_metadata,
+                },
             ))
         try:
             try:

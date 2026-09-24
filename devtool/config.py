@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import DotnetTarget, JobConfig, ProjectConfig, TargetConfig
+from .repository_identity import RepositoryIdentityError, build_repository_identity
 from .workspace import WorkspaceConfigError, load_workspace_config, workspace_as_dict
 from .wrapper_config import WrapperConfigError, load_wrapper_config, wrapper_as_dict
 from .workflow_config import (
@@ -710,6 +711,10 @@ def load_project_config(
 ) -> ProjectConfig:
     repo_root = resolve_repository_root(repo_root_arg, config_path_arg)
     config_path = find_config(repo_root, config_path_arg)
+    try:
+        repository_identity = build_repository_identity(repo_root, config_path)
+    except RepositoryIdentityError as exc:
+        raise SystemExit(str(exc)) from exc
     config_root = config_path.parent if config_path else repo_root
 
     loaded: dict[str, Any] = {}
@@ -1083,6 +1088,7 @@ def load_project_config(
         ),
         env=effective_env,
         config_path=config_path,
+        repository_identity=repository_identity,
         selected_target=resolved["selected_target"],
         variant=selected_variant_name,
         targets=targets,
@@ -2517,6 +2523,7 @@ def _expanded_workflow_graph_dict(config: ProjectConfig, target_name: str, actio
 def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
     return {
         "repo_root": str(config.repo_root),
+        "repository_identity": config.repository_identity.as_dict() if config.repository_identity else {},
         "config_path": str(config.config_path) if config.config_path else "",
         "global_config_path": str(config.global_config_path) if config.global_config_path else "",
         "workspace": workspace_as_dict(config.workspace, config.targets),

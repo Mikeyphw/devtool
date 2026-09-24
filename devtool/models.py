@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .repository_identity import RepositoryIdentity
+
 
 @dataclass(slots=True)
 class Issue:
@@ -301,6 +303,7 @@ class ProjectConfig:
     run_command: str = ""
     env: dict[str, str] = field(default_factory=dict)
     config_path: Path | None = None
+    repository_identity: RepositoryIdentity | None = None
     selected_target: str = ""
     variant: str = ""
     targets: dict[str, TargetConfig] = field(default_factory=dict)

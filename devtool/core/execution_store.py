@@ -170,6 +170,9 @@ class ExecutionReducer:
         invocation_metadata = metadata.get("invocation_metadata")
         if isinstance(invocation_metadata, dict):
             run.invocation_metadata.update({str(key): value for key, value in invocation_metadata.items()})
+        repository_identity = metadata.get("repository_identity")
+        if isinstance(repository_identity, dict):
+            run.repository_identity = {str(key): value for key, value in repository_identity.items()}
         for key in ("wrapper_schema", "wrapper_command"):
             value = metadata.get(key)
             if value not in (None, ""):

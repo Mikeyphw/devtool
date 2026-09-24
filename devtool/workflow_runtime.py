@@ -64,11 +64,20 @@ class _WorkspaceGraphPlanner:
                 if dependency not in current:
                     current.append(dependency)
             return node.key
+        repository_identity = (
+            self.config.repository_identity.as_dict()
+            if self.config.repository_identity is not None
+            else {}
+        )
         self._nodes[node.key] = replace(
             node,
             index=self._next_index,
             depends_on=(),
-            metadata={**dict(node.metadata), "workspace_graph": True},
+            metadata={
+                **dict(node.metadata),
+                "workspace_graph": True,
+                "repository_identity": repository_identity,
+            },
         )
         self._dependencies[node.key] = deps
         self._next_index += 1
@@ -529,6 +538,11 @@ def _node_specs(config: ProjectConfig, node: WorkflowNode, *, validation_skip: t
                 "workflow_runner_options": dict(runner_options),
                 "workflow_inputs": list(inputs),
                 "workflow_outputs": list(outputs),
+                "repository_identity": (
+                    target_config.repository_identity.as_dict()
+                    if target_config.repository_identity is not None
+                    else {}
+                ),
             }
         )
         spec.metadata = metadata
