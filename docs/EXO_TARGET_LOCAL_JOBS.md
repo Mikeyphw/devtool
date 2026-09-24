@@ -238,3 +238,22 @@ a normalized `job` object with `scope`, `target`, `local_name`, `key`, and
 so a failed phone-side run can be diagnosed from the copied log without
 reverse-engineering internal job keys.
 
+
+## TLJ-11 UI and machine summary surfaces
+
+Target-local job identity is now part of the user-facing action label and the
+runner machine payload. A workflow command generated from `job:contracts` inside
+`dustui_android` renders as `target-local job:dustui_android.contracts` in the
+action table, compact summary, and surfaces that use the shared summary labels.
+
+`build_runner_json()` now emits `schema_version = 2` and includes:
+
+- `workflow`: the same workflow payload exposed by `build_json_summary()`.
+- `execution_context.target_local_job_count`.
+- `execution_context.repository_job_count`.
+- `execution_context.targets_with_target_local_jobs`.
+- `execution_context.target_local_jobs[]`.
+- `execution_context.repository_jobs[]`.
+
+This keeps dashboard/HUD consumers from needing to reverse-engineer target-local
+job identity from raw result metadata.

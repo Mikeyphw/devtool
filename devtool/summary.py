@@ -362,29 +362,52 @@ def _coalesced_dotnet_validation_label(metadata: dict[str, object]) -> str:
     return ".NET validation (" + " + ".join(components) + " via dotnet test)"
 
 
+def _workflow_job_display(metadata: dict[str, object] | None) -> str:
+    metadata = metadata or {}
+    scope = str(metadata.get("workflow_job_scope") or metadata.get("workflow_resolution_scope") or "").strip()
+    key = str(metadata.get("workflow_job_key") or metadata.get("workflow_resolution_key") or "").strip()
+    target = str(metadata.get("workflow_job_target") or metadata.get("workflow_resolution_target") or metadata.get("workflow_target") or "").strip()
+    local_name = str(metadata.get("workflow_job_local_name") or metadata.get("workflow_resolution_local_name") or "").strip()
+    is_target_local = bool(metadata.get("workflow_job_target_local")) or scope == "target"
+    if is_target_local:
+        display = key or (f"{target}.{local_name}" if target and local_name else local_name)
+        return f"target-local job:{display}" if display else "target-local job"
+    if scope == "repository" and key:
+        return f"repository job:{key}"
+    return ""
+
+
 def _action_label(name: str, metadata: dict[str, object] | None = None) -> str:
     metadata = metadata or {}
     explicit = _coalesced_dotnet_validation_label(metadata)
     if explicit:
-        return explicit
-    base = name.strip()
-    if str(metadata.get("runner") or metadata.get("project_type") or "").lower() == "go":
-        go_labels = {
-            "restore": "Go restore",
-            "build": "Go build",
-            "test": "Go tests",
-            "lint": "Go vet",
-            "package": "Go package",
-            "go-validation": "Go tests",
-        }
-        prefix = base.partition(" [")[0].lower()
-        if prefix in go_labels:
-            suffix = base[len(base.partition(" [")[0]):]
-            return go_labels[prefix] + suffix
-    # Preserve useful target suffixes such as "build [S3pe.Modern.sln]".
-    prefix, separator, suffix = base.partition(" [")
-    label = _ACTION_LABELS.get(prefix.lower(), prefix.replace("-", " ").replace("_", " ").strip().title())
-    return f"{label} [{suffix}" if separator else label
+        label = explicit
+    else:
+        base = name.strip()
+        if str(metadata.get("runner") or metadata.get("project_type") or "").lower() == "go":
+            go_labels = {
+                "restore": "Go restore",
+                "build": "Go build",
+                "test": "Go tests",
+                "lint": "Go vet",
+                "package": "Go package",
+                "go-validation": "Go tests",
+            }
+            prefix = base.partition(" [")[0].lower()
+            if prefix in go_labels:
+                suffix = base[len(base.partition(" [")[0]):]
+                label = go_labels[prefix] + suffix
+            else:
+                label = ""
+        else:
+            label = ""
+        if not label:
+            # Preserve useful target suffixes such as "build [S3pe.Modern.sln]".
+            prefix, separator, suffix = base.partition(" [")
+            label = _ACTION_LABELS.get(prefix.lower(), prefix.replace("-", " ").replace("_", " ").strip().title())
+            label = f"{label} [{suffix}" if separator else label
+    job_display = _workflow_job_display(metadata)
+    return f"{label} · {job_display}" if job_display else label
 
 
 def _human_duration(seconds: float) -> str:
@@ -1330,11 +1353,28 @@ def build_runner_json(
         "totals": totals,
     }
     machine = machine_state_from_runtime(machine_raw).as_dict()
+    workflow_payload = json_summary.get("workflow") if isinstance(json_summary.get("workflow"), dict) else {}
+    workflow_summary = workflow_payload.get("summary") if isinstance(workflow_payload.get("summary"), dict) else {}
+    target_local_jobs = workflow_summary.get("target_local_jobs") if isinstance(workflow_summary.get("target_local_jobs"), list) else []
+    repository_jobs = workflow_summary.get("repository_jobs") if isinstance(workflow_summary.get("repository_jobs"), list) else []
+    targets_with_target_local_jobs = (
+        workflow_summary.get("targets_with_target_local_jobs")
+        if isinstance(workflow_summary.get("targets_with_target_local_jobs"), list)
+        else []
+    )
 
     return {
         "schema_version": 1,
         "machine_schema_version": MACHINE_SCHEMA_VERSION,
         "machine": machine,
+        "workflow": workflow_payload,
+        "execution_context": {
+            "target_local_job_count": int(workflow_summary.get("target_local_job_count") or 0),
+            "repository_job_count": int(workflow_summary.get("repository_job_count") or 0),
+            "targets_with_target_local_jobs": targets_with_target_local_jobs,
+            "target_local_jobs": target_local_jobs,
+            "repository_jobs": repository_jobs,
+        },
         "ok": ok,
         "command": command,
         "repo": repo_root,
