@@ -299,6 +299,8 @@ _devtool_commands() {
     'gr:alias for groups'
     'jobs:list reusable polyglot jobs'
     'jb:alias for jobs'
+    'target-local-jobs:report target-local job adoption and workflow wiring'
+    'tlj:alias for target-local-jobs'
     'workflows:list configured target workflows and safe scheduling metadata'
     'wf:alias for workflows'
     'invoke:execute an arbitrary declared workflow action'
@@ -1214,8 +1216,11 @@ _devtool() {
         detect)
           _arguments '--format[output format]:format:(text json)'
           ;;
-        targets|tg|groups|gr|jobs|jb|workflows|wf)
+        targets|tg|groups|gr|workflows|wf)
           _arguments '--json[emit structured configuration metadata]'
+          ;;
+        jobs|jb|target-local-jobs|tlj)
+          _arguments '--json[emit structured configuration metadata]' '--target[limit to one target]:target:_devtool_targets'
           ;;
         plan|pl)
           _arguments \

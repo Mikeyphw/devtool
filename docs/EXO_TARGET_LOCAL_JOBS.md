@@ -301,3 +301,32 @@ plan export, preflight export, and run-summary export. This gives future repo
 migration roadmaps a stable contract for target-local jobs without requiring a
 custom one-off wrapper per project.
 
+## TLJ-13 post-seal adoption report
+
+EXO TLJ-13 adds a read-only adoption report for humans and AI agents migrating
+repos to target-local jobs. The report intentionally does not mutate config. It
+summarizes target-local jobs, repository jobs, workflow wiring, safe command
+examples, and the migration checklist in one place.
+
+Use it during repo migrations before writing overlays:
+
+```bash
+devtool target-local-jobs --json
+devtool target-local-jobs --target dustui_go --json
+devtool target-local-jobs --target dustui_go
+```
+
+The JSON payload is schema-versioned and includes:
+
+- `summary.target_local_job_count`
+- `summary.repository_job_count`
+- `summary.targets_with_target_local_jobs[]`
+- `targets.<target>.jobs[]`
+- `targets.<target>.workflows[]`
+- `targets.<target>.recommended_next_steps[]`
+- global `checklist[]`
+
+This gives follow-up roadmaps, such as a DustUI Go migration, a stable command
+for discovering the current target-local adoption state before generating more
+project-specific overlays.
+

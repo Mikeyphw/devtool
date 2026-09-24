@@ -105,6 +105,7 @@ from .completion_state import build_completion_state, completion_values
 from .compatibility import compatibility_report, render_compatibility_text
 from .final_seal import final_seal_report, render_final_seal_text
 from .target_seal import target_seal_report, render_target_seal_text
+from .target_local_adoption import render_target_local_adoption_text, target_local_adoption_report
 from .config_migration import analyze_config_migration, migrate_config_text, migration_report
 from .config import (
     detect_project_kind,
@@ -1541,6 +1542,9 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_cmd = subparsers.add_parser("jobs", aliases=["jb"], help="List reusable polyglot jobs declared under [jobs.*] and target-local jobs")
     jobs_cmd.add_argument("--json", action="store_true", help="Emit structured reusable-job metadata")
     jobs_cmd.add_argument("--target", default="", help="Limit target-local jobs to one target while keeping repository jobs visible")
+    target_local_jobs_cmd = subparsers.add_parser("target-local-jobs", aliases=["tlj"], help="Report target-local job adoption, workflow wiring, and migration commands")
+    target_local_jobs_cmd.add_argument("--json", action="store_true", help="Emit structured target-local adoption metadata")
+    target_local_jobs_cmd.add_argument("--target", default="", help="Limit the adoption report to one target")
     workflows_cmd = subparsers.add_parser("workflows", aliases=["wf"], help="List configured target workflows without executing them")
     workflows_cmd.add_argument("--json", action="store_true", help="Emit structured workflow metadata")
     plan_cmd = subparsers.add_parser("plan", aliases=["pl"], help="Plan the expanded workflow DAG, safe scheduling waves, scopes, and commands without executing them")
@@ -13431,6 +13435,14 @@ def _main_after_parse(
     if args.command in {"jobs", "jb"}:
         config = _load_command_config(args)
         _jobs(config, as_json=bool(getattr(args, "json", False)), selected_target=str(getattr(args, "target", "") or ""))
+        return 0
+    if args.command in {"target-local-jobs", "tlj"}:
+        config = _load_command_config(args)
+        payload = target_local_adoption_report(config, selected_target=str(getattr(args, "target", "") or ""))
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(render_target_local_adoption_text(payload), end="")
         return 0
     if args.command in {"workflows", "wf"}:
         config = _load_command_config(args)
