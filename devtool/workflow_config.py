@@ -282,13 +282,18 @@ def _parse_workflow_reference(
             raise SystemExit(
                 f"Workflow target '{target_name}' references unknown job '{payload}'. Available jobs: {available}"
             )
+        job_key = str(job.metadata.get("job_key") or job.name or payload)
         return WorkflowStepRef(
             raw=raw,
             kind="job",
-            name=str(job.metadata.get("job_key") or job.name or payload),
+            name=job_key,
             step_id=step_id,
             depends_on=depends_on,
             depends_on_declared=depends_on_declared,
+            resolution_scope=job_scope(job),
+            resolution_target=job_target(job),
+            resolution_local_name=job_local_name(job),
+            resolution_key=job_key,
         )
 
     name, hash_sep, action = payload.partition("#")
@@ -472,7 +477,7 @@ def workflow_steps_as_strings(workflow: WorkflowConfig) -> list[str]:
 
 
 def workflow_step_as_dict(step: WorkflowStepRef) -> dict[str, Any]:
-    return {
+    payload = {
         "ref": step.raw,
         "kind": step.kind,
         "name": step.name,
@@ -481,6 +486,15 @@ def workflow_step_as_dict(step: WorkflowStepRef) -> dict[str, Any]:
         "depends_on": list(step.depends_on),
         "depends_on_declared": step.depends_on_declared,
     }
+    if step.kind == "job":
+        payload.update({
+            "resolution_scope": step.resolution_scope,
+            "resolution_target": step.resolution_target,
+            "resolution_local_name": step.resolution_local_name,
+            "resolution_key": step.resolution_key or step.name,
+            "target_local": step.resolution_scope == "target",
+        })
+    return payload
 
 
 def workflow_as_dict(target_name: str, workflow: WorkflowConfig) -> dict[str, Any]:

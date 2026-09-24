@@ -57,3 +57,15 @@ devtool -r "$REPO" preflight --workflow fast --json
 
 Target-local jobs without an explicit `root` are planned, scheduled, and preflighted from the owning target root. Repository-wide jobs still default to the repository root. This keeps `inputs` and `outputs` scoped consistently across workflow execution, safe scheduling, and toolchain reports.
 
+
+## Runtime provenance and scheduler identity
+
+Target-local job references keep both the author-facing reference and the resolved execution identity:
+
+- `workflow_ref` remains the configured value, such as `job:contracts`.
+- `workflow_resolution_scope` is `target` for `[targets.<target>.jobs.<name>]` jobs and `repository` for `[jobs.<name>]` jobs.
+- `workflow_resolution_target` contains the owning target for target-local jobs.
+- `workflow_resolution_local_name` contains the local job name, such as `contracts`.
+- `workflow_resolution_key` contains the executable key, such as `dustui_android.contracts`.
+
+These fields are present in workflow graph JSON, command-spec metadata, and safe-scheduler plan nodes. That means logs, EXO events, execution plans, and machine clients can display `job:contracts` while still correlating it with the unambiguous executable key `dustui_android.contracts`.

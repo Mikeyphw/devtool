@@ -42,7 +42,7 @@ class WorkflowNode:
         return self.ref.action
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "key": self.key,
             "id": self.ref.step_id,
             "target": self.target,
@@ -55,6 +55,15 @@ class WorkflowNode:
             "depends_on": list(self.depends_on),
             "metadata": dict(self.metadata),
         }
+        if self.ref.kind == "job":
+            payload["resolution"] = {
+                "scope": self.ref.resolution_scope,
+                "target": self.ref.resolution_target,
+                "local_name": self.ref.resolution_local_name,
+                "key": self.ref.resolution_key or self.ref.name,
+                "target_local": self.ref.resolution_scope == "target",
+            }
+        return payload
 
 
 @dataclass(frozen=True, slots=True)

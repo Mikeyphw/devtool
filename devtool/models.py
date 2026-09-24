@@ -68,6 +68,12 @@ class WorkflowStepRef:
     A plain string step keeps the MP02 ordered-list contract. MP03 also accepts
     inline step tables with stable ``id`` and ``depends_on`` fields so the same
     configuration can express branches and joins without shell orchestration.
+
+    ``resolution_*`` fields preserve how a human-authored reference resolved
+    without forcing every downstream surface to reverse-engineer it from the
+    executable internal name. This is especially important for target-local
+    jobs, where ``job:contracts`` resolves to an internal key such as
+    ``dustui_android.contracts``.
     """
 
     raw: str
@@ -77,6 +83,10 @@ class WorkflowStepRef:
     step_id: str = ""
     depends_on: tuple[str, ...] = ()
     depends_on_declared: bool = False
+    resolution_scope: str = ""
+    resolution_target: str = ""
+    resolution_local_name: str = ""
+    resolution_key: str = ""
 
 
 @dataclass(slots=True)

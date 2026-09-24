@@ -31,6 +31,10 @@ class WorkflowNodeScope:
     workflow: str
     runner: str
     action: str
+    job_scope: str = ""
+    job_target: str = ""
+    job_local_name: str = ""
+    job_key: str = ""
     reads: tuple[str, ...] = ()
     writes: tuple[str, ...] = ()
     writes_known: bool = False
@@ -49,6 +53,11 @@ class WorkflowNodeScope:
             "workflow": self.workflow,
             "runner": self.runner,
             "action": self.action,
+            "job_scope": self.job_scope,
+            "job_target": self.job_target,
+            "job_local_name": self.job_local_name,
+            "job_key": self.job_key,
+            "target_local_job": self.job_scope == "target",
             "reads": list(self.reads),
             "writes": list(self.writes),
             "writes_known": self.writes_known,
@@ -66,6 +75,10 @@ class WorkflowScheduleNode:
     workflow: str
     runner: str
     action: str
+    job_scope: str
+    job_target: str
+    job_local_name: str
+    job_key: str
     depends_on: tuple[str, ...]
     spec_indexes: tuple[int, ...]
     spec_names: tuple[str, ...]
@@ -87,6 +100,11 @@ class WorkflowScheduleNode:
             "workflow": self.workflow,
             "runner": self.runner,
             "action": self.action,
+            "job_scope": self.job_scope,
+            "job_target": self.job_target,
+            "job_local_name": self.job_local_name,
+            "job_key": self.job_key,
+            "target_local_job": self.job_scope == "target",
             "depends_on": list(self.depends_on),
             "spec_indexes": list(self.spec_indexes),
             "spec_names": list(self.spec_names),
@@ -321,6 +339,10 @@ def scope_for_graph_node(config: ProjectConfig, node: WorkflowNode) -> WorkflowN
         workflow=node.workflow,
         runner=runner,
         action=action,
+        job_scope=str(node.ref.resolution_scope or metadata.get("scope") or ""),
+        job_target=str(node.ref.resolution_target or metadata.get("target") or ""),
+        job_local_name=str(node.ref.resolution_local_name or metadata.get("local_name") or ""),
+        job_key=str(node.ref.resolution_key or metadata.get("job_key") or ""),
         reads=_dedupe(reads),
         writes=_dedupe(writes),
         writes_known=writes_known,
@@ -400,6 +422,10 @@ def _nodes_from_specs(specs: Sequence[CommandSpec]) -> tuple[WorkflowScheduleNod
             workflow=str(metadata.get("workflow_name") or ""),
             runner=str(metadata.get("workflow_runner") or metadata.get("runner") or ""),
             action=str(metadata.get("workflow_action") or ""),
+            job_scope=str(metadata.get("workflow_resolution_scope") or ""),
+            job_target=str(metadata.get("workflow_resolution_target") or ""),
+            job_local_name=str(metadata.get("workflow_resolution_local_name") or ""),
+            job_key=str(metadata.get("workflow_resolution_key") or ""),
             depends_on=tuple(str(item) for item in _object_sequence(metadata.get("workflow_depends_on", [])) if str(item)),
             spec_indexes=tuple(index for index, _ in parts),
             spec_names=tuple(spec.name for _, spec in parts),
