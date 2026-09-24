@@ -12,6 +12,7 @@ from typing import Any
 
 from .models import ProjectConfig
 from .features import resolve_feature_flags
+from .wrapper_config import wrapper_as_dict
 from .android.capabilities import resolve_android_execution_context
 from .android.devices import AndroidDeviceManager
 
@@ -103,6 +104,12 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
 
     checks.append(DoctorCheck("project", "git", "ok" if (config.repo_root / ".git").exists() else "missing", str(config.repo_root / ".git")))
     checks.append(DoctorCheck("project", "config", "ok" if config.config_path else "optional", str(config.config_path) if config.config_path else "using detected defaults"))
+    checks.append(DoctorCheck(
+        "project",
+        "wrapper",
+        "ok" if config.wrapper.commands else "optional",
+        (f"schema {config.wrapper.schema}; commands: {', '.join(sorted(config.wrapper.commands))}" if config.wrapper.commands else "not configured"),
+    ))
     runner_source = str(config.config_provenance.get("runner", "") or "")
     if "legacy" in runner_source:
         checks.append(DoctorCheck(
@@ -143,6 +150,7 @@ def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
             for name, target in sorted(config.targets.items())
             if target.workflows
         },
+        "wrapper": wrapper_as_dict(config.wrapper),
         "healthy": not any(item.status == "missing" for item in checks),
         "features": features.to_dict(),
         "checks": [item.as_dict() for item in checks],

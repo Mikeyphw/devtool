@@ -13,6 +13,7 @@ from typing import Any
 
 from .models import DotnetTarget, JobConfig, ProjectConfig, TargetConfig
 from .workspace import WorkspaceConfigError, load_workspace_config, workspace_as_dict
+from .wrapper_config import WrapperConfigError, load_wrapper_config, wrapper_as_dict
 from .workflow_config import (
     job_as_dict,
     load_jobs,
@@ -36,7 +37,7 @@ GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
     "project", "workspace", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
-    "go", "maven", "cmake", "meson", "make", "test_profiles", "variants",
+    "go", "maven", "cmake", "meson", "make", "test_profiles", "variants", "wrapper",
 }
 GLOBAL_COMMAND_SCOPED_CLI_KEYS = {
     ("validation", "skip_restore"), ("validation", "skip_build"), ("validation", "skip_test"),
@@ -704,6 +705,7 @@ def load_project_config(
     project_override: str = "",
     kind_override: str = "",
     allow_ambiguous_target: bool = False,
+    allow_ambiguous_project_kind: bool = False,
 ) -> ProjectConfig:
     repo_root = resolve_repository_root(repo_root_arg, config_path_arg)
     config_path = find_config(repo_root, config_path_arg)
@@ -798,6 +800,14 @@ def load_project_config(
         )
     except WorkspaceConfigError as exc:
         raise SystemExit(str(exc)) from exc
+    # Wrapper commands are a repository-owned public contract.  Deliberately
+    # read them from repo_loaded rather than the global/default-merged config so
+    # ~/.config/devtool/config.toml cannot inject commands into repositories.
+    repo_wrapper_raw = _require_table(repo_loaded, "wrapper", source=repo_source_label)
+    try:
+        wrapper = load_wrapper_config(repo_wrapper_raw, targets=targets, workspace=workspace)
+    except WrapperConfigError as exc:
+        raise SystemExit(f"Invalid wrapper configuration in {repo_source_label}: {exc}") from exc
     selected_target_name = _default_target_name(
         project_section,
         targets,
@@ -810,7 +820,12 @@ def load_project_config(
     selected_target_hint = targets.get(selected_target_name) if selected_target_name else None
     if selected_target_hint is not None and selected_target_hint.effective_runner:
         detected_kind = selected_target_hint.effective_runner
-    if detected_kind == "unknown" and len(kind_details.get("candidates", ())) > 1 and selected_target_hint is None:
+    if (
+        detected_kind == "unknown"
+        and len(kind_details.get("candidates", ())) > 1
+        and selected_target_hint is None
+        and not allow_ambiguous_project_kind
+    ):
         available = ", ".join(kind_details["candidates"])
         named = ", ".join(sorted(targets)) or "<none>"
         raise SystemExit(
@@ -1060,6 +1075,7 @@ def load_project_config(
         targets=targets,
         jobs=jobs,
         workspace=workspace,
+        wrapper=wrapper,
         ui_config=ui_config,
         execution_environment=execution_environment,
         chroot_name=chroot_name,
@@ -1084,6 +1100,26 @@ def load_project_config(
         except WorkflowRuntimeError as exc:
             raise SystemExit(str(exc)) from exc
     return config_result
+
+
+def load_wrapper_project_config(
+    repo_root_arg: str | None,
+    config_path_arg: str | None,
+) -> ProjectConfig:
+    """Load repository wrapper metadata before a wrapper command chooses a target.
+
+    Wrapper dispatch needs the complete repository-owned command contract before
+    it can know which target/group to select.  This path therefore permits both
+    target and project-kind ambiguity while preserving the strict defaults used
+    by ordinary executable Devtool commands.
+    """
+
+    return load_project_config(
+        repo_root_arg,
+        config_path_arg,
+        allow_ambiguous_target=True,
+        allow_ambiguous_project_kind=True,
+    )
 
 
 def project_identity(kind: str) -> tuple[str, str, str]:
@@ -2459,6 +2495,7 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
         "config_path": str(config.config_path) if config.config_path else "",
         "global_config_path": str(config.global_config_path) if config.global_config_path else "",
         "workspace": workspace_as_dict(config.workspace, config.targets),
+        "wrapper": wrapper_as_dict(config.wrapper),
         "ui": {
             "config": config.ui_config,
             "resolved": {surface: resolve_ui_preferences(config.ui_config, surface=surface).as_dict() for surface in ("machine", "desktop", "tui", "hud", "android")},

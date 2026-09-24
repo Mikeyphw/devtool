@@ -124,6 +124,7 @@ from .project_runners import resolve_validation_plan
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
+from .wrapper_config import wrapper_as_dict
 from .workspace import WorkspaceConfigError, resolve_workspace_targets, workspace_as_dict, workspace_group_memberships
 from .workflow_runtime import build_workspace_specs, build_workspace_validation_specs, plan_workspace_targets
 from .workflow_scheduler import (
@@ -11039,6 +11040,7 @@ def _config_command(args: argparse.Namespace) -> int:
             "repo_root": str(config.repo_root),
             "project": {"runner": config.runner, "platform": config.platform, "selected_target": config.selected_target, "variant": config.variant},
             "workspace": workspace_as_dict(config.workspace, config.targets),
+            "wrapper": wrapper_as_dict(config.wrapper),
             "provenance": dict(sorted(config.config_provenance.items())),
             "migration": migration,
             "compatibility": compatibility_report(path).get("summary", {}),
@@ -11054,6 +11056,8 @@ def _config_command(args: argparse.Namespace) -> int:
                 ("selected_target", config.selected_target or "-"),
                 ("workspace_targets", ", ".join(sorted(config.targets)) or "-"),
                 ("workspace_groups", ", ".join(sorted(config.workspace.groups)) or "-"),
+                ("wrapper_schema", str(config.wrapper.schema) if config.wrapper.commands else "-"),
+                ("wrapper_commands", ", ".join(sorted(config.wrapper.commands)) or "-"),
                 ("migration", "recommended" if migration.get("needs_migration") else "canonical"),
             ]
             rows.extend((f"provenance.{key}", value) for key, value in sorted(config.config_provenance.items()))
@@ -11070,6 +11074,8 @@ def _config_command(args: argparse.Namespace) -> int:
             ("compatibility_migration", "recommended" if migration.get("needs_migration") else "canonical"),
             ("build_target", config.build_target or "-"),
             ("run_target", config.run_target or "-"),
+            ("wrapper_schema", str(config.wrapper.schema) if config.wrapper.commands else "-"),
+            ("wrapper_commands", ", ".join(sorted(config.wrapper.commands)) or "-"),
         ]
         rows.extend((f"provenance.{key}", value) for key, value in sorted(config.config_provenance.items()))
         render_status_table(rows)

@@ -212,6 +212,61 @@ DotnetTarget = TargetConfig
 
 
 @dataclass(slots=True)
+class WrapperOptionConfig:
+    name: str
+    type: str = "string"
+    description: str = ""
+    aliases: tuple[str, ...] = ()
+    required: bool = False
+    repeatable: bool = False
+    choices: tuple[str, ...] = ()
+    default: Any = None
+    has_default: bool = False
+    conflicts: tuple[str, ...] = ()
+    requires: tuple[str, ...] = ()
+    relative_to: str = ""
+    global_argv: tuple[str, ...] = ()
+    command_argv: tuple[str, ...] = ()
+    passthrough_argv: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class WrapperPositionalConfig:
+    name: str
+    type: str = "string"
+    description: str = ""
+    required: bool = False
+    repeatable: bool = False
+    choices: tuple[str, ...] = ()
+    relative_to: str = ""
+    global_argv: tuple[str, ...] = ()
+    command_argv: tuple[str, ...] = ()
+    passthrough_argv: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class WrapperCommandConfig:
+    name: str
+    description: str = ""
+    devtool: str = ""
+    workflow: str = ""
+    aliases: tuple[str, ...] = ()
+    target: str = ""
+    group: str = ""
+    all_targets: bool = False
+    allow_passthrough: bool = False
+    options: dict[str, WrapperOptionConfig] = field(default_factory=dict)
+    positionals: tuple[WrapperPositionalConfig, ...] = ()
+
+
+@dataclass(slots=True)
+class WrapperConfig:
+    schema: int = 1
+    default_command: str = ""
+    commands: dict[str, WrapperCommandConfig] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class ProjectConfig:
     repo_root: Path
     kind: str
@@ -240,6 +295,7 @@ class ProjectConfig:
     targets: dict[str, TargetConfig] = field(default_factory=dict)
     jobs: dict[str, JobConfig] = field(default_factory=dict)
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
+    wrapper: WrapperConfig = field(default_factory=WrapperConfig)
     ui_config: dict[str, Any] = field(default_factory=dict)
     execution_environment: str = "auto"
     chroot_name: str = "androidos"
