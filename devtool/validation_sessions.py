@@ -24,6 +24,7 @@ from typing import Any, Iterable, Sequence
 
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .validation_failures import FailureClassification, classify_validation_failure
+from .federation_ownership import federation_operational_owner_from_environment
 
 SESSION_SCHEMA_VERSION = 6
 DEFAULT_PHASE_ORDER = (
@@ -1514,6 +1515,12 @@ def create_session(
     session_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:10]
     annotated = annotate_specs(list(specs), session_id=session_id)
     session_context = dict(apply_context or {})
+    federation_owner = federation_operational_owner_from_environment(config.repo_root)
+    if federation_owner:
+        existing_owner = session_context.get("federation_owner")
+        if existing_owner not in (None, federation_owner):
+            raise ValidationSessionError("Conflicting federation operational owner in validation context")
+        session_context["federation_owner"] = federation_owner
     session_options = dict(options or {})
     failure_action = str(
         session_options.get("failure_action")

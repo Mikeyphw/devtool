@@ -28,6 +28,7 @@ from ..console_utils import create_console
 from ..generic_progress import GenericProgressTracker
 from ..logstore import write_log
 from ..models import Issue, OperationResult
+from ..federation_ownership import federation_operational_owner_from_environment
 from .capabilities import capability_report, normalize_hook_capabilities
 from .isolation import RepositoryMutationSnapshot
 from .models import HookExecutionContext, HookExecutionRequest, HookExecutionResult
@@ -360,6 +361,24 @@ class EmbeddedHookEngine:
         if request.dry_run:
             output = "$ " + " ".join(argv) + f"\n{request.script_label} script skipped during dry-run."
             path = str(write_log(output, request.log_path, append=request.log_path is not None))
+            dry_owner = federation_operational_owner_from_environment(repo_root, run_id=request.run_id)
+            dry_event = {
+                "schema_version": 1,
+                "kind": request.kind,
+                "phase": request.phase,
+                "protocol": protocol,
+                "script_path": script_rel.as_posix(),
+                "script_sha256": expected_sha,
+                "runner": runner,
+                "timeout_seconds": timeout_seconds,
+                "status": "skipped",
+                "declared_capabilities": requested_caps,
+                "effective_capabilities": cap_report,
+                "declared_writes": list(request.declared_writes),
+                "detected_writes": [],
+            }
+            if dry_owner:
+                dry_event["federation_owner"] = dry_owner
             return OperationResult(
                 request.operation_name,
                 argv,
@@ -369,23 +388,7 @@ class EmbeddedHookEngine:
                 [],
                 skipped=True,
                 log_path=path,
-                metadata={
-                    "hook_event": {
-                        "schema_version": 1,
-                        "kind": request.kind,
-                        "phase": request.phase,
-                        "protocol": protocol,
-                        "script_path": script_rel.as_posix(),
-                        "script_sha256": expected_sha,
-                        "runner": runner,
-                        "timeout_seconds": timeout_seconds,
-                        "status": "skipped",
-                        "declared_capabilities": requested_caps,
-                        "effective_capabilities": cap_report,
-                        "declared_writes": list(request.declared_writes),
-                        "detected_writes": [],
-                    }
-                },
+                metadata={"hook_event": dry_event},
             )
 
         members = list_archive_members(artifact_path, include_data=True)
@@ -590,6 +593,9 @@ class EmbeddedHookEngine:
             "write_restoration_errors": restoration_errors,
             "writes_restored": bool(violations and request.restore_on_write_violation and not restoration_errors),
         }
+        hook_owner = federation_operational_owner_from_environment(repo_root, run_id=request.run_id)
+        if hook_owner:
+            event["federation_owner"] = hook_owner
         return OperationResult(
             request.operation_name,
             [runner, script_rel.as_posix()],

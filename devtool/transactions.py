@@ -17,6 +17,7 @@ from .artifacts import preview_artifact, read_delete_manifest
 from .models import OperationResult
 from .reservations import ReservationConflict, active_reservations, assert_reservation_available, normalize_paths, reservation_coordinator
 from .xdg import data_dir
+from .federation_ownership import federation_operational_owner_from_environment
 
 
 def devtool_xdg_dir() -> Path:
@@ -795,6 +796,9 @@ def create_apply_transaction(
         "preview_counts": preview.get("counts", {}),
         "git_state": {**_capture_git_state(repo_root, tx_dir), "rollback_scope": "paths-v1"},
     }
+    federation_owner = federation_operational_owner_from_environment(repo_root, run_id=str(tx.get("run_id") or ""))
+    if federation_owner:
+        tx["federation_owner"] = federation_owner
     _atomic_write_json(_transaction_file(tx_dir), tx)
 
     tx["backup_method"] = "none"

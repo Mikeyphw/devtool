@@ -16,6 +16,7 @@ from typing import Any, Iterable, Iterator
 import uuid
 
 from .core.events import ArtifactCreated, publish_event
+from .federation_ownership import attach_federation_operational_owner
 
 REGISTRY_SCHEMA = 2
 
@@ -330,6 +331,7 @@ def register_paths(
                 specific = dict(item_metadata.get(str(path)) or item_metadata.get(display) or {})
             combined_metadata = dict(shared)
             combined_metadata.update(specific)
+            combined_metadata = attach_federation_operational_owner(combined_metadata, repo_root, run_id=run_id)
             combined_metadata = _normalize_metadata_booleans(combined_metadata)
             sha256 = _sha256(path)
             registered_at = _now()

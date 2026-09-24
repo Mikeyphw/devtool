@@ -29,6 +29,11 @@ from .core.events import (
 )
 from .federation_discovery import resolve_federated_repository
 from .federation_plan import FederatedPlanGraph, build_federated_plan
+from .federation_operations import (
+    capture_federated_resume_checkpoint,
+    collect_federated_operational_snapshot,
+    request_federated_child_cancellation,
+)
 from .models import FederatedWorkflowConfig, FederatedWorkflowStep, ProjectConfig
 from .repository_identity import RepositoryIdentity, same_repository_identity
 
@@ -49,6 +54,7 @@ class FederatedChildRun:
     exit_code: int
     repository_identity: dict[str, Any] = field(default_factory=dict)
     run_lineage: dict[str, Any] = field(default_factory=dict)
+    operational_ownership: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +68,7 @@ class FederatedChildRun:
             "exit_code": self.exit_code,
             "repository_identity": dict(self.repository_identity),
             "run_lineage": dict(self.run_lineage),
+            "operational_ownership": dict(self.operational_ownership),
         }
 
 
@@ -251,6 +258,7 @@ def run_federated_workflow(
     publish: Callable[[Any], None] = publish_event,
     snapshot_lookup: Callable[[str], Any] | None = None,
     parent_run_id: str = "",
+    request_child_cancel: Callable[[str], Any] | None = None,
 ) -> FederatedRunReport:
     """Execute a configured federation workflow sequentially with EXO lineage.
 
@@ -271,6 +279,8 @@ def run_federated_workflow(
     owner_fingerprint = str(owner_identity.get("fingerprint") or owner_identity.get("root") or parent.repo_root)
     started = time.monotonic()
     snapshot_lookup = snapshot_lookup or get_execution_store().snapshot
+    request_child_cancel = request_child_cancel or (lambda child_run_id: request_federated_child_cancellation(child_run_id))
+    active_child_run_id = ""
 
     parent_lineage = {
         "kind": "federation",
@@ -347,7 +357,9 @@ def run_federated_workflow(
                 resolution=resolution,
             )
             effective_fingerprint = str(identity.get("fingerprint") or identity.get("root") or resolution.root)
+            resume_checkpoint = capture_federated_resume_checkpoint(resolution)
             child_run_id = str(RunId.new(prefix=f"fed-{step.repository}"))
+            active_child_run_id = child_run_id
             parent_node = node_ids[step.step_id]
             invocation_command = f"{name}:{step.step_id}"
             lineage = {
@@ -371,7 +383,7 @@ def run_federated_workflow(
                 kind="federation-child",
                 argv=tuple(_child_argv(root=resolution.root, target=target, workflow=step.workflow, invocation_command=invocation_command)),
                 source="federation",
-                metadata={"child_run_id": child_run_id, "run_lineage": lineage},
+                metadata={"child_run_id": child_run_id, "run_lineage": lineage, "resume_checkpoint": resume_checkpoint},
             ))
 
             env = {
@@ -403,6 +415,13 @@ def run_federated_workflow(
                 expected_parent_run_id=run_id,
                 snapshot=child_snapshot,
             ) if child_snapshot is not None else {}
+            operational = collect_federated_operational_snapshot(
+                resolution,
+                child_run_id=child_run_id,
+                execution_snapshot=child_snapshot,
+                resume_checkpoint=resume_checkpoint,
+            ).as_dict()
+            active_child_run_id = ""
             child_status = (
                 str(getattr(child_snapshot, "status", "") or "")
                 if child_snapshot is not None
@@ -416,11 +435,15 @@ def run_federated_workflow(
                 duration_seconds=time.monotonic() - child_started,
                 source="federation",
                 transition_reason=f"child run {child_run_id}",
-                metadata={"child_run_id": child_run_id, "run_lineage": persisted_lineage or lineage},
+                metadata={
+                    "child_run_id": child_run_id,
+                    "run_lineage": persisted_lineage or lineage,
+                    "operational_ownership": operational,
+                },
             ))
             child = FederatedChildRun(
                 step.step_id, step.repository, step.workflow, target, child_run_id,
-                parent_node, child_status, rc, identity, persisted_lineage or lineage,
+                parent_node, child_status, rc, identity, persisted_lineage or lineage, operational,
             )
             outcomes[step.step_id] = child
             children.append(child)
@@ -431,6 +454,11 @@ def run_federated_workflow(
                 parent_status = ExecutionStatus.FAILED.value
                 parent_exit = rc or 1
     except KeyboardInterrupt:
+        if active_child_run_id:
+            try:
+                request_child_cancel(active_child_run_id)
+            except Exception:
+                pass
         parent_status = ExecutionStatus.CANCELLED.value
         parent_exit = 130
     except BaseException:
@@ -484,6 +512,7 @@ def run_federated_direct_child(
     owner_identity = parent.repository_identity.as_dict() if parent.repository_identity else {}
     owner_fingerprint = str(owner_identity.get("fingerprint") or owner_identity.get("root") or parent.repo_root)
     effective_fingerprint = str(identity.get("fingerprint") or identity.get("root") or resolution.root)
+    resume_checkpoint = capture_federated_resume_checkpoint(resolution)
     parent_id = str(parent_run_id or RunId.new(prefix="federation-exec"))
     child_run_id = str(RunId.new(prefix=f"fed-{repo_name}"))
     node_id = f"federation:exec:{repo_name}:{operation}"
@@ -538,7 +567,7 @@ def run_federated_direct_child(
         kind="federation-child",
         argv=argv,
         source="federation",
-        metadata={"child_run_id": child_run_id, "run_lineage": lineage},
+        metadata={"child_run_id": child_run_id, "run_lineage": lineage, "resume_checkpoint": resume_checkpoint},
     ))
     env = {
         "DEVTOOL_RUN_ID": child_run_id,
@@ -565,6 +594,12 @@ def run_federated_direct_child(
             expected_parent_run_id=parent_id,
             snapshot=snapshot,
         ) if snapshot is not None else {}
+        operational = collect_federated_operational_snapshot(
+            resolution,
+            child_run_id=child_run_id,
+            execution_snapshot=snapshot,
+            resume_checkpoint=resume_checkpoint,
+        ).as_dict()
         status = (
             str(getattr(snapshot, "status", "") or "")
             if snapshot is not None
@@ -578,7 +613,11 @@ def run_federated_direct_child(
             duration_seconds=time.monotonic() - child_started,
             source="federation",
             transition_reason=f"child run {child_run_id}",
-            metadata={"child_run_id": child_run_id, "run_lineage": persisted_lineage or lineage},
+            metadata={
+                "child_run_id": child_run_id,
+                "run_lineage": persisted_lineage or lineage,
+                "operational_ownership": operational,
+            },
         ))
         publish(RunFinished(
             run_id=parent_id,
@@ -589,7 +628,7 @@ def run_federated_direct_child(
         ))
         return FederatedChildRun(
             operation, repo_name, operation, "", child_run_id, node_id, status, rc,
-            identity, persisted_lineage or lineage,
+            identity, persisted_lineage or lineage, operational,
         )
     except BaseException:
         publish(RunFinished(

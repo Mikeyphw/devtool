@@ -242,3 +242,35 @@ recursive Devtool execution reconstructs the same lineage remotely. Returned
 SSH/OCI producer evidence includes the child identity, mapped roots, lineage,
 and actual artifact-return location so diagnostics and artifacts remain
 attributable to the owning repository.
+
+## FRX-10: artifacts, hooks, validation, and transactional boundaries
+
+Federation orchestration does not acquire ownership of child operational state.
+When a canonical child run is active, the existing artifact registry, apply
+transaction journal, validation-session context, and embedded-hook event record
+an additive `federation_owner` object containing the child repository alias,
+repository fingerprint, canonical owner root, parent run/node, and authoritative
+child EXO run id. Non-federated execution keeps its existing payload shape.
+
+The parent coordinator aggregates only compact references after a child run:
+artifact-registry record ids/paths, transaction ids/status, validation-session
+ids/checkpoint keys, hook-event summaries, diagnostic ids/log references, and a
+child resume checkpoint. The parent never imports a child's rollback journal,
+validation plan, hook write-set, or artifact-registry contents into its own
+transaction/validation state.
+
+Child apply transactions continue to use the existing repository-keyed XDG
+transaction root and child rollback policy. Parent cancellation may request
+cancellation of the authoritative child EXO run through the normal IPC control
+path, but the federation coordinator does not invoke rollback or cleanup on the
+child's behalf. Validation is likewise repository-local: only child validation
+sessions carrying the matching child owner/run metadata can appear in child
+operational references, so a successful parent validation session cannot
+satisfy a child gate.
+
+Each executed child also receives a resume checkpoint containing its canonical
+repository root, repository fingerprint, and Git revision when available.
+Resume must re-resolve the enrollment and reject a moved/replaced repository or
+changed Git revision. Child EXO snapshots remain independently recoverable: if
+a parent snapshot is absent, lineage can identify child runs as orphaned
+children without rewriting their operational state.
