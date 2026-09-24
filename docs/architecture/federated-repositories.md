@@ -54,3 +54,41 @@ versions, and invalid group references fail closed.
 
 FRX-02 deliberately does not inspect child `.devtool.toml` files or execute
 child work. Repository discovery/ownership resolution begins in FRX-03.
+
+## FRX-03: discovery and repository boundaries
+
+FRX-03 resolves the explicit FRX-02 enrollment records into authoritative child
+repository boundaries. Discovery remains strictly opt-in: nested Git
+repositories or `.devtool.toml` files that are not enrolled are ignored.
+
+Each enrolled repository is resolved independently through:
+
+1. the explicitly requested federation repository name;
+2. the enrolled canonical child root;
+3. that child's own root `.devtool.toml`, when present;
+4. otherwise child-local detected defaults;
+5. the child's own workspace/default target.
+
+Parent `--target`, workspace selection, and parent config do not flow into the
+child. In particular, a nested child without its own `.devtool.toml` does **not**
+borrow an ancestor parent's config during federation discovery. Ordinary
+non-federated Devtool config discovery retains its existing ancestor lookup.
+
+Repository resolution records the canonical child identity, config path,
+selected target, runner/platform, parent-relative relation (`nested`,
+`external`, or `ancestor`), and a boundary status/detail. Symlink enrollments are
+canonicalized before identity resolution.
+
+The public inspection surface is:
+
+```text
+devtool federation list
+devtool federation inspect <repository>
+```
+
+Both commands have machine-readable JSON forms. `doctor --json` and
+`status --json` also expose the same federation boundary payload, while their
+human surfaces include repository boundary summaries.
+
+FRX-03 still does not create cross-repository DAG edges or execute child work.
+That begins with FRX-05 after the FRX-04 boundary gate.

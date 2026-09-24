@@ -14,6 +14,7 @@ from .models import ProjectConfig
 from .features import resolve_feature_flags
 from .wrapper_config import wrapper_as_dict
 from .wrapper_launcher import launcher_status, launcher_status_as_dict
+from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, resolve_federated_repository
 from .android.capabilities import resolve_android_execution_context
 from .android.devices import AndroidDeviceManager
 
@@ -132,6 +133,36 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
         "ok" if wrapper_command_names else "optional",
         (f"schema {config.wrapper.schema}; commands: {', '.join(wrapper_command_names)}" if wrapper_command_names else "not configured"),
     ))
+    federation_names = sorted(config.federation.repositories)
+    checks.append(DoctorCheck(
+        "federation",
+        "enrollment",
+        "ok" if federation_names else "optional",
+        (f"repositories: {', '.join(federation_names)}" if federation_names else "not configured"),
+    ))
+    for federation_name in federation_names:
+        enrollment = config.federation.repositories[federation_name]
+        try:
+            resolution = resolve_federated_repository(config, federation_name)
+        except FederationDiscoveryError as exc:
+            checks.append(DoctorCheck(
+                "federation",
+                f"repository:{federation_name}",
+                "missing",
+                str(exc),
+            ))
+        else:
+            if not resolution.available:
+                status = "optional" if not enrollment.required else "missing"
+                detail = f"{resolution.root}; {resolution.boundary_detail}"
+            else:
+                status = "ok"
+                short_identity = (resolution.repository_identity.fingerprint[:12] if resolution.repository_identity else "missing")
+                detail = (
+                    f"{resolution.root}; relation={resolution.relation}; identity={short_identity}; "
+                    f"target={resolution.selected_target or '-'}"
+                )
+            checks.append(DoctorCheck("federation", f"repository:{federation_name}", status, detail))
     if config.wrapper.commands:
         launcher_report = launcher_status(config.repo_root)
         checks.append(DoctorCheck(
@@ -201,6 +232,7 @@ def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
         },
         "wrapper": wrapper_as_dict(config.wrapper),
         "wrapper_launchers": launcher_status_as_dict(launcher_status(config.repo_root)),
+        "federation": federation_boundary_payload(config, tolerate_errors=True),
         "healthy": not any(item.status == "missing" for item in checks),
         "features": features.to_dict(),
         "checks": [item.as_dict() for item in checks],

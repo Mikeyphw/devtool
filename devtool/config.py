@@ -550,7 +550,12 @@ def discover_make_roots(repo_root: Path) -> list[Path]:
     return _marker_roots(repo_root, ("Makefile", "makefile", "GNUmakefile"))
 
 
-def find_config(repo_root: Path, config_path_arg: str | None) -> Path | None:
+def find_config(
+    repo_root: Path,
+    config_path_arg: str | None,
+    *,
+    search_ancestors: bool = True,
+) -> Path | None:
     if config_path_arg:
         path = Path(config_path_arg).expanduser().resolve()
         if not path.exists():
@@ -559,7 +564,8 @@ def find_config(repo_root: Path, config_path_arg: str | None) -> Path | None:
             raise SystemExit(f"Explicit config path is not a file: {path}")
         return path
 
-    for parent in [repo_root, *repo_root.parents]:
+    parents = [repo_root, *repo_root.parents] if search_ancestors else [repo_root]
+    for parent in parents:
         candidate = parent / CONFIG_NAME
         if candidate.exists():
             if not candidate.is_file():
@@ -709,9 +715,10 @@ def load_project_config(
     kind_override: str = "",
     allow_ambiguous_target: bool = False,
     allow_ambiguous_project_kind: bool = False,
+    allow_parent_config: bool = True,
 ) -> ProjectConfig:
     repo_root = resolve_repository_root(repo_root_arg, config_path_arg)
-    config_path = find_config(repo_root, config_path_arg)
+    config_path = find_config(repo_root, config_path_arg, search_ancestors=allow_parent_config)
     try:
         repository_identity = build_repository_identity(repo_root, config_path)
     except RepositoryIdentityError as exc:

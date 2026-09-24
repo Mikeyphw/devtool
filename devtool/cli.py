@@ -104,6 +104,7 @@ from .completion import ZSH_COMPLETION
 from .completion_state import build_completion_state, completion_values
 from .compatibility import compatibility_report, render_compatibility_text
 from .final_seal import final_seal_report, render_final_seal_text
+from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, federation_inspect_payload
 from .target_seal import target_seal_report, render_target_seal_text
 from .target_local_adoption import render_target_local_adoption_text, target_local_adoption_report
 from .config_migration import analyze_config_migration, migrate_config_text, migration_report
@@ -736,6 +737,8 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--explain", action="store_true", help="Explain Termux provider selection and rejection reasons")
             cmd.add_argument("--json", action="store_true", help="Emit structured runtime, Android, device, project, and expanded-workflow health checks")
             cmd.add_argument("--workflow", default="all", help="Workflow/action to analyze across the selected target scope; default: all declared workflows")
+        if name == "status":
+            cmd.add_argument("--json", action="store_true", help="Emit structured project, execution, repository identity, and federation boundary status")
         if name == "clean":
             cmd.add_argument("--caches", action="store_true", help="Also prune repository-scoped devtool-managed caches and transient state")
             cmd.add_argument("--space", action="store_true", help="Prune safe global Android/toolchain caches managed by Devtool")
@@ -1041,6 +1044,14 @@ def build_parser() -> argparse.ArgumentParser:
     pytest_profile.add_argument("--top", type=int, default=30, help="Maximum number of slow entries to show")
     pytest_profile.add_argument("--strict", action="store_true", help="Fail when unmarked tests exceed the slow threshold")
     pytest_profile.add_argument("--json", action="store_true", help="Emit a structured pytest-profile report")
+
+    federation_cmd = subparsers.add_parser("federation", aliases=["fed"], help="Inspect explicitly enrolled federated repositories")
+    federation_sub = federation_cmd.add_subparsers(dest="federation_command", required=True)
+    federation_list = federation_sub.add_parser("list", aliases=["ls"], help="List enrolled repositories and resolved ownership boundaries")
+    federation_list.add_argument("--json", action="store_true", help="Emit machine-readable federation discovery state")
+    federation_inspect = federation_sub.add_parser("inspect", aliases=["show"], help="Inspect one enrolled repository and its child-owned resolution")
+    federation_inspect.add_argument("repository", help="Federation repository name")
+    federation_inspect.add_argument("--json", action="store_true", help="Emit machine-readable repository boundary state")
 
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
@@ -10934,7 +10945,104 @@ def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespac
         render_status_table(rows)
 
 
+def _status_payload(config: ProjectConfig, *, args: argparse.Namespace | None = None) -> dict[str, object]:
+    runner = get_project_runner(config)
+    capabilities = runner_capabilities(config).supported()
+    plan = _execution_plan_for_args(config, args or argparse.Namespace(host=False, chroot="", execution_environment=EXECUTION_AUTO))
+    return {
+        "schema_version": 1,
+        "repo": str(config.repo_root),
+        "repository_identity": config.repository_identity.as_dict() if config.repository_identity else {},
+        "kind": config.kind,
+        "platform": config.platform,
+        "runner": config.runner or runner.kind,
+        "runner_name": runner.display_name,
+        "capabilities": list(capabilities),
+        "execution": {
+            "current": plan.current,
+            "requested": plan.requested,
+            "effective": plan.effective,
+            "reason": plan.reason,
+            "chroot": plan.chroot_name or "",
+        },
+        "selected_target": config.selected_target,
+        "variant": config.variant,
+        "restore_target": config.restore_target,
+        "build_target": config.build_target,
+        "test_target": config.test_target,
+        "run_target": config.run_target,
+        "git_dirty": _git_dirty(config.repo_root),
+        "transaction_root": str(transaction_root(config.repo_root)),
+        "federation": federation_boundary_payload(config, tolerate_errors=True),
+    }
+
+
+def _federation_parent_config(args: argparse.Namespace) -> ProjectConfig:
+    # Federation discovery intentionally ignores parent --target/--variant.
+    # Child target selection belongs to the child repository's own defaults.
+    return load_project_config(
+        args.repo,
+        args.config,
+        target_name="",
+        variant_name="",
+        allow_ambiguous_target=True,
+        allow_ambiguous_project_kind=True,
+    )
+
+
+def _federation_command(args: argparse.Namespace) -> int:
+    config = _federation_parent_config(args)
+    action = str(getattr(args, "federation_command", "") or "")
+    as_json = bool(getattr(args, "json", False))
+    try:
+        if action in {"list", "ls"}:
+            payload = federation_boundary_payload(config)
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("owner", str((config.repository_identity.root if config.repository_identity else config.repo_root))),
+                    ("repositories", str(len(payload.get("repositories", [])))),
+                ]
+                for item in payload.get("repositories", []):
+                    if not isinstance(item, dict):
+                        continue
+                    status = str(item.get("boundary_status") or "unknown")
+                    target = str(item.get("selected_target") or "-")
+                    relation = str(item.get("relation") or "unknown")
+                    rows.append((f"repo.{item.get('name')}", f"{status}; {relation}; target={target}; {item.get('root')}"))
+                for group_name, members in sorted((payload.get("groups") or {}).items()):
+                    rows.append((f"group.{group_name}", ", ".join(str(x) for x in members)))
+                render_status_table(rows)
+            return 0
+        if action in {"inspect", "show"}:
+            payload = federation_inspect_payload(config, str(getattr(args, "repository", "") or ""))
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                item = payload["repository"]
+                identity = item.get("repository_identity") or {}
+                render_status_table([
+                    ("name", str(item.get("name") or "")),
+                    ("root", str(item.get("root") or "")),
+                    ("relation", str(item.get("relation") or "")),
+                    ("config", str(item.get("config_path") or "detected defaults")),
+                    ("selected_target", str(item.get("selected_target") or "-")),
+                    ("runner", str(item.get("runner") or "-")),
+                    ("identity", str(identity.get("fingerprint") or "-")),
+                    ("boundary", str(item.get("boundary_status") or "")),
+                    ("detail", str(item.get("boundary_detail") or "")),
+                ])
+            return 0
+    except FederationDiscoveryError as exc:
+        raise SystemExit(str(exc)) from exc
+    raise SystemExit(f"Unknown federation command: {action}")
+
+
 def _status(config: ProjectConfig, *, args: argparse.Namespace | None = None) -> None:
+    if args is not None and bool(getattr(args, "json", False)):
+        print(json.dumps(_status_payload(config, args=args), indent=2, ensure_ascii=False))
+        return
     runner = get_project_runner(config)
     capabilities = runner_capabilities(config).supported()
     plan = _execution_plan_for_args(config, args or argparse.Namespace(host=False, chroot="", execution_environment=EXECUTION_AUTO))
@@ -10958,7 +11066,11 @@ def _status(config: ProjectConfig, *, args: argparse.Namespace | None = None) ->
         ("run_target", config.run_target or "-"),
         ("git_dirty", "yes" if _git_dirty(config.repo_root) else "no"),
         ("transaction_root", str(transaction_root(config.repo_root))),
+        ("federation", str(len(config.federation.repositories)) if config.federation.repositories else "-"),
     ]
+    for item in federation_boundary_payload(config, tolerate_errors=True).get("repositories", []):
+        if isinstance(item, dict):
+            rows.append((f"federation.{item.get('name')}", f"{item.get('boundary_status')}; {item.get('relation')}; {item.get('root')}"))
     rows.extend(runner.inspect_rows(config))
     render_status_table(rows)
 
@@ -13397,6 +13509,8 @@ def _main_after_parse(
             required_capabilities=[str(item) for item in getattr(args, "require_capability", []) if str(item).strip()],
         )
         return 0
+    if args.command in {"federation", "fed"}:
+        return _federation_command(args)
     if args.command == "config":
         return _config_command(args)
     if args.command in {"targets", "tg"}:
