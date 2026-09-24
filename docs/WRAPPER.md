@@ -79,3 +79,14 @@ devtool completion-state --kind all --format json
 ## Safety model
 
 Wrapper bindings are declarative argv transformations, not shell snippets. Devtool rejects unsafe wrapper binding attempts such as repository routing controls, internal provenance flags, nested `--` separators, and NUL/newline values. Sensitive-looking wrapper options such as `token`, `secret`, `password`, `credential`, `api_key`, and `auth` are redacted in human and machine resolution surfaces.
+
+## Final seal
+
+The wrapper final seal verifies that all wrapper-facing surfaces agree with the same repository contract:
+
+```sh
+devtool wrapper seal
+devtool wrapper seal --json
+```
+
+The seal checks launcher status, wrapper documentation, discovery metadata, completion state, help rendering, non-interactive resolution, and doctor integration. It is read-only and returns a non-zero exit code when any required wrapper surface is missing or inconsistent.

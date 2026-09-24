@@ -146,6 +146,11 @@ from .wrapper_help import (
     render_wrapper_version,
     wrapper_discovery_payload,
 )
+from .wrapper_final_seal import (
+    build_wrapper_final_seal,
+    render_wrapper_final_seal,
+    wrapper_final_seal_as_dict,
+)
 from .workspace import WorkspaceConfigError, resolve_workspace_targets, workspace_as_dict, workspace_group_memberships
 from .workflow_runtime import build_workspace_specs, build_workspace_validation_specs, plan_workspace_targets
 from .workflow_scheduler import (
@@ -999,6 +1004,8 @@ def build_parser() -> argparse.ArgumentParser:
     wrapper_verify.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
     wrapper_status = wrapper_sub.add_parser("status", help="Show repository devtoolw launcher status")
     wrapper_status.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
+    wrapper_seal = wrapper_sub.add_parser("seal", help="Run wrapper cross-surface final seal checks")
+    wrapper_seal.add_argument("--json", action="store_true", help="Emit wrapper final seal as JSON")
 
     compatibility_cmd = subparsers.add_parser("compatibility", aliases=["compat"], help="Audit retained legacy interfaces and migration paths")
     compatibility_cmd.add_argument("--json", action="store_true", help="Emit the versioned compatibility report as JSON")
@@ -11782,6 +11789,14 @@ def _handle_wrapper_command(args: argparse.Namespace) -> int:
             command_name = str(getattr(args, "command_name", "") or "")
             print(render_wrapper_command_help(config, command_name) if command_name else render_wrapper_overview(config), end="")
         return 0
+
+    if action == "seal":
+        seal = build_wrapper_final_seal(config)
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(wrapper_final_seal_as_dict(seal), indent=2, ensure_ascii=False))
+        else:
+            print(render_wrapper_final_seal(seal), end="")
+        return 0 if seal.ok else 1
 
     if action in {"resolve", "exec"}:
         wrapper_args = list(getattr(args, "wrapper_args", []) or [])
