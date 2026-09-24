@@ -195,6 +195,23 @@ def load_jobs(
     return jobs
 
 
+def _target_job_base_root(repo_root: Path, target: TargetConfig) -> Path:
+    """Return the directory that target-local job paths should be relative to.
+
+    Repository jobs keep repository-root-relative path semantics.  Target-local
+    jobs are authored inside ``[targets.<name>.jobs]`` and should therefore use
+    the owning target's execution root for explicit ``root = "..."`` values
+    as well as the implicit runtime cwd used when root is omitted.
+    """
+    raw = target.root or target.cwd or target.build_target or target.restore_target or str(repo_root)
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = repo_root / path
+    if path.is_file():
+        path = path.parent
+    return path.resolve(strict=False)
+
+
 def load_target_jobs(
     repo_root: Path,
     raw_targets: object,
@@ -216,15 +233,21 @@ def load_target_jobs(
         if raw_jobs in (None, {}):
             continue
         context = f"targets.{target_name}.jobs"
+        target_root = _target_job_base_root(repo_root, target)
         target_jobs = load_jobs(
-            repo_root,
+            target_root,
             raw_jobs,
             target.env or base_env,
             supported_runners=supported_runners,
             runner_option_sections=runner_option_sections,
             context_prefix=context,
             key_prefix=target_name,
-            scope_metadata={"scope": "target", "target": target_name, "target_local": True},
+            scope_metadata={
+                "scope": "target",
+                "target": target_name,
+                "target_local": True,
+                "target_root": str(target_root),
+            },
         )
         short_names: dict[str, JobConfig] = {}
         for internal_name, job in target_jobs.items():

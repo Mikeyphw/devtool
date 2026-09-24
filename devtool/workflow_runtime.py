@@ -363,13 +363,23 @@ def _runner_action_specs(config: ProjectConfig, runner_name: str, action: str) -
 
 
 def _structured_job_metadata(job: JobConfig) -> dict[str, object]:
+    job_metadata = dict(job.metadata)
+    job_scope = str(job_metadata.get("scope") or ("target" if job_metadata.get("target_local") else "repository"))
+    job_target = str(job_metadata.get("target") or "")
+    job_local_name = str(job_metadata.get("local_name") or job.name)
+    job_key = str(job_metadata.get("job_key") or job.name)
     metadata: dict[str, object] = {
         "runner": job.runner,
         "project_type": job.runner,
         "project_root": job.root,
         "workflow_job": job.name,
         "workflow_job_mode": job.command_mode,
-        **dict(job.metadata),
+        "workflow_job_scope": job_scope,
+        "workflow_job_target": job_target,
+        "workflow_job_local_name": job_local_name,
+        "workflow_job_key": job_key,
+        "workflow_job_target_local": job_scope == "target" or bool(job_metadata.get("target_local")),
+        **job_metadata,
     }
     if "progress_parser" not in metadata:
         if job.runner == "node":
@@ -497,6 +507,7 @@ def _node_specs(config: ProjectConfig, node: WorkflowNode, *, validation_skip: t
             {
                 "workflow_graph": True,
                 "workflow_target": node.target,
+                "workflow_effective_cwd": spec.cwd or "",
                 "workflow_name": node.workflow,
                 "workflow_node_key": node.key,
                 "workflow_node_id": ref.step_id,

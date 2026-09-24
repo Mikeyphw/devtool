@@ -69,3 +69,30 @@ Target-local job references keep both the author-facing reference and the resolv
 - `workflow_resolution_key` contains the executable key, such as `dustui_android.contracts`.
 
 These fields are present in workflow graph JSON, command-spec metadata, and safe-scheduler plan nodes. That means logs, EXO events, execution plans, and machine clients can display `job:contracts` while still correlating it with the unambiguous executable key `dustui_android.contracts`.
+
+## Execution affinity
+
+Target-local jobs use the owning target as their execution context:
+
+- Omitted `root` means the job runs from the target root.
+- Relative explicit `root` values inside `[targets.<target>.jobs.<name>]` are resolved relative to that target root, not the repository root.
+- `inputs` and `outputs` remain relative to the job's effective root for scheduler/preflight safety checks.
+- A job without its own `[env]` inherits the target environment.
+- An explicitly empty `[targets.<target>.jobs.<name>.env]` clears inherited environment values for that job.
+- `gradle_tasks = [...]` target-local jobs run from the target root and keep their Gradle task list in runtime metadata.
+
+Example:
+
+```toml
+[targets.dustui_android]
+runner = "android"
+root = "android/DustUI"
+
+[targets.dustui_android.jobs.contracts]
+runner = "command"
+root = "tools/contracts" # resolves to android/DustUI/tools/contracts
+command = ["python3", "check.py"]
+outputs = ["out/contracts.json"]
+```
+
+Runtime command metadata includes `workflow_effective_cwd` plus normalized job identity fields such as `workflow_job_scope`, `workflow_job_target`, `workflow_job_local_name`, `workflow_job_key`, and `workflow_job_target_local`.
