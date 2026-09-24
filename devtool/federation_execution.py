@@ -30,6 +30,7 @@ from .core.events import (
 from .federation_discovery import resolve_federated_repository
 from .federation_plan import FederatedPlanGraph, build_federated_plan
 from .models import FederatedWorkflowConfig, FederatedWorkflowStep, ProjectConfig
+from .repository_identity import RepositoryIdentity, same_repository_identity
 
 
 class FederationExecutionError(RuntimeError):
@@ -135,6 +136,77 @@ def _step_identity(plan: FederatedPlanGraph, step: FederatedWorkflowStep) -> dic
         if isinstance(identity, dict):
             return dict(identity)
     return {}
+
+
+def _assert_planned_resolution_identity(
+    *,
+    repository: str,
+    planned_identity: dict[str, Any],
+    resolution: Any,
+) -> None:
+    actual = getattr(resolution, "repository_identity", None)
+    if actual is None:
+        raise FederationExecutionError(
+            f"Federation repository {repository!r} has no identity at execution time"
+        )
+    if not planned_identity:
+        raise FederationExecutionError(
+            f"Federation repository {repository!r} has no planned repository identity"
+        )
+    try:
+        expected = RepositoryIdentity.from_dict(planned_identity)
+    except Exception as exc:
+        raise FederationExecutionError(
+            f"Federation repository {repository!r} has invalid planned identity: {exc}"
+        ) from exc
+    if not same_repository_identity(expected, actual):
+        raise FederationExecutionError(
+            f"Federation repository {repository!r} identity changed between planning and execution: "
+            f"planned {expected.fingerprint or '<missing>'} at {expected.root}, "
+            f"resolved {actual.fingerprint or '<missing>'} at {actual.root}"
+        )
+    planned_root = Path(expected.root).resolve(strict=False)
+    actual_root = Path(getattr(resolution, "root", actual.root)).resolve(strict=False)
+    if planned_root != actual_root:
+        raise FederationExecutionError(
+            f"Federation repository {repository!r} root changed between planning and execution: "
+            f"planned {planned_root}, resolved {actual_root}"
+        )
+
+
+def _assert_child_snapshot_authority(
+    *,
+    repository: str,
+    child_run_id: str,
+    expected_identity: dict[str, Any],
+    expected_parent_run_id: str,
+    snapshot: Any,
+) -> dict[str, Any]:
+    if snapshot is None:
+        return {}
+    persisted_lineage = dict(getattr(snapshot, "run_lineage", {}) or {})
+    if persisted_lineage.get("parent_run_id") != expected_parent_run_id:
+        raise FederationExecutionError(
+            f"Child run {child_run_id!r} did not persist parent federation lineage {expected_parent_run_id!r}"
+        )
+    if str(persisted_lineage.get("child_run_id") or child_run_id) != child_run_id:
+        raise FederationExecutionError(
+            f"Child run {child_run_id!r} persisted mismatched child_run_id "
+            f"{persisted_lineage.get('child_run_id')!r}"
+        )
+    persisted_identity = dict(getattr(snapshot, "repository_identity", {}) or {})
+    if not persisted_identity:
+        raise FederationExecutionError(
+            f"Child run {child_run_id!r} for repository {repository!r} did not persist repository identity"
+        )
+    expected = RepositoryIdentity.from_dict(expected_identity)
+    actual = RepositoryIdentity.from_dict(persisted_identity)
+    if not same_repository_identity(expected, actual):
+        raise FederationExecutionError(
+            f"Child run {child_run_id!r} repository identity mismatch for {repository!r}: "
+            f"expected {expected.fingerprint}, got {actual.fingerprint}"
+        )
+    return persisted_lineage
 
 
 @contextmanager
@@ -269,6 +341,11 @@ def run_federated_workflow(
                 raise FederationExecutionError(f"Federation repository {step.repository!r} is unavailable at execution time")
             target = _step_target(plan, step)
             identity = _step_identity(plan, step)
+            _assert_planned_resolution_identity(
+                repository=step.repository,
+                planned_identity=identity,
+                resolution=resolution,
+            )
             effective_fingerprint = str(identity.get("fingerprint") or identity.get("root") or resolution.root)
             child_run_id = str(RunId.new(prefix=f"fed-{step.repository}"))
             parent_node = node_ids[step.step_id]
@@ -319,16 +396,18 @@ def run_federated_workflow(
                     invocation_command=invocation_command,
                 )))
             child_snapshot = snapshot_lookup(child_run_id)
-            persisted_lineage = dict(getattr(child_snapshot, "run_lineage", {}) or {}) if child_snapshot is not None else {}
+            persisted_lineage = _assert_child_snapshot_authority(
+                repository=step.repository,
+                child_run_id=child_run_id,
+                expected_identity=identity,
+                expected_parent_run_id=run_id,
+                snapshot=child_snapshot,
+            ) if child_snapshot is not None else {}
             child_status = (
                 str(getattr(child_snapshot, "status", "") or "")
                 if child_snapshot is not None
                 else (ExecutionStatus.SUCCEEDED.value if rc == 0 else ExecutionStatus.CANCELLED.value if rc == 130 else ExecutionStatus.FAILED.value)
             )
-            if child_snapshot is not None and persisted_lineage.get("parent_run_id") != run_id:
-                raise FederationExecutionError(
-                    f"Child run {child_run_id!r} did not persist parent federation lineage {run_id!r}"
-                )
             publish(NodeFinished(
                 run_id=run_id,
                 node_id=parent_node,
@@ -479,16 +558,18 @@ def run_federated_direct_child(
         with _federation_child_environment(env):
             rc = int(execute(child_run_id, lineage))
         snapshot = snapshot_lookup(child_run_id)
-        persisted_lineage = dict(getattr(snapshot, "run_lineage", {}) or {}) if snapshot is not None else {}
+        persisted_lineage = _assert_child_snapshot_authority(
+            repository=repo_name,
+            child_run_id=child_run_id,
+            expected_identity=identity,
+            expected_parent_run_id=parent_id,
+            snapshot=snapshot,
+        ) if snapshot is not None else {}
         status = (
             str(getattr(snapshot, "status", "") or "")
             if snapshot is not None
             else (ExecutionStatus.SUCCEEDED.value if rc == 0 else ExecutionStatus.CANCELLED.value if rc == 130 else ExecutionStatus.FAILED.value)
         )
-        if snapshot is not None and persisted_lineage.get("parent_run_id") != parent_id:
-            raise FederationExecutionError(
-                f"Child run {child_run_id!r} did not persist direct federation lineage {parent_id!r}"
-            )
         publish(NodeFinished(
             run_id=parent_id,
             node_id=node_id,

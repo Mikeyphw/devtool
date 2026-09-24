@@ -190,3 +190,29 @@ through the existing runner pipeline.  An unqualified job prefers the child's
 selected/sole target-local contract, while `<target>:job:<name>` is strict and
 never falls back to repository scope.  `--plan` performs the same resolution
 without execution.
+
+## FRX-08: execution and contract Gate 2
+
+FRX-08 seals the local cross-repository execution contract before remote
+transport is allowed to build on it. The read-only gate is exposed as:
+
+```text
+devtool federation gate2
+devtool federation gate2 --json
+```
+
+`execution-preflight` is an alias. The gate requires the FRX-04 boundary gate,
+rebuilds configured federated plans, verifies deterministic dependency edges
+and current child repository identities, and runs an in-memory EXO authority
+probe proving that parent and child run ids remain distinct and that corrupt
+lineage is rejected. `doctor` exposes the same qualification as
+`federation/gate2`.
+
+Execution is hardened at the same boundary: immediately before a federated
+child is invoked, Devtool re-resolves the child and requires its canonical
+repository identity/root to match the plan. After execution, the authoritative
+child EXO snapshot must persist the expected repository identity, parent run id,
+and exact child run id. A moved/replaced child or mutated lineage therefore
+fails closed rather than being accepted as the planned execution.
+
+Repositories without `[federation]` remain valid and report `standalone` mode.

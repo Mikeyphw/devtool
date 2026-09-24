@@ -16,6 +16,7 @@ from .wrapper_config import wrapper_as_dict
 from .wrapper_launcher import launcher_status, launcher_status_as_dict
 from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, resolve_federated_repository
 from .federation_gate import build_federation_gate1_report
+from .federation_gate2 import build_federation_gate2_report
 from .android.capabilities import resolve_android_execution_context
 from .android.devices import AndroidDeviceManager
 
@@ -174,6 +175,17 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
             "gate1",
             "ok" if federation_gate.ok else "missing",
             f"FRX-04 status={federation_gate.status}; checks={len(federation_gate.checks)}",
+        ))
+    try:
+        federation_gate2 = build_federation_gate2_report(config)
+    except Exception as exc:
+        checks.append(DoctorCheck("federation", "gate2", "missing", f"FRX-08 preflight failed: {exc}"))
+    else:
+        checks.append(DoctorCheck(
+            "federation",
+            "gate2",
+            "ok" if federation_gate2.ok else "missing",
+            f"FRX-08 status={federation_gate2.status}; checks={len(federation_gate2.checks)}",
         ))
     if config.wrapper.commands:
         launcher_report = launcher_status(config.repo_root)
