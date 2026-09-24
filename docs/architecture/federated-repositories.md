@@ -92,3 +92,23 @@ human surfaces include repository boundary summaries.
 
 FRX-03 still does not create cross-repository DAG edges or execute child work.
 That begins with FRX-05 after the FRX-04 boundary gate.
+
+## FRX-04 boundary gate
+
+Before cross-repository planning is introduced, Devtool exposes a read-only
+boundary qualification gate:
+
+```bash
+devtool federation preflight
+devtool federation preflight --json
+```
+
+`gate1` is an alias for automation compatibility. The gate validates the owner
+repository identity, every enrolled child boundary, isolated child config
+reloads, wrapper and target-local discovery, and EXO repository-identity
+persistence. Optional missing repositories are reported but do not fail the
+gate. Required missing, ambiguous, identity-colliding, or config-leaking child
+repositories fail closed.
+
+A repository without `[federation]` passes the same gate in `standalone` mode;
+FRX remains opt-in.

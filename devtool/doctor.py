@@ -15,6 +15,7 @@ from .features import resolve_feature_flags
 from .wrapper_config import wrapper_as_dict
 from .wrapper_launcher import launcher_status, launcher_status_as_dict
 from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, resolve_federated_repository
+from .federation_gate import build_federation_gate1_report
 from .android.capabilities import resolve_android_execution_context
 from .android.devices import AndroidDeviceManager
 
@@ -163,6 +164,17 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
                     f"target={resolution.selected_target or '-'}"
                 )
             checks.append(DoctorCheck("federation", f"repository:{federation_name}", status, detail))
+    try:
+        federation_gate = build_federation_gate1_report(config)
+    except Exception as exc:
+        checks.append(DoctorCheck("federation", "gate1", "missing", f"FRX-04 preflight failed: {exc}"))
+    else:
+        checks.append(DoctorCheck(
+            "federation",
+            "gate1",
+            "ok" if federation_gate.ok else "missing",
+            f"FRX-04 status={federation_gate.status}; checks={len(federation_gate.checks)}",
+        ))
     if config.wrapper.commands:
         launcher_report = launcher_status(config.repo_root)
         checks.append(DoctorCheck(

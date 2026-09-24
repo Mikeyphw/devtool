@@ -105,6 +105,7 @@ from .completion_state import build_completion_state, completion_values
 from .compatibility import compatibility_report, render_compatibility_text
 from .final_seal import final_seal_report, render_final_seal_text
 from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, federation_inspect_payload
+from .federation_gate import build_federation_gate1_report, federation_gate1_as_dict, render_federation_gate1
 from .target_seal import target_seal_report, render_target_seal_text
 from .target_local_adoption import render_target_local_adoption_text, target_local_adoption_report
 from .config_migration import analyze_config_migration, migrate_config_text, migration_report
@@ -1052,6 +1053,8 @@ def build_parser() -> argparse.ArgumentParser:
     federation_inspect = federation_sub.add_parser("inspect", aliases=["show"], help="Inspect one enrolled repository and its child-owned resolution")
     federation_inspect.add_argument("repository", help="Federation repository name")
     federation_inspect.add_argument("--json", action="store_true", help="Emit machine-readable repository boundary state")
+    federation_preflight = federation_sub.add_parser("preflight", aliases=["gate1"], help="Run the FRX-04 repository identity and boundary validation gate")
+    federation_preflight.add_argument("--json", action="store_true", help="Emit the machine-readable FRX-04 gate report")
 
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
@@ -11034,6 +11037,14 @@ def _federation_command(args: argparse.Namespace) -> int:
                     ("detail", str(item.get("boundary_detail") or "")),
                 ])
             return 0
+        if action in {"preflight", "gate1"}:
+            report = build_federation_gate1_report(config)
+            payload = federation_gate1_as_dict(report)
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(render_federation_gate1(report), end="")
+            return 0 if report.ok else 1
     except FederationDiscoveryError as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
