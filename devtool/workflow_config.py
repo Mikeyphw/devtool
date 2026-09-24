@@ -493,7 +493,22 @@ def workflow_as_dict(target_name: str, workflow: WorkflowConfig) -> dict[str, An
     }
 
 
+def job_scope(job: JobConfig) -> str:
+    return str(job.metadata.get("scope") or ("target" if job.metadata.get("target_local") else "repository"))
+
+
+def job_target(job: JobConfig) -> str:
+    return str(job.metadata.get("target") or "")
+
+
+def job_local_name(job: JobConfig) -> str:
+    return str(job.metadata.get("local_name") or job.name)
+
+
 def job_as_dict(job: JobConfig) -> dict[str, Any]:
+    scope = job_scope(job)
+    target = job_target(job)
+    local_name = job_local_name(job)
     return {
         "runner": job.runner,
         "root": job.root,
@@ -507,6 +522,11 @@ def job_as_dict(job: JobConfig) -> dict[str, Any]:
         "device_serial": job.device_serial,
         "inputs": list(job.inputs),
         "outputs": list(job.outputs),
+        "scope": scope,
+        "target": target,
+        "local_name": local_name,
+        "target_local": scope == "target" or bool(job.metadata.get("target_local")),
+        "job_key": str(job.metadata.get("job_key") or job.name),
         "metadata": dict(job.metadata),
         "options": dict(job.options),
     }

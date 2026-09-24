@@ -8212,6 +8212,7 @@ def _targets(config: ProjectConfig, *, as_json: bool = False) -> None:
                     "root": target.root or target.solution or target.build_target or target.restore_target or target.run_project,
                     "inputs": list(target.inputs),
                     "outputs": list(target.outputs),
+                    "jobs": sorted(target.jobs),
                     "workflows": {
                         workflow_name: [step.raw for step in workflow.steps]
                         for workflow_name, workflow in sorted(target.workflows.items())
@@ -8227,12 +8228,14 @@ def _targets(config: ProjectConfig, *, as_json: bool = False) -> None:
         for name, target in sorted(config.targets.items()):
             location = target.root or target.solution or target.build_target or target.restore_target or target.run_project or "-"
             workflows = ",".join(sorted(target.workflows)) or "-"
+            jobs = ",".join(sorted(target.jobs)) or "-"
             groups = ",".join(memberships.get(name, ())) or "-"
             default = " default" if name == config.workspace.default_target else ""
             rows.append((
                 name,
                 f"platform={target.platform or '-'} runner={target.effective_runner or '-'} "
-                f"groups={groups} workflows={workflows} inputs={len(target.inputs)} outputs={len(target.outputs)} root={location}{default}",
+                f"groups={groups} jobs={jobs} workflows={workflows} "
+                f"inputs={len(target.inputs)} outputs={len(target.outputs)} root={location}{default}",
             ))
     elif config.kind == "dotnet":
         rows = [(candidate.stem, f"platform={config.platform or 'dotnet'} runner=dotnet root={candidate.relative_to(config.repo_root)}") for candidate in discover_dotnet_candidates(config.repo_root)]
@@ -8261,11 +8264,16 @@ def _groups(config: ProjectConfig, *, as_json: bool = False) -> None:
     render_status_table(rows)
 
 def _jobs(config: ProjectConfig, *, as_json: bool = False) -> None:
-    from .workflow_config import job_as_dict
+    from .workflow_config import job_as_dict, job_local_name, job_scope, job_target
+    target_jobs: dict[str, dict[str, object]] = {}
+    for target_name, target in sorted(config.targets.items()):
+        if target.jobs:
+            target_jobs[target_name] = {name: job_as_dict(job) for name, job in sorted(target.jobs.items())}
     if as_json:
         print(json.dumps({
-            "schema_version": 1,
+            "schema_version": 2,
             "jobs": {name: job_as_dict(job) for name, job in sorted(config.jobs.items())},
+            "target_jobs": target_jobs,
         }, indent=2, ensure_ascii=False))
         return
     if not config.jobs:
@@ -8274,7 +8282,11 @@ def _jobs(config: ProjectConfig, *, as_json: bool = False) -> None:
     rows: list[tuple[str, str]] = []
     for name, job in sorted(config.jobs.items()):
         payload = job.action or " ".join(job.command) or job.shell_command
-        rows.append((name, f"runner={job.runner} mode={job.command_mode} root={job.root or '-'} {payload}".strip()))
+        scope = job_scope(job)
+        target = job_target(job)
+        local_name = job_local_name(job)
+        scope_text = f"scope={scope}" + (f" target={target} local={local_name}" if target else "")
+        rows.append((name, f"{scope_text} runner={job.runner} mode={job.command_mode} root={job.root or '-'} {payload}".strip()))
     render_status_table(rows)
 
 

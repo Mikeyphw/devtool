@@ -104,9 +104,15 @@ def _target_root(config: ProjectConfig, target: TargetConfig) -> Path:
     return path.resolve(strict=False)
 
 
-def _job_root(config: ProjectConfig, name: str) -> Path:
+def _job_root(config: ProjectConfig, name: str, target_name: str = "") -> Path:
     job = config.jobs[name]
-    path = Path(job.root or config.repo_root).expanduser()
+    default_root: object = config.repo_root
+    if bool(job.metadata.get("target_local")):
+        owner = str(job.metadata.get("target") or target_name or "").strip()
+        target = config.targets.get(owner)
+        if target is not None:
+            default_root = _target_root(config, target)
+    path = Path(job.root or default_root).expanduser()
     if not path.is_absolute():
         path = config.repo_root / path
     return path.resolve(strict=False)
@@ -322,7 +328,7 @@ def analyze_toolchain_requirements(
                     ))
             if node.ref.kind == "job" and node.ref.name in config.jobs:
                 job = config.jobs[node.ref.name]
-                root = _job_root(config, job.name)
+                root = _job_root(config, job.name, node.target)
                 root_key = (f"job:{job.name}", str(root))
                 if root_key not in seen_roots:
                     seen_roots.add(root_key)

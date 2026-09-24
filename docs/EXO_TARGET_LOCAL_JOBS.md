@@ -38,3 +38,22 @@ Execution modes:
 - `gradle_tasks = [":app:testDebugUnitTest"]` is shorthand for a Gradle/Android command job and defaults the runner to `gradle` when no runner is declared.
 
 Target-local command jobs without an explicit `root` execute from the target root. Repository-wide jobs without an explicit `root` execute from the repository root.
+
+## Discovery and preflight truth
+
+Target-local jobs appear in both repository-wide and per-target views:
+
+```bash
+devtool -r "$REPO" jobs --json
+devtool -r "$REPO" targets --json
+devtool -r "$REPO" workflows --json
+devtool -r "$REPO" preflight --workflow fast --json
+```
+
+`jobs --json` exposes:
+
+- `jobs`: all executable job keys, including target-local internal keys such as `dustui_android.contracts`.
+- `target_jobs`: per-target local names such as `contracts`, mapped to the same normalized job payload.
+
+Target-local jobs without an explicit `root` are planned, scheduled, and preflighted from the owning target root. Repository-wide jobs still default to the repository root. This keeps `inputs` and `outputs` scoped consistently across workflow execution, safe scheduling, and toolchain reports.
+
