@@ -24,3 +24,33 @@ A config owned by a descendant or unrelated directory is rejected. This prevents
 ### What FRX-01 does not do
 
 FRX-01 does not add `[federation]`, discover child repositories, create cross-repository DAG edges, or execute child repositories. Those begin in later FRX overlays.
+
+## FRX-02: explicit federation configuration
+
+Federation enrollment is repository-owned and opt-in. Merely placing another
+Git repository below a Devtool repository does not enroll it.
+
+```toml
+[federation]
+schema = 1
+
+[federation.repositories.android-app]
+path = "../android-app"
+
+[federation.repositories.optional-tool]
+path = "tools/optional-tool"
+required = false
+
+[federation.groups.product]
+repositories = ["android-app", "optional-tool"]
+```
+
+Relative paths are resolved from the **configuration-owning repository root**,
+not from the process cwd or a deeper requested project root. Required children
+must exist as directories at config-load time; optional children may be absent
+and remain visible as unavailable enrollment records. Self-enrollment, duplicate
+canonical roots (including symlink aliases), unknown fields, unsupported schema
+versions, and invalid group references fail closed.
+
+FRX-02 deliberately does not inspect child `.devtool.toml` files or execute
+child work. Repository discovery/ownership resolution begins in FRX-03.

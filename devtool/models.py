@@ -279,6 +279,32 @@ class WrapperConfig:
     commands: dict[str, WrapperCommandConfig] = field(default_factory=dict)
 
 
+@dataclass(slots=True, frozen=True)
+class FederatedRepositoryConfig:
+    name: str
+    declared_path: str
+    root: str
+    required: bool = True
+    available: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class FederationGroup:
+    name: str
+    repositories: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class FederationConfig:
+    schema: int = 1
+    repositories: dict[str, FederatedRepositoryConfig] = field(default_factory=dict)
+    groups: dict[str, FederationGroup] = field(default_factory=dict)
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.repositories or self.groups)
+
+
 @dataclass(slots=True)
 class ProjectConfig:
     repo_root: Path
@@ -310,6 +336,7 @@ class ProjectConfig:
     jobs: dict[str, JobConfig] = field(default_factory=dict)
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     wrapper: WrapperConfig = field(default_factory=WrapperConfig)
+    federation: FederationConfig = field(default_factory=FederationConfig)
     ui_config: dict[str, Any] = field(default_factory=dict)
     execution_environment: str = "auto"
     chroot_name: str = "androidos"

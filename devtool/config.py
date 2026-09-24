@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import DotnetTarget, JobConfig, ProjectConfig, TargetConfig
+from .federation_config import FederationConfigError, federation_as_dict, load_federation_config
 from .repository_identity import RepositoryIdentityError, build_repository_identity
 from .workspace import WorkspaceConfigError, load_workspace_config, workspace_as_dict
 from .wrapper_config import WrapperConfigError, load_wrapper_config, wrapper_as_dict
@@ -39,7 +40,7 @@ GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
     "project", "workspace", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
-    "go", "maven", "cmake", "meson", "make", "test_profiles", "variants", "wrapper",
+    "go", "maven", "cmake", "meson", "make", "test_profiles", "variants", "wrapper", "federation",
 }
 GLOBAL_COMMAND_SCOPED_CLI_KEYS = {
     ("validation", "skip_restore"), ("validation", "skip_build"), ("validation", "skip_test"),
@@ -826,6 +827,16 @@ def load_project_config(
         wrapper = load_wrapper_config(repo_wrapper_raw, targets=targets, workspace=workspace)
     except WrapperConfigError as exc:
         raise SystemExit(f"Invalid wrapper configuration in {repo_source_label}: {exc}") from exc
+    # Federation is repository-owned just like wrappers.  Never merge it from
+    # global defaults: enrollment must be explicit in the owning repository.
+    repo_federation_raw = _require_table(repo_loaded, "federation", source=repo_source_label)
+    try:
+        federation = load_federation_config(
+            repo_federation_raw,
+            owner_root=Path(repository_identity.root),
+        )
+    except FederationConfigError as exc:
+        raise SystemExit(f"Invalid federation configuration in {repo_source_label}: {exc}") from exc
     selected_target_name = _default_target_name(
         project_section,
         targets,
@@ -1095,6 +1106,7 @@ def load_project_config(
         jobs=jobs,
         workspace=workspace,
         wrapper=wrapper,
+        federation=federation,
         ui_config=ui_config,
         execution_environment=execution_environment,
         chroot_name=chroot_name,
@@ -2528,6 +2540,7 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
         "global_config_path": str(config.global_config_path) if config.global_config_path else "",
         "workspace": workspace_as_dict(config.workspace, config.targets),
         "wrapper": wrapper_as_dict(config.wrapper),
+        "federation": federation_as_dict(config.federation),
         "ui": {
             "config": config.ui_config,
             "resolved": {surface: resolve_ui_preferences(config.ui_config, surface=surface).as_dict() for surface in ("machine", "desktop", "tui", "hud", "android")},
