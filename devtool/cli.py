@@ -508,6 +508,9 @@ def build_parser() -> argparse.ArgumentParser:
     execution.add_argument("--fail-fast", action="store_true", help="Stop at the first failed step")
     execution.add_argument("--performance", action="store_true", help="Write a JSON performance report for this run")
     execution.add_argument("--performance-file", default="", help="Performance report path (default: devtool state directory)")
+    execution.add_argument("--internal-invocation-source", dest="_devtool_invocation_source", default="", help=argparse.SUPPRESS)
+    execution.add_argument("--internal-invocation-command", dest="_devtool_invocation_command", default="", help=argparse.SUPPRESS)
+    execution.add_argument("--internal-wrapper-schema", dest="_devtool_wrapper_schema", default="", help=argparse.SUPPRESS)
 
     output = parser.add_argument_group("Output and clipboard")
     output.add_argument("--stdout-payload", choices=["auto", "summary", "raw"], default="auto", help="Select stdout content: normal UI, concise summary, or raw command output")
@@ -11411,6 +11414,49 @@ def _write_performance_report(
 
 
 
+
+
+def _safe_internal_invocation_token(value: object, *, field: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-/")
+    if any(ch not in allowed for ch in text) or len(text) > 128:
+        raise ValueError(f"invalid internal invocation {field}")
+    return text
+
+
+def _invocation_source_for_args(args: argparse.Namespace) -> str:
+    return _safe_internal_invocation_token(
+        getattr(args, "_devtool_invocation_source", "") or "cli",
+        field="source",
+    ) or "cli"
+
+
+def _invocation_command_for_args(args: argparse.Namespace) -> str:
+    return _safe_internal_invocation_token(
+        getattr(args, "_devtool_invocation_command", "") or getattr(args, "command", "") or "devtool",
+        field="command",
+    )
+
+
+def _invocation_metadata_for_args(args: argparse.Namespace) -> dict[str, object]:
+    source = _invocation_source_for_args(args)
+    command = _invocation_command_for_args(args)
+    metadata: dict[str, object] = {
+        "invocation_source": source,
+        "invocation_command": command,
+    }
+    schema = _safe_internal_invocation_token(
+        getattr(args, "_devtool_wrapper_schema", ""),
+        field="wrapper_schema",
+    )
+    if schema:
+        metadata["wrapper_schema"] = schema
+    if source == "wrapper":
+        metadata["wrapper_command"] = command
+    return metadata
+
 def _apply_ui_cli_overrides(args: argparse.Namespace) -> None:
     mapping = {
         "ui_profile": "DEVTOOL_UI_PROFILE",
@@ -11442,13 +11488,15 @@ def main(argv: list[str] | None = None) -> int:
         emit_build = command in PROGRESS_CAPABLE_COMMANDS
         event_run_id = _ensure_run_id(args) if emit_build else ""
         lifecycle_started = time.monotonic()
+        invocation_source = _invocation_source_for_args(args)
+        invocation_metadata = _invocation_metadata_for_args(args)
         if emit_build:
             publish_event(BuildStarted(
                 run_id=event_run_id,
                 command=command,
                 project=str(getattr(args, "repo", "") or Path.cwd()),
-                source="cli",
-                metadata={"command": command},
+                source=invocation_source,
+                metadata={"command": command, **invocation_metadata},
             ))
         try:
             try:
@@ -11464,7 +11512,7 @@ def main(argv: list[str] | None = None) -> int:
                         status="failed",
                         exit_code=1,
                         duration_seconds=time.monotonic() - lifecycle_started,
-                        source="cli",
+                        source=invocation_source,
                         seal_reason="CLI execution aborted; no further nodes can be discovered",
                         publish=publish_event,
                     )
@@ -11475,7 +11523,7 @@ def main(argv: list[str] | None = None) -> int:
                     status="succeeded" if code == 0 else ("cancelled" if code == 130 else "failed"),
                     exit_code=code,
                     duration_seconds=time.monotonic() - lifecycle_started,
-                    source="cli",
+                    source=invocation_source,
                     seal_reason="CLI execution discovery complete",
                     publish=publish_event,
                 )

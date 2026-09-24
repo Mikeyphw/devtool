@@ -156,6 +156,24 @@ class ExecutionReducer:
         run.status = ExecutionStatus.RUNNING
         run.command = str(event.command or run.command)
         run.project = str(event.project or run.project)
+        metadata = dict(event.metadata or {})
+        invocation_source = str(metadata.get("invocation_source") or event.source or "").strip()
+        invocation_command = str(metadata.get("invocation_command") or event.command or "").strip()
+        if invocation_source:
+            run.invocation_source = invocation_source
+        elif not run.invocation_source:
+            run.invocation_source = "devtool"
+        if invocation_command:
+            run.invocation_command = invocation_command
+        elif not run.invocation_command:
+            run.invocation_command = str(event.command or "")
+        invocation_metadata = metadata.get("invocation_metadata")
+        if isinstance(invocation_metadata, dict):
+            run.invocation_metadata.update({str(key): value for key, value in invocation_metadata.items()})
+        for key in ("wrapper_schema", "wrapper_command"):
+            value = metadata.get(key)
+            if value not in (None, ""):
+                run.invocation_metadata[str(key)] = value
         run.started_at = run.started_at or event.timestamp
 
     def _run_finished(self, run: ExecutionRunState, event: "RunFinished") -> None:

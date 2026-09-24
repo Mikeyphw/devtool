@@ -157,6 +157,9 @@ class ExecutionRunState:
     status: ExecutionStatus = ExecutionStatus.PLANNED
     command: str = ""
     project: str = ""
+    invocation_source: str = ""
+    invocation_command: str = ""
+    invocation_metadata: dict[str, Any] = field(default_factory=dict)
     nodes: dict[str, ExecutionNodeState] = field(default_factory=dict)
     processes: dict[str, ExecutionProcessState] = field(default_factory=dict)
     diagnostics: dict[str, ExecutionDiagnosticState] = field(default_factory=dict)
@@ -633,6 +636,9 @@ class ExecutionSnapshot:
     status: str
     command: str
     project: str
+    invocation_source: str
+    invocation_command: str
+    invocation_metadata: dict[str, Any]
     counts: ExecutionCounts
     accounting: ExecutionAccountingSnapshot
     nodes: tuple[ExecutionNodeSnapshot, ...]
@@ -654,11 +660,14 @@ class ExecutionSnapshot:
     @classmethod
     def from_state(cls, state: ExecutionRunState) -> "ExecutionSnapshot":
         return cls(
-            schema_version=5,
+            schema_version=6,
             run_id=state.run_id,
             status=state.status.value,
             command=state.command,
             project=state.project,
+            invocation_source=state.invocation_source,
+            invocation_command=state.invocation_command,
+            invocation_metadata=deepcopy(state.invocation_metadata),
             counts=state.counts(),
             accounting=ExecutionAccountingSnapshot.from_state(state),
             nodes=tuple(ExecutionNodeSnapshot.from_state(item) for item in state.nodes.values()),
@@ -688,6 +697,9 @@ class ExecutionSnapshot:
             "status": self.status,
             "command": self.command,
             "project": self.project,
+            "invocation_source": self.invocation_source,
+            "invocation_command": self.invocation_command,
+            "invocation_metadata": deepcopy(self.invocation_metadata),
             "counts": self.counts.to_dict(),
             "accounting": self.accounting.to_dict(),
             "nodes": [item.to_dict() for item in self.nodes],
