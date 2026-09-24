@@ -73,8 +73,8 @@ from .hooks.history import collect_hook_events
 from .artifact_inspection import inspect_artifact
 from .artifact_registry import load_registry, find_record, verify_record, prune_registry
 from .api_output import extract_universal_json_flag, run_json_invocation
-from .core import configure_logging
-from .core.events import BuildFinished, BuildStarted, OverlayApplied, configure_event_console, publish_event
+from .core import configure_logging, finalize_execution_run
+from .core.events import BuildStarted, OverlayApplied, configure_event_console, publish_event
 from .overlay import check_overlay, rebase_overlay
 from .plugins import discover_plugins, doctor_plugin
 from .doctor import collect_doctor_checks, doctor_payload
@@ -3167,6 +3167,7 @@ def _finish_live_progress(live_progress: TaskerProgressSink | None, *, totals: d
         totals=totals,
         results=results,
         notification=None,
+        detach_execution_projection=False,
     )
 
 
@@ -11440,6 +11441,7 @@ def main(argv: list[str] | None = None) -> int:
         command = str(getattr(args, "command", "") or "devtool")
         emit_build = command in PROGRESS_CAPABLE_COMMANDS
         event_run_id = _ensure_run_id(args) if emit_build else ""
+        lifecycle_started = time.monotonic()
         if emit_build:
             publish_event(BuildStarted(
                 run_id=event_run_id,
@@ -11449,32 +11451,40 @@ def main(argv: list[str] | None = None) -> int:
                 metadata={"command": command},
             ))
         try:
-            if bool(getattr(args, "quiet", False)) and not universal_json:
-                with redirect_stdout(io.StringIO()):
+            try:
+                if bool(getattr(args, "quiet", False)) and not universal_json:
+                    with redirect_stdout(io.StringIO()):
+                        code = int(_main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args))
+                else:
                     code = int(_main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args))
-            else:
-                code = int(_main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args))
-        except BaseException:
+            except BaseException:
+                if emit_build:
+                    finalize_execution_run(
+                        event_run_id,
+                        status="failed",
+                        exit_code=1,
+                        duration_seconds=time.monotonic() - lifecycle_started,
+                        source="cli",
+                        seal_reason="CLI execution aborted; no further nodes can be discovered",
+                        publish=publish_event,
+                    )
+                raise
             if emit_build:
-                publish_event(BuildFinished(
-                    run_id=event_run_id,
-                    success=False,
-                    status="failed",
-                    exit_code=1,
+                finalize_execution_run(
+                    event_run_id,
+                    status="succeeded" if code == 0 else ("cancelled" if code == 130 else "failed"),
+                    exit_code=code,
+                    duration_seconds=time.monotonic() - lifecycle_started,
                     source="cli",
-                    metadata={"command": command, "exception": True},
-                ))
-            raise
-        if emit_build:
-            publish_event(BuildFinished(
-                run_id=event_run_id,
-                success=code == 0,
-                status="succeeded" if code == 0 else ("cancelled" if code == 130 else "failed"),
-                exit_code=code,
-                source="cli",
-                metadata={"command": command, "exit_code": code},
-            ))
-        return code
+                    seal_reason="CLI execution discovery complete",
+                    publish=publish_event,
+                )
+            return code
+        finally:
+            sink = getattr(args, "_devtool_live_progress_sink", None)
+            if sink is not None:
+                sink.close_execution_projection()
+                args._devtool_live_progress_sink = None
 
     if universal_json:
         args._devtool_json = True
@@ -13070,6 +13080,7 @@ def _main_after_parse(
     write_log(_run_log_start_text(args, config), log_path)
     _single_run_lock = _acquire_single_run_lock(config, args, log_path=log_path)
     tasker_progress = _live_progress_for_args(args, config)
+    args._devtool_live_progress_sink = tasker_progress
     if tasker_progress is not None:
         tasker_progress.log_path = str(log_path)
 
@@ -13716,7 +13727,13 @@ def _main_after_parse(
     if args.command in APPLY_COMMANDS:
         notify_apply_finished(args, config, results, totals)
     _write_performance_report(args, results, started_at=started_at, finished_at=finished_at, config=config)
-    final_exit = 0 if totals["failed"] == 0 else 1
+    cancelled = any(
+        int(result.returncode or 0) == 130
+        or str(result.metadata.get("workflow_node_state") or "") == "cancelled"
+        for result in results
+        if result.name != "apply-rollback"
+    )
+    final_exit = 130 if cancelled else (0 if totals["failed"] == 0 else 1)
     _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=final_exit, results=results)
     _release_single_run_lock(args)
     return final_exit

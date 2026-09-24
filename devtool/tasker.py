@@ -1404,7 +1404,7 @@ class TaskerProgressSink:
             previous["updated_at"] = utc_now_iso()
             self._phase_progress[key] = previous
 
-    def finished(self, *, ok: bool, totals: dict[str, int], results: list[OperationResult], notification: dict[str, Any] | None = None) -> None:
+    def finished(self, *, ok: bool, totals: dict[str, int], results: list[OperationResult], notification: dict[str, Any] | None = None, detach_execution_projection: bool = True) -> None:
         cancelled = any(int(result.returncode or 0) == 130 for result in results if result.name != "apply-rollback")
         if ok:
             self._finalize_successful_pipeline()
@@ -1439,6 +1439,11 @@ class TaskerProgressSink:
         if self._ipc_publisher is not None:
             self._ipc_publisher.close(unregister=True)
             self._ipc_publisher = None
+        if detach_execution_projection:
+            self._detach_execution_projection()
+
+    def close_execution_projection(self) -> None:
+        """Release the EXO projection after the CLI publishes terminal truth."""
         self._detach_execution_projection()
 
     def emit(

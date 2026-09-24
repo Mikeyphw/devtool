@@ -276,11 +276,13 @@ def test_cli_build_envelope_establishes_run_id_before_run_started(monkeypatch) -
     monkeypatch.setattr(cli, "_main_after_parse", lambda *args, **kwargs: 0)
 
     assert cli.main(["build"]) == 0
-    assert len(published) == 2
+    assert len(published) == 3
     assert isinstance(published[0], RunStarted)
-    assert isinstance(published[1], RunFinished)
+    from devtool.core.events import GraphSealed
+    assert isinstance(published[1], GraphSealed)
+    assert isinstance(published[2], RunFinished)
     assert published[0].run_id
-    assert published[0].run_id == published[1].run_id
+    assert published[0].run_id == published[1].run_id == published[2].run_id
 
 
 def test_run_specs_seeds_workflow_nodes_before_execution(tmp_path) -> None:

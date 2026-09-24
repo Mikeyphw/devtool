@@ -61,6 +61,10 @@ __all__ = [
     "ExecutionStore",
     "ExecutionReducer",
     "ExecutionStoreError",
+    "ExecutionLifecycleAudit",
+    "ExecutionLifecycleError",
+    "audit_execution_lifecycle",
+    "finalize_execution_run",
     "ExecutionSequenceError",
     "ExecutionTransitionError",
     "CommandResult",
@@ -75,5 +79,6 @@ __all__ = [
 ]
 
 from .execution_subscribers import ExecutionProjectionSubscriber, canonical_execution_document, legacy_execution_projection
+from .execution_lifecycle import ExecutionLifecycleAudit, ExecutionLifecycleError, audit_execution_lifecycle, finalize_execution_run
 
 from .execution_recovery import JournalReplayReport, load_execution_journal, recover_event_bus
