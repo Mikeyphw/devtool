@@ -201,3 +201,29 @@ job counts, the `target_local_jobs` entries involved in the plan, and the set of
 Human `--explain` output now includes the normalized job key beside each
 scheduler node. DOT output labels target-local job nodes with `job:<target>.<job>`
 so cross-target previews make the owning target visible before anything runs.
+
+## Preflight export and toolchain identity
+
+EXO TLJ-09 upgrades `devtool preflight --json` to schema version 2 for
+workspace target analysis. Preflight now reports the target-local jobs involved
+in the selected workflow before any command runs:
+
+```bash
+devtool -r "$REPO" preflight --target dustui_android --workflow fast --json
+devtool -r "$REPO" preflight --target dustui_android --workflow fast
+```
+
+The JSON payload includes:
+
+- `summary.target_local_job_count` and `summary.repository_job_count`.
+- `summary.targets_with_target_local_jobs` for cross-target workflows.
+- `target_local_jobs[]` entries with `key`, `target`, `local_name`, `runner`,
+  `workflow`, and `node`.
+- `repository_jobs[]` entries for reusable repository-level jobs reached by the
+  same workflow.
+- `job:<target>.<job>` readiness checks so diagnostics can point to the owning
+  target-local job rather than only to the expanded workflow node.
+
+Human preflight output also includes compact `target-local jobs` and
+`repository jobs` rows. This keeps plan, preflight, doctor, jobs inspection, and
+completion surfaces aligned around the same target-local job identity contract.

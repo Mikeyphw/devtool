@@ -8591,10 +8591,14 @@ def _preflight(config: ProjectConfig, args: argparse.Namespace) -> int:
     if bool(getattr(args, "json", False)):
         print(json.dumps(report.as_dict(), indent=2, ensure_ascii=False))
     else:
+        target_local_names = [str(item.get("key") or "") for item in report.target_local_jobs if isinstance(item, dict)]
+        repository_job_names = [str(item.get("key") or "") for item in report.repository_jobs if isinstance(item, dict)]
         rows: list[tuple[str, str]] = [
             ("targets", ", ".join(report.targets)),
             ("runners", ", ".join(report.runners) or "-"),
             ("environments", ", ".join(report.environments) or "-"),
+            ("target-local jobs", ", ".join(target_local_names) or "none"),
+            ("repository jobs", ", ".join(repository_job_names) or "none"),
         ]
         for tool in report.tools:
             rows.append((f"tool.{tool.executable}", f"{tool.status}: {tool.detail}"))

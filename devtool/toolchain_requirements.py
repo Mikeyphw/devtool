@@ -74,6 +74,8 @@ class ToolchainReport:
     environments: tuple[str, ...]
     checks: tuple[RequirementCheck, ...]
     graph_nodes: tuple[dict[str, object], ...] = ()
+    target_local_jobs: tuple[dict[str, object], ...] = ()
+    repository_jobs: tuple[dict[str, object], ...] = ()
 
     @property
     def healthy(self) -> bool:
@@ -82,15 +84,26 @@ class ToolchainReport:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "healthy": self.healthy,
             "targets": list(self.targets),
             "invocations": [{"target": target, "workflow": action} for target, action in self.invocations],
+            "summary": {
+                "target_local_job_count": len(self.target_local_jobs),
+                "repository_job_count": len(self.repository_jobs),
+                "targets_with_target_local_jobs": sorted({
+                    str(item.get("target") or "")
+                    for item in self.target_local_jobs
+                    if str(item.get("target") or "")
+                }),
+            },
             "runners": list(self.runners),
             "tools": [item.as_dict() for item in self.tools],
             "environments": list(self.environments),
             "checks": [item.as_dict() for item in self.checks],
             "graph_nodes": list(self.graph_nodes),
+            "target_local_jobs": list(self.target_local_jobs),
+            "repository_jobs": list(self.repository_jobs),
         }
 
 
@@ -269,6 +282,8 @@ def analyze_toolchain_requirements(
     environments: list[str] = []
     graph_nodes: list[dict[str, object]] = []
     tool_rows: dict[str, dict[str, object]] = {}
+    target_local_jobs: dict[str, dict[str, object]] = {}
+    repository_jobs: dict[str, dict[str, object]] = {}
     registered = set(DEFAULT_RUNNER_REGISTRY.registered_kinds()) | {"command"}
 
     seen_roots: set[tuple[str, str]] = set()
@@ -328,6 +343,29 @@ def analyze_toolchain_requirements(
                     ))
             if node.ref.kind == "job" and node.ref.name in config.jobs:
                 job = config.jobs[node.ref.name]
+                job_metadata = dict(job.metadata)
+                job_scope = str(job_metadata.get("scope") or ("target" if job_metadata.get("target_local") else "repository"))
+                job_target = str(job_metadata.get("target") or node.target or "")
+                job_local_name = str(job_metadata.get("local_name") or job.name)
+                job_key = str(job_metadata.get("job_key") or job.name)
+                job_entry = {
+                    "key": job_key,
+                    "scope": job_scope,
+                    "target": job_target if job_scope == "target" else "",
+                    "local_name": job_local_name if job_scope == "target" else job.name,
+                    "runner": job.runner,
+                    "node": node.key,
+                    "workflow": node.workflow,
+                }
+                if job_scope == "target" or bool(job_metadata.get("target_local")):
+                    target_local_jobs[job_key] = job_entry
+                    checks.append(RequirementCheck(
+                        "job", job_key, "ready",
+                        f"target-local job owned by {job_target or node.target}",
+                        target=node.target, workflow=node.workflow, node=node.key,
+                    ))
+                else:
+                    repository_jobs[job_key] = job_entry
                 root = _job_root(config, job.name, node.target)
                 root_key = (f"job:{job.name}", str(root))
                 if root_key not in seen_roots:
@@ -419,4 +457,6 @@ def analyze_toolchain_requirements(
         environments=tuple(environments),
         checks=_dedupe_checks(checks),
         graph_nodes=tuple(graph_nodes),
+        target_local_jobs=tuple(target_local_jobs[key] for key in sorted(target_local_jobs)),
+        repository_jobs=tuple(repository_jobs[key] for key in sorted(repository_jobs)),
     )
