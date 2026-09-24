@@ -305,6 +305,15 @@ def _parse_workflow_reference(
             raise SystemExit(
                 f"Workflow target '{target_name}' references unknown job '{payload}'. Available jobs: {available}"
             )
+        scope = job_scope(job)
+        owner_target = job_target(job)
+        if scope == "target" and owner_target and owner_target != target_name:
+            local_name = job_local_name(job)
+            raise SystemExit(
+                f"Workflow target '{target_name}' references target-local job '{payload}' owned by "
+                f"target '{owner_target}'. Target-local jobs may only be used by their owning target; "
+                f"use target:{owner_target}#<workflow> to execute '{local_name}' through that target's workflow."
+            )
         job_key = str(job.metadata.get("job_key") or job.name or payload)
         return WorkflowStepRef(
             raw=raw,
@@ -313,8 +322,8 @@ def _parse_workflow_reference(
             step_id=step_id,
             depends_on=depends_on,
             depends_on_declared=depends_on_declared,
-            resolution_scope=job_scope(job),
-            resolution_target=job_target(job),
+            resolution_scope=scope,
+            resolution_target=owner_target,
             resolution_local_name=job_local_name(job),
             resolution_key=job_key,
         )

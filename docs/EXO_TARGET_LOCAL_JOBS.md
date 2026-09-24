@@ -96,3 +96,26 @@ outputs = ["out/contracts.json"]
 ```
 
 Runtime command metadata includes `workflow_effective_cwd` plus normalized job identity fields such as `workflow_job_scope`, `workflow_job_target`, `workflow_job_local_name`, `workflow_job_key`, and `workflow_job_target_local`.
+
+## Workflow ownership boundaries
+
+Target-local jobs are discoverable by their executable key, but they are not a cross-target API. A workflow may reference its own target-local job by either the local name or the scoped key:
+
+```toml
+[targets.web.jobs.assets]
+runner = "command"
+command = ["python3", "assets.py"]
+
+[targets.web.workflows]
+short = ["job:assets"]
+scoped = ["job:web.assets"]
+```
+
+Another target must not call that job directly with `job:web.assets`. Cross-target orchestration should call the owning target workflow instead:
+
+```toml
+[targets.api.workflows]
+fast = ["target:web#fast"]
+```
+
+This keeps ownership, target root, environment inheritance, scheduler identity, and EXO provenance attached to the target that declared the job. Invalid foreign target-local job references fail during configuration load, before any command is executed.
