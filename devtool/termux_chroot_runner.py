@@ -949,6 +949,7 @@ def wrap_specs_for_termux_host_chroot(
     env = env or os.environ
     mappings = list(path_map or default_path_map(env))
     host_repo = Path(repo_root).expanduser() if repo_root is not None else None
+    remote_repo_root = _translate_path(str(host_repo.resolve()), mappings, cwd=os.getcwd()) if host_repo is not None else ""
     identity = resolve_chroot_identity(chroot_name, mappings, env=env)
     wrapped: list[CommandSpec] = []
     for spec in specs:
@@ -999,6 +1000,14 @@ def wrap_specs_for_termux_host_chroot(
         payload = "cd " + shlex.quote(chroot_cwd or "/") + " && exec env -i " + assignments + " " + shlex.join(argv)
         command = _identity_switch_command(identity, payload)
         metadata = dict(spec.metadata)
+        from .federation_transport import attach_federation_transport_metadata
+        metadata = attach_federation_transport_metadata(
+            metadata,
+            local_root=str(host_repo.resolve()) if host_repo is not None else host_cwd,
+            execution_environment="termux-host-chroot",
+            remote_root=remote_repo_root or chroot_cwd,
+            path_mapping="chroot-path-map",
+        )
         metadata["execution_mode"] = "termux-host-chroot"
         metadata["chroot"] = chroot_name
         metadata["chroot_runner"] = "termux-host-toolchain"

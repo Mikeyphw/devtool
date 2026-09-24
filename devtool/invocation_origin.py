@@ -54,7 +54,7 @@ def invocation_command_for_args(args: Any) -> str:
     ) or "devtool"
 
 
-def _federation_lineage_from_environment() -> dict[str, object]:
+def federation_lineage_from_environment() -> dict[str, object]:
     parent_run_id = str(os.environ.get("DEVTOOL_FEDERATION_PARENT_RUN_ID") or "").strip()
     if not parent_run_id:
         return {}
@@ -75,13 +75,17 @@ def _federation_lineage_from_environment() -> dict[str, object]:
     return {key: value for key, value in values.items() if value not in (None, "")}
 
 
+# Private historical spelling retained for internal/plugin compatibility.
+_federation_lineage_from_environment = federation_lineage_from_environment
+
+
 def invocation_metadata_for_args(args: Any) -> dict[str, object]:
     metadata = build_invocation_metadata(
         source=invocation_source_for_args(args),
         command=invocation_command_for_args(args),
         wrapper_schema=getattr(args, "_devtool_wrapper_schema", ""),
     )
-    lineage = _federation_lineage_from_environment()
+    lineage = federation_lineage_from_environment()
     if lineage:
         metadata["run_lineage"] = lineage
     return metadata

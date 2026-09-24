@@ -118,8 +118,11 @@ def _ssh_execution_provenance(metadata: Mapping[str, object]) -> dict[str, objec
 
 
 def _execution_provenance(metadata: Mapping[str, object], argv: Sequence[str]) -> dict[str, object]:
+    from .federation_transport import federation_transport_provenance
+    federation = federation_transport_provenance(metadata)
     ssh = _ssh_execution_provenance(metadata)
     if ssh:
+        ssh.update(federation)
         return ssh
     mode = str(metadata.get("execution_mode") or "").strip()
     result: dict[str, object] = {}
@@ -142,6 +145,7 @@ def _execution_provenance(metadata: Mapping[str, object], argv: Sequence[str]) -
             if token in {"--name", "-n"}:
                 result["chroot"] = tokens[index + 1]
                 break
+    result.update(federation)
     return {key: value for key, value in result.items() if value not in ("", None, {}, [])}
 
 

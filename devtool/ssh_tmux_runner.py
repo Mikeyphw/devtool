@@ -1737,6 +1737,16 @@ def wrap_specs_for_ssh_commands(
                 # explicit remote repo root rather than inventing a remote path.
                 remote_cwd = remote_root
 
+            from .federation_transport import attach_federation_transport_metadata
+            federation_environment = "ssh-proot-oci" if config.execution_provider == SSH_PROOT_OCI else "ssh-command"
+            metadata = attach_federation_transport_metadata(
+                metadata,
+                local_root=local_root,
+                execution_environment=federation_environment,
+                remote_root=remote_root,
+                execution_provider=config.execution_provider,
+                path_mapping="oci-workspace" if config.execution_provider == SSH_PROOT_OCI else "ssh-workspace",
+            )
             return_bundle = None
             return_fragment = ""
             if config.profile and config.copy_artifacts and not dry_run:
@@ -1756,6 +1766,15 @@ def wrap_specs_for_ssh_commands(
                     provider_metadata={**preparation_metadata, **metadata},
                 )
                 metadata.update(return_bundle.metadata())
+                metadata = attach_federation_transport_metadata(
+                    metadata,
+                    local_root=local_root,
+                    execution_environment=federation_environment,
+                    remote_root=remote_root,
+                    execution_provider=config.execution_provider,
+                    artifact_return_root=str(return_bundle.root),
+                    path_mapping="oci-workspace" if config.execution_provider == SSH_PROOT_OCI else "ssh-workspace",
+                )
                 remote_rsync = preparation.worker.tools.get("rsync", "") if preparation is not None else "rsync"
                 try:
                     return_fragment = shell_return_fragment(config, return_bundle, remote_rsync=remote_rsync or "rsync")
@@ -1994,11 +2013,17 @@ def build_remote_tmux_script(config: SSHRunnerConfig, forwarded: list[str]) -> s
     devtool_argv = [config.tool, *forwarded]
 
     run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
-    run_assignment = (" DEVTOOL_RUN_ID=" + shlex.quote(run_id)) if run_id else ""
+    forwarded_env: list[str] = []
+    if run_id:
+        forwarded_env.append("DEVTOOL_RUN_ID=" + run_id)
+    for key, value in sorted(os.environ.items()):
+        if key.startswith("DEVTOOL_FEDERATION_") and str(value).strip():
+            forwarded_env.append(f"{key}={value}")
+    env_suffix = (" " + " ".join(shlex.quote(item) for item in forwarded_env)) if forwarded_env else ""
     command = (
         "env DEVTOOL_EXECUTION_CONTEXT=ssh DEVTOOL_INSIDE_SSH=1 DEVTOOL_SSH_CONTEXT="
         + shlex.quote(config.destination)
-        + run_assignment
+        + env_suffix
         + " " + _shell_join_remote(devtool_argv)
     )
     if config.cwd:

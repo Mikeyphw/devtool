@@ -216,3 +216,29 @@ and exact child run id. A moved/replaced child or mutated lineage therefore
 fails closed rather than being accepted as the planned execution.
 
 Repositories without `[federation]` remain valid and report `standalone` mode.
+
+## FRX-09: remote execution repository identity
+
+Federation transport reuses each execution provider's existing authoritative
+path mapping rather than assuming that local and remote repositories have the
+same path. For federation child work, execution metadata now carries the source
+repository, child repository identity/fingerprint, local and provider-resolved
+remote roots, execution environment/provider, parent/child lineage, artifact
+return root, and the mapping mechanism that produced the remote path.
+
+Provider integration follows the existing execution contracts:
+
+- Termux host to chroot uses the configured Termux/chroot path map.
+- PRoot uses the established bind/repository mount mapping.
+- SSH uses the selected managed/existing remote workspace root.
+- SSH+OCI uses the resolved OCI guest workspace rooted through the SSH provider.
+- Local execution retains identity mapping without inventing a remote path.
+
+Remote-required providers fail closed when no explicit provider-resolved child
+root is available, when lineage names a different effective repository, or when
+the local execution root no longer belongs to the planned repository identity.
+Whole-run SSH/tmux forwarding carries the federation environment variables so
+recursive Devtool execution reconstructs the same lineage remotely. Returned
+SSH/OCI producer evidence includes the child identity, mapped roots, lineage,
+and actual artifact-return location so diagnostics and artifacts remain
+attributable to the owning repository.

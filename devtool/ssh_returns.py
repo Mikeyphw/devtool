@@ -188,6 +188,8 @@ def create_return_bundle(
     }
     producer_meta = dict(provider_metadata or {})
     producer_meta.update({key: value for key, value in spec_metadata.items() if key not in producer_meta})
+    if producer_meta.get("federation_child_repository"):
+        producer_meta["federation_artifact_return_root"] = str(root)
     producer = producer_identity(
         profile=config.profile,
         destination=config.destination,

@@ -5162,6 +5162,24 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
 
     for spec in specs:
         metadata = dict(spec.metadata)
+        from .federation_transport import attach_federation_transport_metadata
+        if not metadata.get("federation_child_remote_root"):
+            execution_mode = str(metadata.get("execution_mode") or plan.effective or plan.current or "local")
+            remote_root = str(
+                metadata.get("ssh_workspace_path")
+                or metadata.get("oci_guest_workspace")
+                or metadata.get("chroot_repository_root")
+                or metadata.get("proot_repository_root")
+                or config.repo_root
+            )
+            metadata = attach_federation_transport_metadata(
+                metadata,
+                local_root=config.repo_root,
+                execution_environment=execution_mode,
+                remote_root=remote_root,
+                execution_provider=str(metadata.get("execution_provider") or ""),
+                artifact_return_root=str(metadata.get("ssh_return_root") or ""),
+            )
         metadata.update(plan.metadata())
         metadata["execution_preflight"] = [
             {"name": item.name, "status": item.status, "detail": item.detail}

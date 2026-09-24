@@ -541,6 +541,9 @@ def wrap_specs_for_proot_distro(
             created_stage = True
             cache_root.mkdir(parents=True, exist_ok=True)
         bind_pairs = [(item.host, item.guest) for item in mappings]
+        federated_guest_root = translate_host_path(str(Path(repo_root).expanduser().resolve()), mappings, cwd=str(repo_root))
+        if federated_guest_root == str(Path(repo_root).expanduser().resolve()):
+            federated_guest_root = config.repo_mount
         helper_pythonpath = _needs_devtool_python_helper(specs)
         if helper_pythonpath:
             _stage_devtool_python_helper(stage_root, dry_run=dry_run)
@@ -582,6 +585,14 @@ def wrap_specs_for_proot_distro(
                 command.extend(["--env", item])
             command.extend(["--", "/bin/sh", guest_exec, *argv])
             metadata = dict(spec.metadata)
+            from .federation_transport import attach_federation_transport_metadata
+            metadata = attach_federation_transport_metadata(
+                metadata,
+                local_root=str(Path(repo_root).expanduser().resolve()),
+                execution_environment="proot-distro",
+                remote_root=federated_guest_root,
+                path_mapping="proot-bind",
+            )
             metadata.setdefault("progress_argv", list(spec.argv))
             metadata.setdefault("progress_cwd", spec.cwd or str(repo_root))
             metadata.update({

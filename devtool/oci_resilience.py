@@ -48,6 +48,18 @@ OCI_PROVENANCE_KEYS: tuple[str, ...] = (
     "oci_source_sync_id",
     "oci_dry_run",
     "oci_phase_node_id",
+    "federation_source_repository",
+    "federation_child_repository",
+    "federation_child_repository_fingerprint",
+    "federation_child_local_root",
+    "federation_child_remote_root",
+    "federation_execution_environment",
+    "federation_execution_provider",
+    "federation_parent_run_id",
+    "federation_parent_node_id",
+    "federation_child_run_id",
+    "federation_artifact_return_root",
+    "federation_path_mapping",
 )
 
 
@@ -158,6 +170,23 @@ def producer_identity(
         "execution_provider": str(meta.get("execution_provider") or meta.get("execution_mode") or "ssh-command"),
         "phase_node_id": str(meta.get("oci_phase_node_id") or phase_node_id(str(run_id or ""), str(session or ""), provider=str(meta.get("execution_provider") or meta.get("execution_mode") or "ssh-command"))),
     }
+    federation_keys = (
+        "federation_source_repository",
+        "federation_child_repository",
+        "federation_child_repository_fingerprint",
+        "federation_child_local_root",
+        "federation_child_remote_root",
+        "federation_execution_environment",
+        "federation_execution_provider",
+        "federation_parent_run_id",
+        "federation_parent_node_id",
+        "federation_child_run_id",
+        "federation_artifact_return_root",
+        "federation_path_mapping",
+    )
+    federation = {key.removeprefix("federation_"): meta.get(key) for key in federation_keys if meta.get(key) not in (None, "")}
+    if federation:
+        producer["federation"] = federation
     if producer["execution_provider"] == "ssh-proot-oci":
         for key in (
             "oci_runtime", "oci_container", "oci_architecture", "oci_image_reference",
