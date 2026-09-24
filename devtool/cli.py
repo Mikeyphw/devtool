@@ -257,7 +257,7 @@ INTERACTIVE_COPY_COMMANDS = {
 
 
 PROGRESS_CAPABLE_COMMANDS = {
-    "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v", "validate-all",
+    "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v", "validate-all", "invoke",
     "wine-validate", "wv", "start-validation", "sv", "resume-validation", "rv",
     "validation-finalize", "vf", "validation-abort", "va", "validation-recover", "vrec",
     "validation-reset", "vreset", "validation-accept-plan-change", "vapc",
@@ -1486,11 +1486,17 @@ def build_parser() -> argparse.ArgumentParser:
     plan_cmd = subparsers.add_parser("plan", aliases=["pl"], help="Plan the expanded workflow DAG, safe scheduling waves, scopes, and commands without executing them")
     _add_workspace_scope_flags(plan_cmd)
     _add_workflow_scheduler_flags(plan_cmd)
-    plan_cmd.add_argument("action", nargs="?", default="validate", choices=["restore", "build", "test", "lint", "package", "run", "validate", "wine-validate"], help="Workflow/action to plan (default: validate)")
+    plan_cmd.add_argument("action", nargs="?", default="validate", help="Workflow/action to plan, including repository-defined workflow names (default: validate)")
     plan_cmd.add_argument("--json", action="store_true", help="Emit the complete graph and scheduling plan as JSON")
     plan_cmd.add_argument("--dot", action="store_true", help="Emit Graphviz DOT instead of the human plan")
     plan_cmd.add_argument("--explain", action="store_true", help="Show read/write scope and serialization reasons for every node")
     plan_cmd.add_argument("--show-commands", action="store_true", help="Include resolved command argv/cwd in the human plan")
+
+    invoke_cmd = subparsers.add_parser("invoke", help="Execute an arbitrary declared workflow action through the canonical workspace planner")
+    _add_workspace_scope_flags(invoke_cmd)
+    _add_workflow_scheduler_flags(invoke_cmd)
+    invoke_cmd.add_argument("action", help="Declared workflow action to execute, such as codegen or regenerate")
+
     affected_cmd = subparsers.add_parser("affected", aliases=["aff"], help="Show dependency-aware targets affected by Git changes")
     _add_workspace_scope_flags(affected_cmd, include_affected=False)
     affected_cmd.add_argument("--base", default="", help="Git base revision; default is the current working tree")
@@ -7993,7 +7999,7 @@ def _single_run_reservation(config: ProjectConfig, args: argparse.Namespace) -> 
     # We only relax repository exclusivity when every workflow node proves its
     # write set through explicit outputs/read-only metadata. Any ambiguity
     # intentionally falls back to the historical exclusive lock.
-    if command in {"restore", "r", "build", "b", "test", "t", "lint", "l", "package", "p", "validate", "v", "validate-all", "wine-validate", "wv"} and config.targets:
+    if command in {"restore", "r", "build", "b", "test", "t", "lint", "l", "package", "p", "validate", "v", "validate-all", "wine-validate", "wv", "invoke"} and config.targets:
         try:
             groups = tuple(str(item).strip() for item in getattr(args, "group", []) if str(item).strip())
             if groups or bool(getattr(args, "all_targets", False)):
@@ -8016,7 +8022,16 @@ def _single_run_reservation(config: ProjectConfig, args: argparse.Namespace) -> 
                 )
                 candidates = selection.targets
             if candidates:
-                action = "validate" if command in {"validate", "v", "validate-all"} else ("wine-validate" if command in {"wine-validate", "wv"} else {"r": "restore", "b": "build", "t": "test", "l": "lint", "p": "package"}.get(command, command))
+                action = (
+                    str(getattr(args, "action", "") or "").strip()
+                    if command == "invoke"
+                    else (
+                        "validate" if command in {"validate", "v", "validate-all"}
+                        else ("wine-validate" if command in {"wine-validate", "wv"} else {"r": "restore", "b": "build", "t": "test", "l": "lint", "p": "package"}.get(command, command))
+                    )
+                )
+                if not action:
+                    raise ValueError("invoke action is empty")
                 specs = (
                     build_workspace_validation_specs(config, candidates, wine=action == "wine-validate")
                     if action in {"validate", "wine-validate"}
@@ -13597,13 +13612,16 @@ def _main_after_parse(
         results, raw_output = _handle_batch(config, args, log_path=log_path, tasker_progress=tasker_progress)
     else:
         planning_config = _config_for_validation_planning(config, args)
+        execution_action = str(getattr(args, "action", "") or "").strip() if args.command == "invoke" else args.command
+        if args.command == "invoke" and not execution_action:
+            parser.error("invoke requires a workflow action")
         workspace_targets = _workspace_target_names_for_args(planning_config, args, parser)
         if bool(getattr(args, "affected", False)) and bool(getattr(args, "_devtool_affected_empty", False)):
             specs = []
         elif workspace_targets:
-            if args.command in {"run", "rn"} and len(workspace_targets) > 1:
+            if execution_action == "run" and len(workspace_targets) > 1:
                 parser.error("run cannot target multiple workspace members because the first long-running process would block later targets")
-            specs = build_workspace_specs(planning_config, workspace_targets, args.command)
+            specs = build_workspace_specs(planning_config, workspace_targets, execution_action)
             for spec in specs:
                 metadata = dict(spec.metadata)
                 selection_kind, selection_groups = _workspace_selection_metadata(args)
@@ -13619,7 +13637,7 @@ def _main_after_parse(
                 from .test_declarations import command_specs as _declared_test_specs
                 specs = _declared_test_specs(planning_config, getattr(args, "test_names", []), all_tests=bool(getattr(args, "all_declared_tests", False)))
             else:
-                specs = build_specs(planning_config, args.command)
+                specs = build_specs(planning_config, execution_action)
         specs = _maybe_apply_test_no_build_flag(specs, args, parser)
         results, raw_output = _run_specs_for_args(planning_config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
 

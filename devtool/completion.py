@@ -79,6 +79,20 @@ _devtool_groups() {
   fi
 }
 
+_devtool_workflow_actions() {
+  local -a actions declared
+  actions=(restore build test lint package run validate wine-validate)
+  declared=(${(f)"$(_devtool_completion_values workflows)"})
+  declared=(${declared:#*:*})
+  actions+=(${declared})
+  actions=(${(u)actions})
+  if (( ${#actions} )); then
+    _describe -t workflow-actions 'workflow action' actions
+  else
+    _message 'declared workflow action'
+  fi
+}
+
 _devtool_ui_profiles() {
   local repo config global_config
   local -a profiles
@@ -287,6 +301,7 @@ _devtool_commands() {
     'jb:alias for jobs'
     'workflows:list configured target workflows and safe scheduling metadata'
     'wf:alias for workflows'
+    'invoke:execute an arbitrary declared workflow action'
     'plan:plan expanded workflow DAG, safe scheduling waves, scopes, and commands'
     'pl:alias for plan'
     'affected:show dependency-aware targets affected by Git changes'
@@ -1218,7 +1233,21 @@ _devtool() {
             '--dot[emit Graphviz DOT]' \
             '--explain[show read/write scopes and serialization reasons]' \
             '--show-commands[show resolved commands and working directories]' \
-            '1:workflow action:(restore build test lint package run validate wine-validate)'
+            '1:workflow action:_devtool_workflow_actions'
+          ;;
+        invoke)
+          _arguments \
+            '--target[named target/profile]:target:_devtool_targets' \
+            '*--group[workspace target group]:group:_devtool_groups' \
+            '--all-targets[select every workspace target]' \
+            '--affected[limit invocation to dependency-aware affected targets]' \
+            '--affected-base[Git base revision for affected selection]:revision:' \
+            '--affected-head[Git head revision for affected selection]:revision:' \
+            '--variant[target variant]:variant:_devtool_variants' \
+            '(--workflow-parallel --no-workflow-parallel)--workflow-parallel[run independent workflow nodes concurrently when safe]' \
+            '(--workflow-parallel --no-workflow-parallel)--no-workflow-parallel[force sequential workflow-node execution]' \
+            '--workflow-max-workers[maximum concurrent workflow nodes]:count:' \
+            '1:workflow action:_devtool_workflow_actions'
           ;;
         affected|aff)
           _arguments \

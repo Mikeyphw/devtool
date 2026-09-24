@@ -71,7 +71,7 @@ HOST_ONLY_COMMANDS = {
     "ai-prompt", "ap", "bundle", "config", "init-config", "termux",
 }
 AUTO_CHROOT_COMMANDS = {
-    "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v", "wine-validate", "wv",
+    "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v", "wine-validate", "wv", "invoke",
     "run", "rn", "package", "pkg", "clean", "cl", "inspect", "info", "apply-overlay", "ao", "apply-overlays", "aos",
     "apply-snapshot", "as", "batch", "commit", "ci", "tag", "status", "st",
     "doctor", "dr", "rollback", "history", "targets", "tg", "detect", "handoff",
