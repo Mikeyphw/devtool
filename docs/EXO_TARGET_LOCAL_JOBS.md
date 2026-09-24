@@ -145,3 +145,31 @@ The values have different purposes:
 `target_job_keys` and `target_job_refs` lists. `devtool doctor --json` includes
 `target_jobs` and `target_job_keys`, and the text doctor reports whether the
 repository uses target-local jobs/workflows.
+
+## Job inspection and target filtering
+
+EXO TLJ-07 makes `devtool jobs` truthful for repositories that use only
+`[targets.<target>.jobs.*]` declarations. The human output now lists both
+repository-wide jobs and target-local jobs, using the executable key for the row
+name and the owning target/local name in the details.
+
+```bash
+devtool -r "$REPO" jobs
+devtool -r "$REPO" jobs --target dustui_android
+devtool -r "$REPO" jobs --target dustui_android --json
+```
+
+`--target <name>` filters only the target-local job view. Repository-wide jobs
+remain visible because they are reusable by any target. The JSON payload uses
+schema version 4 and includes:
+
+- `selected_target`: the requested target filter, if any.
+- `summary.repository_jobs`: repository-wide jobs only.
+- `summary.target_local_jobs`: target-local jobs in the filtered view.
+- `repository_jobs`: repository-wide job payloads.
+- `target_jobs`: target-local payloads grouped by target.
+- `completion.target_job_keys` and `completion.target_job_refs`: filtered to the
+  selected target when `--target` is used.
+
+Unknown target names fail before producing partial output so scripts do not
+silently validate the wrong target-local job set.

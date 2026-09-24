@@ -78,7 +78,7 @@ class ExoTargetLocalJobsCompletionDoctorTests(unittest.TestCase):
             with redirect_stdout(out):
                 _jobs(cfg, as_json=True)
             payload = json.loads(out.getvalue())
-        self.assertEqual(payload["schema_version"], 3)
+        self.assertEqual(payload["schema_version"], 4)
         self.assertIn("contracts", payload["target_jobs"]["app"])
         self.assertIn("app.contracts", payload["completion"]["target_job_keys"])
         self.assertIn("job:contracts", payload["completion"]["target_job_refs"])

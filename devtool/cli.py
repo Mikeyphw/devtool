@@ -1538,8 +1538,9 @@ def build_parser() -> argparse.ArgumentParser:
     targets_cmd.add_argument("--json", action="store_true", help="Emit structured target metadata")
     groups_cmd = subparsers.add_parser("groups", aliases=["gr"], help="List workspace target groups and their expanded targets")
     groups_cmd.add_argument("--json", action="store_true", help="Emit structured workspace-group metadata")
-    jobs_cmd = subparsers.add_parser("jobs", aliases=["jb"], help="List reusable polyglot jobs declared under [jobs.*]")
+    jobs_cmd = subparsers.add_parser("jobs", aliases=["jb"], help="List reusable polyglot jobs declared under [jobs.*] and target-local jobs")
     jobs_cmd.add_argument("--json", action="store_true", help="Emit structured reusable-job metadata")
+    jobs_cmd.add_argument("--target", default="", help="Limit target-local jobs to one target while keeping repository jobs visible")
     workflows_cmd = subparsers.add_parser("workflows", aliases=["wf"], help="List configured target workflows without executing them")
     workflows_cmd.add_argument("--json", action="store_true", help="Emit structured workflow metadata")
     plan_cmd = subparsers.add_parser("plan", aliases=["pl"], help="Plan the expanded workflow DAG, safe scheduling waves, scopes, and commands without executing them")
@@ -8263,28 +8264,51 @@ def _groups(config: ProjectConfig, *, as_json: bool = False) -> None:
         rows.append((name, f"members=[{members}] targets=[{targets}]"))
     render_status_table(rows)
 
-def _jobs(config: ProjectConfig, *, as_json: bool = False) -> None:
+def _jobs(config: ProjectConfig, *, as_json: bool = False, selected_target: str = "") -> None:
     from .workflow_config import job_as_dict, job_local_name, job_scope, job_target
+
+    selected_target = str(selected_target or "").strip()
+    if selected_target and selected_target not in config.targets:
+        raise SystemExit(f"Unknown target for jobs inspection: {selected_target}")
+
+    target_items = [
+        (target_name, target)
+        for target_name, target in sorted(config.targets.items())
+        if not selected_target or target_name == selected_target
+    ]
     target_jobs: dict[str, dict[str, object]] = {}
-    for target_name, target in sorted(config.targets.items()):
+    for target_name, target in target_items:
         if target.jobs:
             target_jobs[target_name] = {name: job_as_dict(job) for name, job in sorted(target.jobs.items())}
+
+    target_job_keys = sorted(
+        str(job.metadata.get("job_key") or f"{target_name}.{local_name}")
+        for target_name, target in target_items
+        for local_name, job in sorted(target.jobs.items())
+    )
+    target_job_refs = sorted(
+        value
+        for target_name, target in target_items
+        for local_name, job in sorted(target.jobs.items())
+        for key in [str(job.metadata.get("job_key") or f"{target_name}.{local_name}")]
+        for value in (f"{target_name}:job:{local_name}", f"{target_name}:job:{key}", f"job:{local_name}", f"job:{key}")
+    )
+    repository_jobs = {
+        name: job
+        for name, job in sorted(config.jobs.items())
+        if job_scope(job) == "repository"
+    }
     if as_json:
-        target_job_keys = sorted(
-            str(job.metadata.get("job_key") or f"{target_name}.{local_name}")
-            for target_name, target in sorted(config.targets.items())
-            for local_name, job in sorted(target.jobs.items())
-        )
-        target_job_refs = sorted(
-            value
-            for target_name, target in sorted(config.targets.items())
-            for local_name, job in sorted(target.jobs.items())
-            for key in [str(job.metadata.get("job_key") or f"{target_name}.{local_name}")]
-            for value in (f"{target_name}:job:{local_name}", f"{target_name}:job:{key}", f"job:{local_name}", f"job:{key}")
-        )
         print(json.dumps({
-            "schema_version": 3,
+            "schema_version": 4,
+            "selected_target": selected_target,
+            "summary": {
+                "repository_jobs": len(repository_jobs),
+                "target_local_jobs": sum(len(target.jobs) for _, target in target_items),
+                "targets_with_jobs": [target_name for target_name, target in target_items if target.jobs],
+            },
             "jobs": {name: job_as_dict(job) for name, job in sorted(config.jobs.items())},
+            "repository_jobs": {name: job_as_dict(job) for name, job in sorted(repository_jobs.items())},
             "target_jobs": target_jobs,
             "completion": {
                 "target_job_keys": target_job_keys,
@@ -8292,19 +8316,29 @@ def _jobs(config: ProjectConfig, *, as_json: bool = False) -> None:
             },
         }, indent=2, ensure_ascii=False))
         return
-    if not config.jobs:
-        console.print("[yellow]No reusable jobs configured.[/yellow]")
-        return
+
     rows: list[tuple[str, str]] = []
-    for name, job in sorted(config.jobs.items()):
+    for name, job in sorted(repository_jobs.items()):
         payload = job.action or " ".join(job.command) or job.shell_command
         scope = job_scope(job)
         target = job_target(job)
         local_name = job_local_name(job)
         scope_text = f"scope={scope}" + (f" target={target} local={local_name}" if target else "")
         rows.append((name, f"{scope_text} runner={job.runner} mode={job.command_mode} root={job.root or '-'} {payload}".strip()))
+    for target_name, target in target_items:
+        for local_name, job in sorted(target.jobs.items()):
+            payload = job.action or " ".join(job.command) or job.shell_command
+            key = str(job.metadata.get("job_key") or f"{target_name}.{local_name}")
+            root = job.root or target.root or "-"
+            rows.append((
+                key,
+                f"scope=target target={target_name} local={local_name} ref=job:{local_name} "
+                f"runner={job.runner} mode={job.command_mode} root={root} {payload}".strip(),
+            ))
+    if not rows:
+        console.print("[yellow]No reusable or target-local jobs configured.[/yellow]")
+        return
     render_status_table(rows)
-
 
 def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
     from .workflow_config import workflow_as_dict
@@ -13251,7 +13285,7 @@ def _main_after_parse(
         return 0
     if args.command in {"jobs", "jb"}:
         config = _load_command_config(args)
-        _jobs(config, as_json=bool(getattr(args, "json", False)))
+        _jobs(config, as_json=bool(getattr(args, "json", False)), selected_target=str(getattr(args, "target", "") or ""))
         return 0
     if args.command in {"workflows", "wf"}:
         config = _load_command_config(args)
