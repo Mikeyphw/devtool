@@ -13,6 +13,7 @@ from typing import Any
 from .models import ProjectConfig
 from .features import resolve_feature_flags
 from .wrapper_config import wrapper_as_dict
+from .wrapper_launcher import launcher_status, launcher_status_as_dict
 from .android.capabilities import resolve_android_execution_context
 from .android.devices import AndroidDeviceManager
 
@@ -104,12 +105,30 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
 
     checks.append(DoctorCheck("project", "git", "ok" if (config.repo_root / ".git").exists() else "missing", str(config.repo_root / ".git")))
     checks.append(DoctorCheck("project", "config", "ok" if config.config_path else "optional", str(config.config_path) if config.config_path else "using detected defaults"))
+    wrapper_command_names = sorted(config.wrapper.commands)
     checks.append(DoctorCheck(
         "project",
         "wrapper",
-        "ok" if config.wrapper.commands else "optional",
-        (f"schema {config.wrapper.schema}; commands: {', '.join(sorted(config.wrapper.commands))}" if config.wrapper.commands else "not configured"),
+        "ok" if wrapper_command_names else "optional",
+        (f"schema {config.wrapper.schema}; commands: {', '.join(wrapper_command_names)}" if wrapper_command_names else "not configured"),
     ))
+    if config.wrapper.commands:
+        launcher_report = launcher_status(config.repo_root)
+        checks.append(DoctorCheck(
+            "project",
+            "wrapper-launchers",
+            "ok" if launcher_report.ok else "optional",
+            "current" if launcher_report.ok else ", ".join(f"{item.name}:{item.reason or 'not current'}" for item in launcher_report.files),
+        ))
+        if config.wrapper.default_command:
+            checks.append(DoctorCheck("project", "wrapper-default", "ok", config.wrapper.default_command))
+        missing_descriptions = [name for name, command in sorted(config.wrapper.commands.items()) if not command.description]
+        checks.append(DoctorCheck(
+            "project",
+            "wrapper-docs",
+            "ok" if not missing_descriptions else "optional",
+            "all wrapper commands have descriptions" if not missing_descriptions else "commands without descriptions: " + ", ".join(missing_descriptions),
+        ))
     runner_source = str(config.config_provenance.get("runner", "") or "")
     if "legacy" in runner_source:
         checks.append(DoctorCheck(
@@ -151,6 +170,7 @@ def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
             if target.workflows
         },
         "wrapper": wrapper_as_dict(config.wrapper),
+        "wrapper_launchers": launcher_status_as_dict(launcher_status(config.repo_root)),
         "healthy": not any(item.status == "missing" for item in checks),
         "features": features.to_dict(),
         "checks": [item.as_dict() for item in checks],

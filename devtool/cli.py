@@ -140,6 +140,12 @@ from .wrapper_launcher import (
     launcher_status_as_dict,
     verify_launchers,
 )
+from .wrapper_help import (
+    render_wrapper_command_help,
+    render_wrapper_overview,
+    render_wrapper_version,
+    wrapper_discovery_payload,
+)
 from .workspace import WorkspaceConfigError, resolve_workspace_targets, workspace_as_dict, workspace_group_memberships
 from .workflow_runtime import build_workspace_specs, build_workspace_validation_specs, plan_workspace_targets
 from .workflow_scheduler import (
@@ -963,17 +969,26 @@ def build_parser() -> argparse.ArgumentParser:
     completion = subparsers.add_parser("completion")
     completion.add_argument("shell", choices=["zsh"])
     completion_state = subparsers.add_parser("completion-state", help="Emit config-aware values for shell/editor completion")
-    completion_state.add_argument("--kind", choices=["targets", "groups", "ui-profiles", "test-profiles", "variants", "jobs", "workflows", "pytest-tests", "all"], default="all")
+    completion_state.add_argument("--kind", choices=["targets", "groups", "ui-profiles", "test-profiles", "variants", "jobs", "workflows", "wrapper-commands", "wrapper-aliases", "wrapper-options", "pytest-tests", "all"], default="all")
     completion_state.add_argument("--format", choices=["lines", "json"], default="lines")
 
     wrapper_cmd = subparsers.add_parser("wrapper", help="Resolve, describe, and execute repository wrapper commands")
     wrapper_sub = wrapper_cmd.add_subparsers(dest="wrapper_command", required=True)
     wrapper_describe = wrapper_sub.add_parser("describe", help="Describe the repository wrapper contract")
     wrapper_describe.add_argument("--json", action="store_true", help="Emit the wrapper contract as JSON")
+    wrapper_help = wrapper_sub.add_parser("help", help="Show repository wrapper help")
+    wrapper_help.add_argument("command_name", nargs="?", default="", help="Optional wrapper command to describe")
+    wrapper_help.add_argument("--json", action="store_true", help="Emit wrapper discovery metadata as JSON")
+    wrapper_discover = wrapper_sub.add_parser("discover", help="Discover wrapper commands, launchers, and docs")
+    wrapper_discover.add_argument("--json", action="store_true", help="Emit wrapper discovery metadata as JSON")
     wrapper_resolve = wrapper_sub.add_parser("resolve", add_help=False, help="Resolve wrapper argv without executing it")
     wrapper_resolve.add_argument("--json", action="store_true", help="Emit the resolved command as JSON")
+    wrapper_resolve.add_argument("--help", dest="wrapper_control_help", action="store_true", help=argparse.SUPPRESS)
+    wrapper_resolve.add_argument("--version", dest="wrapper_control_version", action="store_true", help=argparse.SUPPRESS)
     wrapper_resolve.add_argument("wrapper_args", nargs=argparse.REMAINDER, help="Repository wrapper argv to resolve")
     wrapper_exec = wrapper_sub.add_parser("exec", add_help=False, help="Resolve wrapper argv and execute the canonical Devtool command")
+    wrapper_exec.add_argument("--help", dest="wrapper_control_help", action="store_true", help=argparse.SUPPRESS)
+    wrapper_exec.add_argument("--version", dest="wrapper_control_version", action="store_true", help=argparse.SUPPRESS)
     wrapper_exec.add_argument("wrapper_args", nargs=argparse.REMAINDER, help="Repository wrapper argv to execute")
     wrapper_init = wrapper_sub.add_parser("init", help="Create repository devtoolw launchers")
     wrapper_init.add_argument("--force", action="store_true", help="Overwrite drifted generated wrapper launchers")
@@ -11752,13 +11767,48 @@ def _handle_wrapper_command(args: argparse.Namespace) -> int:
             print(_wrapper_contract_text(config), end="")
         return 0
 
+    if action == "discover":
+        payload = wrapper_discovery_payload(config)
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(render_wrapper_overview(config), end="")
+        return 0
+
+    if action == "help":
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(wrapper_discovery_payload(config), indent=2, ensure_ascii=False))
+        else:
+            command_name = str(getattr(args, "command_name", "") or "")
+            print(render_wrapper_command_help(config, command_name) if command_name else render_wrapper_overview(config), end="")
+        return 0
+
     if action in {"resolve", "exec"}:
         wrapper_args = list(getattr(args, "wrapper_args", []) or [])
+        if bool(getattr(args, "wrapper_control_help", False)):
+            wrapper_args.insert(0, "--help")
+        if bool(getattr(args, "wrapper_control_version", False)):
+            wrapper_args.insert(0, "--version")
         try:
             resolution = resolve_wrapper_argv(config, wrapper_args, launch_cwd=Path.cwd())
         except WrapperResolutionError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
+
+        if resolution.mode == "help":
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(wrapper_resolution_as_dict(resolution), indent=2, ensure_ascii=False))
+            elif resolution.command:
+                print(render_wrapper_command_help(config, resolution.command), end="")
+            else:
+                print(render_wrapper_overview(config), end="")
+            return 0
+        if resolution.mode == "version":
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(wrapper_resolution_as_dict(resolution), indent=2, ensure_ascii=False))
+            else:
+                print(render_wrapper_version(), end="")
+            return 0
 
         if action == "resolve":
             if bool(getattr(args, "json", False)):
@@ -11768,8 +11818,6 @@ def _handle_wrapper_command(args: argparse.Namespace) -> int:
             return 0
 
         if resolution.mode != "execute":
-            # Rendering polished help belongs to WRAP-08.  Until then, control
-            # requests are represented without executing any canonical command.
             print(json.dumps(wrapper_resolution_as_dict(resolution), indent=2, ensure_ascii=False))
             return 0
 

@@ -201,6 +201,6 @@ def test_wrapper_exec_control_mode_does_not_reenter_main(monkeypatch, capsys) ->
 
     assert rc == 0
     assert not called
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["mode"] == "help"
-    assert payload["canonical_argv"] == []
+    output = capsys.readouterr().out
+    assert "Usage: devtoolw build" in output
+    assert "Action: build" in output

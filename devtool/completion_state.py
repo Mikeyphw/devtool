@@ -18,6 +18,9 @@ class CompletionState:
     variants: list[str]
     jobs: list[str]
     workflows: list[str]
+    wrapper_commands: list[str]
+    wrapper_aliases: list[str]
+    wrapper_options: list[str]
     pytest_tests: list[str]
     schema_version: int = COMPLETION_STATE_SCHEMA_VERSION
 
@@ -58,6 +61,32 @@ def _workflows(config: ProjectConfig) -> list[str]:
     return sorted(values)
 
 
+
+def _wrapper_commands(config: ProjectConfig) -> list[str]:
+    return sorted(config.wrapper.commands)
+
+
+def _wrapper_aliases(config: ProjectConfig) -> list[str]:
+    values: set[str] = set()
+    for command in config.wrapper.commands.values():
+        values.update(command.aliases)
+    return sorted(value for value in values if value)
+
+
+def _wrapper_options(config: ProjectConfig) -> list[str]:
+    values: set[str] = {"--help", "--version"}
+    for command in config.wrapper.commands.values():
+        for option in command.options.values():
+            values.add(f"{command.name}:--{option.name}")
+            values.add(f"--{option.name}")
+            for alias in option.aliases:
+                token = f"-{alias}" if len(alias) == 1 else f"--{alias}"
+                values.add(f"{command.name}:{token}")
+                values.add(token)
+        if command.allow_passthrough:
+            values.add(f"{command.name}:--")
+    return sorted(value for value in values if value)
+
 def _ui_profiles(config: ProjectConfig) -> list[str]:
     names = {"auto", *UI_PROFILE_NAMES}
     raw = config.ui_config.get("profiles") if isinstance(config.ui_config, dict) else None
@@ -85,6 +114,9 @@ def build_completion_state(config: ProjectConfig, *, include_pytest: bool = Fals
         variants=_variants(config),
         jobs=sorted(config.jobs),
         workflows=_workflows(config),
+        wrapper_commands=_wrapper_commands(config),
+        wrapper_aliases=_wrapper_aliases(config),
+        wrapper_options=_wrapper_options(config),
         pytest_tests=_pytest_tests(config) if include_pytest else [],
     )
 
@@ -96,7 +128,7 @@ def completion_values(config: ProjectConfig, kind: str) -> list[str]:
     key = normalized.replace("-", "_")
     if normalized == "all":
         values: list[str] = []
-        for name in ("targets", "groups", "ui_profiles", "test_profiles", "variants", "jobs", "workflows", "pytest_tests"):
+        for name in ("targets", "groups", "ui_profiles", "test_profiles", "variants", "jobs", "workflows", "wrapper_commands", "wrapper_aliases", "wrapper_options", "pytest_tests"):
             values.extend(mapping.get(name) or [])
         return list(dict.fromkeys(str(value) for value in values if value))
     value = mapping.get(key, [])
