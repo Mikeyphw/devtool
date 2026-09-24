@@ -133,6 +133,13 @@ from .wrapper_resolution import (
     resolve_wrapper_argv,
     wrapper_resolution_as_dict,
 )
+from .wrapper_launcher import (
+    WrapperLauncherError,
+    install_launchers,
+    launcher_status,
+    launcher_status_as_dict,
+    verify_launchers,
+)
 from .workspace import WorkspaceConfigError, resolve_workspace_targets, workspace_as_dict, workspace_group_memberships
 from .workflow_runtime import build_workspace_specs, build_workspace_validation_specs, plan_workspace_targets
 from .workflow_scheduler import (
@@ -968,6 +975,15 @@ def build_parser() -> argparse.ArgumentParser:
     wrapper_resolve.add_argument("wrapper_args", nargs=argparse.REMAINDER, help="Repository wrapper argv to resolve")
     wrapper_exec = wrapper_sub.add_parser("exec", add_help=False, help="Resolve wrapper argv and execute the canonical Devtool command")
     wrapper_exec.add_argument("wrapper_args", nargs=argparse.REMAINDER, help="Repository wrapper argv to execute")
+    wrapper_init = wrapper_sub.add_parser("init", help="Create repository devtoolw launchers")
+    wrapper_init.add_argument("--force", action="store_true", help="Overwrite drifted generated wrapper launchers")
+    wrapper_init.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
+    wrapper_update = wrapper_sub.add_parser("update", help="Refresh repository devtoolw launchers")
+    wrapper_update.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
+    wrapper_verify = wrapper_sub.add_parser("verify", help="Verify repository devtoolw launchers are current")
+    wrapper_verify.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
+    wrapper_status = wrapper_sub.add_parser("status", help="Show repository devtoolw launcher status")
+    wrapper_status.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
 
     compatibility_cmd = subparsers.add_parser("compatibility", aliases=["compat"], help="Audit retained legacy interfaces and migration paths")
     compatibility_cmd.add_argument("--json", action="store_true", help="Emit the versioned compatibility report as JSON")
@@ -11686,11 +11702,47 @@ def _wrapper_resolution_text(resolution: WrapperResolution) -> str:
     ]
     return "\n".join(lines) + "\n"
 
+
+def _wrapper_launcher_status_text(status) -> str:
+    headline = "Wrapper launchers: current" if status.ok else "Wrapper launchers: attention required"
+    lines = [headline, f"Repository: {status.repo_root}"]
+    for item in status.files:
+        state = "current" if item.current else item.reason or "not current"
+        lines.append(f"  {item.name}: {state} ({item.path})")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_wrapper_launcher_status(status, *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(launcher_status_as_dict(status), indent=2, ensure_ascii=False))
+    else:
+        print(_wrapper_launcher_status_text(status), end="")
+
+
 def _handle_wrapper_command(args: argparse.Namespace) -> int:
     repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
     args.repo = str(repo_root)
-    config = load_wrapper_project_config(str(repo_root), getattr(args, "config", None))
     action = str(getattr(args, "wrapper_command", "") or "")
+
+    if action in {"init", "update", "verify", "status"}:
+        try:
+            if action == "init":
+                status = install_launchers(repo_root, force=bool(getattr(args, "force", False)), update=False)
+            elif action == "update":
+                status = install_launchers(repo_root, update=True)
+            elif action == "verify":
+                status = verify_launchers(repo_root)
+            else:
+                status = launcher_status(repo_root)
+        except WrapperLauncherError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        _emit_wrapper_launcher_status(status, as_json=bool(getattr(args, "json", False)))
+        if action == "verify" and not status.ok:
+            return 1
+        return 0
+
+    config = load_wrapper_project_config(str(repo_root), getattr(args, "config", None))
 
     if action == "describe":
         payload = wrapper_as_dict(config.wrapper)
