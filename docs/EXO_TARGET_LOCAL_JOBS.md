@@ -119,3 +119,29 @@ fast = ["target:web#fast"]
 ```
 
 This keeps ownership, target root, environment inheritance, scheduler identity, and EXO provenance attached to the target that declared the job. Invalid foreign target-local job references fail during configuration load, before any command is executed.
+
+## Completion and doctor surfaces
+
+EXO TLJ-06 exposes target-local jobs to editor and shell tooling without making
+foreign target-local jobs executable from the wrong owner. Use these read-only
+completion categories:
+
+```bash
+devtool -r "$REPO" completion-state --kind target-jobs
+devtool -r "$REPO" completion-state --kind target-job-keys
+devtool -r "$REPO" completion-state --kind target-job-refs
+```
+
+The values have different purposes:
+
+- `target-jobs` emits `target:local_name` pairs for human pickers.
+- `target-job-keys` emits internal executable keys such as `dustui_android.contracts`.
+- `target-job-refs` emits workflow reference snippets such as `job:contracts`,
+  `job:dustui_android.contracts`, and `dustui_android:job:contracts`. The
+  unqualified `job:*` values are valid only inside the owning target workflow;
+  cross-target composition still goes through `target:<target>#<workflow>`.
+
+`devtool jobs --json` now includes a `completion` object with the stable
+`target_job_keys` and `target_job_refs` lists. `devtool doctor --json` includes
+`target_jobs` and `target_job_keys`, and the text doctor reports whether the
+repository uses target-local jobs/workflows.

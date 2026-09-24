@@ -974,7 +974,7 @@ def build_parser() -> argparse.ArgumentParser:
     completion = subparsers.add_parser("completion")
     completion.add_argument("shell", choices=["zsh"])
     completion_state = subparsers.add_parser("completion-state", help="Emit config-aware values for shell/editor completion")
-    completion_state.add_argument("--kind", choices=["targets", "groups", "ui-profiles", "test-profiles", "variants", "jobs", "workflows", "wrapper-commands", "wrapper-aliases", "wrapper-options", "pytest-tests", "all"], default="all")
+    completion_state.add_argument("--kind", choices=["targets", "groups", "ui-profiles", "test-profiles", "variants", "jobs", "target-jobs", "target-job-keys", "target-job-refs", "workflows", "wrapper-commands", "wrapper-aliases", "wrapper-options", "pytest-tests", "all"], default="all")
     completion_state.add_argument("--format", choices=["lines", "json"], default="lines")
 
     wrapper_cmd = subparsers.add_parser("wrapper", help="Resolve, describe, and execute repository wrapper commands")
@@ -8270,10 +8270,26 @@ def _jobs(config: ProjectConfig, *, as_json: bool = False) -> None:
         if target.jobs:
             target_jobs[target_name] = {name: job_as_dict(job) for name, job in sorted(target.jobs.items())}
     if as_json:
+        target_job_keys = sorted(
+            str(job.metadata.get("job_key") or f"{target_name}.{local_name}")
+            for target_name, target in sorted(config.targets.items())
+            for local_name, job in sorted(target.jobs.items())
+        )
+        target_job_refs = sorted(
+            value
+            for target_name, target in sorted(config.targets.items())
+            for local_name, job in sorted(target.jobs.items())
+            for key in [str(job.metadata.get("job_key") or f"{target_name}.{local_name}")]
+            for value in (f"{target_name}:job:{local_name}", f"{target_name}:job:{key}", f"job:{local_name}", f"job:{key}")
+        )
         print(json.dumps({
-            "schema_version": 2,
+            "schema_version": 3,
             "jobs": {name: job_as_dict(job) for name, job in sorted(config.jobs.items())},
             "target_jobs": target_jobs,
+            "completion": {
+                "target_job_keys": target_job_keys,
+                "target_job_refs": target_job_refs,
+            },
         }, indent=2, ensure_ascii=False))
         return
     if not config.jobs:

@@ -105,6 +105,26 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
 
     checks.append(DoctorCheck("project", "git", "ok" if (config.repo_root / ".git").exists() else "missing", str(config.repo_root / ".git")))
     checks.append(DoctorCheck("project", "config", "ok" if config.config_path else "optional", str(config.config_path) if config.config_path else "using detected defaults"))
+    target_job_count = sum(len(target.jobs) for target in config.targets.values())
+    target_job_targets = [name for name, target in sorted(config.targets.items()) if target.jobs]
+    checks.append(DoctorCheck(
+        "project",
+        "target-local-jobs",
+        "ok" if target_job_count else "optional",
+        (f"{target_job_count} jobs across targets: {', '.join(target_job_targets)}" if target_job_count else "not configured"),
+    ))
+    dangling_workflows = [
+        f"{target_name}.{workflow_name}"
+        for target_name, target in sorted(config.targets.items())
+        for workflow_name, workflow in sorted(target.workflows.items())
+        if any(step.kind == "job" and step.resolution_scope == "target" for step in workflow.steps)
+    ]
+    checks.append(DoctorCheck(
+        "project",
+        "target-local-workflows",
+        "ok" if dangling_workflows else "optional",
+        ("workflows using target-local jobs: " + ", ".join(dangling_workflows) if dangling_workflows else "not configured"),
+    ))
     wrapper_command_names = sorted(config.wrapper.commands)
     checks.append(DoctorCheck(
         "project",
@@ -164,6 +184,16 @@ def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
         "platform": config.platform,
         "selected_target": config.selected_target,
         "jobs": sorted(config.jobs),
+        "target_jobs": {
+            target_name: sorted(target.jobs)
+            for target_name, target in sorted(config.targets.items())
+            if target.jobs
+        },
+        "target_job_keys": sorted(
+            str(job.metadata.get("job_key") or f"{target_name}.{local_name}")
+            for target_name, target in sorted(config.targets.items())
+            for local_name, job in sorted(target.jobs.items())
+        ),
         "workflows": {
             name: sorted(target.workflows)
             for name, target in sorted(config.targets.items())

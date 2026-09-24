@@ -1164,7 +1164,7 @@ _devtool() {
           _values 'shell' zsh
           ;;
         completion-state)
-          _arguments '--kind[completion value category]:kind:(targets groups ui-profiles test-profiles variants jobs workflows pytest-tests all)' '--format[output format]:format:(lines json)'
+          _arguments '--kind[completion value category]:kind:(targets groups ui-profiles test-profiles variants jobs target-jobs target-job-keys target-job-refs workflows wrapper-commands wrapper-aliases wrapper-options pytest-tests all)' '--format[output format]:format:(lines json)'
           ;;
         pytest)
           if (( ${#line} < 2 )); then

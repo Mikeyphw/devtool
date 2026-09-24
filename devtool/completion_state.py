@@ -6,7 +6,7 @@ from typing import Any
 from .models import ProjectConfig
 from .ui_core.preferences import UI_PROFILE_NAMES
 
-COMPLETION_STATE_SCHEMA_VERSION = 1
+COMPLETION_STATE_SCHEMA_VERSION = 2
 
 
 @dataclass(slots=True)
@@ -17,6 +17,9 @@ class CompletionState:
     test_profiles: list[str]
     variants: list[str]
     jobs: list[str]
+    target_jobs: list[str]
+    target_job_keys: list[str]
+    target_job_refs: list[str]
     workflows: list[str]
     wrapper_commands: list[str]
     wrapper_aliases: list[str]
@@ -50,6 +53,37 @@ def _variants(config: ProjectConfig) -> list[str]:
     if config.variant:
         names.add(config.variant)
     return sorted(name for name in names if name)
+
+
+def _target_jobs(config: ProjectConfig) -> list[str]:
+    values: set[str] = set()
+    for target_name, target in config.targets.items():
+        for local_name in target.jobs:
+            values.add(f"{target_name}:{local_name}")
+    return sorted(values)
+
+
+def _target_job_keys(config: ProjectConfig) -> list[str]:
+    values: set[str] = set()
+    for target_name, target in config.targets.items():
+        for local_name, job in target.jobs.items():
+            values.add(str(job.metadata.get("job_key") or f"{target_name}.{local_name}"))
+    return sorted(values)
+
+
+def _target_job_refs(config: ProjectConfig) -> list[str]:
+    values: set[str] = set()
+    for target_name, target in config.targets.items():
+        for local_name, job in target.jobs.items():
+            key = str(job.metadata.get("job_key") or f"{target_name}.{local_name}")
+            values.add(f"{target_name}:job:{local_name}")
+            values.add(f"{target_name}:job:{key}")
+            # These forms are valid only from inside the owning target workflow,
+            # but exposing them helps editors and docs keep the scoped syntax
+            # visible without implying cross-target ownership transfer.
+            values.add(f"job:{local_name}")
+            values.add(f"job:{key}")
+    return sorted(values)
 
 
 def _workflows(config: ProjectConfig) -> list[str]:
@@ -113,6 +147,9 @@ def build_completion_state(config: ProjectConfig, *, include_pytest: bool = Fals
         test_profiles=_test_profiles(config),
         variants=_variants(config),
         jobs=sorted(config.jobs),
+        target_jobs=_target_jobs(config),
+        target_job_keys=_target_job_keys(config),
+        target_job_refs=_target_job_refs(config),
         workflows=_workflows(config),
         wrapper_commands=_wrapper_commands(config),
         wrapper_aliases=_wrapper_aliases(config),
@@ -128,7 +165,7 @@ def completion_values(config: ProjectConfig, kind: str) -> list[str]:
     key = normalized.replace("-", "_")
     if normalized == "all":
         values: list[str] = []
-        for name in ("targets", "groups", "ui_profiles", "test_profiles", "variants", "jobs", "workflows", "wrapper_commands", "wrapper_aliases", "wrapper_options", "pytest_tests"):
+        for name in ("targets", "groups", "ui_profiles", "test_profiles", "variants", "jobs", "target_jobs", "target_job_keys", "target_job_refs", "workflows", "wrapper_commands", "wrapper_aliases", "wrapper_options", "pytest_tests"):
             values.extend(mapping.get(name) or [])
         return list(dict.fromkeys(str(value) for value in values if value))
     value = mapping.get(key, [])
