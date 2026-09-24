@@ -108,6 +108,13 @@ from .federation_discovery import FederationDiscoveryError, federation_boundary_
 from .federation_gate import build_federation_gate1_report, federation_gate1_as_dict, render_federation_gate1
 from .federation_plan import FederationPlanError, build_federated_plan
 from .federation_execution import FederationExecutionError, run_federated_workflow
+from .federation_bridge import (
+    FederationBridgeError,
+    execute_federated_job,
+    execute_federated_wrapper,
+    plan_federated_job,
+    plan_federated_wrapper,
+)
 from .target_seal import target_seal_report, render_target_seal_text
 from .target_local_adoption import render_target_local_adoption_text, target_local_adoption_report
 from .config_migration import analyze_config_migration, migrate_config_text, migration_report
@@ -1063,6 +1070,11 @@ def build_parser() -> argparse.ArgumentParser:
     federation_run = federation_sub.add_parser("run", help="Execute a federated workflow with distinct parent/child EXO runs")
     federation_run.add_argument("workflow", help="Federation workflow name")
     federation_run.add_argument("--json", action="store_true", help="Emit the machine-readable federated run and lineage report")
+    federation_exec = federation_sub.add_parser("exec", help="Execute one enrolled child wrapper or target-local-job public contract")
+    federation_exec.add_argument("repository", help="Federation repository name")
+    federation_exec.add_argument("--plan", action="store_true", help="Resolve the child public contract without executing it")
+    federation_exec.add_argument("--json", action="store_true", help="Emit machine-readable bridge resolution or execution state")
+    federation_exec.add_argument("contract_argv", nargs=argparse.REMAINDER, help="Use -- wrapper <args...> or -- job <reference>")
 
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
@@ -11090,7 +11102,67 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append((child.step_id, f"{child.repository}::{child.workflow}; {child.status}; run={child.run_id or '-'}"))
                 render_status_table(rows)
             return int(report.exit_code)
-    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError) as exc:
+        if action == "exec":
+            raw_contract = [str(value) for value in (getattr(args, "contract_argv", []) or [])]
+            plan_only = bool(getattr(args, "plan", False))
+            if raw_contract and raw_contract[0] == "--plan":
+                plan_only = True
+                raw_contract = raw_contract[1:]
+            if raw_contract and raw_contract[0] == "--":
+                raw_contract = raw_contract[1:]
+            if not raw_contract:
+                raise FederationBridgeError("federation exec requires '-- wrapper <args...>' or '-- job <reference>'")
+            contract, contract_args = raw_contract[0], raw_contract[1:]
+            repository = str(getattr(args, "repository", "") or "")
+            if contract == "wrapper":
+                if plan_only:
+                    bridge_plan, _, _ = plan_federated_wrapper(config, repository, contract_args)
+                    payload = bridge_plan.as_dict()
+                    code = 0
+                else:
+                    child = execute_federated_wrapper(config, repository, contract_args, reenter=main)
+                    payload = child.as_dict()
+                    code = int(child.exit_code)
+            elif contract == "job":
+                if len(contract_args) != 1:
+                    raise FederationBridgeError("federation exec job requires exactly one job reference")
+                job_reference = contract_args[0]
+                if plan_only:
+                    bridge_plan, _, _ = plan_federated_job(config, repository, job_reference)
+                    payload = bridge_plan.as_dict()
+                    code = 0
+                else:
+                    child = execute_federated_job(
+                        config,
+                        repository,
+                        job_reference,
+                        verbose=bool(getattr(args, "verbose", False)),
+                        dry_run=bool(getattr(args, "dry_run", False)),
+                        continue_on_error=bool(getattr(args, "continue_on_error", False)),
+                    )
+                    payload = child.as_dict()
+                    code = int(child.exit_code)
+            else:
+                raise FederationBridgeError(
+                    f"Unsupported federation child contract {contract!r}; expected 'wrapper' or 'job'"
+                )
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("repository", str(payload.get("repository") or repository)),
+                    ("contract", str(payload.get("contract") or contract)),
+                    ("status", str(payload.get("status") or ("planned" if plan_only else "unknown"))),
+                ]
+                if payload.get("run_id"):
+                    rows.append(("run_id", str(payload.get("run_id"))))
+                if payload.get("target"):
+                    rows.append(("target", str(payload.get("target"))))
+                if payload.get("job_reference"):
+                    rows.append(("job", str(payload.get("job_reference"))))
+                render_status_table(rows)
+            return code
+    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 

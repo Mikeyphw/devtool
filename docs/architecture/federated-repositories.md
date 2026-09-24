@@ -174,3 +174,19 @@ cancellation, and restores the caller's execution environment after every
 recursive child invocation.  The child itself still runs through canonical
 `devtool invoke`, so ordinary workflow, runner, EXO, logging, and validation
 semantics remain authoritative inside that repository.
+
+## FRX-07: wrapper and target-local-job federation bridge
+
+`devtool federation exec <repository> -- wrapper <args...>` resolves the child
+repository's own wrapper contract, preserves WRAP's canonical single re-entry
+and wrapper invocation provenance, and adds FRX-06 federation lineage without
+forwarding parent repository/target routing controls.  Parent EXO nodes store
+only the wrapper's redacted argv projection, so sensitive wrapper option values
+are not copied into federation orchestration evidence.
+
+`devtool federation exec <repository> -- job <reference>` resolves a child-owned
+repository or target-local job and sends the resulting normal `CommandSpec`s
+through the existing runner pipeline.  An unqualified job prefers the child's
+selected/sole target-local contract, while `<target>:job:<name>` is strict and
+never falls back to repository scope.  `--plan` performs the same resolution
+without execution.

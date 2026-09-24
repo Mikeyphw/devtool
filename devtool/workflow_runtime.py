@@ -599,6 +599,99 @@ def _specs_from_graph(
     return annotate_specs_with_scopes(config, graph, specs)
 
 
+
+def build_direct_job_specs(
+    config: ProjectConfig,
+    job_reference: str,
+    *,
+    target_name: str = "",
+) -> list[CommandSpec]:
+    """Resolve one repository or target-local job into normal runner specs.
+
+    FRX-07 uses this as the public target-local-job execution bridge.  Target
+    ownership is explicit: an unqualified name resolves against the selected
+    (or sole) target first, then repository jobs.  Qualified
+    ``<target>:job:<name>`` references never fall back to repository scope.
+    """
+
+    raw = str(job_reference or "").strip()
+    if not raw:
+        raise WorkflowRuntimeError("Direct job execution requires a job reference")
+    selected = str(target_name or "").strip()
+    local_name = raw
+    explicitly_targeted = False
+    if ":job:" in raw:
+        selected, local_name = raw.split(":job:", 1)
+        selected = selected.strip()
+        local_name = local_name.strip()
+        explicitly_targeted = True
+    elif raw.startswith("job:"):
+        local_name = raw[4:].strip()
+    if not local_name:
+        raise WorkflowRuntimeError(f"Invalid direct job reference {raw!r}")
+
+    if not selected:
+        selected = str(config.selected_target or "").strip()
+        if not selected and len(config.targets) == 1:
+            selected = next(iter(config.targets))
+
+    if selected:
+        target = config.targets.get(selected)
+        if target is None:
+            available = ", ".join(sorted(config.targets)) or "<none>"
+            raise WorkflowRuntimeError(
+                f"Direct job reference {raw!r} selects unknown target {selected!r}. Available targets: {available}"
+            )
+        matches = [
+            job for key, job in target.jobs.items()
+            if local_name in {key, job.name, str(job.metadata.get("local_name") or ""), str(job.metadata.get("job_key") or "")}
+        ]
+        unique = list({id(job): job for job in matches}.values())
+        if len(unique) > 1:
+            raise WorkflowRuntimeError(f"Direct target-local job reference {raw!r} is ambiguous in target {selected!r}")
+        if unique:
+            scoped = _target_scoped_config(config, selected)
+            specs = _job_specs(scoped, unique[0])
+            for spec in specs:
+                spec.metadata.update({
+                    "direct_job": True,
+                    "direct_job_scope": "target",
+                    "direct_job_target": selected,
+                    "direct_job_reference": raw,
+                    "repository_identity": (scoped.repository_identity.as_dict() if scoped.repository_identity else {}),
+                })
+            return specs
+        if explicitly_targeted:
+            available = ", ".join(sorted(target.jobs)) or "<none>"
+            raise WorkflowRuntimeError(
+                f"Target {selected!r} has no target-local job {local_name!r}. Available jobs: {available}"
+            )
+
+    repository_job = config.jobs.get(local_name)
+    if repository_job is None:
+        matches = [job for key, job in config.jobs.items() if local_name in {key, job.name}]
+        unique = list({id(job): job for job in matches}.values())
+        if len(unique) == 1:
+            repository_job = unique[0]
+        elif len(unique) > 1:
+            raise WorkflowRuntimeError(f"Direct repository job reference {raw!r} is ambiguous")
+    if repository_job is None:
+        target_jobs = sorted(config.targets.get(selected).jobs) if selected and config.targets.get(selected) else []
+        available = sorted(set(config.jobs) | set(target_jobs))
+        raise WorkflowRuntimeError(
+            f"Unknown direct job {raw!r}. Available jobs: {', '.join(available) or '<none>'}"
+        )
+    specs = _job_specs(config, repository_job)
+    for spec in specs:
+        spec.metadata.update({
+            "direct_job": True,
+            "direct_job_scope": "repository",
+            "direct_job_target": "",
+            "direct_job_reference": raw,
+            "repository_identity": (config.repository_identity.as_dict() if config.repository_identity else {}),
+        })
+    return specs
+
 def build_workspace_specs(config: ProjectConfig, target_names: Sequence[str], action: str) -> list[CommandSpec]:
     graph = plan_workspace_targets(config, target_names, action)
     return _specs_from_graph(config, graph)

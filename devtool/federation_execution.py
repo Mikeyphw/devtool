@@ -376,9 +376,155 @@ def run_federated_workflow(
     return FederatedRunReport(name, run_id, parent_status, parent_exit, tuple(children), plan)
 
 
+def run_federated_direct_child(
+    parent: ProjectConfig,
+    repository: str,
+    *,
+    operation: str,
+    invocation_argv: Iterable[str],
+    execute: Callable[[str, dict[str, Any]], int],
+    publish: Callable[[Any], None] = publish_event,
+    snapshot_lookup: Callable[[str], Any] | None = None,
+    parent_run_id: str = "",
+) -> FederatedChildRun:
+    """Run one explicitly selected federated child contract with EXO lineage.
+
+    FRX-07 uses this for wrapper and target-local-job bridges.  The callback is
+    responsible for the child execution itself; this helper owns only the
+    federation coordinator run/node, lineage environment, and parent/child
+    correlation.
+    """
+
+    repo_name = str(repository or "").strip()
+    if not repo_name:
+        raise FederationExecutionError("Federated direct execution requires a repository name")
+    resolution = resolve_federated_repository(parent, repo_name)
+    if not resolution.available:
+        raise FederationExecutionError(f"Federation repository {repo_name!r} is unavailable")
+    identity = resolution.repository_identity.as_dict() if resolution.repository_identity else {}
+    owner_identity = parent.repository_identity.as_dict() if parent.repository_identity else {}
+    owner_fingerprint = str(owner_identity.get("fingerprint") or owner_identity.get("root") or parent.repo_root)
+    effective_fingerprint = str(identity.get("fingerprint") or identity.get("root") or resolution.root)
+    parent_id = str(parent_run_id or RunId.new(prefix="federation-exec"))
+    child_run_id = str(RunId.new(prefix=f"fed-{repo_name}"))
+    node_id = f"federation:exec:{repo_name}:{operation}"
+    started = time.monotonic()
+    snapshot_lookup = snapshot_lookup or get_execution_store().snapshot
+    argv = tuple(str(value) for value in invocation_argv)
+    lineage = {
+        "kind": "federation",
+        "relationship": "child",
+        "parent_run_id": parent_id,
+        "parent_node_id": node_id,
+        "child_run_id": child_run_id,
+        "federation_workflow": "@direct",
+        "federation_step": operation,
+        "repository": repo_name,
+        "source_repository": owner_fingerprint,
+        "requested_repository": repo_name,
+        "effective_repository": effective_fingerprint,
+        "execution_environment": "auto",
+    }
+    publish(RunStarted(
+        run_id=parent_id,
+        command=f"federation exec {repo_name} {operation}",
+        project=str(parent.repo_root),
+        source="federation",
+        metadata={
+            "repository_identity": owner_identity,
+            "run_lineage": {
+                "kind": "federation",
+                "relationship": "coordinator",
+                "child_run_id": parent_id,
+                "federation_workflow": "@direct",
+                "federation_step": operation,
+                "source_repository": owner_fingerprint,
+                "effective_repository": owner_fingerprint,
+            },
+        },
+    ))
+    publish(NodeDiscovered(
+        run_id=parent_id,
+        node_id=node_id,
+        label=f"{repo_name}::{operation}",
+        kind="federation-child",
+        source="federation",
+        metadata={"repository": repo_name, "repository_identity": identity},
+    ))
+    publish(GraphSealed(run_id=parent_id, reason="direct federation child resolved", source="federation"))
+    publish(NodeStarted(
+        run_id=parent_id,
+        node_id=node_id,
+        label=f"{repo_name}::{operation}",
+        kind="federation-child",
+        argv=argv,
+        source="federation",
+        metadata={"child_run_id": child_run_id, "run_lineage": lineage},
+    ))
+    env = {
+        "DEVTOOL_RUN_ID": child_run_id,
+        "DEVTOOL_FEDERATION_RELATIONSHIP": "child",
+        "DEVTOOL_FEDERATION_PARENT_RUN_ID": parent_id,
+        "DEVTOOL_FEDERATION_PARENT_NODE_ID": node_id,
+        "DEVTOOL_FEDERATION_WORKFLOW": "@direct",
+        "DEVTOOL_FEDERATION_STEP": operation,
+        "DEVTOOL_FEDERATION_REPOSITORY": repo_name,
+        "DEVTOOL_FEDERATION_SOURCE_REPOSITORY": owner_fingerprint,
+        "DEVTOOL_FEDERATION_REQUESTED_REPOSITORY": repo_name,
+        "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
+        "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
+    }
+    child_started = time.monotonic()
+    try:
+        with _federation_child_environment(env):
+            rc = int(execute(child_run_id, lineage))
+        snapshot = snapshot_lookup(child_run_id)
+        persisted_lineage = dict(getattr(snapshot, "run_lineage", {}) or {}) if snapshot is not None else {}
+        status = (
+            str(getattr(snapshot, "status", "") or "")
+            if snapshot is not None
+            else (ExecutionStatus.SUCCEEDED.value if rc == 0 else ExecutionStatus.CANCELLED.value if rc == 130 else ExecutionStatus.FAILED.value)
+        )
+        if snapshot is not None and persisted_lineage.get("parent_run_id") != parent_id:
+            raise FederationExecutionError(
+                f"Child run {child_run_id!r} did not persist direct federation lineage {parent_id!r}"
+            )
+        publish(NodeFinished(
+            run_id=parent_id,
+            node_id=node_id,
+            status=status,
+            exit_code=rc,
+            duration_seconds=time.monotonic() - child_started,
+            source="federation",
+            transition_reason=f"child run {child_run_id}",
+            metadata={"child_run_id": child_run_id, "run_lineage": persisted_lineage or lineage},
+        ))
+        publish(RunFinished(
+            run_id=parent_id,
+            status=status,
+            exit_code=rc,
+            duration_seconds=time.monotonic() - started,
+            source="federation",
+        ))
+        return FederatedChildRun(
+            operation, repo_name, operation, "", child_run_id, node_id, status, rc,
+            identity, persisted_lineage or lineage,
+        )
+    except BaseException:
+        publish(RunFinished(
+            run_id=parent_id,
+            status=ExecutionStatus.FAILED.value,
+            exit_code=1,
+            duration_seconds=time.monotonic() - started,
+            source="federation",
+        ))
+        raise
+
+
 __all__ = [
     "FederationExecutionError",
     "FederatedChildRun",
     "FederatedRunReport",
     "run_federated_workflow",
+    "run_federated_direct_child",
 ]
