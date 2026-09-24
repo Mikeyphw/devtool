@@ -11,6 +11,7 @@ from .execution_contract import (
     legacy_phase_node_id,
 )
 from .execution_state import (
+    EXECUTION_SNAPSHOT_SCHEMA_VERSION,
     ExecutionArtifactSnapshot,
     ExecutionAccountingScope,
     ExecutionAccountingSnapshot,
@@ -46,6 +47,7 @@ __all__ = [
     "canonical_execution_status",
     "canonical_status_value",
     "legacy_phase_node_id",
+    "EXECUTION_SNAPSHOT_SCHEMA_VERSION",
     "ExecutionCounts",
     "ExecutionMeasuredProgress",
     "ExecutionAccountingScope",

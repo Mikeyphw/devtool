@@ -31,6 +31,7 @@ from ..models import Issue, OperationResult
 from ..federation_ownership import federation_operational_owner_from_environment
 from .capabilities import capability_report, normalize_hook_capabilities
 from .isolation import RepositoryMutationSnapshot
+from .execution import HookExecutionAdapter
 from .models import HookExecutionContext, HookExecutionRequest, HookExecutionResult
 from .payload import build_hook_payload, json_safe
 from .result import load_structured_hook_result
@@ -63,6 +64,7 @@ def _run_live_with_events(
     render_progress: bool = False,
     stream_output: bool = False,
     progress_target: str = "",
+    execution_adapter: HookExecutionAdapter | None = None,
 ) -> tuple[int, str, GenericProgressTracker | None, list[dict[str, Any]]]:
     started = time.monotonic()
     last_output_at = started
@@ -108,6 +110,8 @@ def _run_live_with_events(
             pass_fds=(event_w,),
         )
         os.close(event_w)
+        if execution_adapter is not None:
+            execution_adapter.process_started(pid=proc.pid, argv=command, cwd=str(cwd))
     except OSError as exc:
         os.close(event_r); os.close(event_w)
         return 127, str(exc), tracker, test_events
@@ -176,6 +180,9 @@ def _run_live_with_events(
                 with contextlib.suppress(Exception):
                     proc.wait(timeout=1.0)
             event_reader.join(timeout=0.25)
+            if execution_adapter is not None:
+                execution_adapter.process_exited(exit_code=124, duration_seconds=max(0.0, time.monotonic() - started), failure_kind="timeout")
+                execution_adapter.progress(detail=timeout_message)
             return 124, "".join(output_parts), tracker, test_events
         try:
             item = lines.get(timeout=0.1)
@@ -200,6 +207,8 @@ def _run_live_with_events(
             append("\n" + heartbeat + "\n")
             if tracker is not None:
                 tracker.update_from_line(f"Still running · {elapsed}s without output")
+            if execution_adapter is not None:
+                execution_adapter.progress(detail=f"Still running · {elapsed}s without output")
     try:
         rc = proc.wait(timeout=1.0)
     except subprocess.TimeoutExpired:
@@ -210,6 +219,8 @@ def _run_live_with_events(
         rc = 124
     reader.join(timeout=0.25)
     event_reader.join(timeout=0.25)
+    if execution_adapter is not None:
+        execution_adapter.process_exited(exit_code=rc, duration_seconds=max(0.0, time.monotonic() - started), failure_kind="" if rc == 0 else "hook_process_failure")
     return rc, "".join(output_parts), tracker, test_events
 
 
@@ -358,7 +369,23 @@ class EmbeddedHookEngine:
             declared_writes=list(request.declared_writes),
         )
         argv = [runner, script_rel.as_posix()]
+        execution_adapter = HookExecutionAdapter(
+            run_id=request.run_id,
+            operation_name=request.operation_name,
+            kind=request.kind,
+            phase=request.phase,
+            label=f"{request.script_label}: {request.phase.replace('_', ' ')}",
+            argv=tuple(argv),
+            metadata={
+                "script_path": script_rel.as_posix(),
+                "script_sha256": expected_sha,
+                "runner": runner,
+                "target": request.target,
+                "artifact_path": str(artifact_path),
+            },
+        )
         if request.dry_run:
+            execution_adapter.finish(exit_code=0, skipped=True)
             output = "$ " + " ".join(argv) + f"\n{request.script_label} script skipped during dry-run."
             path = str(write_log(output, request.log_path, append=request.log_path is not None))
             dry_owner = federation_operational_owner_from_environment(repo_root, run_id=request.run_id)
@@ -495,6 +522,7 @@ class EmbeddedHookEngine:
                 render_progress=request.render_progress,
                 stream_output=request.stream_output,
                 progress_target=request.phase.replace("_", " "),
+                execution_adapter=execution_adapter,
             )
             try:
                 structured = load_structured_hook_result(result_path)
@@ -566,6 +594,21 @@ class EmbeddedHookEngine:
             issues.append(Issue("error", request.operation_name, str(artifact_path), "write-boundary", "Hook changed undeclared path(s): " + ", ".join(violations[:12])))
         if rc != 0 and not any(issue.severity == "error" for issue in issues):
             issues.append(Issue("error", request.operation_name, script_rel.as_posix(), "exit-code", f"{request.script_label} script exited with code {rc}."))
+        for issue in issues:
+            if issue.severity in {"warning", "error"}:
+                execution_adapter.diagnostic(
+                    severity=issue.severity,
+                    code=issue.code,
+                    message=issue.message,
+                    failure_kind=request.failure_kind if rc != 0 else "",
+                    log_path=path,
+                )
+        execution_adapter.finish(
+            exit_code=rc,
+            duration_seconds=duration,
+            failure_kind=request.failure_kind if rc != 0 else "",
+            evidence=(path,),
+        )
         result_status = structured.status if structured is not None else ("pass" if rc == 0 else "fail")
         event = {
             "schema_version": 1,

@@ -71,7 +71,8 @@ gradle.addListener(new TaskExecutionListener() {
 
     void afterExecute(Task task, TaskState state) {
         def completed = devtoolTaskCompleted.incrementAndGet()
-        def outcome = state.failure != null ? 'failed' : (state.skipped ? 'skipped' : (state.upToDate ? 'up-to-date' : (state.noSource ? 'no-source' : 'success')))
+        def skipMessage = state.skipMessage?.toString()?.trim()?.toUpperCase()
+        def outcome = state.failure != null ? 'failed' : (skipMessage == 'FROM-CACHE' ? 'from-cache' : (state.noSource ? 'no-source' : (state.upToDate ? 'up-to-date' : (state.skipped ? 'skipped' : 'success'))))
         devtoolEmit('task-finish', [
             task: task.path,
             completed: completed,

@@ -15,6 +15,9 @@ import math
 from .execution_contract import ExecutionStatus, canonical_execution_status
 
 
+EXECUTION_SNAPSHOT_SCHEMA_VERSION = 7
+
+
 @dataclass(slots=True)
 class ExecutionProgressState:
     current: float | None = None
@@ -664,7 +667,7 @@ class ExecutionSnapshot:
     @classmethod
     def from_state(cls, state: ExecutionRunState) -> "ExecutionSnapshot":
         return cls(
-            schema_version=7,
+            schema_version=EXECUTION_SNAPSHOT_SCHEMA_VERSION,
             run_id=state.run_id,
             status=state.status.value,
             command=state.command,
@@ -733,6 +736,7 @@ def status_from_value(value: object, *, default: ExecutionStatus) -> ExecutionSt
 
 
 __all__ = [
+    "EXECUTION_SNAPSHOT_SCHEMA_VERSION",
     "ExecutionProgressState",
     "ExecutionProcessState",
     "ExecutionDiagnosticState",

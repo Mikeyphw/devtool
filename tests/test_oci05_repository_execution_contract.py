@@ -79,7 +79,7 @@ def test_oci05_v2_image_embeds_exact_standard_runtime_bytes() -> None:
     expected = {
         "build-apk": "c35521e80c7f05b734e23c444922fa7b02820d9318c17494d9f0076fc23f70fc",
         "termux_toolchains.py": "46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe",
-        "devtool-events.init.gradle": "da7550a61bae530a8bb407c64574a456f77398db29332470623b47028bd9a50f",
+        "devtool-events.init.gradle": "621ce78be0c05cd5e5e43668461795ae0ed81de89acf40e0e8843d52248995a4",
     }
     with tarfile.open(fileobj=io.BytesIO(definition.context_bytes), mode="r:") as archive:
         for name, digest in expected.items():

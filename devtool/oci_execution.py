@@ -112,7 +112,7 @@ print("installed_context_sha256="+str(d.get("context_sha256") or ""))
 expected={{
 "/usr/local/lib/devtool/build-apk":"c35521e80c7f05b734e23c444922fa7b02820d9318c17494d9f0076fc23f70fc",
 "/usr/local/lib/devtool/termux_toolchains.py":"46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe",
-"/usr/local/lib/devtool/devtool-events.init.gradle":"da7550a61bae530a8bb407c64574a456f77398db29332470623b47028bd9a50f",
+"/usr/local/lib/devtool/devtool-events.init.gradle":"621ce78be0c05cd5e5e43668461795ae0ed81de89acf40e0e8843d52248995a4",
 }}
 ok=all(os.path.isfile(path) and hashlib.sha256(open(path,"rb").read()).hexdigest()==digest for path,digest in expected.items())
 print("embedded_runtime_ok="+("1" if ok else "0"))

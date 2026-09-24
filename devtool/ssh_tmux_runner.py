@@ -1468,7 +1468,7 @@ def _oci_rewrite_runtime_argv(argv: list[str], metadata: dict[str, Any]) -> list
         metadata.pop("android_builder", None)
         metadata["oci_embedded_android_runtime"] = True
 
-    events_sha = "da7550a61bae530a8bb407c64574a456f77398db29332470623b47028bd9a50f"
+    events_sha = "621ce78be0c05cd5e5e43668461795ae0ed81de89acf40e0e8843d52248995a4"
     for index, token in enumerate(result[:-1]):
         if token != "--init-script":
             continue

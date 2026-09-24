@@ -123,7 +123,7 @@ def _gradle_event_candidates(output: str, project_root: Path) -> list[ArtifactCa
         task = str(event.get("task") or "")
         outcome = str(event.get("outcome") or "").strip().lower().replace("_", "-")
         did_work = _coerce_bool(event.get("didWork", False), False)
-        state = "produced" if did_work and outcome == "success" else "reused" if outcome in {"up-to-date", "skipped", "no-source"} else "discovered"
+        state = "produced" if did_work and outcome == "success" else "reused" if outcome in {"up-to-date", "from-cache", "skipped", "no-source"} else "discovered"
         paths = event.get("artifactOutputs") or event.get("artifact_outputs") or []
         if not isinstance(paths, list):
             continue

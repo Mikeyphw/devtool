@@ -60,6 +60,16 @@ class GradleTaskExecutionTelemetryTests(unittest.TestCase):
         self.assertEqual(snap["duplicate_terminal_header_count"], 1)
         self.assertEqual(snap["task_outcomes"], {":app:compileDebugKotlin": "up-to-date"})
 
+
+
+    def test_plain_console_preserves_no_source_and_from_cache_outcomes(self) -> None:
+        tracker = self.tracker()
+        self.assertTrue(tracker.update_from_line("> Task :app:generate NO-SOURCE\n"))
+        self.assertTrue(tracker.update_from_line("> Task :app:compile FROM-CACHE\n"))
+        snap = tracker.snapshot()
+        self.assertEqual(snap["task_outcomes"][":app:generate"], "no-source")
+        self.assertEqual(snap["task_outcomes"][":app:compile"], "from-cache")
+
     def test_structured_duplicate_task_start_is_reported_as_execution_anomaly(self) -> None:
         tracker = self.tracker()
         tracker.update_from_line(self.event(1, "task-start", task=":app:test", completed=0, total=1))

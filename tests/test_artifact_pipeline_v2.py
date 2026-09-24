@@ -8,7 +8,7 @@ import subprocess
 import time
 import zipfile
 
-from devtool.artifact_pipeline import atomic_copy_artifact, collect_and_process_artifacts, format_artifact_summary
+from devtool.artifact_pipeline import _gradle_event_candidates, atomic_copy_artifact, collect_and_process_artifacts, format_artifact_summary
 from devtool.artifact_registry import load_registry, register_paths, save_registry, verify_record
 from devtool.cli import build_parser
 from devtool.models import OperationResult, ProjectConfig
@@ -470,3 +470,19 @@ def test_builtin_release_profile_reaches_android_package_artifact_contract(tmp_p
     assert package.metadata["collect_artifacts"] is True
     assert package.metadata["verify_artifacts"] is True
     assert package.metadata["artifact_required"] is True
+
+
+
+def test_gradle_from_cache_artifact_is_classified_as_reused(tmp_path: Path) -> None:
+    artifact = _zip(tmp_path / "build" / "outputs" / "demo.zip")
+    event = {
+        "kind": "task-finish",
+        "task": ":app:package",
+        "outcome": "from-cache",
+        "didWork": False,
+        "artifactOutputs": [str(artifact)],
+    }
+    candidates = _gradle_event_candidates("DEVTOOL_EVENT " + json.dumps(event), tmp_path)
+    assert len(candidates) == 1
+    assert candidates[0].state == "reused"
+    assert candidates[0].metadata["gradle_outcome"] == "from-cache"

@@ -18,6 +18,7 @@ from devtool.core.execution_limits import (
     MAX_LOG_REF_CHARS,
 )
 from devtool.core.execution_subscribers import ExecutionProjectionSubscriber
+from devtool.core.execution_state import EXECUTION_SNAPSHOT_SCHEMA_VERSION
 from devtool.core.events.events import event_from_dict
 from devtool.core.events.listeners import event_to_dict
 
@@ -162,7 +163,8 @@ def test_synthetic_transition_provenance_is_first_class_and_round_trips():
     bus.publish(event)
     snapshot = bus.execution_store.snapshot("provenance")
     node = snapshot.node("node")
-    assert snapshot.schema_version == 5
+    assert EXECUTION_SNAPSHOT_SCHEMA_VERSION >= 5
+    assert snapshot.schema_version == EXECUTION_SNAPSHOT_SCHEMA_VERSION
     assert node.status == "blocked"
     assert node.transition_origin == "scheduler_inferred"
     assert node.transition_reason == "dependency compile failed"
@@ -198,3 +200,19 @@ def test_android_compatibility_projection_preserves_transition_provenance():
     assert 'transitionReason = value.optString("transition_reason", "")' in graph
     assert 'item.put("transition_origin", step.transitionOrigin)' in update
     assert 'item.put("transition_reason", step.transitionReason)' in update
+
+
+
+def test_gradle_structured_producer_preserves_cache_up_to_date_and_no_source_outcomes():
+    for relative in (
+        "devtool/resources/gradle/devtool-events.init.gradle",
+        "devtool/resources/oci/android-arm64/devtool-events.init.gradle",
+    ):
+        script = (ROOT / relative).read_text(encoding="utf-8")
+        assert "state.skipMessage" in script
+        assert "skipMessage == 'FROM-CACHE' ? 'from-cache'" in script
+        no_source = script.index("state.noSource ? 'no-source'")
+        up_to_date = script.index("state.upToDate ? 'up-to-date'")
+        generic_skipped = script.index("state.skipped ? 'skipped'")
+        assert no_source < generic_skipped
+        assert up_to_date < generic_skipped

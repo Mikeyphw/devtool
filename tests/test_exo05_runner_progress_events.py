@@ -42,6 +42,23 @@ def test_gradle_structured_events_become_task_and_test_nodes(monkeypatch) -> Non
     assert snap.node("build").status == "running"
 
 
+
+
+
+def test_gradle_successful_work_avoidance_outcomes_remain_distinct(monkeypatch) -> None:
+    for index, outcome in enumerate(("up-to-date", "no-source", "from-cache"), start=1):
+        run_id = f"exo05-outcome-{index}"
+        bus, adapter = _adapter(monkeypatch, run_id=run_id)
+        task = f":task{index}"
+        adapter.gradle_event({"kind": "task-graph", "tasks": [task], "total": 1})
+        adapter.gradle_event({"kind": "task-start", "task": task})
+        adapter.gradle_event({"kind": "task-finish", "task": task, "outcome": outcome, "didWork": False})
+        snap = bus.execution_store.snapshot(run_id)
+        node = next(node for node in snap.nodes if node.label == task)
+        assert node.status == "succeeded"
+        assert node.metadata["outcome"] == outcome
+
+
 def test_npm_planned_scripts_keep_duplicate_labels_as_distinct_nodes(monkeypatch) -> None:
     bus, adapter = _adapter(monkeypatch, tool="npm")
     steps = [SimpleNamespace(label="pkg:build"), SimpleNamespace(label="pkg:build")]

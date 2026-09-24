@@ -8,7 +8,7 @@ This document seals the 11-overlay EXO execution-model migration.
 before listeners observe them. Human labels are presentation only; identity is
 `run_id`, `node_id`, `event_id`, and `process_id`.
 
-The canonical snapshot schema is version 4. It preserves:
+The EXO-11 seal originally qualified canonical snapshot schema version 4. The current additive schema is version 7 (EXO promise remediation introduced v5, WRAP provenance v6, and FRX repository identity v7). Current consumers must use the emitted `schema_version` rather than pinning the historical EXO-11 value. It preserves:
 
 - run lifecycle and graph-seal state;
 - direct, recursive, and leaf operation accounting;
@@ -62,3 +62,23 @@ The EXO roadmap is complete only when validation gate 3 passes the explicit
 EXO/core/runtime/surface compatibility selector and the before-commit self-host
 proves persistence, replay recovery, cross-surface agreement, redaction, and
 stable operation identity from the newly installed checkout.
+
+
+## Current lifecycle convergence addendum
+
+A later audit found that embedded artifact lifecycle scripts (preflight, validation,
+finalize/before-commit/after-commit) still used Tasker/Rich phase callbacks as the
+primary live-progress path while their subprocesses bypassed the authoritative EXO
+node/process graph. That was not full EXO convergence.
+
+The current re-seal routes every embedded hook through `HookExecutionAdapter`:
+- the lifecycle phase is a canonical `artifact-hook` EXO node;
+- the actual spawned script runner is a canonical EXO process;
+- failures carry exit code, failure kind, diagnostics, and durable log evidence;
+- retries receive distinct hook-attempt node identities;
+- `ExecutionProjectionSubscriber` receives these events, so terminal/desktop/Android/IPC
+  surfaces can render the same authoritative execution truth;
+- Tasker/Rich phase callbacks remain compatibility projections, not lifecycle authority.
+
+This addendum is enforced by `tests/test_exo_lifecycle_hook_convergence.py` and the
+current re-seal contract.

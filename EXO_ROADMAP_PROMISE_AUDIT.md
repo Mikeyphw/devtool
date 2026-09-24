@@ -81,3 +81,27 @@ The audit also reconfirmed:
 - Android typed execution transport;
 - stable `run_id`/`node_id` control payloads;
 - cross-surface stale-legacy-state rejection.
+
+## Current compatibility note
+
+This report records the post-EXO-11 remediation point where transition provenance advanced the canonical snapshot to schema v5. Later additive campaigns advanced the same snapshot to v6 (WRAP invocation provenance) and v7 (FRX repository identity), while retaining the EXO semantics audited here. The current schema version is centralized as `EXECUTION_SNAPSHOT_SCHEMA_VERSION`; EXO tests assert the transition-provenance promise is available in v5 or later instead of pinning the historical value.
+
+
+## Current lifecycle convergence addendum
+
+A later audit found that embedded artifact lifecycle scripts (preflight, validation,
+finalize/before-commit/after-commit) still used Tasker/Rich phase callbacks as the
+primary live-progress path while their subprocesses bypassed the authoritative EXO
+node/process graph. That was not full EXO convergence.
+
+The current re-seal routes every embedded hook through `HookExecutionAdapter`:
+- the lifecycle phase is a canonical `artifact-hook` EXO node;
+- the actual spawned script runner is a canonical EXO process;
+- failures carry exit code, failure kind, diagnostics, and durable log evidence;
+- retries receive distinct hook-attempt node identities;
+- `ExecutionProjectionSubscriber` receives these events, so terminal/desktop/Android/IPC
+  surfaces can render the same authoritative execution truth;
+- Tasker/Rich phase callbacks remain compatibility projections, not lifecycle authority.
+
+This addendum is enforced by `tests/test_exo_lifecycle_hook_convergence.py` and the
+current re-seal contract.

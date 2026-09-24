@@ -142,7 +142,7 @@ def _validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         "toolchains_path": "/usr/local/lib/devtool/termux_toolchains.py",
         "toolchains_sha256": "46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe",
         "gradle_events_init_path": "/usr/local/lib/devtool/devtool-events.init.gradle",
-        "gradle_events_init_sha256": "da7550a61bae530a8bb407c64574a456f77398db29332470623b47028bd9a50f",
+        "gradle_events_init_sha256": "621ce78be0c05cd5e5e43668461795ae0ed81de89acf40e0e8843d52248995a4",
     }
     if embedded != expected_embedded:
         raise ValueError("OCI-05 embedded Devtool Android runtime contract changed unexpectedly")
