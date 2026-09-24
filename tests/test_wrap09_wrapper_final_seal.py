@@ -85,6 +85,7 @@ def test_wrapper_final_seal_converges_wrapper_surfaces() -> None:
         seal = build_wrapper_final_seal(_load(root))
         payload = wrapper_final_seal_as_dict(seal)
 
+        assert payload["schema_version"] == 2
         assert payload["status"] == "ok"
         assert payload["ok"] is True
         assert payload["commands"] == ["build", "codegen", "upload"]
@@ -94,7 +95,15 @@ def test_wrapper_final_seal_converges_wrapper_surfaces() -> None:
         assert checks[("discovery", "commands")]["status"] == "ok"
         assert checks[("completion", "commands")]["status"] == "ok"
         assert checks[("completion", "aliases")]["status"] == "ok"
+        assert checks[("execution-bridge", "generic-contract")]["status"] == "ok"
+        assert checks[("execution-origin", "generic-contract")]["status"] == "ok"
+        assert checks[("execution-bridge", "command:build")]["status"] == "ok"
+        assert checks[("execution-origin", "command:build")]["status"] == "ok"
+        assert checks[("execution-bridge", "command:codegen")]["status"] == "ok"
+        assert checks[("execution-origin", "command:codegen")]["status"] == "ok"
         assert checks[("resolution", "execute:upload")]["status"] == "skipped"
+        assert checks[("execution-bridge", "command:upload")]["status"] == "skipped"
+        assert checks[("execution-origin", "command:upload")]["status"] == "skipped"
         assert checks[("doctor", "project:wrapper")]["status"] == "ok"
         assert checks[("doctor", "project:wrapper-launchers")]["status"] == "ok"
         assert checks[("doctor", "project:wrapper-docs")]["status"] == "ok"
@@ -115,6 +124,7 @@ def test_wrapper_seal_cli_surfaces_json_and_exit_code(capsys) -> None:
         args = parser.parse_args(["--repo", str(root), "wrapper", "seal", "--json"])
         assert cli._handle_wrapper_command(args) == 0
         payload = json.loads(capsys.readouterr().out)
+        assert payload["schema_version"] == 2
         assert payload["status"] == "ok"
         assert payload["commands"] == ["build", "codegen", "upload"]
 

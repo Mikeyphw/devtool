@@ -69,3 +69,7 @@ failure propagation and restore: PASS
 ```
 
 The artifact validator routes through Devtool's own validation selector path using repeated `--task test` and repeated `--pytest-test` selectors. A local sandbox attempt to run that exact Devtool validation path reached Devtool's venv bootstrap and failed only because the sandbox has no DNS/network for dependency download; the selected test sets above were replayed directly from the exact-ZIP replay tree in the already-provisioned environment.
+
+## Post-WRAP-09 re-seal
+
+`devtool_wrapper_execution_evidence_reseal_02_v1` upgrades the final-seal payload to schema 2 and closes the execution-evidence gap found by the post-roadmap audit. The seal now probes the shared production wrapper re-entry bridge and persists its invocation origin through the real in-memory EXO event/store path without executing repository work. See `WRAPPER_EXECUTION_EVIDENCE_RESEAL_02_REPORT.md` for the remediation audit loop and validation evidence.

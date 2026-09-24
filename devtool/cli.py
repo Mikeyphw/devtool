@@ -152,6 +152,17 @@ from .wrapper_final_seal import (
     render_wrapper_final_seal,
     wrapper_final_seal_as_dict,
 )
+from .invocation_origin import (
+    invocation_command_for_args as _shared_invocation_command_for_args,
+    invocation_metadata_for_args as _shared_invocation_metadata_for_args,
+    invocation_source_for_args as _shared_invocation_source_for_args,
+    safe_internal_invocation_token as _shared_safe_internal_invocation_token,
+)
+from .wrapper_execution import (
+    build_wrapper_canonical_argv_with_provenance as _build_wrapper_canonical_argv_with_provenance,
+    execute_wrapper_resolution as _execute_wrapper_resolution,
+    wrapper_resolution_command_token as _shared_wrapper_resolution_command_token,
+)
 from .workspace import WorkspaceConfigError, resolve_workspace_targets, workspace_as_dict, workspace_group_memberships
 from .workflow_runtime import build_workspace_specs, build_workspace_validation_specs, plan_workspace_targets
 from .workflow_scheduler import (
@@ -11685,54 +11696,23 @@ def _write_performance_report(
 
 
 def _safe_internal_invocation_token(value: object, *, field: str) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-/")
-    if any(ch not in allowed for ch in text) or len(text) > 128:
-        raise ValueError(f"invalid internal invocation {field}")
-    return text
+    return _shared_safe_internal_invocation_token(value, field=field)
 
 
 def _invocation_source_for_args(args: argparse.Namespace) -> str:
-    return _safe_internal_invocation_token(
-        getattr(args, "_devtool_invocation_source", "") or "cli",
-        field="source",
-    ) or "cli"
+    return _shared_invocation_source_for_args(args)
 
 
 def _invocation_command_for_args(args: argparse.Namespace) -> str:
-    return _safe_internal_invocation_token(
-        getattr(args, "_devtool_invocation_command", "") or getattr(args, "command", "") or "devtool",
-        field="command",
-    )
+    return _shared_invocation_command_for_args(args)
 
 
 def _invocation_metadata_for_args(args: argparse.Namespace) -> dict[str, object]:
-    source = _invocation_source_for_args(args)
-    command = _invocation_command_for_args(args)
-    metadata: dict[str, object] = {
-        "invocation_source": source,
-        "invocation_command": command,
-    }
-    schema = _safe_internal_invocation_token(
-        getattr(args, "_devtool_wrapper_schema", ""),
-        field="wrapper_schema",
-    )
-    if schema:
-        metadata["wrapper_schema"] = schema
-    if source == "wrapper":
-        metadata["wrapper_command"] = command
-    return metadata
-
+    return _shared_invocation_metadata_for_args(args)
 
 
 def _wrapper_resolution_command_token(resolution: WrapperResolution) -> str:
-    if resolution.devtool_command:
-        return resolution.devtool_command
-    if resolution.workflow_action:
-        return "invoke"
-    return ""
+    return _shared_wrapper_resolution_command_token(resolution)
 
 
 def _wrapper_canonical_argv_with_provenance(
@@ -11740,36 +11720,11 @@ def _wrapper_canonical_argv_with_provenance(
     *,
     outer_global_argv: Sequence[str] | None = None,
 ) -> list[str]:
-    """Return canonical Devtool argv for a wrapper execution.
+    return _build_wrapper_canonical_argv_with_provenance(
+        resolution,
+        outer_global_argv=outer_global_argv,
+    )
 
-    The outer ``wrapper exec`` command is a local resolver only.  The returned
-    argv is routed back through ``main()`` so the normal CLI parser, SSH/chroot
-    delegation, reservations, progress lifecycle, runner passthrough, and EXO
-    provenance all belong to the canonical command rather than to ``wrapper``.
-    """
-
-    if resolution.mode != "execute":
-        raise WrapperResolutionError(f"Wrapper resolution mode {resolution.mode!r} is not executable")
-    command_token = _wrapper_resolution_command_token(resolution)
-    if not command_token or command_token == "wrapper":
-        raise WrapperResolutionError("Wrapper resolution did not produce a safe canonical Devtool command")
-
-    argv: list[str] = list(resolution.global_argv)
-    if outer_global_argv:
-        argv.extend(str(item) for item in outer_global_argv if str(item))
-    argv.extend([
-        "--internal-invocation-source",
-        "wrapper",
-        "--internal-invocation-command",
-        resolution.command or resolution.command_spelling or command_token,
-        "--internal-wrapper-schema",
-        str(resolution.schema),
-        command_token,
-        *resolution.command_argv,
-    ])
-    if resolution.passthrough_argv:
-        argv.extend(["--", *resolution.passthrough_argv])
-    return argv
 
 
 def _flag_value(value: object) -> str:
@@ -12048,11 +12003,11 @@ def _handle_wrapper_command(args: argparse.Namespace) -> int:
             print(json.dumps(wrapper_resolution_as_dict(resolution), indent=2, ensure_ascii=False))
             return 0
 
-        canonical = _wrapper_canonical_argv_with_provenance(
+        return _execute_wrapper_resolution(
             resolution,
+            reenter=main,
             outer_global_argv=_wrapper_forwarded_outer_global_argv(args),
         )
-        return int(main(canonical))
 
     print(f"Error: Unknown wrapper command: {action}", file=sys.stderr)
     return 2

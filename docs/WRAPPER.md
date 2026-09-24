@@ -92,3 +92,9 @@ devtool wrapper seal --json
 ```
 
 The seal checks launcher status, wrapper documentation, discovery metadata, completion state, help rendering, non-interactive resolution, and doctor integration. It is read-only and returns a non-zero exit code when any required wrapper surface is missing or inconsistent.
+
+### Execution-evidence re-seal
+
+Final-seal schema 2 also verifies the WRAP-04/WRAP-05 execution boundary. The seal exercises the same canonical wrapper bridge used by `wrapper exec` with an in-memory callback, proves that it re-enters canonical Devtool exactly once, verifies each internal provenance control occurs exactly once, and then publishes the resulting wrapper provenance through the real in-memory EXO `EventBus`/`ExecutionStore` to confirm `invocation_source`, `invocation_command`, `wrapper_schema`, and `wrapper_command` persist correctly.
+
+This evidence probe remains read-only: it does **not** execute the repository command, invoke a runner, spawn a subprocess, or attach a synthetic run to Devtool's process-wide runtime store. The persistence proof uses a fresh isolated in-memory `EventBus`/`ExecutionStore` and discards it immediately afterward. Commands requiring user-supplied values are marked `skipped` for command-specific probes; the generic production-bridge/EXO persistence contract is still sealed independently.
