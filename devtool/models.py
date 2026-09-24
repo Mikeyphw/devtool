@@ -294,15 +294,32 @@ class FederationGroup:
     repositories: tuple[str, ...] = ()
 
 
+@dataclass(slots=True, frozen=True)
+class FederatedWorkflowStep:
+    step_id: str
+    ref: str
+    repository: str
+    workflow: str
+    depends_on: tuple[str, ...] = ()
+    depends_on_declared: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class FederatedWorkflowConfig:
+    name: str
+    steps: tuple[FederatedWorkflowStep, ...] = ()
+
+
 @dataclass(slots=True)
 class FederationConfig:
     schema: int = 1
     repositories: dict[str, FederatedRepositoryConfig] = field(default_factory=dict)
     groups: dict[str, FederationGroup] = field(default_factory=dict)
+    workflows: dict[str, FederatedWorkflowConfig] = field(default_factory=dict)
 
     @property
     def enabled(self) -> bool:
-        return bool(self.repositories or self.groups)
+        return bool(self.repositories or self.groups or self.workflows)
 
 
 @dataclass(slots=True)

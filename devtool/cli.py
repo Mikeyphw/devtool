@@ -106,6 +106,7 @@ from .compatibility import compatibility_report, render_compatibility_text
 from .final_seal import final_seal_report, render_final_seal_text
 from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, federation_inspect_payload
 from .federation_gate import build_federation_gate1_report, federation_gate1_as_dict, render_federation_gate1
+from .federation_plan import FederationPlanError, build_federated_plan
 from .target_seal import target_seal_report, render_target_seal_text
 from .target_local_adoption import render_target_local_adoption_text, target_local_adoption_report
 from .config_migration import analyze_config_migration, migrate_config_text, migration_report
@@ -1055,6 +1056,9 @@ def build_parser() -> argparse.ArgumentParser:
     federation_inspect.add_argument("--json", action="store_true", help="Emit machine-readable repository boundary state")
     federation_preflight = federation_sub.add_parser("preflight", aliases=["gate1"], help="Run the FRX-04 repository identity and boundary validation gate")
     federation_preflight.add_argument("--json", action="store_true", help="Emit the machine-readable FRX-04 gate report")
+    federation_plan = federation_sub.add_parser("plan", help="Build a deterministic planning-only cross-repository workflow DAG")
+    federation_plan.add_argument("workflow", help="Federation workflow name")
+    federation_plan.add_argument("--json", action="store_true", help="Emit the machine-readable federated plan graph")
 
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
@@ -11045,7 +11049,24 @@ def _federation_command(args: argparse.Namespace) -> int:
             else:
                 print(render_federation_gate1(report), end="")
             return 0 if report.ok else 1
-    except FederationDiscoveryError as exc:
+        if action == "plan":
+            graph = build_federated_plan(config, str(getattr(args, "workflow", "") or ""))
+            payload = graph.as_dict()
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("workflow", graph.workflow),
+                    ("repositories", ", ".join(graph.repositories) or "-"),
+                    ("nodes", str(len(graph.nodes))),
+                ]
+                for node in graph.topological_order():
+                    deps = ", ".join(node.depends_on) or "-"
+                    kind = "aggregate" if node.synthetic else f"{node.repository}:{node.target}:{node.workflow}"
+                    rows.append((node.key, f"{kind}; depends_on={deps}"))
+                render_status_table(rows)
+            return 0
+    except (FederationDiscoveryError, FederationPlanError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 

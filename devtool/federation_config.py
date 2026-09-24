@@ -13,13 +13,18 @@ import re
 import tomllib
 from typing import Any, Mapping
 
-from .models import FederationConfig, FederationGroup, FederatedRepositoryConfig
+from .models import (
+    FederationConfig, FederationGroup, FederatedRepositoryConfig,
+    FederatedWorkflowConfig, FederatedWorkflowStep,
+)
 
 FEDERATION_SCHEMA_VERSION = 1
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_FEDERATION_KEYS = frozenset({"schema", "repositories", "groups"})
+_FEDERATION_KEYS = frozenset({"schema", "repositories", "groups", "workflows"})
 _REPOSITORY_KEYS = frozenset({"path", "required"})
 _GROUP_KEYS = frozenset({"repositories"})
+_WORKFLOW_KEYS = frozenset({"depends_on", "steps"})
+_WORKFLOW_STEP_KEYS = frozenset({"id", "ref", "depends_on"})
 
 
 class FederationConfigError(ValueError):
@@ -128,6 +133,71 @@ def _repo_members(value: object, *, path: str) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _workflow_ref(value: object, *, path: str, repositories: Mapping[str, FederatedRepositoryConfig]) -> tuple[str, str, str]:
+    if not isinstance(value, str) or not value.strip():
+        raise _fail(f"{path} must be a non-empty repository::workflow reference")
+    raw = value.strip()
+    if raw.count("::") != 1:
+        raise _fail(f"{path} must use repository::workflow syntax, got {raw!r}")
+    repository, workflow = (part.strip() for part in raw.split("::", 1))
+    repository = _name(repository, path=f"{path} repository")
+    workflow = _name(workflow, path=f"{path} workflow")
+    if repository not in repositories:
+        available = ", ".join(sorted(repositories)) or "<none>"
+        raise _fail(f"{path} references unknown federation repository {repository!r}. Available repositories: {available}")
+    return raw, repository, workflow
+
+
+def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str, FederatedRepositoryConfig]) -> tuple[FederatedWorkflowStep, ...]:
+    _reject_unknown(raw, _WORKFLOW_KEYS, path=f"[federation.workflows.{name}]")
+    shorthand = raw.get("depends_on")
+    structured = raw.get("steps")
+    if shorthand is not None and structured is not None:
+        raise _fail(f"federation workflow {name!r} cannot combine depends_on and steps")
+    steps: list[FederatedWorkflowStep] = []
+    if shorthand is not None:
+        if not isinstance(shorthand, list) or not shorthand:
+            raise _fail(f"federation.workflows.{name}.depends_on must be a non-empty array")
+        for index, value in enumerate(shorthand, 1):
+            ref, repository, workflow = _workflow_ref(value, path=f"federation.workflows.{name}.depends_on[{index - 1}]", repositories=repositories)
+            step_id = f"step-{index:02d}"
+            steps.append(FederatedWorkflowStep(step_id, ref, repository, workflow, (), True))
+    elif structured is not None:
+        if not isinstance(structured, list) or not structured:
+            raise _fail(f"federation.workflows.{name}.steps must be a non-empty array of inline tables")
+        seen_ids: set[str] = set()
+        for index, value in enumerate(structured):
+            if not isinstance(value, dict):
+                raise _fail(f"federation.workflows.{name}.steps[{index}] must be an inline table")
+            item = dict(value)
+            _reject_unknown(item, _WORKFLOW_STEP_KEYS, path=f"federation.workflows.{name}.steps[{index}]")
+            step_id = _name(item.get("id"), path=f"federation.workflows.{name}.steps[{index}].id")
+            if step_id in seen_ids:
+                raise _fail(f"federation workflow {name!r} declares duplicate step id {step_id!r}")
+            seen_ids.add(step_id)
+            ref, repository, workflow = _workflow_ref(item.get("ref"), path=f"federation.workflows.{name}.steps[{index}].ref", repositories=repositories)
+            deps_raw = item.get("depends_on", [])
+            if not isinstance(deps_raw, list):
+                raise _fail(f"federation.workflows.{name}.steps[{index}].depends_on must be an array of step ids")
+            deps: list[str] = []
+            for dep_index, dep in enumerate(deps_raw):
+                dep_name = _name(dep, path=f"federation.workflows.{name}.steps[{index}].depends_on[{dep_index}]")
+                if dep_name in deps:
+                    raise _fail(f"federation workflow {name!r} step {step_id!r} repeats dependency {dep_name!r}")
+                deps.append(dep_name)
+            steps.append(FederatedWorkflowStep(step_id, ref, repository, workflow, tuple(deps), "depends_on" in item))
+        known = {step.step_id for step in steps}
+        for step in steps:
+            missing = [dep for dep in step.depends_on if dep not in known]
+            if missing:
+                raise _fail(f"federation workflow {name!r} step {step.step_id!r} depends on unknown step id(s): {', '.join(missing)}")
+            if step.step_id in step.depends_on:
+                raise _fail(f"federation workflow {name!r} step {step.step_id!r} cannot depend on itself")
+    else:
+        raise _fail(f"federation workflow {name!r} must declare depends_on or steps")
+    return tuple(steps)
+
+
 def load_federation_config(section: object, *, owner_root: str | Path) -> FederationConfig:
     """Parse repository-owned ``[federation]`` configuration.
 
@@ -221,11 +291,20 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
             )
         groups[name] = FederationGroup(name=name, repositories=members)
 
-    return FederationConfig(schema=schema, repositories=repositories, groups=groups)
+    workflows_raw = _table(raw.get("workflows"), path="[federation.workflows]")
+    workflows: dict[str, FederatedWorkflowConfig] = {}
+    for raw_name, raw_workflow in workflows_raw.items():
+        name = _name(raw_name, path="federation workflow name")
+        if name in workflows:
+            raise _fail(f"Duplicate federation workflow name after normalization: {name!r}")
+        item = _table(raw_workflow, path=f"[federation.workflows.{name}]")
+        workflows[name] = FederatedWorkflowConfig(name=name, steps=_workflow_steps(name, item, repositories))
+
+    return FederationConfig(schema=schema, repositories=repositories, groups=groups, workflows=workflows)
 
 
 def federation_as_dict(config: FederationConfig) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "schema": config.schema,
         "enabled": config.enabled,
         "repositories": {
@@ -246,6 +325,24 @@ def federation_as_dict(config: FederationConfig) -> dict[str, Any]:
             for name, group in sorted(config.groups.items())
         },
     }
+    if config.workflows:
+        payload["workflows"] = {
+            name: {
+                "name": workflow.name,
+                "steps": [
+                    {
+                        "id": step.step_id,
+                        "ref": step.ref,
+                        "repository": step.repository,
+                        "workflow": step.workflow,
+                        "depends_on": list(step.depends_on),
+                    }
+                    for step in workflow.steps
+                ],
+            }
+            for name, workflow in sorted(config.workflows.items())
+        }
+    return payload
 
 
 __all__ = [

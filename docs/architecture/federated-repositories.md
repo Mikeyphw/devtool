@@ -112,3 +112,48 @@ repositories fail closed.
 
 A repository without `[federation]` passes the same gate in `standalone` mode;
 FRX remains opt-in.
+
+## FRX-05 federated plan graph
+
+FRX-05 introduces planning-only cross-repository DAGs. It does not execute
+child commands.
+
+Federation workflows are repository-owned and can use the compact prerequisite
+form:
+
+```toml
+[federation.workflows.release]
+depends_on = ["backend::prepare-release", "android-app::release"]
+```
+
+The shorthand expands both child workflows and joins them at a synthetic,
+non-executable `@federation::release` aggregate node.
+
+For explicit cross-repository edges, use structured steps:
+
+```toml
+[federation.workflows.release]
+steps = [
+  { id = "backend", ref = "backend::prepare-release" },
+  { id = "android", ref = "android-app::release", depends_on = ["backend"] },
+]
+```
+
+Each `repository::workflow` resolves the enrolled child through the FRX-03
+boundary resolver, uses only that child's selected/default target, requires the
+named workflow to exist, expands the child's existing workflow DAG, and prefixes
+all child graph nodes with the federation repository name. Cross-repository
+step dependencies are attached to the downstream child roots.
+
+Planning is available through:
+
+```text
+devtool federation plan <workflow>
+devtool federation plan <workflow> --json
+```
+
+The graph is deterministic, serializable, cycle-checked, and includes child
+repository identity metadata on every executable child node. Ambiguous child
+targets, missing child workflows, unavailable repositories, ownership changes,
+unknown dependencies, and dependency cycles fail closed. The planner is
+read-only and must not execute a child job, hook, or runner action.
