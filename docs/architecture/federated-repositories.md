@@ -305,3 +305,34 @@ contracts, Gate 1/Gate 2, observed remote path mappings, and orphan child runs.
 Completion state and zsh completion expose federation repository/workflow names
 for `list`, `inspect`, `status`, `plan`, `run`, and `exec` commands. The checked-
 in completion file is kept byte-identical to `devtool.completion.ZSH_COMPLETION`.
+
+## FRX-12: final seal and release qualification
+
+The federation campaign closes with a read-only final qualification surface:
+
+```text
+devtool federation final-seal
+devtool federation final-seal --json
+devtool federation seal
+```
+
+The final seal exposes one check for each of the fourteen roadmap promises:
+configuration contract, repository identity, explicit discovery, boundary
+isolation, graph planning, cycle rejection, EXO parent/child lineage, WRAP
+bridge, target-local-job bridge, local/remote repository identity propagation,
+artifact/hook/validation/transaction ownership, machine/UI/doctor truth,
+standalone backward compatibility, and documentation/completion parity.
+
+FRX-12 also performs a recursive topology audit that follows only configured
+`[federation.repositories]` edges. It never scans for Git repositories. This
+closes deep registration cycles such as `A -> B -> C -> A` while preserving the
+explicit-enrollment rule. Optional missing children remain optional; required
+children, identity collapse, boundary borrowing, or cyclic explicit enrollment
+fail the seal.
+
+The final release validation replays all FRX-01..12 contract suites together
+with WRAP, target-local-job, EXO, remote-provider, operational-boundary,
+UI/machine, doctor, and completion coverage. Repositories without federation
+remain in standalone mode and keep the existing build/test/validate/wrapper/TLJ
+execution contracts unchanged.
+

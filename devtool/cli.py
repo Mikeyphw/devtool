@@ -107,6 +107,7 @@ from .final_seal import final_seal_report, render_final_seal_text
 from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, federation_inspect_payload
 from .federation_gate import build_federation_gate1_report, federation_gate1_as_dict, render_federation_gate1
 from .federation_gate2 import build_federation_gate2_report, federation_gate2_as_dict, render_federation_gate2
+from .federation_final_seal import build_federation_final_seal_report, federation_final_seal_as_dict, render_federation_final_seal
 from .federation_plan import FederationPlanError, build_federated_plan
 from .federation_observability import build_federation_observability
 from .federation_execution import FederationExecutionError, run_federated_workflow
@@ -1068,6 +1069,8 @@ def build_parser() -> argparse.ArgumentParser:
     federation_preflight.add_argument("--json", action="store_true", help="Emit the machine-readable FRX-04 gate report")
     federation_gate2 = federation_sub.add_parser("gate2", aliases=["execution-preflight"], help="Run the FRX-08 cross-repository execution and contract validation gate")
     federation_gate2.add_argument("--json", action="store_true", help="Emit the machine-readable FRX-08 gate report")
+    federation_final_seal = federation_sub.add_parser("final-seal", aliases=["seal"], help="Run the FRX-12 federation final release qualification")
+    federation_final_seal.add_argument("--json", action="store_true", help="Emit the machine-readable FRX-12 final seal report")
     federation_status = federation_sub.add_parser("status", aliases=["summary"], help="Show one coherent federation observability snapshot")
     federation_status.add_argument("--run", default="", help="Limit run observations to one parent or child EXO run ID")
     federation_status.add_argument("--json", action="store_true", help="Emit the machine-readable federation observability snapshot")
@@ -11097,6 +11100,14 @@ def _federation_command(args: argparse.Namespace) -> int:
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
             else:
                 print(render_federation_gate2(report), end="")
+            return 0 if report.ok else 1
+        if action in {"final-seal", "seal"}:
+            report = build_federation_final_seal_report(config)
+            payload = federation_final_seal_as_dict(report)
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(render_federation_final_seal(report), end="")
             return 0 if report.ok else 1
         if action in {"status", "summary"}:
             payload = build_federation_observability(config).as_dict()

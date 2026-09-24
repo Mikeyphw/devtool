@@ -17,6 +17,7 @@ from .wrapper_launcher import launcher_status, launcher_status_as_dict
 from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, resolve_federated_repository
 from .federation_gate import build_federation_gate1_report
 from .federation_gate2 import build_federation_gate2_report
+from .federation_final_seal import build_federation_final_seal_report
 from .federation_observability import build_federation_observability
 from .android.capabilities import resolve_android_execution_context
 from .android.devices import AndroidDeviceManager
@@ -188,6 +189,18 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
             "ok" if federation_gate2.ok else "missing",
             f"FRX-08 status={federation_gate2.status}; checks={len(federation_gate2.checks)}",
         ))
+    try:
+        federation_final = build_federation_final_seal_report(config)
+    except Exception as exc:
+        checks.append(DoctorCheck("federation", "final-seal", "missing", f"FRX-12 final seal failed: {exc}"))
+    else:
+        checks.append(DoctorCheck(
+            "federation",
+            "final-seal",
+            "ok" if federation_final.ok else "missing",
+            f"FRX-12 status={federation_final.status}; checks={len(federation_final.checks)}",
+        ))
+
     try:
         federation_observation = build_federation_observability(config)
     except Exception as exc:
