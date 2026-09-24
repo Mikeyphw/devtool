@@ -24,6 +24,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .artifact_registry import load_registry
+from .federation_observability import build_federation_observability
 from .artifacts import load_history
 from .console_utils import create_console, detect_console_width, is_termux_environment
 from .core.events import tui_event_snapshot
@@ -111,6 +112,16 @@ def _repo_snapshot(repo_root: Path) -> dict[str, Any]:
                 live = state
     except Exception:
         live = {}
+    federation: dict[str, Any] = {}
+    try:
+        from .config import load_project_config
+        config = load_project_config(
+            repo_root, None, target_name="",
+            allow_ambiguous_target=True, allow_ambiguous_project_kind=True,
+        )
+        federation = build_federation_observability(config).as_dict()
+    except Exception:
+        federation = {}
     return {
         "repo": repo_root.name,
         "root": str(repo_root),
@@ -122,6 +133,7 @@ def _repo_snapshot(repo_root: Path) -> dict[str, Any]:
         "history": history,
         "live": live,
         "core_events": tui_event_snapshot(),
+        "federation": federation,
     }
 
 
@@ -190,6 +202,20 @@ def _semantic_live_panels(snapshot: dict[str, Any], profile: TerminalProfile) ->
             ("Detail", ui.operation.detail or "-"),
         ])
     panels: list[Any] = [_kv_panel("Live build/test run", rows, profile=profile)]
+    federation = ui.federation if isinstance(ui.federation, dict) else {}
+    if federation:
+        relationship = str(federation.get("relationship") or "federation")
+        fed_rows: list[tuple[str, Any]] = [("Role", relationship)]
+        if federation.get("workflow"):
+            fed_rows.append(("Workflow", federation.get("workflow")))
+        if federation.get("repository"):
+            fed_rows.append(("Repository", federation.get("repository")))
+        if federation.get("parent_run_id") and not profile.compact:
+            fed_rows.append(("Parent", str(federation.get("parent_run_id"))[:18]))
+        children = federation.get("children") if isinstance(federation.get("children"), list) else []
+        if children:
+            fed_rows.append(("Children", ", ".join(f"{item.get('repository') or item.get('step')}:{item.get('status')}" for item in children[:4] if isinstance(item, dict))))
+        panels.append(_kv_panel("Federation run", fed_rows, profile=profile))
 
     completed_statuses = {"ok", "passed", "success", "completed", "cached", "skipped"}
     visible = [node for node in ui.progress if ui.presentation.show_completed_steps or node.status not in completed_statuses]
@@ -311,11 +337,24 @@ def _dashboard(snapshot: dict[str, Any], profile: TerminalProfile) -> Group:
         summary_rows.append(("Event", str(latest.get("type") or "-") + (f": {latest.get('task')}" if latest.get("task") else "")))
     if profile.termux:
         summary_rows.append(("Runtime", "Termux"))
-    return Group(
+    panels: list[Any] = [
         _kv_panel("Repository", repo_rows, profile=profile),
         _kv_panel("Overview", summary_rows, profile=profile),
-        *_semantic_live_panels(snapshot, profile),
-    )
+    ]
+    federation = snapshot.get("federation") if isinstance(snapshot.get("federation"), dict) else {}
+    if federation.get("enabled"):
+        fed_summary = federation.get("summary") if isinstance(federation.get("summary"), dict) else {}
+        rows = [
+            ("Health", "ok" if fed_summary.get("healthy") else "attention"),
+            ("Repositories", f"{fed_summary.get('available_repositories', 0)}/{fed_summary.get('repositories', 0)} available"),
+            ("Workflows", fed_summary.get("workflows", 0)),
+        ]
+        if not profile.compact:
+            names = [str(item.get("name")) for item in federation.get("repositories", []) if isinstance(item, dict) and item.get("name")]
+            rows.append(("Members", ", ".join(names) or "-"))
+        panels.append(_kv_panel("Federation", rows, profile=profile))
+    panels.extend(_semantic_live_panels(snapshot, profile))
+    return Group(*panels)
 
 
 def _build_page(snapshot: dict[str, Any], profile: TerminalProfile) -> Group:

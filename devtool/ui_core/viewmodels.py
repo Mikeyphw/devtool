@@ -5,6 +5,7 @@ import math
 import re
 from typing import Any, Iterable, Mapping
 
+from ..federation_observability import runtime_federation_projection
 from .actions import ActionContext, actions_for_context
 from .capabilities import capabilities_for_surface, negotiate_capabilities
 from .diagnostics import diagnostic_presentations, summarize_diagnostics
@@ -416,5 +417,6 @@ def runtime_state_to_ui_snapshot(
             policy=resolved_preferences.notification_policy,
             notification_id=f"run:{operation.run_id or command or 'devtool'}",
         ).as_dict()],
+        federation=(dict(state.get("federation")) if isinstance(state.get("federation"), Mapping) else runtime_federation_projection(state.get("execution"))),
         surface=str(surface or "machine"),
     )

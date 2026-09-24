@@ -165,6 +165,7 @@ class UISnapshot:
     confirmation_policy: dict[str, Any] = field(default_factory=dict)
     notification_policy: dict[str, Any] = field(default_factory=dict)
     notifications: list[dict[str, Any]] = field(default_factory=list)
+    federation: dict[str, Any] = field(default_factory=dict)
     schema_version: int = UI_SCHEMA_VERSION
     surface: str = "machine"
 

@@ -35,6 +35,7 @@ from .ui_core.copy import copy_text
 from .ui_core.icons import resolve_icon
 from .ui_core.preferences import resolve_user_ui_preferences
 from .ui_core.viewmodels import runtime_state_to_ui_snapshot
+from .federation_observability import runtime_federation_projection
 
 
 DEFAULT_HUD_POLL_INTERVAL = 0.10
@@ -445,6 +446,7 @@ def _execution_runtime_projection(execution: dict[str, Any], *, notification: di
                    "errors": sum(1 for item in diagnostics if str(item.get("severity") or "").lower() == "error"),
                    "warnings": sum(1 for item in diagnostics if str(item.get("severity") or "").lower() == "warning")},
         "execution": execution, "execution_schema_version": execution.get("schema_version"),
+        "federation": runtime_federation_projection(execution),
         "execution_truth": "canonical", "graph_sealed": bool(execution.get("graph_sealed")),
         "tasker_notification": notification, "notification": notification,
     }

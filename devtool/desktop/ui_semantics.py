@@ -34,6 +34,7 @@ class DesktopSemanticView:
     diagnostic_summary: dict[str, Any] = field(default_factory=dict)
     diagnostics: list[dict[str, Any]] = field(default_factory=list)
     notifications: list[dict[str, Any]] = field(default_factory=list)
+    federation: dict[str, Any] = field(default_factory=dict)
     schema_version: int = DESKTOP_UI_SCHEMA_VERSION
 
     def as_dict(self) -> dict[str, Any]:
@@ -54,6 +55,7 @@ def build_desktop_semantic_view(ui_snapshot: Mapping[str, Any] | None) -> Deskto
     diagnostic_summary = _mapping(ui.get("diagnostic_summary"))
     diagnostics = _list_of_mappings(ui.get("diagnostic_presentations"))
     notifications = _list_of_mappings(ui.get("notifications"))
+    federation = _mapping(ui.get("federation"))
 
     # Make renderer-facing fields explicit and deterministic. Renderers should
     # never need to reconstruct action semantics or terminology themselves.
@@ -86,6 +88,7 @@ def build_desktop_semantic_view(ui_snapshot: Mapping[str, Any] | None) -> Deskto
         diagnostic_summary=diagnostic_summary,
         diagnostics=diagnostics,
         notifications=notifications,
+        federation=federation,
     )
 
 

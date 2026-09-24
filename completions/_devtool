@@ -67,6 +67,26 @@ _devtool_wrapper_options() {
   _values 'repository wrapper option' $options
 }
 
+_devtool_federation_repositories() {
+  local -a values
+  values=(${(f)"$(_devtool_completion_values federation-repositories)"})
+  if (( ${#values} )); then
+    _describe -t federation-repositories 'federated repository' values
+  else
+    _message 'repository from [federation.repositories]'
+  fi
+}
+
+_devtool_federation_workflows() {
+  local -a values
+  values=(${(f)"$(_devtool_completion_values federation-workflows)"})
+  if (( ${#values} )); then
+    _describe -t federation-workflows 'federation workflow' values
+  else
+    _message 'workflow from [federation.workflows]'
+  fi
+}
+
 _devtool_targets() {
   local repo config
   local -a targets
@@ -348,6 +368,8 @@ _devtool_commands() {
     'completion:print shell completion'
     'completion-state:emit config-aware completion values for shells and editors'
     'wrapper:resolve, inspect, and execute repository wrapper commands'
+    'federation:inspect, plan, run, and observe explicitly enrolled repositories'
+    'fed:alias for federation'
     'pytest:profile Devtool pytest runtime and slow-test budget behavior'
     'compatibility:audit retained legacy interfaces and migration paths'
     'compat:alias for compatibility'
@@ -742,6 +764,29 @@ _devtool() {
                 else
                   _devtool_wrapper_options "${line[3]}"
                 fi
+                ;;
+            esac
+          fi
+          ;;
+        federation|fed)
+          if (( ${#line} < 2 )); then
+            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight status summary plan run exec
+          else
+            case $line[2] in
+              list|preflight|gate1|gate2|execution-preflight)
+                _arguments '--json[emit machine-readable federation state]'
+                ;;
+              status|summary)
+                _arguments '--run[parent or child EXO run ID]:run-id:' '--json[emit machine-readable federation observability]'
+                ;;
+              inspect)
+                _arguments '1:federated repository:_devtool_federation_repositories' '--json[emit machine-readable repository boundary state]'
+                ;;
+              plan|run)
+                _arguments '1:federation workflow:_devtool_federation_workflows' '--json[emit machine-readable federation state]'
+                ;;
+              exec)
+                _arguments '1:federated repository:_devtool_federation_repositories' '--plan[resolve without execution]' '--json[emit machine-readable bridge state]' '*:child contract arguments:'
                 ;;
             esac
           fi

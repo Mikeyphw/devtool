@@ -108,6 +108,7 @@ from .federation_discovery import FederationDiscoveryError, federation_boundary_
 from .federation_gate import build_federation_gate1_report, federation_gate1_as_dict, render_federation_gate1
 from .federation_gate2 import build_federation_gate2_report, federation_gate2_as_dict, render_federation_gate2
 from .federation_plan import FederationPlanError, build_federated_plan
+from .federation_observability import build_federation_observability
 from .federation_execution import FederationExecutionError, run_federated_workflow
 from .federation_bridge import (
     FederationBridgeError,
@@ -1067,6 +1068,9 @@ def build_parser() -> argparse.ArgumentParser:
     federation_preflight.add_argument("--json", action="store_true", help="Emit the machine-readable FRX-04 gate report")
     federation_gate2 = federation_sub.add_parser("gate2", aliases=["execution-preflight"], help="Run the FRX-08 cross-repository execution and contract validation gate")
     federation_gate2.add_argument("--json", action="store_true", help="Emit the machine-readable FRX-08 gate report")
+    federation_status = federation_sub.add_parser("status", aliases=["summary"], help="Show one coherent federation observability snapshot")
+    federation_status.add_argument("--run", default="", help="Limit run observations to one parent or child EXO run ID")
+    federation_status.add_argument("--json", action="store_true", help="Emit the machine-readable federation observability snapshot")
     federation_plan = federation_sub.add_parser("plan", help="Build a deterministic planning-only cross-repository workflow DAG")
     federation_plan.add_argument("workflow", help="Federation workflow name")
     federation_plan.add_argument("--json", action="store_true", help="Emit the machine-readable federated plan graph")
@@ -11017,7 +11021,7 @@ def _status_payload(config: ProjectConfig, *, args: argparse.Namespace | None = 
         "run_target": config.run_target,
         "git_dirty": _git_dirty(config.repo_root),
         "transaction_root": str(transaction_root(config.repo_root)),
-        "federation": federation_boundary_payload(config, tolerate_errors=True),
+        "federation": build_federation_observability(config).as_dict(),
     }
 
 
@@ -11094,6 +11098,46 @@ def _federation_command(args: argparse.Namespace) -> int:
             else:
                 print(render_federation_gate2(report), end="")
             return 0 if report.ok else 1
+        if action in {"status", "summary"}:
+            payload = build_federation_observability(config).as_dict()
+            wanted_run = str(getattr(args, "run", "") or "").strip()
+            if wanted_run:
+                payload["runs"] = [
+                    item for item in payload.get("runs", [])
+                    if isinstance(item, dict) and (
+                        str(item.get("run_id") or "") == wanted_run
+                        or str(item.get("parent_run_id") or "") == wanted_run
+                    )
+                ]
+                payload["summary"] = {**dict(payload.get("summary") or {}), "runs": len(payload["runs"])}
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                summary = payload.get("summary") or {}
+                rows = [
+                    ("owner", str((payload.get("owner") or {}).get("root") or config.repo_root)),
+                    ("health", "ok" if summary.get("healthy") else "attention"),
+                    ("repositories", f"{summary.get('available_repositories', 0)}/{summary.get('repositories', 0)} available"),
+                    ("workflows", f"{summary.get('workflows', 0)}; errors={summary.get('workflow_errors', 0)}"),
+                    ("runs", f"{summary.get('runs', 0)}; orphan_children={summary.get('orphan_child_runs', 0)}"),
+                ]
+                for item in payload.get("repositories", []):
+                    if not isinstance(item, dict):
+                        continue
+                    contracts = item.get("public_contracts") if isinstance(item.get("public_contracts"), dict) else {}
+                    rows.append((
+                        f"repo.{item.get('name')}",
+                        f"{item.get('boundary_status')}; target={item.get('selected_target') or '-'}; "
+                        f"wrappers={len(contracts.get('wrapper_commands') or [])}; jobs={len(contracts.get('target_local_jobs') or [])}"
+                    ))
+                for item in payload.get("workflows", []):
+                    if isinstance(item, dict):
+                        rows.append((f"workflow.{item.get('name')}", f"{item.get('status')}; nodes={item.get('node_count', 0)}"))
+                for item in payload.get("runs", []):
+                    if isinstance(item, dict):
+                        rows.append((f"run.{str(item.get('run_id') or '')[:12]}", f"{item.get('relationship')}; {item.get('status')}; {item.get('workflow') or item.get('repository') or '-'}"))
+                render_status_table(rows)
+            return 0 if bool((payload.get("summary") or {}).get("healthy", True)) else 1
         if action == "plan":
             graph = build_federated_plan(config, str(getattr(args, "workflow", "") or ""))
             payload = graph.as_dict()

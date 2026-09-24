@@ -274,3 +274,34 @@ Resume must re-resolve the enrollment and reject a moved/replaced repository or
 changed Git revision. Child EXO snapshots remain independently recoverable: if
 a parent snapshot is absent, lineage can identify child runs as orphaned
 children without rewriting their operational state.
+
+## FRX-11: machine/UI/doctor observability convergence
+
+Federation observability is a read-only projection over the already-authoritative
+FRX contracts. `devtool federation status` and `--json` combine child boundary
+resolution, public wrapper/TLJ contracts, deterministic workflow-plan health,
+Gate 1/Gate 2 status, and currently observable EXO federation lineage into one
+schema-versioned payload. The projection deliberately excludes raw argv and
+arbitrary invocation metadata so WRAP secret-redaction guarantees survive when
+state is copied into dashboards or desktop IPC.
+
+The same runtime federation projection is embedded into shared UI state,
+machine state, HUD/desktop canonical execution projections, and the GTK
+semantic view. Coordinator runs expose repository-qualified child nodes, child
+run ids, statuses, safe transport mappings, and operational reference kinds.
+Child runs expose their parent run/node and repository identity. This keeps the
+TUI and desktop surfaces repo-aware without creating another navigation tree or
+new execution truth source.
+
+The terminal dashboard adds one compact Federation panel when the repository is
+federated. The desktop Control Center snapshot adds one `federation` section,
+and machine state keeps schema v2 while adding an optional `federation` field.
+Repositories without federation continue to emit an empty/additive field and do
+not change execution behavior.
+
+`doctor` now cross-checks the unified projection: enrollment/config boundaries,
+canonical root uniqueness, workflow-plan/cycle health, child wrapper/TLJ public
+contracts, Gate 1/Gate 2, observed remote path mappings, and orphan child runs.
+Completion state and zsh completion expose federation repository/workflow names
+for `list`, `inspect`, `status`, `plan`, `run`, and `exec` commands. The checked-
+in completion file is kept byte-identical to `devtool.completion.ZSH_COMPLETION`.

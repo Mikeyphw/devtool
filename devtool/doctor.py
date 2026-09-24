@@ -17,6 +17,7 @@ from .wrapper_launcher import launcher_status, launcher_status_as_dict
 from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, resolve_federated_repository
 from .federation_gate import build_federation_gate1_report
 from .federation_gate2 import build_federation_gate2_report
+from .federation_observability import build_federation_observability
 from .android.capabilities import resolve_android_execution_context
 from .android.devices import AndroidDeviceManager
 
@@ -187,6 +188,76 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
             "ok" if federation_gate2.ok else "missing",
             f"FRX-08 status={federation_gate2.status}; checks={len(federation_gate2.checks)}",
         ))
+    try:
+        federation_observation = build_federation_observability(config)
+    except Exception as exc:
+        checks.append(DoctorCheck("federation", "observability", "missing", f"FRX-11 observability failed: {exc}"))
+    else:
+        observation = federation_observation.as_dict()
+        summary = observation.get("summary") if isinstance(observation.get("summary"), dict) else {}
+        checks.append(DoctorCheck(
+            "federation",
+            "observability",
+            "ok" if summary.get("healthy", True) else "missing",
+            f"repositories={summary.get('available_repositories', 0)}/{summary.get('repositories', 0)}; "
+            f"workflows={summary.get('workflows', 0)}; runs={summary.get('runs', 0)}; "
+            f"orphans={summary.get('orphan_child_runs', 0)}",
+        ))
+        roots = [
+            str(item.get("root") or "")
+            for item in observation.get("repositories", [])
+            if isinstance(item, dict) and item.get("available")
+        ]
+        duplicate_roots = sorted({root for root in roots if roots.count(root) > 1})
+        checks.append(DoctorCheck(
+            "federation", "canonical-roots",
+            "ok" if not duplicate_roots else "missing",
+            "canonical enrollment roots are unique" if not duplicate_roots else "duplicates: " + ", ".join(duplicate_roots),
+        ))
+        workflow_errors = [
+            str(item.get("name") or "")
+            for item in observation.get("workflows", [])
+            if isinstance(item, dict) and item.get("status") != "ok"
+        ]
+        checks.append(DoctorCheck(
+            "federation", "workflow-plans",
+            "ok" if not workflow_errors else "missing",
+            "all federation workflow DAGs resolve" if not workflow_errors else "unresolved: " + ", ".join(workflow_errors),
+        ))
+        wrappers = 0
+        target_jobs = 0
+        for item in observation.get("repositories", []):
+            if not isinstance(item, dict):
+                continue
+            contracts = item.get("public_contracts") if isinstance(item.get("public_contracts"), dict) else {}
+            wrappers += len(contracts.get("wrapper_commands") or [])
+            target_jobs += len(contracts.get("target_local_jobs") or [])
+        checks.append(DoctorCheck(
+            "federation", "public-contracts",
+            "ok" if wrappers or target_jobs or not federation_names else "optional",
+            f"wrapper commands={wrappers}; target-local jobs={target_jobs}",
+        ))
+        remote_children = []
+        missing_mappings = []
+        for run in observation.get("runs", []):
+            if not isinstance(run, dict):
+                continue
+            federation = run.get("federation") if isinstance(run.get("federation"), dict) else {}
+            for child in federation.get("children", []) if isinstance(federation.get("children"), list) else []:
+                if not isinstance(child, dict):
+                    continue
+                transport = child.get("transport") if isinstance(child.get("transport"), dict) else {}
+                env = str(transport.get("execution_environment") or "")
+                if env in {"ssh", "ssh-command", "ssh-proot-oci", "oci", "chroot", "termux-host-chroot", "proot-distro"}:
+                    remote_children.append(child)
+                    if not transport.get("path_mapping") or not transport.get("child_remote_root"):
+                        missing_mappings.append(str(child.get("repository") or child.get("node_id") or "child"))
+        checks.append(DoctorCheck(
+            "federation", "remote-mappings",
+            "missing" if missing_mappings else "ok" if remote_children else "optional",
+            ("missing provider-resolved mapping: " + ", ".join(sorted(set(missing_mappings))))
+            if missing_mappings else (f"{len(remote_children)} observed remote child runs have explicit mappings" if remote_children else "no observed remote child runs"),
+        ))
     if config.wrapper.commands:
         launcher_report = launcher_status(config.repo_root)
         checks.append(DoctorCheck(
@@ -256,7 +327,7 @@ def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
         },
         "wrapper": wrapper_as_dict(config.wrapper),
         "wrapper_launchers": launcher_status_as_dict(launcher_status(config.repo_root)),
-        "federation": federation_boundary_payload(config, tolerate_errors=True),
+        "federation": build_federation_observability(config).as_dict(),
         "healthy": not any(item.status == "missing" for item in checks),
         "features": features.to_dict(),
         "checks": [item.as_dict() for item in checks],

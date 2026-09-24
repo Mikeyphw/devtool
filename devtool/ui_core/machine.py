@@ -28,6 +28,7 @@ class MachineState:
     presentation: dict[str, Any] = field(default_factory=dict)
     capabilities: dict[str, Any] = field(default_factory=dict)
     responsive: dict[str, Any] = field(default_factory=dict)
+    federation: dict[str, Any] = field(default_factory=dict)
     schema_version: int = MACHINE_SCHEMA_VERSION
 
     def as_dict(self) -> dict[str, Any]:
@@ -97,6 +98,7 @@ def machine_state_from_runtime(
             "negotiation": dict(ui.capability_negotiation),
         },
         responsive=dict(ui.responsive),
+        federation=dict(ui.federation),
     )
 
 

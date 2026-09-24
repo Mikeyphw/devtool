@@ -20,6 +20,7 @@ from ..hud import (
     state_metric_text,
 )
 from ..models import ProjectConfig
+from ..federation_observability import build_federation_observability
 from ..workspace import workspace_group_memberships
 from ..ui_core.viewmodels import runtime_state_to_ui_snapshot
 from ..tasker import DEFAULT_TASKER_DIR
@@ -85,6 +86,7 @@ class DesktopControlCenterSnapshot:
     settings: dict[str, Any] = field(default_factory=dict)
     ui: dict[str, Any] = field(default_factory=dict)
     desktop_ui: dict[str, Any] = field(default_factory=dict)
+    federation: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -99,6 +101,7 @@ class DesktopControlCenterSnapshot:
             "settings": self.settings,
             "ui": self.ui,
             "desktop_ui": self.desktop_ui,
+            "federation": self.federation,
         }
 
 
@@ -222,6 +225,7 @@ class DesktopControlCenterModel:
             },
             ui=semantic_ui,
             desktop_ui=build_desktop_semantic_view(semantic_ui).as_dict(),
+            federation=build_federation_observability(config).as_dict(),
         )
 
 
