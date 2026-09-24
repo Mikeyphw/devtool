@@ -20,6 +20,7 @@ from contextlib import contextmanager, redirect_stdout
 import io
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Sequence
 
 from rich.console import Console
 from rich.prompt import Confirm
@@ -113,6 +114,7 @@ from .config import (
     find_config,
     load_global_config,
     load_project_config,
+    load_wrapper_project_config,
     minimal_global_config_template,
     resolve_repository_root,
     resolve_config_dict,
@@ -125,6 +127,12 @@ from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
 from .wrapper_config import wrapper_as_dict
+from .wrapper_resolution import (
+    WrapperResolution,
+    WrapperResolutionError,
+    resolve_wrapper_argv,
+    wrapper_resolution_as_dict,
+)
 from .workspace import WorkspaceConfigError, resolve_workspace_targets, workspace_as_dict, workspace_group_memberships
 from .workflow_runtime import build_workspace_specs, build_workspace_validation_specs, plan_workspace_targets
 from .workflow_scheduler import (
@@ -950,6 +958,16 @@ def build_parser() -> argparse.ArgumentParser:
     completion_state = subparsers.add_parser("completion-state", help="Emit config-aware values for shell/editor completion")
     completion_state.add_argument("--kind", choices=["targets", "groups", "ui-profiles", "test-profiles", "variants", "jobs", "workflows", "pytest-tests", "all"], default="all")
     completion_state.add_argument("--format", choices=["lines", "json"], default="lines")
+
+    wrapper_cmd = subparsers.add_parser("wrapper", help="Resolve, describe, and execute repository wrapper commands")
+    wrapper_sub = wrapper_cmd.add_subparsers(dest="wrapper_command", required=True)
+    wrapper_describe = wrapper_sub.add_parser("describe", help="Describe the repository wrapper contract")
+    wrapper_describe.add_argument("--json", action="store_true", help="Emit the wrapper contract as JSON")
+    wrapper_resolve = wrapper_sub.add_parser("resolve", add_help=False, help="Resolve wrapper argv without executing it")
+    wrapper_resolve.add_argument("--json", action="store_true", help="Emit the resolved command as JSON")
+    wrapper_resolve.add_argument("wrapper_args", nargs=argparse.REMAINDER, help="Repository wrapper argv to resolve")
+    wrapper_exec = wrapper_sub.add_parser("exec", add_help=False, help="Resolve wrapper argv and execute the canonical Devtool command")
+    wrapper_exec.add_argument("wrapper_args", nargs=argparse.REMAINDER, help="Repository wrapper argv to execute")
 
     compatibility_cmd = subparsers.add_parser("compatibility", aliases=["compat"], help="Audit retained legacy interfaces and migration paths")
     compatibility_cmd.add_argument("--json", action="store_true", help="Emit the versioned compatibility report as JSON")
@@ -11457,6 +11475,261 @@ def _invocation_metadata_for_args(args: argparse.Namespace) -> dict[str, object]
         metadata["wrapper_command"] = command
     return metadata
 
+
+
+def _wrapper_resolution_command_token(resolution: WrapperResolution) -> str:
+    if resolution.devtool_command:
+        return resolution.devtool_command
+    if resolution.workflow_action:
+        return "invoke"
+    return ""
+
+
+def _wrapper_canonical_argv_with_provenance(
+    resolution: WrapperResolution,
+    *,
+    outer_global_argv: Sequence[str] | None = None,
+) -> list[str]:
+    """Return canonical Devtool argv for a wrapper execution.
+
+    The outer ``wrapper exec`` command is a local resolver only.  The returned
+    argv is routed back through ``main()`` so the normal CLI parser, SSH/chroot
+    delegation, reservations, progress lifecycle, runner passthrough, and EXO
+    provenance all belong to the canonical command rather than to ``wrapper``.
+    """
+
+    if resolution.mode != "execute":
+        raise WrapperResolutionError(f"Wrapper resolution mode {resolution.mode!r} is not executable")
+    command_token = _wrapper_resolution_command_token(resolution)
+    if not command_token or command_token == "wrapper":
+        raise WrapperResolutionError("Wrapper resolution did not produce a safe canonical Devtool command")
+
+    argv: list[str] = list(resolution.global_argv)
+    if outer_global_argv:
+        argv.extend(str(item) for item in outer_global_argv if str(item))
+    argv.extend([
+        "--internal-invocation-source",
+        "wrapper",
+        "--internal-invocation-command",
+        resolution.command or resolution.command_spelling or command_token,
+        "--internal-wrapper-schema",
+        str(resolution.schema),
+        command_token,
+        *resolution.command_argv,
+    ])
+    if resolution.passthrough_argv:
+        argv.extend(["--", *resolution.passthrough_argv])
+    return argv
+
+
+def _flag_value(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _append_value_arg(out: list[str], flag: str, value: object) -> None:
+    text = _flag_value(value)
+    if text:
+        out.extend([flag, text])
+
+
+def _append_int_arg(out: list[str], flag: str, value: object) -> None:
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError):
+        number = 0
+    if number:
+        out.extend([flag, str(number)])
+
+
+def _append_bool_arg(out: list[str], flag: str, value: object) -> None:
+    if bool(value):
+        out.append(flag)
+
+
+def _wrapper_forwarded_outer_global_argv(args: argparse.Namespace) -> list[str]:
+    """Forward non-semantic outer Devtool controls to the canonical command.
+
+    Scope/action selectors are deliberately not forwarded: the repository
+    wrapper contract owns target/group/all-target selection.  Execution
+    environment, UI, logging, machine-output and toolchain controls are safe to
+    carry into the canonical command so normal routing still happens after
+    wrapper resolution.
+    """
+
+    out: list[str] = []
+    _append_value_arg(out, "--config", getattr(args, "config", ""))
+
+    for attr, flag in (
+        ("verbose", "--verbose"),
+        ("quiet", "--quiet"),
+        ("trace", "--trace"),
+        ("yes", "--yes"),
+        ("force", "--force"),
+        ("allow_pending_validation", "--allow-pending-validation"),
+        ("dry_run", "--dry-run"),
+        ("continue_on_error", "--continue-on-error"),
+        ("fail_fast", "--fail-fast"),
+        ("performance", "--performance"),
+        ("copy", "--copy"),
+        ("no_clipboard", "--no-clipboard"),
+        ("host", "--host"),
+        ("ssh_no_artifact_copy", "--ssh-no-artifact-copy"),
+        ("ssh_detached", "--ssh-detached"),
+        ("deny_network", "--deny-network"),
+        ("offline", "--offline"),
+    ):
+        _append_bool_arg(out, flag, getattr(args, attr, False))
+
+    default_values = {
+        "copy_via": "auto",
+        "stdout_payload": "auto",
+        "theme": "auto",
+        "hud_mode": "desktop",
+        "execution_environment": EXECUTION_AUTO,
+    }
+    for attr, flag in (
+        ("performance_file", "--performance-file"),
+        ("machine_file", "--machine-file"),
+        ("copy_via", "--copy-via"),
+        ("stdout_payload", "--stdout-payload"),
+        ("theme", "--theme"),
+        ("log_dir", "--log-dir"),
+        ("ui_profile", "--ui-profile"),
+        ("ui_theme", "--ui-theme"),
+        ("ui_density", "--ui-density"),
+        ("ui_icons", "--ui-icons"),
+        ("ui_motion", "--ui-motion"),
+        ("ui_verbosity", "--ui-verbosity"),
+        ("hud_mode", "--hud-mode"),
+        ("chroot", "--chroot"),
+        ("ssh", "--ssh"),
+        ("ssh_profile", "--ssh-profile"),
+        ("ssh_user", "--ssh-user"),
+        ("ssh_identity", "--ssh-identity"),
+        ("ssh_session", "--ssh-session"),
+        ("ssh_cwd", "--ssh-cwd"),
+        ("ssh_tool", "--ssh-tool"),
+        ("ssh_mode", "--ssh-mode"),
+        ("ssh_stage_dir", "--ssh-stage-dir"),
+        ("proot_distro", "--proot-distro"),
+        ("proot_user", "--proot-user"),
+        ("proot_cwd", "--proot-cwd"),
+        ("proot_repo_mount", "--proot-repo-mount"),
+        ("execution_environment", "--execution-environment"),
+        ("termux_resource_profile", "--termux-resource-profile"),
+        ("shared_storage_policy", "--shared-storage-policy"),
+        ("artifact_export", "--artifact-export"),
+        ("bootstrap_downloads", "--bootstrap-downloads"),
+        ("toolchain_profile", "--toolchain-profile"),
+        ("android_sdk_root", "--android-sdk-root"),
+        ("android_sdk_provider", "--android-sdk-provider"),
+        ("gradle_command", "--gradle-command"),
+        ("gradle_provider", "--gradle-provider"),
+        ("java_home", "--java-home"),
+        ("java_provider", "--java-provider"),
+        ("gradle_user_home", "--gradle-user-home"),
+        ("native_provider", "--native-provider"),
+        ("native_cache", "--native-cache"),
+        ("android_build_tools_provider", "--android-build-tools-provider"),
+        ("aapt2_provider", "--aapt2-provider"),
+    ):
+        value = getattr(args, attr, "")
+        if attr in default_values and str(value or "") == str(default_values[attr]):
+            continue
+        _append_value_arg(out, flag, value)
+
+    _append_int_arg(out, "--ssh-port", getattr(args, "ssh_port", 0))
+
+    for value in getattr(args, "proot_bind", []) or []:
+        _append_value_arg(out, "--proot-bind", value)
+    for value in getattr(args, "proot_env", []) or []:
+        _append_value_arg(out, "--proot-env", value)
+
+    auto_hud = getattr(args, "auto_hud", None)
+    if auto_hud is True:
+        out.append("--auto-hud")
+    elif auto_hud is False:
+        out.append("--no-hud")
+    if bool(getattr(args, "hud_overlay", False)):
+        out.append("--hud-overlay")
+    if bool(getattr(args, "hud_no_overlay", False)):
+        out.append("--hud-no-overlay")
+
+    if bool(getattr(args, "no_bootstrap_downloads", False)):
+        out.append("--no-bootstrap-downloads")
+    return out
+
+
+def _wrapper_contract_text(config: ProjectConfig) -> str:
+    if not config.wrapper.commands:
+        return "No repository wrapper commands are configured.\n"
+    lines = [f"Wrapper schema: {config.wrapper.schema}"]
+    if config.wrapper.default_command:
+        lines.append(f"Default command: {config.wrapper.default_command}")
+    lines.append("Commands:")
+    for name, command in sorted(config.wrapper.commands.items()):
+        target = command.target or command.group or ("all-targets" if command.all_targets else "default-target")
+        action = command.devtool or f"invoke {command.workflow}"
+        description = f" — {command.description}" if command.description else ""
+        lines.append(f"  {name}: {action} [{target}]{description}")
+    return "\n".join(lines) + "\n"
+
+
+def _wrapper_resolution_text(resolution: WrapperResolution) -> str:
+    if resolution.mode != "execute":
+        return json.dumps(wrapper_resolution_as_dict(resolution), indent=2, ensure_ascii=False) + "\n"
+    lines = [
+        f"Wrapper command: {resolution.command}",
+        f"Execution kind: {resolution.execution_kind}",
+        "Canonical argv:",
+        "  " + shlex.join(resolution.canonical_argv),
+    ]
+    return "\n".join(lines) + "\n"
+
+def _handle_wrapper_command(args: argparse.Namespace) -> int:
+    repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
+    args.repo = str(repo_root)
+    config = load_wrapper_project_config(str(repo_root), getattr(args, "config", None))
+    action = str(getattr(args, "wrapper_command", "") or "")
+
+    if action == "describe":
+        payload = wrapper_as_dict(config.wrapper)
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(_wrapper_contract_text(config), end="")
+        return 0
+
+    if action in {"resolve", "exec"}:
+        wrapper_args = list(getattr(args, "wrapper_args", []) or [])
+        try:
+            resolution = resolve_wrapper_argv(config, wrapper_args, launch_cwd=Path.cwd())
+        except WrapperResolutionError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+
+        if action == "resolve":
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(wrapper_resolution_as_dict(resolution), indent=2, ensure_ascii=False))
+            else:
+                print(_wrapper_resolution_text(resolution), end="")
+            return 0
+
+        if resolution.mode != "execute":
+            # Rendering polished help belongs to WRAP-08.  Until then, control
+            # requests are represented without executing any canonical command.
+            print(json.dumps(wrapper_resolution_as_dict(resolution), indent=2, ensure_ascii=False))
+            return 0
+
+        canonical = _wrapper_canonical_argv_with_provenance(
+            resolution,
+            outer_global_argv=_wrapper_forwarded_outer_global_argv(args),
+        )
+        return int(main(canonical))
+
+    print(f"Error: Unknown wrapper command: {action}", file=sys.stderr)
+    return 2
+
 def _apply_ui_cli_overrides(args: argparse.Namespace) -> None:
     mapping = {
         "ui_profile": "DEVTOOL_UI_PROFILE",
@@ -11579,6 +11852,8 @@ def _main_after_parse(
     _normalize_command_aliases(args)
     _apply_global_cli_defaults(args, parse_argv)
     _normalize_live_progress_args(args)
+    if args.command == "wrapper":
+        return _handle_wrapper_command(args)
     ssh_rc = _maybe_delegate_ssh(raw_argv, args)
     if ssh_rc is not None:
         return ssh_rc

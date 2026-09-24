@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import urllib.error
 import tempfile
@@ -233,8 +234,19 @@ class TermuxNativeProviderTests(unittest.TestCase):
         self.assertEqual({item.capability for item in providers}, expected)
 
     def test_existing_android_consumers_can_use_termux_apksigner_and_adb_from_path(self) -> None:
-        with patch("devtool.android_artifacts.shutil.which", side_effect=lambda name: "/prefix/bin/apksigner" if name == "apksigner" else None):
-            self.assertEqual(android_artifacts._tool_from_sdk("apksigner"), "/prefix/bin/apksigner")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prefix = root / "usr"
+            sdk = root / "sdk"
+            sdk.mkdir()
+            apksigner = prefix / "bin" / "apksigner"
+            _exe(apksigner, "apksigner")
+            runtime = RuntimeIdentity("android", "termux", "arm64", "bionic", prefix)
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "ANDROID_SDK_ROOT": str(sdk)}), patch(
+                "devtool.android.capabilities.detect_runtime_identity",
+                return_value=runtime,
+            ):
+                self.assertEqual(android_artifacts._tool_from_sdk("apksigner"), str(apksigner))
         with patch("devtool.android_instrumentation.shutil.which", return_value="/prefix/bin/adb"):
             self.assertEqual(android_instrumentation._device_prefix("device-1"), ["/prefix/bin/adb", "-s", "device-1"])
 
