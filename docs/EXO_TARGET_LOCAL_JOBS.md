@@ -257,3 +257,47 @@ action table, compact summary, and surfaces that use the shared summary labels.
 
 This keeps dashboard/HUD consumers from needing to reverse-engineer target-local
 job identity from raw result metadata.
+
+## TLJ-12 final seal and adoption checklist
+
+EXO TLJ-12 seals the target-local jobs roadmap by treating normalized job
+identity as the cross-surface contract. New consumers should avoid parsing raw
+`<target>.<job>` strings when structured fields are available.
+
+Use these fields first:
+
+- `workflow_resolution_scope`, `workflow_resolution_target`,
+  `workflow_resolution_local_name`, and `workflow_resolution_key` in runtime
+  command metadata.
+- `job.scope`, `job.target`, `job.local_name`, `job.key`, and
+  `job.target_local` in `devtool plan --json` command entries.
+- `summary.target_local_jobs[]`, `target_local_jobs[]`, and
+  `targets_with_target_local_jobs` in plan, preflight, and run-summary exports.
+- `completion.target_job_keys`, `completion.target_job_refs`, and filtered
+  `target_jobs` from `devtool jobs --json` for CLI integrations.
+
+Recommended DustUI Go migration shape:
+
+```toml
+[targets.dustui_go]
+runner = "command"
+root = "go"
+
+[targets.dustui_go.jobs.contracts]
+command = ["go", "test", "./internal/contracts/..."]
+outputs = ["build/evidence/contracts.json"]
+
+[targets.dustui_go.jobs.ui_snapshot]
+command = ["go", "test", "./internal/ui/..."]
+outputs = ["build/evidence/ui-snapshot.json"]
+
+[targets.dustui_go.workflows]
+fast = ["job:contracts", "job:ui_snapshot"]
+```
+
+Final-seal regression coverage verifies that one target-local job identity is
+consistent across config loading, completion-state generation, jobs inspection,
+plan export, preflight export, and run-summary export. This gives future repo
+migration roadmaps a stable contract for target-local jobs without requiring a
+custom one-off wrapper per project.
+
