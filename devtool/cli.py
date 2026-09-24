@@ -107,6 +107,7 @@ from .final_seal import final_seal_report, render_final_seal_text
 from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, federation_inspect_payload
 from .federation_gate import build_federation_gate1_report, federation_gate1_as_dict, render_federation_gate1
 from .federation_plan import FederationPlanError, build_federated_plan
+from .federation_execution import FederationExecutionError, run_federated_workflow
 from .target_seal import target_seal_report, render_target_seal_text
 from .target_local_adoption import render_target_local_adoption_text, target_local_adoption_report
 from .config_migration import analyze_config_migration, migrate_config_text, migration_report
@@ -1059,6 +1060,9 @@ def build_parser() -> argparse.ArgumentParser:
     federation_plan = federation_sub.add_parser("plan", help="Build a deterministic planning-only cross-repository workflow DAG")
     federation_plan.add_argument("workflow", help="Federation workflow name")
     federation_plan.add_argument("--json", action="store_true", help="Emit the machine-readable federated plan graph")
+    federation_run = federation_sub.add_parser("run", help="Execute a federated workflow with distinct parent/child EXO runs")
+    federation_run.add_argument("workflow", help="Federation workflow name")
+    federation_run.add_argument("--json", action="store_true", help="Emit the machine-readable federated run and lineage report")
 
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
@@ -11066,7 +11070,27 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append((node.key, f"{kind}; depends_on={deps}"))
                 render_status_table(rows)
             return 0
-    except (FederationDiscoveryError, FederationPlanError) as exc:
+        if action == "run":
+            report = run_federated_workflow(
+                config,
+                str(getattr(args, "workflow", "") or ""),
+                reenter=main,
+            )
+            payload = report.as_dict()
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("workflow", report.workflow),
+                    ("parent_run_id", report.parent_run_id),
+                    ("status", report.status),
+                    ("children", str(len(report.children))),
+                ]
+                for child in report.children:
+                    rows.append((child.step_id, f"{child.repository}::{child.workflow}; {child.status}; run={child.run_id or '-'}"))
+                render_status_table(rows)
+            return int(report.exit_code)
+    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 

@@ -173,6 +173,20 @@ class ExecutionReducer:
         repository_identity = metadata.get("repository_identity")
         if isinstance(repository_identity, dict):
             run.repository_identity = {str(key): value for key, value in repository_identity.items()}
+        run_lineage = metadata.get("run_lineage")
+        if isinstance(run_lineage, dict):
+            normalized_lineage = {str(key): value for key, value in run_lineage.items()}
+            parent_run_id = str(normalized_lineage.get("parent_run_id") or "").strip()
+            child_run_id = str(normalized_lineage.get("child_run_id") or run.run_id).strip()
+            if parent_run_id and parent_run_id == run.run_id:
+                raise ExecutionTransitionError("federated child run cannot name itself as parent_run_id")
+            if child_run_id and child_run_id != run.run_id:
+                raise ExecutionTransitionError(
+                    f"run_lineage child_run_id {child_run_id!r} does not match event run_id {run.run_id!r}"
+                )
+            if normalized_lineage:
+                normalized_lineage["child_run_id"] = run.run_id
+                run.run_lineage = normalized_lineage
         for key in ("wrapper_schema", "wrapper_command"):
             value = metadata.get(key)
             if value not in (None, ""):

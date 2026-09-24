@@ -157,3 +157,20 @@ repository identity metadata on every executable child node. Ambiguous child
 targets, missing child workflows, unavailable repositories, ownership changes,
 unknown dependencies, and dependency cycles fail closed. The planner is
 read-only and must not execute a child job, hook, or runner action.
+
+## FRX-06: EXO parent/child execution lineage
+
+Federated execution uses a coordinator run plus one authoritative EXO child run
+per configured federation workflow step.  Child runs never reuse the parent run
+id.  The parent node records the child run id, while the child execution
+snapshot stores additive `run_lineage` metadata containing the parent run/node,
+federation workflow/step, repository alias, source/effective repository
+identity, and execution-environment request.
+
+`devtool federation run <workflow>` is deliberately sequential in FRX-06.  It
+honors explicit federation dependencies, blocks dependent steps after a failed
+prerequisite, preserves the first concrete child exit code, propagates
+cancellation, and restores the caller's execution environment after every
+recursive child invocation.  The child itself still runs through canonical
+`devtool invoke`, so ordinary workflow, runner, EXO, logging, and validation
+semantics remain authoritative inside that repository.

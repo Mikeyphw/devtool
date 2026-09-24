@@ -7,6 +7,7 @@ that WRAP-04 persists into EXO is built and validated by one implementation.
 """
 
 from typing import Any
+import os
 
 
 def safe_internal_invocation_token(value: object, *, field: str) -> str:
@@ -53,9 +54,34 @@ def invocation_command_for_args(args: Any) -> str:
     ) or "devtool"
 
 
+def _federation_lineage_from_environment() -> dict[str, object]:
+    parent_run_id = str(os.environ.get("DEVTOOL_FEDERATION_PARENT_RUN_ID") or "").strip()
+    if not parent_run_id:
+        return {}
+    values = {
+        "kind": "federation",
+        "relationship": str(os.environ.get("DEVTOOL_FEDERATION_RELATIONSHIP") or "child").strip() or "child",
+        "parent_run_id": parent_run_id,
+        "parent_node_id": str(os.environ.get("DEVTOOL_FEDERATION_PARENT_NODE_ID") or "").strip(),
+        "federation_workflow": str(os.environ.get("DEVTOOL_FEDERATION_WORKFLOW") or "").strip(),
+        "federation_step": str(os.environ.get("DEVTOOL_FEDERATION_STEP") or "").strip(),
+        "repository": str(os.environ.get("DEVTOOL_FEDERATION_REPOSITORY") or "").strip(),
+        "source_repository": str(os.environ.get("DEVTOOL_FEDERATION_SOURCE_REPOSITORY") or "").strip(),
+        "requested_repository": str(os.environ.get("DEVTOOL_FEDERATION_REQUESTED_REPOSITORY") or "").strip(),
+        "effective_repository": str(os.environ.get("DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY") or "").strip(),
+        "execution_environment": str(os.environ.get("DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT") or "").strip(),
+        "child_run_id": str(os.environ.get("DEVTOOL_RUN_ID") or "").strip(),
+    }
+    return {key: value for key, value in values.items() if value not in (None, "")}
+
+
 def invocation_metadata_for_args(args: Any) -> dict[str, object]:
-    return build_invocation_metadata(
+    metadata = build_invocation_metadata(
         source=invocation_source_for_args(args),
         command=invocation_command_for_args(args),
         wrapper_schema=getattr(args, "_devtool_wrapper_schema", ""),
     )
+    lineage = _federation_lineage_from_environment()
+    if lineage:
+        metadata["run_lineage"] = lineage
+    return metadata
