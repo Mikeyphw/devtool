@@ -8611,13 +8611,91 @@ def _workflow_plan_dot(graph, schedule: WorkflowExecutionPlan | None) -> str:
     for node in graph.nodes:
         scheduled = schedule_nodes.get(node.key)
         runner = scheduled.runner if scheduled is not None else (node.runner or node.ref.kind)
-        label = f"{node.target}\\n{node.label}\\n{runner}"
+        resolution = node.ref.resolution_key or node.ref.name
+        if node.ref.resolution_scope == "target" and resolution:
+            resolution = f"job:{resolution}"
+        label_parts = [node.target, node.label, runner]
+        if resolution and resolution != node.label:
+            label_parts.append(resolution)
+        label = "\n".join(label_parts)
         lines.append(f'  "{node.key}" [label="{label}"];')
     for node in graph.nodes:
         for dependency in node.depends_on:
             lines.append(f'  "{dependency}" -> "{node.key}";')
     lines.append("}")
     return "\n".join(lines)
+
+
+def _plan_command_entry(index: int, spec: CommandSpec, config: ProjectConfig) -> dict[str, object]:
+    metadata = dict(spec.metadata)
+    job_scope = str(metadata.get("workflow_job_scope") or metadata.get("workflow_resolution_scope") or "")
+    job_target = str(metadata.get("workflow_job_target") or metadata.get("workflow_resolution_target") or "")
+    job_local_name = str(metadata.get("workflow_job_local_name") or metadata.get("workflow_resolution_local_name") or "")
+    job_key = str(metadata.get("workflow_job_key") or metadata.get("workflow_resolution_key") or "")
+    target_local_job = bool(metadata.get("workflow_job_target_local")) or job_scope == "target" or metadata.get("workflow_resolution_scope") == "target"
+    return {
+        "index": index,
+        "name": spec.name,
+        "argv": list(spec.argv),
+        "cwd": str(spec.cwd or config.repo_root),
+        "node": str(metadata.get("workflow_node_key") or ""),
+        "runner": str(metadata.get("workflow_runner") or metadata.get("runner") or ""),
+        "workflow_target": str(metadata.get("workflow_target") or ""),
+        "workflow_name": str(metadata.get("workflow_name") or ""),
+        "workflow_ref": str(metadata.get("workflow_ref") or ""),
+        "resolution": {
+            "scope": str(metadata.get("workflow_resolution_scope") or ""),
+            "target": str(metadata.get("workflow_resolution_target") or ""),
+            "local_name": str(metadata.get("workflow_resolution_local_name") or ""),
+            "key": str(metadata.get("workflow_resolution_key") or ""),
+        },
+        "job": {
+            "scope": job_scope,
+            "target": job_target,
+            "local_name": job_local_name,
+            "key": job_key,
+            "target_local": target_local_job,
+        },
+        "target_local_job": target_local_job,
+    }
+
+
+def _workflow_plan_summary(graph, schedule: WorkflowExecutionPlan | None, specs: Sequence[CommandSpec]) -> dict[str, object]:
+    target_local_jobs: dict[str, dict[str, object]] = {}
+    repository_jobs: dict[str, dict[str, object]] = {}
+    targets_with_target_local_jobs: set[str] = set()
+    for spec in specs:
+        metadata = dict(spec.metadata)
+        job_scope = str(metadata.get("workflow_job_scope") or "")
+        job_key = str(metadata.get("workflow_job_key") or "")
+        if not job_key:
+            continue
+        job_target = str(metadata.get("workflow_job_target") or "")
+        job_local_name = str(metadata.get("workflow_job_local_name") or "")
+        target_local_job = bool(metadata.get("workflow_job_target_local")) or job_scope == "target"
+        entry = {
+            "key": job_key,
+            "scope": job_scope or ("target" if target_local_job else "repository"),
+            "target": job_target,
+            "local_name": job_local_name,
+        }
+        if target_local_job:
+            target_local_jobs[job_key] = entry
+            if job_target:
+                targets_with_target_local_jobs.add(job_target)
+        else:
+            repository_jobs[job_key] = entry
+    return {
+        "schema_version": 1,
+        "node_count": len(graph.nodes),
+        "command_count": len(specs),
+        "wave_count": len(schedule.waves) if schedule is not None else 0,
+        "target_local_job_count": len(target_local_jobs),
+        "repository_job_count": len(repository_jobs),
+        "target_local_jobs": [target_local_jobs[key] for key in sorted(target_local_jobs)],
+        "repository_jobs": [repository_jobs[key] for key in sorted(repository_jobs)],
+        "targets_with_target_local_jobs": sorted(targets_with_target_local_jobs),
+    }
 
 
 def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
@@ -8638,10 +8716,21 @@ def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
         affected_payload = selection.as_dict()
     if config.targets and not candidates:
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "action": action,
             "targets": [],
             "affected": affected_payload,
+            "summary": {
+                "schema_version": 1,
+                "node_count": 0,
+                "command_count": 0,
+                "wave_count": 0,
+                "target_local_job_count": 0,
+                "repository_job_count": 0,
+                "target_local_jobs": [],
+                "repository_jobs": [],
+                "targets_with_target_local_jobs": [],
+            },
             "message": "No targets selected; execution would be a successful no-op.",
         }
         if bool(getattr(args, "json", False)):
@@ -8665,22 +8754,17 @@ def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
             parallel_requested=requested,
             max_parallel_nodes=int(getattr(args, "workflow_max_workers", 0) or 0),
         )
+        summary = _workflow_plan_summary(graph, plan, specs)
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "action": action,
             "targets": list(candidates),
             "affected": affected_payload,
+            "summary": summary,
             "graph": graph.as_dict(),
             "schedule": plan.as_dict() if plan is not None else None,
             "commands": [
-                {
-                    "index": index,
-                    "name": spec.name,
-                    "argv": list(spec.argv),
-                    "cwd": str(spec.cwd or config.repo_root),
-                    "node": str(spec.metadata.get("workflow_node_key") or ""),
-                    "runner": str(spec.metadata.get("workflow_runner") or spec.metadata.get("runner") or ""),
-                }
+                _plan_command_entry(index, spec, config)
                 for index, spec in enumerate(specs, 1)
             ],
         }
@@ -8690,11 +8774,13 @@ def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
         if bool(getattr(args, "json", False)):
             print(json.dumps(payload, indent=2, ensure_ascii=False))
             return 0
+        target_local_names = [str(item.get("key") or "") for item in summary.get("target_local_jobs", []) if isinstance(item, dict)]
         rows: list[tuple[str, str]] = [
             ("action", action),
             ("targets", ", ".join(candidates)),
             ("parallel", "effective" if plan and plan.parallel_effective else ("requested/serialized" if plan and plan.parallel_requested else "sequential")),
             ("waves", str(len(plan.waves) if plan else 0)),
+            ("target-local jobs", ", ".join(target_local_names) or "none"),
         ]
         if plan is not None:
             reservation = "known: " + (", ".join(plan.reservation_paths) or "read-only") if plan.reservation_paths_known else "unknown (exclusive repository reservation)"
@@ -8709,7 +8795,9 @@ def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
             render_status_table([
                 (
                     node.key,
-                    f"runner={node.runner or '-'} resource={node.resource_class} reads=[{', '.join(node.reads) or '-'}] "
+                    f"runner={node.runner or '-'} resource={node.resource_class} "
+                    f"job={(node.job_scope + ':' + node.job_key) if node.job_key else '-'} "
+                    f"reads=[{', '.join(node.reads) or '-'}] "
                     f"writes=[{', '.join(node.writes) or '-'}] known={str(node.writes_known).lower()} | {node.scope_reason}",
                 )
                 for node in plan.nodes
@@ -8723,9 +8811,20 @@ def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
 
     specs = build_validation_specs(config) if action == "validate" else build_specs(config, action)
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "action": action,
         "targets": [],
+        "summary": {
+            "schema_version": 1,
+            "node_count": 0,
+            "command_count": len(specs),
+            "wave_count": 0,
+            "target_local_job_count": 0,
+            "repository_job_count": 0,
+            "target_local_jobs": [],
+            "repository_jobs": [],
+            "targets_with_target_local_jobs": [],
+        },
         "graph": None,
         "schedule": None,
         "commands": [{"index": i, "name": spec.name, "argv": list(spec.argv), "cwd": str(spec.cwd or config.repo_root)} for i, spec in enumerate(specs, 1)],

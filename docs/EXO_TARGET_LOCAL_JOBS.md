@@ -173,3 +173,31 @@ schema version 4 and includes:
 
 Unknown target names fail before producing partial output so scripts do not
 silently validate the wrong target-local job set.
+
+## Plan export and dry-run identity
+
+EXO TLJ-08 upgrades `devtool plan` machine output to schema version 2 for
+workspace targets. The plan remains a dry-run operation, but every generated
+command now carries the same normalized target-local job identity that runtime
+commands use:
+
+```bash
+devtool -r "$REPO" plan fast --target dustui_android --json
+devtool -r "$REPO" plan fast --target dustui_android --explain
+devtool -r "$REPO" plan fast --target dustui_android --dot
+```
+
+The JSON payload includes a `summary` object with target-local and repository
+job counts, the `target_local_jobs` entries involved in the plan, and the set of
+`targets_with_target_local_jobs`. Each command entry now includes:
+
+- `workflow_target`, `workflow_name`, and `workflow_ref`.
+- `resolution.scope`, `resolution.target`, `resolution.local_name`, and
+  `resolution.key` from workflow parsing.
+- `job.scope`, `job.target`, `job.local_name`, `job.key`, and
+  `job.target_local` from the execution job metadata.
+- top-level `target_local_job` for simple shell/JQ filtering.
+
+Human `--explain` output now includes the normalized job key beside each
+scheduler node. DOT output labels target-local job nodes with `job:<target>.<job>`
+so cross-target previews make the owning target visible before anything runs.
