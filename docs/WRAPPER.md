@@ -63,7 +63,7 @@ devtool wrapper verify
 devtool wrapper update
 ```
 
-`init` refuses to overwrite unmanaged or drifted files unless `--force` is supplied. `update` refreshes Devtool-generated launchers in place.
+`init` refuses to overwrite unmanaged or drifted files unless `--force` is supplied. `update` refreshes only Devtool-managed launchers in place; it also refuses unmanaged files and symlinks unless `--force` is explicit. Forced replacement removes a launcher symlink itself instead of following it.
 
 ## Completion
 
@@ -78,7 +78,9 @@ devtool completion-state --kind all --format json
 
 ## Safety model
 
-Wrapper bindings are declarative argv transformations, not shell snippets. Devtool rejects unsafe wrapper binding attempts such as repository routing controls, internal provenance flags, nested `--` separators, and NUL/newline values. Sensitive-looking wrapper options such as `token`, `secret`, `password`, `credential`, `api_key`, and `auth` are redacted in human and machine resolution surfaces.
+Wrapper bindings are declarative argv transformations, not shell snippets. Devtool rejects unsafe wrapper binding attempts such as repository routing controls, including attached spellings like `--target=value`, `--repo=value`, `-rPATH`, and `-cPATH`, internal provenance flags, nested `--` separators, and NUL/newline values. Dynamic `{value}` expansion is checked again after expansion so an otherwise-generic binding cannot turn user input into a routing control.
+
+Sensitive-looking wrapper options such as `token`, `secret`, `password`, `credential`, `api_key`, and `auth` are redacted in human and machine resolution surfaces. The in-process `WrapperResolution` retains raw argv only for execution; JSON/machine serialization redacts sensitive option values and all argv projections.
 
 ## Final seal
 

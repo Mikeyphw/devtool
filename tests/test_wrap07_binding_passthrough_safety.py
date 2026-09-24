@@ -109,7 +109,9 @@ def test_sensitive_wrapper_options_get_redacted_resolution_representation() -> N
 
     payload = wrapper_resolution_as_dict(resolution)
     assert payload["sensitive_options"] == ["api_token"]
-    assert "super-secret-token" in payload["canonical_argv"]
+    assert resolution.canonical_argv[-1] == "super-secret-token"  # execution object remains raw in-process
+    assert payload["options"]["api_token"]["value"] == "<redacted>"
+    assert "super-secret-token" not in payload["canonical_argv"]
     assert "super-secret-token" not in payload["redacted_canonical_argv"]
     assert "<redacted>" in payload["redacted_canonical_argv"]
     assert "super-secret-token" not in cli._wrapper_resolution_text(resolution)

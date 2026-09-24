@@ -80,6 +80,11 @@ def _has_executable_mode(path: Path) -> bool:
 
 
 def _status_for(path: Path, name: str, expected: str) -> WrapperLauncherFileStatus:
+    # Never follow repository launcher symlinks. A dangling symlink reports
+    # ``exists() == False`` but still represents an occupied path that must not
+    # be followed by write_text().
+    if path.is_symlink():
+        return WrapperLauncherFileStatus(path=str(path), name=name, exists=True, current=False, reason="symlink")
     if not path.exists():
         return WrapperLauncherFileStatus(path=str(path), name=name, exists=False, current=False, reason="missing")
     if not path.is_file():
@@ -146,15 +151,26 @@ def install_launchers(repo_root: str | Path, *, force: bool = False, update: boo
     root = _repo(repo_root)
     expected = expected_launcher_texts()
     before = launcher_status(root)
-    blockers = [item for item in before.files if item.exists and not item.current and not (force or update)]
+    blockers: list[WrapperLauncherFileStatus] = []
+    for item in before.files:
+        if not item.exists or item.current or force:
+            continue
+        # ``update`` may refresh only launchers that Devtool owns.  Unmanaged
+        # files, symlinks, and non-regular paths still require explicit force.
+        if update and item.marker_present and item.reason == "drifted":
+            continue
+        blockers.append(item)
     if blockers:
         names = ", ".join(f"{item.name} ({item.reason})" for item in blockers)
-        raise WrapperLauncherError(
-            f"Refusing to overwrite existing wrapper launcher file(s): {names}. Use wrapper update or --force."
-        )
+        hint = "Use --force only if replacing these files is intentional."
+        raise WrapperLauncherError(f"Refusing to overwrite existing wrapper launcher file(s): {names}. {hint}")
 
     for name, text in expected.items():
         path = root / name
+        if path.is_symlink():
+            # ``force`` was required above. Remove the link itself rather than
+            # writing through it to an arbitrary target outside the repository.
+            path.unlink()
         path.write_text(text, encoding="utf-8", newline="")
         if name == POSIX_LAUNCHER:
             _make_executable(path)

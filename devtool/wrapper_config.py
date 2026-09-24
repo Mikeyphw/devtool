@@ -52,8 +52,8 @@ WRAPPER_NATIVE_COMMANDS = frozenset({
 # carry internal provenance.  Values carried by ``{value}`` are checked at
 # resolution time for text safety; static structural tokens are rejected here.
 _WRAPPER_BINDING_COMMAND_TOKENS = WRAPPER_NATIVE_COMMANDS | frozenset({"invoke", "plan", "wrapper"})
-_WRAPPER_GLOBAL_BINDING_FORBIDDEN = frozenset({"--repo", "-r", "--config"})
-_WRAPPER_COMMAND_BINDING_FORBIDDEN = _WRAPPER_GLOBAL_BINDING_FORBIDDEN | frozenset({"--target", "--group", "--all-targets"})
+_WRAPPER_GLOBAL_BINDING_FORBIDDEN = frozenset({"--repo", "-r", "--config", "-c", "--target", "--group", "--all-targets"})
+_WRAPPER_COMMAND_BINDING_FORBIDDEN = _WRAPPER_GLOBAL_BINDING_FORBIDDEN
 _WRAPPER_PASSTHROUGH_BINDING_FORBIDDEN = frozenset({"--"})
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -123,28 +123,60 @@ def _string_list(value: object, *, path: str, option_names: bool = False) -> tup
     return tuple(out)
 
 
-def _validate_static_binding_token(token: str, *, path: str, lane: str) -> None:
-    """Validate the static part of an argv binding for one binding lane."""
+def _matches_control_token(token: str, control: str) -> bool:
+    """Return whether *token* uses a control flag spelling accepted by argparse.
+
+    Long controls accept ``--flag=value``.  Short controls that consume a value
+    also accept the attached ``-rVALUE``/``-cVALUE`` forms.  Matching these
+    spellings keeps wrapper bindings from bypassing the exact-token checks.
+    """
+
+    if token == control:
+        return True
+    if control.startswith("--"):
+        return token.startswith(control + "=")
+    return control in {"-r", "-c"} and token.startswith(control) and len(token) > len(control)
+
+
+def wrapper_binding_forbidden_reason(token: str, *, lane: str) -> str:
+    """Return a stable reason when an expanded binding token is structurally unsafe."""
 
     if token == "--":
-        raise _fail(f"{path} cannot bind a raw '--' separator")
+        return "raw passthrough separator"
     if token.startswith("--internal-"):
-        raise _fail(f"{path} cannot bind internal Devtool provenance/control flag {token!r}")
+        return "internal Devtool provenance/control flag"
 
-    # Tokens containing {value} carry user input and are validated for text
-    # safety by the resolver.  Do not classify a value token such as
-    # ["--artifact", "{value}"] as an attempted structural control.
-    if "{value}" in token:
-        return
+    forbidden = _WRAPPER_GLOBAL_BINDING_FORBIDDEN if lane == "global" else _WRAPPER_COMMAND_BINDING_FORBIDDEN
+    if lane in {"global", "command"}:
+        for control in forbidden:
+            if _matches_control_token(token, control):
+                return "repository/global control" if lane == "global" else "target/repository control"
+        if token in _WRAPPER_BINDING_COMMAND_TOKENS:
+            return "Devtool command token"
 
-    if lane == "global" and token in _WRAPPER_GLOBAL_BINDING_FORBIDDEN:
-        raise _fail(f"{path} cannot bind repository/global control token {token!r}")
-    if lane == "command" and token in _WRAPPER_COMMAND_BINDING_FORBIDDEN:
-        raise _fail(f"{path} cannot bind target/repository control token {token!r}; use wrapper command scope fields instead")
     if lane == "passthrough" and token in _WRAPPER_PASSTHROUGH_BINDING_FORBIDDEN:
-        raise _fail(f"{path} cannot bind raw passthrough separator {token!r}")
-    if lane in {"global", "command"} and token in _WRAPPER_BINDING_COMMAND_TOKENS:
+        return "raw passthrough separator"
+    return ""
+
+
+def _validate_static_binding_token(token: str, *, path: str, lane: str) -> None:
+    """Validate structural controls visible before ``{value}`` expansion."""
+
+    # Replace the dynamic field with a harmless sentinel so combined forms like
+    # ``--target={value}`` are classified exactly like their expanded argv.
+    probe = token.replace("{value}", "WRAPPER_VALUE")
+    reason = wrapper_binding_forbidden_reason(probe, lane=lane)
+    if not reason:
+        return
+    if reason == "internal Devtool provenance/control flag":
+        raise _fail(f"{path} cannot bind internal Devtool provenance/control flag {token!r}")
+    if reason == "repository/global control":
+        raise _fail(f"{path} cannot bind repository/global control token {token!r}")
+    if reason == "target/repository control":
+        raise _fail(f"{path} cannot bind target/repository control token {token!r}; use wrapper command scope fields instead")
+    if reason == "Devtool command token":
         raise _fail(f"{path} cannot bind Devtool command token {token!r}")
+    raise _fail(f"{path} cannot bind a raw '--' separator")
 
 
 def _argv_tokens(value: object, *, path: str, lane: str) -> tuple[str, ...]:

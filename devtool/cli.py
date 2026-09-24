@@ -997,9 +997,10 @@ def build_parser() -> argparse.ArgumentParser:
     wrapper_exec.add_argument("--version", dest="wrapper_control_version", action="store_true", help=argparse.SUPPRESS)
     wrapper_exec.add_argument("wrapper_args", nargs=argparse.REMAINDER, help="Repository wrapper argv to execute")
     wrapper_init = wrapper_sub.add_parser("init", help="Create repository devtoolw launchers")
-    wrapper_init.add_argument("--force", action="store_true", help="Overwrite drifted generated wrapper launchers")
+    wrapper_init.add_argument("--force", action="store_true", help="Explicitly replace drifted or unmanaged launcher files")
     wrapper_init.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
     wrapper_update = wrapper_sub.add_parser("update", help="Refresh repository devtoolw launchers")
+    wrapper_update.add_argument("--force", action="store_true", help="Explicitly replace unmanaged launcher files")
     wrapper_update.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
     wrapper_verify = wrapper_sub.add_parser("verify", help="Verify repository devtoolw launchers are current")
     wrapper_verify.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
@@ -11962,7 +11963,7 @@ def _handle_wrapper_command(args: argparse.Namespace) -> int:
             if action == "init":
                 status = install_launchers(repo_root, force=bool(getattr(args, "force", False)), update=False)
             elif action == "update":
-                status = install_launchers(repo_root, update=True)
+                status = install_launchers(repo_root, force=bool(getattr(args, "force", False)), update=True)
             elif action == "verify":
                 status = verify_launchers(repo_root)
             else:

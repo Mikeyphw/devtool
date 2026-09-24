@@ -4,6 +4,7 @@ ZSH_COMPLETION = r'''#compdef devtool
 
 # Legacy desktop page order marker for regression compatibility: overview runs history diagnostics repositories targets run settings
 # Devtool zsh completion. Keep this file synchronized with devtool/completion.py.
+# Hidden execution provenance controls intentionally not offered as candidates: --internal-invocation-source --internal-invocation-command --internal-wrapper-schema
 
 _devtool_repo_path() {
   if (( $+commands[fzf] )); then
@@ -39,6 +40,33 @@ _devtool_completion_values() {
     cmd+=(--target "$target")
   fi
   "${cmd[@]}" completion-state --kind "$kind" 2>/dev/null
+}
+
+_devtool_wrapper_commands() {
+  local -a commands aliases values
+  commands=(${(f)"$(_devtool_completion_values wrapper-commands)"})
+  aliases=(${(f)"$(_devtool_completion_values wrapper-aliases)"})
+  values=($commands $aliases)
+  values=(${(u)values})
+  if (( ${#values} )); then
+    _describe -t wrapper-commands 'repository wrapper command' values
+  else
+    _message 'repository wrapper command from [wrapper.commands]'
+  fi
+}
+
+_devtool_wrapper_options() {
+  local command=$1 item
+  local -a raw options
+  raw=(${(f)"$(_devtool_completion_values wrapper-options)"})
+  options=(--help --version)
+  for item in $raw; do
+    if [[ $item == "$command:"* ]]; then
+      options+=("${item#*:}")
+    fi
+  done
+  options=(${(u)options})
+  _values 'repository wrapper option' $options
 }
 
 _devtool_targets() {
@@ -261,6 +289,7 @@ _devtool_commands() {
     'doctor:diagnose devtool and project prerequisites'
     'dr:alias for doctor'
     'ssh:inspect, bootstrap, and synchronize named SSH build workers'
+    'oci:manage PRoot-Distro OCI runtime state on named SSH workers'
     'bootstrap:provision reusable destination-specific toolchains'
     'android:inspect Android capabilities, ADB providers, and connected devices'
     'termux:inspect native Termux providers, packages, and PRoot guests'
@@ -320,6 +349,7 @@ _devtool_commands() {
     'ap:alias for ai-prompt'
     'completion:print shell completion'
     'completion-state:emit config-aware completion values for shells and editors'
+    'wrapper:resolve, inspect, and execute repository wrapper commands'
     'pytest:profile Devtool pytest runtime and slow-test budget behavior'
     'compatibility:audit retained legacy interfaces and migration paths'
     'compat:alias for compatibility'
@@ -680,6 +710,44 @@ _devtool() {
       ;;
     args)
       case $line[1] in
+        wrapper)
+          if (( ${#line} < 2 )); then
+            _values 'wrapper action' describe help discover resolve exec init update verify status seal
+          else
+            case $line[2] in
+              describe|discover|status|verify|seal)
+                _arguments '--json[emit machine-readable JSON]'
+                ;;
+              init)
+                _arguments '--force[replace drifted or unmanaged launcher files]' '--json[emit launcher status as JSON]'
+                ;;
+              update)
+                _arguments '--force[explicitly replace unmanaged launcher files]' '--json[emit launcher status as JSON]'
+                ;;
+              help)
+                if (( ${#line} < 3 )); then
+                  _arguments '--json[emit wrapper discovery metadata as JSON]' '1:wrapper command:_devtool_wrapper_commands'
+                else
+                  _arguments '--json[emit wrapper discovery metadata as JSON]'
+                fi
+                ;;
+              resolve)
+                if (( ${#line} < 3 )); then
+                  _devtool_wrapper_commands
+                else
+                  _devtool_wrapper_options "${line[3]}"
+                fi
+                ;;
+              exec)
+                if (( ${#line} < 3 )); then
+                  _devtool_wrapper_commands
+                else
+                  _devtool_wrapper_options "${line[3]}"
+                fi
+                ;;
+            esac
+          fi
+          ;;
         restore|rs|lint|run|rn|clean|cl|inspect|info|status|st)
           _arguments \
             '--target[named target/profile]:target:_devtool_targets' \
@@ -826,6 +894,7 @@ _devtool() {
                   '--workspace-mode[remote workspace mode]:mode:(managed existing ephemeral)' \
                   '--workspace-root[managed remote workspace root]:path:' \
                   '--bootstrap-policy[remote bootstrap policy]:policy:(missing never)' \
+                  '--execution-provider[worker execution provider]:provider:(native ssh-native proot-oci ssh-proot-oci)' \
                   '--host-key-policy[OpenSSH host key policy]:policy:(accept-new strict system)' \
                   '--min-free-mb[minimum remote free storage]:mebibytes:' \
                   '--no-default[do not make this the default SSH worker]' \
@@ -849,11 +918,58 @@ _devtool() {
               sync)
                 _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--dry-run[show exact repository delta without modifying worker]'
                 ;;
-              retrieve|return|resume|cancel)
+              retrieve|return)
                 _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--run-id[select one Devtool run]:run-id:' '--session[select one SSH phase session]:session:'
                 ;;
+              resume|cancel)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--run-id[select one Devtool run]:run-id:' '--session[select one SSH phase session]:session:' '--node-id[select one canonical provider node]:node-id:'
+                ;;
               recover)
-                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--run-id[restrict stale-run recovery to one Devtool run]:run-id:'
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--run-id[restrict stale-run recovery to one Devtool run]:run-id:' '--node-id[restrict recovery to one canonical provider node]:node-id:'
+                ;;
+            esac
+          fi
+          ;;
+        oci)
+          if (( ${#line} < 2 )); then
+            _values 'OCI action' definition build gate1 workspace validate-image image-status status update prune diagnostics diag final-seal seal doctor images containers list bootstrap install remove rm
+          else
+            case ${line[2]} in
+              definition)
+                _arguments '--format[output format]:format:(text json)'
+                ;;
+              final-seal|seal)
+                _arguments '--format[output format]:format:(text json)' '--strict[fail when final seal checks fail]'
+                ;;
+              build)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--tag[OCI image tag/reference]:tag:' '--install-as[install built image as this container]:container:' '--no-cache[disable PRoot-Distro build cache]' '--dry-run[plan without mutating worker]' '--format[output format]:format:(text json)'
+                ;;
+              gate1)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--container[installed container name]:container:' '--tag[OCI image tag/reference]:tag:' '--format[output format]:format:(text json)'
+                ;;
+              workspace)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--dry-run[validate workspace/cache paths without creating caches]' '--format[output format]:format:(text json)'
+                ;;
+              image-status|status|diagnostics|diag|doctor|images|containers|list)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)'
+                ;;
+              validate-image)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '2:installed container:container:' '--format[output format]:format:(text json)'
+                ;;
+              update)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--apply[execute the image refresh]' '--force[rebuild/reinstall even when cached]' '--no-cache[disable build cache]' '--format[output format]:format:(text json)'
+                ;;
+              prune)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--apply[remove non-canonical cached images]' '--format[output format]:format:(text json)'
+                ;;
+              bootstrap)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--dry-run[plan without mutating worker]' '--force[force bootstrap/repair]' '--format[output format]:format:(text json)'
+                ;;
+              install)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '2:OCI registry reference or archive:_files' '--name[local container name]:container:' '--architecture[target architecture]:architecture:' '--dry-run[plan without mutating worker]' '--format[output format]:format:(text json)'
+                ;;
+              remove|rm)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '2:container or cached image:target:' '--image[remove a cached image instead of a container]' '--dry-run[plan without mutating worker]' '--format[output format]:format:(text json)'
                 ;;
             esac
           fi

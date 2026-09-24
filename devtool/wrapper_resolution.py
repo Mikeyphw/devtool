@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from .models import ProjectConfig, WrapperCommandConfig, WrapperOptionConfig, WrapperPositionalConfig
+from .wrapper_config import wrapper_binding_forbidden_reason
 
 
 class WrapperResolutionError(ValueError):
@@ -221,10 +222,22 @@ def _redact_argv(argv: Sequence[str], sensitive_values: Sequence[str]) -> tuple[
     return tuple(redacted)
 
 
-def _expand_tokens(tokens: Sequence[str], value: object, *, path: str) -> tuple[str, ...]:
+def _expand_tokens(tokens: Sequence[str], value: object, *, path: str, lane: str) -> tuple[str, ...]:
     _ensure_safe_value_text(value, path=path)
     replacement = _value_text(value)
-    return tuple(token.replace("{value}", replacement) for token in tokens)
+    expanded = tuple(token.replace("{value}", replacement) for token in tokens)
+    for token in expanded:
+        reason = wrapper_binding_forbidden_reason(token, lane=lane)
+        if not reason:
+            continue
+        if reason == "internal Devtool provenance/control flag":
+            raise _fail(f"Wrapper binding {path} cannot expand to internal Devtool control token {token!r}")
+        if reason in {"repository/global control", "target/repository control"}:
+            raise _fail(f"Wrapper binding {path} cannot expand to routing control token {token!r}")
+        if reason == "Devtool command token":
+            raise _fail(f"Wrapper binding {path} cannot expand to Devtool command token {token!r}")
+        raise _fail(f"Wrapper binding {path} cannot expand to raw '--' separator")
+    return expanded
 
 
 def _iter_binding_values(value: object, *, repeatable: bool) -> tuple[object, ...]:
@@ -545,9 +558,9 @@ def resolve_wrapper_argv(
         if not _is_active(option, value, present=present):
             continue
         for item in _iter_binding_values(value, repeatable=option.repeatable):
-            global_bindings.extend(_expand_tokens(option.global_argv, item, path=f"--{option.name}"))
-            command_bindings.extend(_expand_tokens(option.command_argv, item, path=f"--{option.name}"))
-            passthrough_bindings.extend(_expand_tokens(option.passthrough_argv, item, path=f"--{option.name}"))
+            global_bindings.extend(_expand_tokens(option.global_argv, item, path=f"--{option.name}", lane="global"))
+            command_bindings.extend(_expand_tokens(option.command_argv, item, path=f"--{option.name}", lane="command"))
+            passthrough_bindings.extend(_expand_tokens(option.passthrough_argv, item, path=f"--{option.name}", lane="passthrough"))
 
     positional_map = dict(resolved_positionals)
     for positional in command.positionals:
@@ -556,9 +569,9 @@ def resolve_wrapper_argv(
             continue
         values = tuple(value) if positional.repeatable and isinstance(value, tuple) else (value,)
         for item in values:
-            global_bindings.extend(_expand_tokens(positional.global_argv, item, path=positional.name))
-            command_bindings.extend(_expand_tokens(positional.command_argv, item, path=positional.name))
-            passthrough_bindings.extend(_expand_tokens(positional.passthrough_argv, item, path=positional.name))
+            global_bindings.extend(_expand_tokens(positional.global_argv, item, path=positional.name, lane="global"))
+            command_bindings.extend(_expand_tokens(positional.command_argv, item, path=positional.name, lane="command"))
+            passthrough_bindings.extend(_expand_tokens(positional.passthrough_argv, item, path=positional.name, lane="passthrough"))
 
     global_argv = ["--repo", str(repo_root), *global_bindings]
     if command.devtool:
@@ -615,13 +628,40 @@ def resolve_wrapper_argv(
 
 
 def wrapper_resolution_as_dict(resolution: WrapperResolution) -> dict[str, Any]:
-    """Return a deterministic JSON-safe representation of a resolution."""
+    """Return a deterministic JSON-safe, secret-safe representation.
 
-    def json_value(value: object) -> object:
+    The :class:`WrapperResolution` object retains raw argv for in-process
+    execution.  Machine/display serialization never exports sensitive option
+    values or argv tokens containing them.
+    """
+
+    sensitive_names = set(resolution.sensitive_options)
+    sensitive_values: list[str] = []
+    for item in resolution.options:
+        if item.name not in sensitive_names:
+            continue
+        values = item.value if isinstance(item.value, tuple) else (item.value,)
+        for value in values:
+            if value is None or isinstance(value, bool):
+                continue
+            text = _value_text(value)
+            if text:
+                sensitive_values.append(text)
+    sensitive_values = list(dict.fromkeys(sensitive_values))
+
+    def json_value(value: object, *, sensitive: bool = False) -> object:
         if isinstance(value, tuple):
-            return [json_value(item) for item in value]
+            return [json_value(item, sensitive=sensitive) for item in value]
+        if sensitive and value is not None and not isinstance(value, bool):
+            return _ENV_UNSAFE_CHARS_REPLACEMENT
+        if isinstance(value, str):
+            return _redact_argv((value,), sensitive_values)[0]
         return value
 
+    def argv_value(argv: Sequence[str]) -> list[str]:
+        return list(_redact_argv(argv, sensitive_values))
+
+    safe_canonical = argv_value(resolution.canonical_argv)
     return {
         "schema": resolution.schema,
         "mode": resolution.mode,
@@ -637,20 +677,20 @@ def wrapper_resolution_as_dict(resolution: WrapperResolution) -> dict[str, Any]:
         },
         "options": {
             item.name: {
-                "value": json_value(item.value),
+                "value": json_value(item.value, sensitive=item.name in sensitive_names),
                 "provided": item.provided,
                 "defaulted": item.defaulted,
             }
             for item in resolution.options
         },
         "positionals": {name: json_value(value) for name, value in resolution.positionals},
-        "raw_passthrough_argv": list(resolution.raw_passthrough_argv),
+        "raw_passthrough_argv": argv_value(resolution.raw_passthrough_argv),
         "sensitive_options": list(resolution.sensitive_options),
-        "global_argv": list(resolution.global_argv),
-        "command_argv": list(resolution.command_argv),
-        "passthrough_argv": list(resolution.passthrough_argv),
-        "canonical_argv": list(resolution.canonical_argv),
-        "redacted_canonical_argv": list(resolution.redacted_canonical_argv),
+        "global_argv": argv_value(resolution.global_argv),
+        "command_argv": argv_value(resolution.command_argv),
+        "passthrough_argv": argv_value(resolution.passthrough_argv),
+        "canonical_argv": safe_canonical,
+        "redacted_canonical_argv": safe_canonical,
         "repo_root": resolution.repo_root,
         "launch_cwd": resolution.launch_cwd,
         "help_requested": resolution.help_requested,
