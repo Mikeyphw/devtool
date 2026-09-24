@@ -96,8 +96,12 @@ class ExoTargetLocalJobsCompletionDoctorTests(unittest.TestCase):
         checks = {(item["section"], item["name"]): item for item in payload["checks"]}
         self.assertEqual(checks[("project", "target-local-jobs")]["status"], "ok")
         self.assertEqual(checks[("project", "target-local-workflows")]["status"], "ok")
-        self.assertIn("target-local-jobs", text)
-        self.assertIn("target-local-workflows", text)
+        # Rich may wrap long field names on narrow Termux terminals, so the
+        # exact check names are asserted through the structured payload above.
+        # Keep human-output assertions focused on stable details.
+        self.assertIn("1 jobs across targets", text)
+        self.assertIn("workflows using", text)
+        self.assertIn("app.fast", text)
 
 
 if __name__ == "__main__":
