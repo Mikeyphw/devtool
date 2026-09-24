@@ -1033,6 +1033,47 @@ def render_status_table(rows: list[tuple[str, str]], *, console_obj: Console | N
     target_console.print(table)
 
 
+def _workflow_target_local_job_summary(results: list[OperationResult]) -> dict[str, object]:
+    jobs: dict[str, dict[str, object]] = {}
+    repository_jobs: set[str] = set()
+    for result in results:
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        key = str(metadata.get("workflow_job_key") or metadata.get("workflow_resolution_key") or "").strip()
+        if not key:
+            continue
+        scope = str(metadata.get("workflow_job_scope") or metadata.get("workflow_resolution_scope") or "").strip()
+        is_target_local = bool(metadata.get("workflow_job_target_local")) or scope == "target"
+        if not is_target_local:
+            if scope == "repository" or str(metadata.get("workflow_ref_kind") or "") == "job":
+                repository_jobs.add(key)
+            continue
+        target = str(metadata.get("workflow_job_target") or metadata.get("workflow_resolution_target") or metadata.get("workflow_target") or "").strip()
+        local_name = str(metadata.get("workflow_job_local_name") or metadata.get("workflow_resolution_local_name") or "").strip()
+        entry_key = key or (f"{target}.{local_name}" if target and local_name else local_name)
+        if not entry_key:
+            continue
+        entry = jobs.setdefault(entry_key, {
+            "key": entry_key,
+            "target": target,
+            "local_name": local_name,
+            "result_count": 0,
+            "failed": 0,
+            "duration_seconds": 0.0,
+        })
+        entry["result_count"] = int(entry.get("result_count") or 0) + 1
+        if result.returncode != 0 or _result_has_error_issue(result):
+            entry["failed"] = int(entry.get("failed") or 0) + 1
+        entry["duration_seconds"] = round(float(entry.get("duration_seconds") or 0.0) + float(result.duration_seconds or 0.0), 3)
+    ordered_jobs = [jobs[key] for key in sorted(jobs)]
+    return {
+        "target_local_job_count": len(ordered_jobs),
+        "repository_job_count": len(repository_jobs),
+        "targets_with_target_local_jobs": sorted({str(item.get("target") or "") for item in ordered_jobs if str(item.get("target") or "")}),
+        "target_local_jobs": ordered_jobs,
+        "repository_jobs": sorted(repository_jobs),
+    }
+
+
 def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dict:
     totals = calculate_totals(results)
     overlay_groups, _ungrouped = _overlay_groups(results)
@@ -1126,6 +1167,13 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
                 "runner": str(metadata.get("workflow_runner") or ""),
                 "action": str(metadata.get("workflow_action") or ""),
                 "depends_on": [str(value) for value in metadata.get("workflow_depends_on", []) or []],
+                "job": {
+                    "scope": str(metadata.get("workflow_job_scope") or metadata.get("workflow_resolution_scope") or ""),
+                    "target": str(metadata.get("workflow_job_target") or metadata.get("workflow_resolution_target") or ""),
+                    "local_name": str(metadata.get("workflow_job_local_name") or metadata.get("workflow_resolution_local_name") or ""),
+                    "key": str(metadata.get("workflow_job_key") or metadata.get("workflow_resolution_key") or ""),
+                    "target_local": bool(metadata.get("workflow_job_target_local")) or str(metadata.get("workflow_job_scope") or metadata.get("workflow_resolution_scope") or "") == "target",
+                },
                 "state": state,
                 "result_count": 0,
                 "duration_seconds": 0.0,
@@ -1136,11 +1184,13 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
             candidate_schedule = metadata.get("workflow_schedule")
             if isinstance(candidate_schedule, dict) and candidate_schedule:
                 schedule = dict(candidate_schedule)
+        target_local_summary = _workflow_target_local_job_summary(workflow_results)
         data["workflow"] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "targets": targets,
             "workflows": workflows,
             "schedule": schedule,
+            "summary": target_local_summary,
             "nodes": list(node_rows.values()),
         }
 

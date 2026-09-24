@@ -227,3 +227,14 @@ The JSON payload includes:
 Human preflight output also includes compact `target-local jobs` and
 `repository jobs` rows. This keeps plan, preflight, doctor, jobs inspection, and
 completion surfaces aligned around the same target-local job identity contract.
+
+## TLJ-10 run summary export
+
+Runtime summaries now report target-local job identity in the same vocabulary as
+plan and preflight exports. JSON summaries use `workflow.schema_version = 2` and
+include `workflow.summary.target_local_jobs[]`, while each workflow node includes
+a normalized `job` object with `scope`, `target`, `local_name`, `key`, and
+`target_local`. Durable run logs also append target-local job counts and details,
+so a failed phone-side run can be diagnosed from the copied log without
+reverse-engineering internal job keys.
+

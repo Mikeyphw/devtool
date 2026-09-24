@@ -7865,6 +7865,47 @@ def _run_log_start_text(args: argparse.Namespace, config: ProjectConfig | None) 
     return "\n".join(lines)
 
 
+def _run_log_target_local_job_lines(results: list[OperationResult] | None) -> list[str]:
+    jobs: dict[str, dict[str, object]] = {}
+    repository_jobs: set[str] = set()
+    for result in results or []:
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        key = str(metadata.get("workflow_job_key") or metadata.get("workflow_resolution_key") or "").strip()
+        if not key:
+            continue
+        scope = str(metadata.get("workflow_job_scope") or metadata.get("workflow_resolution_scope") or "").strip()
+        is_target_local = bool(metadata.get("workflow_job_target_local")) or scope == "target"
+        if not is_target_local:
+            if scope == "repository":
+                repository_jobs.add(key)
+            continue
+        target = str(metadata.get("workflow_job_target") or metadata.get("workflow_resolution_target") or metadata.get("workflow_target") or "").strip()
+        local_name = str(metadata.get("workflow_job_local_name") or metadata.get("workflow_resolution_local_name") or "").strip()
+        display = key or (f"{target}.{local_name}" if target and local_name else local_name)
+        if not display:
+            continue
+        entry = jobs.setdefault(display, {"count": 0, "failed": 0})
+        entry["count"] = int(entry.get("count") or 0) + 1
+        if result.returncode != 0:
+            entry["failed"] = int(entry.get("failed") or 0) + 1
+    if not jobs and not repository_jobs:
+        return []
+    lines = [
+        f"Devtool target-local jobs: {len(jobs)}",
+        f"Devtool repository jobs: {len(repository_jobs)}",
+    ]
+    if jobs:
+        rendered = []
+        for key in sorted(jobs):
+            entry = jobs[key]
+            suffix = ""
+            if int(entry.get("failed") or 0):
+                suffix = f" failed={int(entry.get('failed') or 0)}"
+            rendered.append(f"{key} count={int(entry.get('count') or 0)}{suffix}")
+        lines.append("Devtool target-local job details: " + "; ".join(rendered))
+    return lines
+
+
 def _append_run_log_summary(
     log_path: Path | str,
     args: argparse.Namespace,
@@ -7952,6 +7993,7 @@ def _append_run_log_summary(
     artifacts = _resolved_artifact_paths_for_args(args)
     for artifact in artifacts:
         lines.append(f"Devtool artifact: {artifact}")
+    lines.extend(_run_log_target_local_job_lines(results))
     if summary_text.strip():
         lines.extend(("", summary_text.strip()))
     write_log("\n".join(lines), log_path, append=True)
