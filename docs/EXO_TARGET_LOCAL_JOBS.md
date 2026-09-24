@@ -330,3 +330,29 @@ This gives follow-up roadmaps, such as a DustUI Go migration, a stable command
 for discovering the current target-local adoption state before generating more
 project-specific overlays.
 
+## TLJ-14 gate + seal overlay
+
+TLJ-14 corrects the campaign bookkeeping after the post-seal adoption helper by adding an explicit validation gate/seal overlay. Earlier TLJ overlays intentionally used `--no-validate` for fast iteration, but a proper campaign seal must be applied without `--no-validate` so Devtool runs the embedded validation contract before commit.
+
+Apply this overlay without `--no-validate`:
+
+```bash
+cd "$HOME/Code/devtool"
+
+devtool -r "$PWD" --target devtool \
+  apply-overlay /sdcard/Download/devtool_exo_target_local_jobs_gate_seal_ov14_v1.zip
+```
+
+The gate validates the target-local jobs campaign across the public surfaces delivered by TLJ-01 through TLJ-13:
+
+- configuration loading and target-local job metadata
+- workflow boundary enforcement
+- completion and doctor discovery
+- `devtool jobs` inspection/filtering
+- `devtool plan --json` export
+- `devtool preflight --json` export
+- run summary / machine payload identity
+- target-local adoption report command
+
+Passing TLJ-14 is the authoritative target-local jobs gate/seal result for this campaign.
+
