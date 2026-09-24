@@ -58,7 +58,7 @@ def _string_tuple(value: object, *, context: str) -> tuple[str, ...]:
     return tuple(result)
 
 
-def _command_tuple(value: object, *, job_name: str) -> tuple[str, ...]:
+def _command_tuple(value: object, *, job_name: str, context_prefix: str = "jobs") -> tuple[str, ...]:
     if value in (None, ""):
         return ()
     if isinstance(value, str):
@@ -66,10 +66,16 @@ def _command_tuple(value: object, *, job_name: str) -> tuple[str, ...]:
             f"Job '{job_name}' uses command as a string. Use command = [\"tool\", \"arg\"] for structured argv "
             "or shell_command = \"...\" when shell syntax is intentionally required."
         )
-    argv = _string_tuple(value, context=f"jobs.{job_name}.command")
+    argv = _string_tuple(value, context=f"{context_prefix}.{job_name}.command")
     if not argv:
         raise SystemExit(f"Job '{job_name}' command cannot be empty.")
     return argv
+
+
+def _gradle_task_tuple(value: object, *, job_name: str, context_prefix: str = "jobs") -> tuple[str, ...]:
+    if value in (None, ""):
+        return ()
+    return _string_tuple(value, context=f"{context_prefix}.{job_name}.gradle_tasks")
 
 
 def _job_options(raw: Mapping[str, Any], runner_option_sections: tuple[str, ...]) -> dict[str, Any]:
@@ -88,66 +94,89 @@ def load_jobs(
     *,
     supported_runners: set[str],
     runner_option_sections: tuple[str, ...],
+    context_prefix: str = "jobs",
+    key_prefix: str = "",
+    scope_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, JobConfig]:
     if section is None:
         return {}
     if not isinstance(section, dict):
-        raise SystemExit("[jobs] must be a TOML table")
+        raise SystemExit(f"[{context_prefix}] must be a TOML table")
 
     jobs: dict[str, JobConfig] = {}
     seen_names: set[str] = set()
     for raw_name, raw_value in section.items():
         if not isinstance(raw_name, str) or not isinstance(raw_value, dict):
-            raise SystemExit(f"Job {raw_name!r} must be a TOML table")
+            raise SystemExit(f"Job {raw_name!r} in [{context_prefix}] must be a TOML table")
         name = raw_name.strip()
         if not name:
-            raise SystemExit("Job names cannot be empty")
+            raise SystemExit(f"Job names cannot be empty in [{context_prefix}]")
         normalized_name = name.casefold()
         if normalized_name in seen_names:
-            raise SystemExit(f"Duplicate job name after normalization: {name!r}")
+            raise SystemExit(f"Duplicate job name after normalization in [{context_prefix}]: {name!r}")
         seen_names.add(normalized_name)
 
+        gradle_tasks = _gradle_task_tuple(raw_value.get("gradle_tasks"), job_name=name, context_prefix=context_prefix)
         runner = normalize_runner_name(raw_value.get("runner", raw_value.get("type", raw_value.get("kind", ""))))
+        if gradle_tasks and not runner:
+            runner = "gradle"
         if not runner:
-            raise SystemExit(f"Job '{name}' must declare runner = \"...\".")
+            raise SystemExit(f"Job '{name}' in [{context_prefix}] must declare runner = \"...\".")
         if runner not in supported_runners or runner in {"auto", "unknown"}:
             supported = ", ".join(sorted(item for item in supported_runners if item not in {"auto", "unknown"}))
-            raise SystemExit(f"Job '{name}' declares unsupported runner '{runner}'. Supported runners: {supported}")
+            raise SystemExit(f"Job '{name}' in [{context_prefix}] declares unsupported runner '{runner}'. Supported runners: {supported}")
 
-        command = _command_tuple(raw_value.get("command"), job_name=name)
+        command = _command_tuple(raw_value.get("command"), job_name=name, context_prefix=context_prefix)
         shell_command = str(raw_value.get("shell_command", "") or "").strip()
         action = str(raw_value.get("action", "") or "").strip()
-        modes = sum(bool(item) for item in (command, shell_command, action))
+        modes = sum(bool(item) for item in (command, shell_command, action, gradle_tasks))
         if modes == 0:
             raise SystemExit(
-                f"Job '{name}' must declare exactly one of action, structured command, or shell_command."
+                f"Job '{name}' in [{context_prefix}] must declare exactly one of action, structured command, "
+                "gradle_tasks, or shell_command."
             )
         if modes > 1:
             raise SystemExit(
-                f"Job '{name}' cannot combine action, command, and shell_command; choose exactly one execution mode."
+                f"Job '{name}' in [{context_prefix}] cannot combine action, command, gradle_tasks, and "
+                "shell_command; choose exactly one execution mode."
             )
+        if gradle_tasks and runner not in {"gradle", "android"}:
+            raise SystemExit(
+                f"Job '{name}' in [{context_prefix}] uses gradle_tasks but declares runner '{runner}'. "
+                "Use runner = \"gradle\" or runner = \"android\"."
+            )
+        if gradle_tasks:
+            command = ("./gradlew", *gradle_tasks)
         if action and not _WORKFLOW_ACTION_RE.fullmatch(action):
-            raise SystemExit(f"Job '{name}' has invalid runner action {action!r}.")
+            raise SystemExit(f"Job '{name}' in [{context_prefix}] has invalid runner action {action!r}.")
 
         execution_raw = raw_value.get("execution_environment", raw_value.get("environment", "auto"))
         try:
             execution_environment = normalize_execution_environment(str(execution_raw or "auto"))
         except ValueError as exc:
-            raise SystemExit(f"Invalid execution environment for job '{name}': {exc}") from exc
+            raise SystemExit(f"Invalid execution environment for job '{name}' in [{context_prefix}]: {exc}") from exc
 
         raw_env = raw_value.get("env", {})
         if raw_env is not None and not isinstance(raw_env, dict):
-            raise SystemExit(f"[jobs.{name}.env] must be a TOML table")
+            raise SystemExit(f"[{context_prefix}.{name}.env] must be a TOML table")
         env = {} if "env" in raw_value and isinstance(raw_env, dict) and not raw_env else {str(k): str(v) for k, v in base_env.items()}
         if isinstance(raw_env, dict):
             env.update({str(k): str(v) for k, v in raw_env.items()})
 
         metadata_raw = raw_value.get("metadata", {})
         if metadata_raw is not None and not isinstance(metadata_raw, dict):
-            raise SystemExit(f"[jobs.{name}.metadata] must be a TOML table")
+            raise SystemExit(f"[{context_prefix}.{name}.metadata] must be a TOML table")
 
-        jobs[name] = JobConfig(
-            name=name,
+        stored_name = f"{key_prefix}.{name}" if key_prefix else name
+        metadata = dict(scope_metadata or {})
+        metadata.update(dict(metadata_raw) if isinstance(metadata_raw, dict) else {})
+        metadata.setdefault("local_name", name)
+        metadata.setdefault("job_key", stored_name)
+        if gradle_tasks:
+            metadata.setdefault("gradle_tasks", list(gradle_tasks))
+
+        jobs[stored_name] = JobConfig(
+            name=stored_name,
             runner=runner,
             root=_resolve_optional_path(repo_root, raw_value.get("root", "")),
             action=action,
@@ -157,13 +186,55 @@ def load_jobs(
             execution_environment=execution_environment,
             chroot_name=str(raw_value.get("chroot_name", "") or "").strip(),
             device_serial=str(raw_value.get("device_serial", "") or "").strip(),
-            inputs=_string_tuple(raw_value.get("inputs"), context=f"jobs.{name}.inputs"),
-            outputs=_string_tuple(raw_value.get("outputs"), context=f"jobs.{name}.outputs"),
-            metadata=dict(metadata_raw) if isinstance(metadata_raw, dict) else {},
+            inputs=_string_tuple(raw_value.get("inputs"), context=f"{context_prefix}.{name}.inputs"),
+            outputs=_string_tuple(raw_value.get("outputs"), context=f"{context_prefix}.{name}.outputs"),
+            metadata=metadata,
             options=_job_options(raw_value, runner_option_sections),
             declared_fields=frozenset(str(key) for key in raw_value),
         )
     return jobs
+
+
+def load_target_jobs(
+    repo_root: Path,
+    raw_targets: object,
+    targets: dict[str, TargetConfig],
+    base_env: Mapping[str, str],
+    *,
+    supported_runners: set[str],
+    runner_option_sections: tuple[str, ...],
+) -> dict[str, JobConfig]:
+    if not isinstance(raw_targets, dict):
+        return {}
+
+    scoped: dict[str, JobConfig] = {}
+    for target_name, target in targets.items():
+        raw_target = raw_targets.get(target_name, {})
+        if not isinstance(raw_target, dict):
+            continue
+        raw_jobs = raw_target.get("jobs", {})
+        if raw_jobs in (None, {}):
+            continue
+        context = f"targets.{target_name}.jobs"
+        target_jobs = load_jobs(
+            repo_root,
+            raw_jobs,
+            target.env or base_env,
+            supported_runners=supported_runners,
+            runner_option_sections=runner_option_sections,
+            context_prefix=context,
+            key_prefix=target_name,
+            scope_metadata={"scope": "target", "target": target_name, "target_local": True},
+        )
+        short_names: dict[str, JobConfig] = {}
+        for internal_name, job in target_jobs.items():
+            local_name = str(job.metadata.get("local_name") or internal_name.rsplit(".", 1)[-1])
+            short_names[local_name] = job
+            if internal_name in scoped:
+                raise SystemExit(f"Duplicate target-local job key {internal_name!r}.")
+            scoped[internal_name] = job
+        target.jobs = short_names
+    return scoped
 
 
 def _parse_workflow_reference(
@@ -205,7 +276,8 @@ def _parse_workflow_reference(
     if kind == "job":
         if "#" in payload:
             raise SystemExit(f"Job workflow reference {raw!r} must not include an action suffix.")
-        if payload not in jobs:
+        job = jobs.get(payload)
+        if job is None:
             available = ", ".join(sorted(jobs)) or "<none>"
             raise SystemExit(
                 f"Workflow target '{target_name}' references unknown job '{payload}'. Available jobs: {available}"
@@ -213,7 +285,7 @@ def _parse_workflow_reference(
         return WorkflowStepRef(
             raw=raw,
             kind="job",
-            name=payload,
+            name=str(job.metadata.get("job_key") or job.name or payload),
             step_id=step_id,
             depends_on=depends_on,
             depends_on_declared=depends_on_declared,
@@ -351,6 +423,10 @@ def load_target_workflows(
             continue
         if not isinstance(raw_workflows, dict):
             raise SystemExit(f"[targets.{name}.workflows] must be a TOML table")
+        workflow_jobs: dict[str, JobConfig] = dict(jobs)
+        for local_name, job in getattr(target, "jobs", {}).items():
+            workflow_jobs[local_name] = job
+            workflow_jobs[job.name] = job
         workflows: dict[str, WorkflowConfig] = {}
         seen_actions: set[str] = set()
         for raw_action, raw_steps in raw_workflows.items():
@@ -370,7 +446,7 @@ def load_target_workflows(
                     step,
                     target_name=name,
                     workflow_name=action,
-                    jobs=jobs,
+                    jobs=workflow_jobs,
                     targets=targets,
                     supported_runners=supported_runners,
                     tests=tests,

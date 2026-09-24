@@ -17,6 +17,7 @@ from .wrapper_config import WrapperConfigError, load_wrapper_config, wrapper_as_
 from .workflow_config import (
     job_as_dict,
     load_jobs,
+    load_target_jobs,
     load_target_workflows,
     normalize_platform_name,
     normalize_runner_name,
@@ -790,6 +791,18 @@ def load_project_config(
         runner_option_sections=RUNNER_OPTION_SECTIONS,
     )
     targets = _load_named_targets(config_root, targets_raw, env_section)
+    target_jobs = load_target_jobs(
+        config_root,
+        targets_raw,
+        targets,
+        env_section,
+        supported_runners=SUPPORTED_RUNNERS,
+        runner_option_sections=RUNNER_OPTION_SECTIONS,
+    )
+    for job_name, job in target_jobs.items():
+        if job_name in jobs:
+            raise SystemExit(f"Duplicate job name after target-local expansion: {job_name!r}")
+        jobs[job_name] = job
     declared_tests = _parse_test_specs(repo_loaded, repo_source_label)
     load_target_workflows(targets_raw, targets, jobs, supported_runners=SUPPORTED_RUNNERS, tests=declared_tests)
     try:
@@ -1866,6 +1879,18 @@ package_command = ""
 # [targets.api.workflows]
 # validate = ["job:generate-client", "runner:python#validate"]
 #
+# EXO target-local jobs are scoped under one target and may be referenced by
+# short name from that target's workflows. Gradle task jobs are structured:
+# [targets.android.jobs.contracts]
+# runner = "command"
+# command = ["python3", "scripts/validate_contract.py"]
+#
+# [targets.android.jobs.unit]
+# gradle_tasks = [":app:testDebugUnitTest"]
+#
+# [targets.android.workflows]
+# fast = ["job:contracts", "job:unit"]
+#
 # MP03 explicit DAG form (depends_on names stable step ids):
 # validate = [
 #   {{ id = "generate", ref = "job:generate-client", depends_on = [] }},
@@ -2549,6 +2574,10 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
                 "inputs": list(target.inputs),
                 "outputs": list(target.outputs),
                 "metadata": target.metadata,
+                "jobs": {
+                    local_name: job_as_dict(job)
+                    for local_name, job in sorted(target.jobs.items())
+                },
                 "workflows": {
                     workflow_name: workflow_steps_as_strings(workflow)
                     for workflow_name, workflow in sorted(target.workflows.items())

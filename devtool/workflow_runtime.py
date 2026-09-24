@@ -382,7 +382,12 @@ def _structured_job_metadata(job: JobConfig) -> dict[str, object]:
 
 
 def _job_specs(config: ProjectConfig, job: JobConfig) -> list[CommandSpec]:
-    root = job.root or str(config.repo_root)
+    if job.root:
+        root = job.root
+    elif bool(job.metadata.get("target_local")):
+        root = config.project_root or str(config.repo_root)
+    else:
+        root = str(config.repo_root)
     effective_env = {} if "env" in job.declared_fields else dict(config.env)
     effective_env.update(job.env)
     job_config = _runner_config(

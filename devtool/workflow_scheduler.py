@@ -169,9 +169,12 @@ def _target_root(config: ProjectConfig, target_name: str) -> Path:
     return path.resolve(strict=False)
 
 
-def _job_root(config: ProjectConfig, job_name: str) -> Path:
+def _job_root(config: ProjectConfig, job_name: str, target_name: str = "") -> Path:
     job = config.jobs[job_name]
-    path = Path(job.root or config.repo_root).expanduser()
+    default_root: object = config.repo_root
+    if bool(job.metadata.get("target_local")) and target_name:
+        default_root = _target_root(config, target_name)
+    path = Path(job.root or default_root).expanduser()
     if not path.is_absolute():
         path = config.repo_root / path
     return path.resolve(strict=False)
@@ -271,7 +274,7 @@ def scope_for_graph_node(config: ProjectConfig, node: WorkflowNode) -> WorkflowN
         metadata = {**metadata, **dict(job.metadata)}
         declared_inputs = job.inputs
         declared_outputs = job.outputs
-        base = _job_root(config, job.name)
+        base = _job_root(config, job.name, node.target)
 
     base_scope, base_safe = _repo_scope(config.repo_root, base, ".")
     # Explicit inputs are a promise precise enough for safe scheduling. When

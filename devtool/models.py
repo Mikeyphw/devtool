@@ -175,6 +175,7 @@ class TargetConfig:
     options: dict[str, Any] = field(default_factory=dict)
     variants: dict[str, dict[str, Any]] = field(default_factory=dict)
     workflows: dict[str, WorkflowConfig] = field(default_factory=dict)
+    jobs: dict[str, JobConfig] = field(default_factory=dict)
     inputs: tuple[str, ...] = ()
     outputs: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
