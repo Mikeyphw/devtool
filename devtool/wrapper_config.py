@@ -46,6 +46,16 @@ WRAPPER_NATIVE_COMMANDS = frozenset({
     "clean",
 })
 
+# Static binding safety.  The wrapper contract may bind repository-facing
+# options to Devtool argv, but it must not let the repository redefine the
+# routing controls that identify the repository, select the target scope, or
+# carry internal provenance.  Values carried by ``{value}`` are checked at
+# resolution time for text safety; static structural tokens are rejected here.
+_WRAPPER_BINDING_COMMAND_TOKENS = WRAPPER_NATIVE_COMMANDS | frozenset({"invoke", "plan", "wrapper"})
+_WRAPPER_GLOBAL_BINDING_FORBIDDEN = frozenset({"--repo", "-r", "--config"})
+_WRAPPER_COMMAND_BINDING_FORBIDDEN = _WRAPPER_GLOBAL_BINDING_FORBIDDEN | frozenset({"--target", "--group", "--all-targets"})
+_WRAPPER_PASSTHROUGH_BINDING_FORBIDDEN = frozenset({"--"})
+
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _OPTION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _ENV_UNSAFE_CHARS_RE = re.compile(r"[\x00\r\n]")
@@ -113,7 +123,31 @@ def _string_list(value: object, *, path: str, option_names: bool = False) -> tup
     return tuple(out)
 
 
-def _argv_tokens(value: object, *, path: str) -> tuple[str, ...]:
+def _validate_static_binding_token(token: str, *, path: str, lane: str) -> None:
+    """Validate the static part of an argv binding for one binding lane."""
+
+    if token == "--":
+        raise _fail(f"{path} cannot bind a raw '--' separator")
+    if token.startswith("--internal-"):
+        raise _fail(f"{path} cannot bind internal Devtool provenance/control flag {token!r}")
+
+    # Tokens containing {value} carry user input and are validated for text
+    # safety by the resolver.  Do not classify a value token such as
+    # ["--artifact", "{value}"] as an attempted structural control.
+    if "{value}" in token:
+        return
+
+    if lane == "global" and token in _WRAPPER_GLOBAL_BINDING_FORBIDDEN:
+        raise _fail(f"{path} cannot bind repository/global control token {token!r}")
+    if lane == "command" and token in _WRAPPER_COMMAND_BINDING_FORBIDDEN:
+        raise _fail(f"{path} cannot bind target/repository control token {token!r}; use wrapper command scope fields instead")
+    if lane == "passthrough" and token in _WRAPPER_PASSTHROUGH_BINDING_FORBIDDEN:
+        raise _fail(f"{path} cannot bind raw passthrough separator {token!r}")
+    if lane in {"global", "command"} and token in _WRAPPER_BINDING_COMMAND_TOKENS:
+        raise _fail(f"{path} cannot bind Devtool command token {token!r}")
+
+
+def _argv_tokens(value: object, *, path: str, lane: str) -> tuple[str, ...]:
     if value is None:
         return ()
     if not isinstance(value, list):
@@ -135,6 +169,7 @@ def _argv_tokens(value: object, *, path: str) -> tuple[str, ...]:
                 raise _fail(f"{path}[{index}] uses unsupported template field {{{field_name}}}; only {{value}} is allowed")
             if format_spec or conversion:
                 raise _fail(f"{path}[{index}] cannot use format specs or conversions in {{value}}")
+        _validate_static_binding_token(raw, path=f"{path}[{index}]", lane=lane)
         out.append(raw)
     return tuple(out)
 
@@ -218,9 +253,9 @@ def _parse_value_contract(raw: Mapping[str, Any], *, path: str, positional: bool
         "relative_to": relative_to,
         "default": default,
         "has_default": has_default,
-        "global_argv": _argv_tokens(raw.get("global_argv"), path=f"{path}.global_argv"),
-        "command_argv": _argv_tokens(raw.get("command_argv"), path=f"{path}.command_argv"),
-        "passthrough_argv": _argv_tokens(raw.get("passthrough_argv"), path=f"{path}.passthrough_argv"),
+        "global_argv": _argv_tokens(raw.get("global_argv"), path=f"{path}.global_argv", lane="global"),
+        "command_argv": _argv_tokens(raw.get("command_argv"), path=f"{path}.command_argv", lane="command"),
+        "passthrough_argv": _argv_tokens(raw.get("passthrough_argv"), path=f"{path}.passthrough_argv", lane="passthrough"),
     }
 
 

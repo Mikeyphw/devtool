@@ -42,10 +42,12 @@ class WrapperResolution:
     options: tuple[WrapperResolvedOption, ...] = ()
     positionals: tuple[tuple[str, Any], ...] = ()
     raw_passthrough_argv: tuple[str, ...] = ()
+    sensitive_options: tuple[str, ...] = ()
     global_argv: tuple[str, ...] = ()
     command_argv: tuple[str, ...] = ()
     passthrough_argv: tuple[str, ...] = ()
     canonical_argv: tuple[str, ...] = ()
+    redacted_canonical_argv: tuple[str, ...] = ()
     repo_root: str = ""
     launch_cwd: str = ""
     help_requested: bool = False
@@ -58,6 +60,8 @@ class WrapperResolution:
 
 _HELP_TOKENS = frozenset({"-h", "--help"})
 _VERSION_TOKENS = frozenset({"--version"})
+_ENV_UNSAFE_CHARS_REPLACEMENT = "<redacted>"
+_SENSITIVE_NAME_FRAGMENTS = ("secret", "token", "password", "passphrase", "credential", "api_key", "apikey", "auth")
 
 
 def _fail(message: str) -> WrapperResolutionError:
@@ -162,7 +166,63 @@ def _value_text(value: object) -> str:
     return str(value)
 
 
-def _expand_tokens(tokens: Sequence[str], value: object) -> tuple[str, ...]:
+def _ensure_safe_value_text(value: object, *, path: str) -> None:
+    text = _value_text(value)
+    if "\x00" in text or "\n" in text or "\r" in text:
+        raise _fail(f"{path} contains a NUL or newline and cannot be expanded into Devtool argv")
+
+
+def _ensure_safe_raw_passthrough(tokens: Sequence[str]) -> None:
+    for index, token in enumerate(tokens):
+        if token == "--":
+            raise _fail("Wrapper raw passthrough cannot contain an additional '--' separator")
+        if "\x00" in token or "\n" in token or "\r" in token:
+            raise _fail(f"Wrapper raw passthrough token at index {index} contains a NUL or newline")
+        if token.startswith("--internal-"):
+            raise _fail(f"Wrapper raw passthrough cannot contain internal Devtool control flag {token!r}")
+
+
+def _looks_sensitive(name: str) -> bool:
+    normalized = name.lower().replace("-", "_")
+    return any(fragment in normalized for fragment in _SENSITIVE_NAME_FRAGMENTS)
+
+
+def _collect_sensitive_texts(
+    command: WrapperCommandConfig,
+    values_by_name: Mapping[str, object],
+    *,
+    active_options: set[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    option_names: list[str] = []
+    values: list[str] = []
+    for option in command.options.values():
+        if option.name not in active_options or not _looks_sensitive(option.name):
+            continue
+        option_names.append(option.name)
+        for item in _iter_binding_values(values_by_name.get(option.name), repeatable=option.repeatable):
+            if item is not None and not isinstance(item, bool):
+                text = _value_text(item)
+                if text:
+                    values.append(text)
+    return tuple(option_names), tuple(dict.fromkeys(values))
+
+
+def _redact_argv(argv: Sequence[str], sensitive_values: Sequence[str]) -> tuple[str, ...]:
+    redacted: list[str] = []
+    ordered = sorted((value for value in sensitive_values if value), key=len, reverse=True)
+    for token in argv:
+        masked = token
+        for value in ordered:
+            if masked == value:
+                masked = _ENV_UNSAFE_CHARS_REPLACEMENT
+            elif value in masked:
+                masked = masked.replace(value, _ENV_UNSAFE_CHARS_REPLACEMENT)
+        redacted.append(masked)
+    return tuple(redacted)
+
+
+def _expand_tokens(tokens: Sequence[str], value: object, *, path: str) -> tuple[str, ...]:
+    _ensure_safe_value_text(value, path=path)
     replacement = _value_text(value)
     return tuple(token.replace("{value}", replacement) for token in tokens)
 
@@ -309,6 +369,7 @@ def resolve_wrapper_argv(
             raise _fail(f"Wrapper command {command.name!r} does not allow raw passthrough after '--'")
         if command.workflow:
             raise _fail(f"Workflow wrapper command {command.name!r} cannot accept raw passthrough")
+        _ensure_safe_raw_passthrough(raw_passthrough)
 
     option_lookup = _option_lookup(command)
     parsed_values: dict[str, list[object]] = {}
@@ -484,9 +545,9 @@ def resolve_wrapper_argv(
         if not _is_active(option, value, present=present):
             continue
         for item in _iter_binding_values(value, repeatable=option.repeatable):
-            global_bindings.extend(_expand_tokens(option.global_argv, item))
-            command_bindings.extend(_expand_tokens(option.command_argv, item))
-            passthrough_bindings.extend(_expand_tokens(option.passthrough_argv, item))
+            global_bindings.extend(_expand_tokens(option.global_argv, item, path=f"--{option.name}"))
+            command_bindings.extend(_expand_tokens(option.command_argv, item, path=f"--{option.name}"))
+            passthrough_bindings.extend(_expand_tokens(option.passthrough_argv, item, path=f"--{option.name}"))
 
     positional_map = dict(resolved_positionals)
     for positional in command.positionals:
@@ -495,9 +556,9 @@ def resolve_wrapper_argv(
             continue
         values = tuple(value) if positional.repeatable and isinstance(value, tuple) else (value,)
         for item in values:
-            global_bindings.extend(_expand_tokens(positional.global_argv, item))
-            command_bindings.extend(_expand_tokens(positional.command_argv, item))
-            passthrough_bindings.extend(_expand_tokens(positional.passthrough_argv, item))
+            global_bindings.extend(_expand_tokens(positional.global_argv, item, path=positional.name))
+            command_bindings.extend(_expand_tokens(positional.command_argv, item, path=positional.name))
+            passthrough_bindings.extend(_expand_tokens(positional.passthrough_argv, item, path=positional.name))
 
     global_argv = ["--repo", str(repo_root), *global_bindings]
     if command.devtool:
@@ -521,6 +582,13 @@ def resolve_wrapper_argv(
     if passthrough_argv:
         canonical.extend(["--", *passthrough_argv])
 
+    sensitive_options, sensitive_values = _collect_sensitive_texts(
+        command,
+        values_by_name,
+        active_options=active_options,
+    )
+    redacted_canonical = _redact_argv(canonical, sensitive_values)
+
     return WrapperResolution(
         schema=config.wrapper.schema,
         mode="execute",
@@ -535,10 +603,12 @@ def resolve_wrapper_argv(
         options=tuple(resolved_options),
         positionals=tuple(resolved_positionals),
         raw_passthrough_argv=raw_passthrough,
+        sensitive_options=sensitive_options,
         global_argv=tuple(global_argv),
         command_argv=tuple(command_argv),
         passthrough_argv=tuple(passthrough_argv),
         canonical_argv=tuple(canonical),
+        redacted_canonical_argv=redacted_canonical,
         repo_root=str(repo_root),
         launch_cwd=str(cwd),
     )
@@ -575,10 +645,12 @@ def wrapper_resolution_as_dict(resolution: WrapperResolution) -> dict[str, Any]:
         },
         "positionals": {name: json_value(value) for name, value in resolution.positionals},
         "raw_passthrough_argv": list(resolution.raw_passthrough_argv),
+        "sensitive_options": list(resolution.sensitive_options),
         "global_argv": list(resolution.global_argv),
         "command_argv": list(resolution.command_argv),
         "passthrough_argv": list(resolution.passthrough_argv),
         "canonical_argv": list(resolution.canonical_argv),
+        "redacted_canonical_argv": list(resolution.redacted_canonical_argv),
         "repo_root": resolution.repo_root,
         "launch_cwd": resolution.launch_cwd,
         "help_requested": resolution.help_requested,

@@ -11698,7 +11698,7 @@ def _wrapper_resolution_text(resolution: WrapperResolution) -> str:
         f"Wrapper command: {resolution.command}",
         f"Execution kind: {resolution.execution_kind}",
         "Canonical argv:",
-        "  " + shlex.join(resolution.canonical_argv),
+        "  " + shlex.join(resolution.redacted_canonical_argv or resolution.canonical_argv),
     ]
     return "\n".join(lines) + "\n"
 
