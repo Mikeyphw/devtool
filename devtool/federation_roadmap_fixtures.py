@@ -44,12 +44,12 @@ def public_contract_fixture() -> dict[str, object]:
 
 
 def _init_git(root: Path) -> None:
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(["git", "-C", str(root), "config", "user.email", "fixture@example.invalid"], check=True)
-    subprocess.run(["git", "-C", str(root), "config", "user.name", "Devtool Fixture"], check=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True, timeout=10)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "fixture@example.invalid"], check=True, timeout=10)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "Devtool Fixture"], check=True, timeout=10)
     (root / "README.md").write_text("fixture\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True, timeout=10)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"], check=True, timeout=10)
 
 
 def repository_ownership_fixture() -> dict[str, object]:
@@ -124,8 +124,8 @@ def source_lock_fixture(*, mutate: bool = False) -> dict[str, object]:
                 raise SystemExit("GIT-FRX-08 source lock fixture did not freeze Git state")
             return first.as_dict()
         (child / "source.txt").write_text("drift\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(child), "add", "."], check=True)
-        subprocess.run(["git", "-C", str(child), "commit", "-qm", "drift"], check=True)
+        subprocess.run(["git", "-C", str(child), "add", "."], check=True, timeout=10)
+        subprocess.run(["git", "-C", str(child), "commit", "-qm", "drift"], check=True, timeout=10)
         second = FederationSourceLock.from_dict(build_federated_plan(config, "release").source_lock)
         comparison = compare_federation_source_locks(first, second, policy="fail")
         if comparison.get("matched"):
@@ -168,11 +168,106 @@ def git_lineage_fixture() -> dict[str, object]:
             raise SystemExit("GIT-FRX-09 lineage fixture did not materialize private result/rollback refs")
         return finalized
 
+
+def resume_invalidation_fixture() -> dict[str, object]:
+    """Exercise FRX-Y02 selective invalidation without touching real user state."""
+    from unittest.mock import patch
+
+    from .federation_execution import FederatedChildRun, FederatedRunReport
+    from .federation_resume import build_resume_plan, checkpoint_report, load_checkpoint
+
+    with tempfile.TemporaryDirectory(prefix="devtool-frx-y02-") as td:
+        root = Path(td)
+        parent = root / "parent"
+        child_a = root / "a"
+        child_b = root / "b"
+        state = root / "state"
+        parent.mkdir(); child_a.mkdir(); child_b.mkdir()
+        child_config = (
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="app"\n'
+            '[targets.app]\nrunner="command"\n[targets.app.jobs.check]\nrunner="command"\n'
+            'command=["python","-c","print(\'ok\')"]\nmetadata={read_only=true}\n'
+            '[targets.app.workflows]\nvalidate=["job:check"]\n'
+        )
+        for child in (child_a, child_b):
+            (child / ".devtool.toml").write_text(child_config, encoding="utf-8")
+            (child / "source.txt").write_text("base\n", encoding="utf-8")
+            _init_git(child)
+        (parent / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="root"\n[targets.root]\nrunner="command"\n'
+            '[federation]\nschema=1\n[federation.repositories.a]\npath="../a"\n'
+            '[federation.repositories.a.exports]\ncapabilities=["contracts/v1"]\n'
+            '[federation.repositories.b]\npath="../b"\n'
+            '[federation.repositories.b.requires]\ncapabilities=["contracts/v1"]\n'
+            '[federation.workflows.release]\n'
+            'steps=[{id="a",ref="a::app::workflow:validate"},{id="b",ref="b::app::workflow:validate",depends_on=["a"]}]\n',
+            encoding="utf-8",
+        )
+        config = _load(parent)
+        plan = build_federated_plan(config, "release")
+        children = []
+        for step in config.federation.workflows["release"].steps:
+            node = next(
+                item for item in plan.nodes
+                if not item.synthetic and item.metadata.get("federation_step") == step.step_id
+            )
+            children.append(FederatedChildRun(
+                step_id=step.step_id, repository=step.repository, workflow="validate", target="app",
+                run_id=f"fixture-child-{step.step_id}", parent_node_id=f"federation:release:{step.step_id}",
+                status="succeeded", exit_code=0, repository_identity=dict(node.metadata.get("repository_identity") or {}),
+                run_lineage={"parent_run_id": "fixture-parent"}, operational_ownership={"references": []},
+                federation_ref=f"{step.repository}::app::validate", requested_ref=step.ref,
+                child_contract="workflow:validate", contract_ref=f"{step.repository}::app::workflow:validate",
+                git_lineage={}, lifecycle="executed",
+            ))
+        with patch("devtool.federation_resume.state_dir", lambda: state), patch(
+            "devtool.federation_git_lineage.state_dir", lambda: state
+        ):
+            checkpoint_report(
+                config,
+                FederatedRunReport("release", "fixture-parent", "succeeded", 0, tuple(children), plan),
+            )
+            # Devtool-owned runtime state is expected and must not invalidate source reuse.
+            (child_a / ".devtool").mkdir(exist_ok=True)
+            (child_a / ".devtool" / "artifacts").mkdir(exist_ok=True)
+            (child_a / ".devtool" / "artifacts" / "registry.lock").write_text("runtime\n", encoding="utf-8")
+            unchanged = build_resume_plan(config, load_checkpoint(config, "fixture-parent"), mode="resume")
+            if [row.action for row in unchanged.decisions] != ["reused", "reused"]:
+                raise SystemExit("FRX-Y02 fixture self-invalidated on Devtool runtime state")
+
+            (child_a / "source.txt").write_text("drift\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(child_a), "add", "source.txt"], check=True, timeout=10)
+            subprocess.run(["git", "-C", str(child_a), "commit", "-qm", "drift"], check=True, timeout=10)
+            changed = _load(parent)
+            resume = build_resume_plan(changed, load_checkpoint(changed, "fixture-parent"), mode="retry")
+        actions = [row.action for row in resume.decisions]
+        if actions != ["rerun_due_to_drift", "rerun_due_to_drift"]:
+            raise SystemExit(f"FRX-Y02 fixture produced unexpected invalidation actions: {actions}")
+        if "frozen Git/tree/config state changed" not in resume.decisions[0].reasons:
+            raise SystemExit("FRX-Y02 fixture did not identify source drift")
+        if not any(reason == "upstream child result changed: a" for reason in resume.decisions[1].reasons):
+            raise SystemExit("FRX-Y02 fixture did not propagate upstream invalidation")
+        return {
+            "schema_version": 1,
+            "roadmap_id": "FRX-Y02",
+            "unchanged_actions": [row.action for row in unchanged.decisions],
+            "drift_actions": actions,
+            "decisions": [
+                {"step_id": row.step_id, "action": row.action, "reasons": list(row.reasons)}
+                for row in resume.decisions
+            ],
+            "checkpoint_predicates": [
+                "plan", "repository", "source", "contract", "upstream-results",
+                "capability-interface", "artifact-inputs", "terminal-evidence",
+            ],
+            "ssh_history_authority": "referenced-not-copied",
+        }
+
 def main(argv: list[str] | None=None) -> int:
     p=argparse.ArgumentParser(prog='python -m devtool.federation_roadmap_fixtures')
-    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage'])
+    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage','resume-invalidation'])
     ns=p.parse_args(argv)
-    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
+    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else resume_invalidation_fixture() if ns.fixture=='resume-invalidation' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 

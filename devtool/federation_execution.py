@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 from .core.execution_contract import ExecutionStatus, RunId
 from .core.events import (
@@ -86,6 +86,7 @@ class FederatedChildRun:
     child_contract: str = ""
     contract_ref: str = ""
     git_lineage: dict[str, Any] = field(default_factory=dict)
+    lifecycle: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -105,6 +106,7 @@ class FederatedChildRun:
             "child_contract": self.child_contract,
             "contract_ref": self.contract_ref,
             "git_lineage": dict(self.git_lineage),
+            "lifecycle": self.lifecycle,
         }
 
 
@@ -117,6 +119,7 @@ class FederatedRunReport:
     children: tuple[FederatedChildRun, ...]
     plan: FederatedPlanGraph
     schedule: dict[str, Any] = field(default_factory=dict)
+    lifecycle: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -138,6 +141,7 @@ class FederatedRunReport:
             "children": [child.as_dict() for child in self.children],
             "plan": self.plan.as_dict(),
             "schedule": dict(self.schedule),
+            "lifecycle": dict(self.lifecycle),
         }
 
 
@@ -483,6 +487,8 @@ def _run_federated_workflow_sequential(
     parent_run_id: str = "",
     request_child_cancel: Callable[[str], Any] | None = None,
     drift_policy: str = "fail",
+    reuse_children: Mapping[str, FederatedChildRun] | None = None,
+    lifecycle_actions: Mapping[str, str] | None = None,
 ) -> FederatedRunReport:
     """Execute a configured federation workflow sequentially with EXO lineage.
 
@@ -568,6 +574,8 @@ def _run_federated_workflow_sequential(
     children: list[FederatedChildRun] = []
     parent_status = ExecutionStatus.SUCCEEDED.value
     parent_exit = 0
+    reuse_children = dict(reuse_children or {})
+    lifecycle_actions = dict(lifecycle_actions or {})
 
     try:
         for step in ordered_steps:
@@ -586,13 +594,42 @@ def _run_federated_workflow_sequential(
                     node_ids[step.step_id], ExecutionStatus.BLOCKED.value, 1,
                     _step_identity(plan, step), {}, {},
                     federation_ref=_step_federation_ref(plan, step), requested_ref=step.ref,
-                    child_contract=_step_child_contract(step), contract_ref=_step_contract_ref(plan, step),
+                    child_contract=_step_child_contract(step), contract_ref=_step_contract_ref(plan, step), lifecycle="blocked",
                 )
                 outcomes[step.step_id] = blocked
                 children.append(blocked)
                 parent_status = ExecutionStatus.FAILED.value
                 if parent_exit == 0:
                     parent_exit = 1
+                continue
+
+            prior = reuse_children.get(step.step_id)
+            if prior is not None:
+                parent_node = node_ids[step.step_id]
+                reused = replace(prior, parent_node_id=parent_node, lifecycle="reused")
+                publish(NodeStarted(
+                    run_id=run_id, node_id=parent_node, label=_step_federation_ref(plan, step),
+                    kind="federation-child", argv=(), source="federation",
+                    metadata={
+                        "child_run_id": reused.run_id, "repository": step.repository,
+                        "target": reused.target, "workflow": reused.workflow,
+                        "federation_ref": reused.federation_ref, "requested_ref": reused.requested_ref,
+                        "reuse_action": "reused", "reused_from_parent_run_id": str(reused.run_lineage.get("parent_run_id") or ""),
+                    },
+                ))
+                publish(NodeFinished(
+                    run_id=run_id, node_id=parent_node, status=ExecutionStatus.SUCCEEDED.value,
+                    exit_code=0, duration_seconds=0.0, source="federation",
+                    transition_reason=f"reused prior child result {reused.run_id}",
+                    metadata={
+                        "child_run_id": reused.run_id, "repository": step.repository,
+                        "target": reused.target, "workflow": reused.workflow,
+                        "federation_ref": reused.federation_ref, "requested_ref": reused.requested_ref,
+                        "reuse_action": "reused", "result_reference": reused.as_dict(),
+                    },
+                ))
+                outcomes[step.step_id] = reused
+                children.append(reused)
                 continue
 
             resolution = resolve_federated_repository(parent, step.repository)
@@ -772,6 +809,11 @@ def _run_federated_workflow_sequential(
                 federation_ref=federation_ref, requested_ref=step.ref,
                 child_contract=_step_child_contract(step), contract_ref=_step_contract_ref(plan, step),
                 git_lineage=git_lineage,
+                lifecycle=(
+                    "cancelled" if child_status == ExecutionStatus.CANCELLED.value else
+                    "failed" if child_status != ExecutionStatus.SUCCEEDED.value or rc != 0 else
+                    str(lifecycle_actions.get(step.step_id) or "executed")
+                ),
             )
             outcomes[step.step_id] = child
             children.append(child)
@@ -826,7 +868,7 @@ def _run_federated_workflow_sequential(
                     requested_ref=str(active_lineage.get("requested_ref") or active_step.ref),
                     child_contract=str(active_lineage.get("child_contract") or ""),
                     contract_ref=str(active_lineage.get("contract_ref") or ""),
-                    git_lineage=cancelled_git_lineage,
+                    git_lineage=cancelled_git_lineage, lifecycle="cancelled",
                 )
                 outcomes[active_step.step_id] = cancelled_child
                 children.append(cancelled_child)
@@ -861,7 +903,7 @@ def _run_federated_workflow_sequential(
                 node_ids[pending.step_id], ExecutionStatus.BLOCKED.value, 130,
                 _step_identity(plan, pending), {}, {},
                 federation_ref=_step_federation_ref(plan, pending), requested_ref=pending.ref,
-                child_contract=_step_child_contract(pending), contract_ref=_step_contract_ref(plan, pending),
+                child_contract=_step_child_contract(pending), contract_ref=_step_contract_ref(plan, pending), lifecycle="blocked",
             )
             outcomes[pending.step_id] = blocked
             children.append(blocked)
@@ -1471,6 +1513,10 @@ def run_federated_workflow(
     max_parallel: int = 0,
     child_executor: ParallelChildExecutor | None = None,
     drift_policy: str = "fail",
+    reuse_children: Mapping[str, FederatedChildRun] | None = None,
+    lifecycle_actions: Mapping[str, str] | None = None,
+    resumed_from: str = "",
+    resume_mode: str = "run",
 ) -> FederatedRunReport:
     """Execute one federation workflow, optionally through FRX-Y01 safe waves.
 
@@ -1480,8 +1526,10 @@ def run_federated_workflow(
     """
 
     requested = bool(parallel or int(max_parallel or 0) > 0)
+    if reuse_children and requested:
+        raise FederationExecutionError("Federation resume/retry currently uses dependency-safe sequential replay; omit --parallel")
     if not requested:
-        return _run_federated_workflow_sequential(
+        report = _run_federated_workflow_sequential(
             parent,
             workflow_name,
             reenter=reenter,
@@ -1490,19 +1538,34 @@ def run_federated_workflow(
             parent_run_id=parent_run_id,
             request_child_cancel=request_child_cancel,
             drift_policy=drift_policy,
+            reuse_children=reuse_children,
+            lifecycle_actions=lifecycle_actions,
         )
-    return _run_federated_workflow_parallel(
-        parent,
-        workflow_name,
-        reenter=reenter,
-        publish=publish,
-        snapshot_lookup=snapshot_lookup,
-        parent_run_id=parent_run_id,
-        request_child_cancel=request_child_cancel,
-        max_parallel=max_parallel,
-        child_executor=child_executor,
-        drift_policy=drift_policy,
-    )
+    else:
+        report = _run_federated_workflow_parallel(
+            parent,
+            workflow_name,
+            reenter=reenter,
+            publish=publish,
+            snapshot_lookup=snapshot_lookup,
+            parent_run_id=parent_run_id,
+            request_child_cancel=request_child_cancel,
+            max_parallel=max_parallel,
+            child_executor=child_executor,
+            drift_policy=drift_policy,
+        )
+    from .federation_resume import checkpoint_report
+    lifecycle = {
+        "mode": str(resume_mode or "run"),
+        "resumed_from": str(resumed_from or ""),
+        "counts": {
+            key: sum(1 for child in report.children if child.lifecycle == key)
+            for key in ("reused", "retried", "rerun_due_to_drift", "blocked", "failed", "cancelled")
+        },
+    }
+    report = replace(report, lifecycle=lifecycle)
+    checkpoint_report(parent, report, resumed_from=resumed_from, mode=resume_mode)
+    return report
 
 
 

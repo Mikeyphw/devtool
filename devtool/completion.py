@@ -801,7 +801,7 @@ _devtool() {
           ;;
         federation|fed)
           if (( ${#line} < 2 )); then
-            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec lock capabilities graph interfaces conformance interface-check affected why
+            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry lock capabilities graph interfaces conformance interface-check affected why
           else
             case $line[2] in
               list|preflight|gate1|gate2|execution-preflight|final-seal|seal)
@@ -836,6 +836,12 @@ _devtool() {
                 ;;
               run)
                 _arguments '1:federation workflow:_devtool_federation_workflows' '--group[execute/plan a federation group]:group:_devtool_federation_groups' '--parallel[run dependency-ready federation children concurrently when safe]' '--max-parallel[maximum concurrent federation children; implies --parallel]:count:' '--affected[run only dependency-aware affected workflow repositories]' '--since[with --affected detect direct changes since revision]:revision:' '*--repository[with --affected seed changed repository]:repository:_devtool_federation_repositories' '--drift-policy[frozen source drift policy]:policy:(fail replan allow-if-equivalent)' '--json[emit machine-readable federation state]'
+                ;;
+              resume)
+                _arguments '1:prior federation parent run ID:run-id:' '--drift-policy[frozen source drift policy]:policy:(fail replan allow-if-equivalent)' '--json[emit machine-readable resume plan/result]'
+                ;;
+              retry)
+                _arguments '1:prior federation parent run ID:run-id:' '--failed[retry only failed children; fail closed if a successful child drifted]' '--drift-policy[frozen source drift policy]:policy:(fail replan allow-if-equivalent)' '--json[emit machine-readable retry plan/result]'
                 ;;
               exec)
                 _arguments '1:federated repository:_devtool_federation_repositories' '--plan[resolve without execution]' '--json[emit machine-readable bridge state]' '*:child contract arguments:'

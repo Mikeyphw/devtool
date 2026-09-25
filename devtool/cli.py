@@ -120,6 +120,7 @@ from .federation_interfaces import (
 )
 from .federation_observability import build_federation_observability
 from .federation_execution import FederationExecutionError, run_federated_workflow, run_federated_group
+from .federation_resume import FederationResumeError
 from .federation_bridge import (
     FederationBridgeError,
     execute_federated_job,
@@ -1148,6 +1149,15 @@ def build_parser() -> argparse.ArgumentParser:
     federation_run.add_argument("--repository", action="append", default=[], help="With --affected, seed one directly changed repository; repeatable")
     federation_run.add_argument("--drift-policy", choices=("fail", "replan", "allow-if-equivalent"), default="fail", help="Frozen source drift policy (default: fail)")
     federation_run.add_argument("--json", action="store_true", help="Emit the machine-readable federated run, scheduler, and lineage report")
+    federation_resume = federation_sub.add_parser("resume", help="Resume a prior federation parent run using dependency-aware checkpoint reuse")
+    federation_resume.add_argument("run_id", help="Prior federation parent run ID")
+    federation_resume.add_argument("--drift-policy", choices=("fail", "replan", "allow-if-equivalent"), default="fail", help="Frozen source drift policy for re-executed children")
+    federation_resume.add_argument("--json", action="store_true", help="Emit machine-readable reuse/invalidation decisions and run result")
+    federation_retry = federation_sub.add_parser("retry", help="Retry a prior federation parent run while reusing still-valid successful children")
+    federation_retry.add_argument("run_id", help="Prior federation parent run ID")
+    federation_retry.add_argument("--failed", action="store_true", help="Retry failed/cancelled/blocked children only; fail closed if a successful child is invalidated")
+    federation_retry.add_argument("--drift-policy", choices=("fail", "replan", "allow-if-equivalent"), default="fail", help="Frozen source drift policy for re-executed children")
+    federation_retry.add_argument("--json", action="store_true", help="Emit machine-readable reuse/invalidation decisions and run result")
     federation_exec = federation_sub.add_parser("exec", help="Execute one enrolled child wrapper or target-local-job public contract")
     federation_exec.add_argument("repository", help="Federation repository name")
     federation_exec.add_argument("--plan", action="store_true", help="Resolve the child public contract without executing it")
@@ -11903,6 +11913,48 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append((child.step_id, f"{subject}; {child.status}; run={child.run_id or '-'}"))
                 render_status_table(rows)
             return int(report.exit_code)
+        if action in {"resume", "retry"}:
+            from .federation_resume import build_resume_plan, child_from_checkpoint, load_checkpoint
+            prior_run_id = str(getattr(args, "run_id", "") or "").strip()
+            checkpoint = load_checkpoint(config, prior_run_id)
+            failed_only = bool(getattr(args, "failed", False)) if action == "retry" else False
+            resume_plan = build_resume_plan(config, checkpoint, mode=action, failed_only=failed_only)
+            reuse_children = {
+                decision.step_id: child_from_checkpoint(decision.prior_child)
+                for decision in resume_plan.decisions if decision.action == "reused"
+            }
+            lifecycle_actions = {
+                decision.step_id: decision.action
+                for decision in resume_plan.decisions if decision.action != "reused"
+            }
+            execution_config = config
+            workflow_name = resume_plan.workflow
+            if resume_plan.group:
+                from .federation_plan import project_with_federation_group
+                execution_config, workflow = project_with_federation_group(config, resume_plan.group)
+                workflow_name = workflow.name
+            report = run_federated_workflow(
+                execution_config, workflow_name, reenter=main, parallel=False,
+                drift_policy=str(getattr(args, "drift_policy", "fail") or "fail"),
+                reuse_children=reuse_children, lifecycle_actions=lifecycle_actions,
+                resumed_from=prior_run_id, resume_mode=action,
+            )
+            payload = report.as_dict()
+            payload["resume_plan"] = resume_plan.as_dict()
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("mode", action + (" --failed" if failed_only else "")),
+                    ("prior_run_id", prior_run_id),
+                    ("parent_run_id", report.parent_run_id),
+                    ("status", report.status),
+                ]
+                for child in report.children:
+                    subject = child.federation_ref or f"{child.repository}::{child.target}::{child.workflow}"
+                    rows.append((child.step_id, f"{subject}; {child.lifecycle or child.status}; run={child.run_id or '-'}"))
+                render_status_table(rows)
+            return int(report.exit_code)
         if action == "exec":
             raw_contract = [str(value) for value in (getattr(args, "contract_argv", []) or [])]
             plan_only = bool(getattr(args, "plan", False))
@@ -11963,7 +12015,7 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append(("job", str(payload.get("job_reference"))))
                 render_status_table(rows)
             return code
-    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError) as exc:
+    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError, FederationResumeError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 
