@@ -262,6 +262,13 @@ command = ["python", "-m", "devtool.federation_roadmap_fixtures", "git-lineage"]
 inputs = ["devtool/federation_git_lineage.py", "devtool/federation_execution.py", "devtool/federation_lock.py", "devtool/federation_roadmap_fixtures.py"]
 metadata = { read_only = true, roadmap_id = "GIT-FRX-09" }
 
+
+[targets.devtool.jobs.ssh01-contract-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.ssh_roadmap_fixtures", "contract", "--json"]
+inputs = ["devtool/ssh_roadmap_fixtures.py", "devtool/ssh_transport.py", "devtool/ssh_environment.py", "devtool/ssh_prepare.py", "devtool/ssh_multiplex.py"]
+metadata = { read_only = true, roadmap_id = "SSH-01" }
+
 [targets.devtool.workflows]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -350,6 +357,13 @@ roadmap-git-frx09 = [
   { id = "git-frx09", ref = "test:roadmap-git-frx09", depends_on = ["git-frx08-freeze", "lineage-fixture"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx09"] },
 ]
+roadmap-ssh01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "ssh01-fixture", ref = "job:ssh01-contract-fixture", depends_on = ["syntax"] },
+  { id = "git-frx09", ref = "test:roadmap-git-frx09", depends_on = ["syntax"] },
+  { id = "ssh01", ref = "test:roadmap-ssh01", depends_on = ["git-frx09", "ssh01-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["ssh01"] },
+]
 roadmap-gate1 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "rebase-fixture", ref = "job:overlay-rebase-fixture", depends_on = ["syntax"] },
@@ -385,6 +399,18 @@ roadmap-current = [
   { id = "git-frx07", ref = "test:roadmap-git-frx07", depends_on = ["frx-y07"] },
   { id = "git-frx08-freeze", ref = "test:roadmap-git-frx08-freeze", depends_on = ["git-frx07"] },
   { id = "git-frx09", ref = "test:roadmap-git-frx09", depends_on = ["git-frx08-freeze"] },
+  { id = "ssh01-fixture", ref = "job:ssh01-contract-fixture", depends_on = ["syntax"] },
+  { id = "ssh01", ref = "test:roadmap-ssh01", depends_on = ["git-frx09", "ssh01-fixture"] },
+]
+
+[[test]]
+id = "roadmap-ssh01"
+name = "SSH-01 adaptive transport environment and worker preparation"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-ssh01.xml",
+  "tests/test_ssh01_transport_environment_worker_preparation.py",
 ]
 
 [[test]]

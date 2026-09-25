@@ -2653,9 +2653,10 @@ def run_specs(
         duration = time.perf_counter() - started
         result_metadata = dict(spec.metadata)
         if result_metadata.get("ssh_return_manifest"):
-            from .ssh_returns import load_return_state
+            from .ssh_returns import load_return_state, publish_return_transfer_event
             ssh_return = load_return_state(result_metadata)
             result_metadata["ssh_return"] = ssh_return
+            publish_return_transfer_event(result_metadata, ssh_return)
         canonical_test_id = str(result_metadata.get("test_spec_id") or spec.name).strip() or spec.name
         canonical_test_candidates = []
         is_go_test = (

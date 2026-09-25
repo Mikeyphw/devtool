@@ -1239,6 +1239,15 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_doctor = ssh_sub.add_parser("doctor", help="Read-only capability discovery for a named SSH worker")
     ssh_doctor.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_doctor.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_env = ssh_sub.add_parser("env", help="Inspect the remote-owned worker environment and toolchain provenance")
+    ssh_env.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_env.add_argument("--target", default="", dest="ssh_env_target", help="Target name to associate with environment evidence")
+    ssh_env.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_prepare = ssh_sub.add_parser("prepare", help="Prepare missing worker/runtime and target toolchain pieces without changing repository source")
+    ssh_prepare.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_prepare.add_argument("--target", default="", dest="ssh_prepare_target", help="Target to prepare")
+    ssh_prepare.add_argument("--dry-run", dest="ssh_prepare_dry_run", action="store_true", help="Classify required preparation without installing anything")
+    ssh_prepare.add_argument("--format", choices=["text", "json"], default="text")
     ssh_bootstrap = ssh_sub.add_parser("bootstrap", help="Install missing minimum worker tools (python, tmux, rsync, git)")
     ssh_bootstrap.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_bootstrap.add_argument("--format", choices=["text", "json"], default="text")
@@ -13367,6 +13376,8 @@ def _main_after_parse(
         from .ssh_resilience import runs_payload, resume_remote_run, cancel_remote_run, recover_stale_runs
         from .ssh_profiles import add_profile, list_profiles, remove_profile, set_default_profile
         from .ssh_qualification import qualify_worker
+        from .ssh_environment import environment_payload
+        from .ssh_prepare import prepare_worker_target
 
         action = str(getattr(args, "ssh_command", "") or "")
         output_format = str(getattr(args, "format", "text") or "text")
@@ -13411,6 +13422,16 @@ def _main_after_parse(
                 worker = resolve_worker_profile(profile, repo=repo_arg, config_path=config_arg)
                 if action == "doctor":
                     payload = worker_doctor_payload(worker)
+                elif action == "env":
+                    payload = environment_payload(
+                        worker, repo_root=repo_root, target=str(getattr(args, "ssh_env_target", "") or "")
+                    )
+                elif action == "prepare":
+                    payload = prepare_worker_target(
+                        worker, repo_root,
+                        target=str(getattr(args, "ssh_prepare_target", "") or ""),
+                        dry_run=bool(getattr(args, "ssh_prepare_dry_run", False)),
+                    )
                 elif action in {"qualify", "seal"}:
                     payload = qualify_worker(
                         worker, repo_root,
@@ -13581,6 +13602,41 @@ def _main_after_parse(
             rows.extend((f"tool.{name}", path or "MISSING") for name, path in tools.items())
             rows.append(("sessions", ", ".join(payload.get("sessions", [])) or "none"))
             rows.append(("overall", "READY" if payload.get("healthy") else ("BOOTSTRAPPABLE" if probe.get("bootstrap_supported") else "BLOCKED")))
+            render_status_table(rows)
+        elif action == "env":
+            worker_env = payload.get("worker", {})
+            rows = [
+                ("profile", payload.get("profile") or "-"),
+                ("destination", payload.get("destination") or "-"),
+                ("policy", payload.get("environment_policy") or "remote"),
+                ("platform", worker_env.get("platform") or "-"),
+                ("architecture", worker_env.get("architecture") or "-"),
+                ("home", worker_env.get("home") or "-"),
+                ("prefix", worker_env.get("prefix") or "-"),
+                ("tmpdir", worker_env.get("tmpdir") or "-"),
+                ("java_home", (payload.get("java") or {}).get("home") or "-"),
+                ("gradle_user_home", (payload.get("gradle") or {}).get("user_home") or "-"),
+                ("android_sdk", (payload.get("android") or {}).get("sdk_root") or "-"),
+                ("multiplex", "enabled" if (payload.get("multiplex") or {}).get("enabled") else "disabled"),
+                ("latency_seconds", str(payload.get("latency_seconds") or 0)),
+            ]
+            rows.extend(
+                (f"tool.{name}", f"{item.get('path') or 'MISSING'} [{item.get('provenance') or 'missing'}]")
+                for name, item in (payload.get("tools") or {}).items()
+            )
+            render_status_table(rows)
+        elif action == "prepare":
+            rows = [
+                ("profile", payload.get("profile") or "-"),
+                ("destination", payload.get("destination") or "-"),
+                ("target", payload.get("target") or "default"),
+                ("status", "PLANNED" if payload.get("dry_run") and payload.get("ok") else ("READY" if payload.get("ok") else "BLOCKED")),
+                ("worker_changed", "yes" if (payload.get("bootstrap") or {}).get("changed") else "no"),
+                ("toolchain", (payload.get("target_toolchain") or {}).get("kind") or "generic"),
+                ("workspace_mutated", "yes" if (payload.get("workspace") or {}).get("mutated") else "no"),
+                ("source_sync", "yes" if (payload.get("source_operations") or {}).get("sync") else "no"),
+                ("detail", payload.get("detail") or "-"),
+            ]
             render_status_table(rows)
         elif action == "bootstrap":
             probe = payload.get("probe", {})

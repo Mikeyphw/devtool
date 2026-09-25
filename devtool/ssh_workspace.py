@@ -24,6 +24,8 @@ from typing import Any, Iterable
 
 from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_base_argv, build_ssh_remote_sh_argv
 from .ssh_worker import SSHWorkerProbe, probe_worker
+from .ssh_multiplex import disable_for_operation, multiplex_failure, strip_multiplex_from_shell, run_with_multiplex_fallback
+from .ssh_transport import SSHTransferTelemetry, federation_transport_identity, run_archive_seed, seed_plan, source_stats
 
 _WORKSPACE_MARKER = ".devtool-workspace-id"
 _WORKSPACE_METADATA = ".devtool-remote-workspace.json"
@@ -234,7 +236,8 @@ def _run_remote(
     input_text: str | None = None,
     timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run_with_multiplex_fallback(
+        config,
         build_ssh_remote_sh_argv(config, script, tty=False),
         check=False,
         capture_output=True,
@@ -416,7 +419,7 @@ def _rsync_argv(
         "--protect-args",
         "--human-readable",
         "--itemize-changes",
-        "--out-format=%i|%n%L",
+        "--out-format=%i|%b|%l|%n%L",
         "--partial",
         "--delay-updates",
         "-e",
@@ -427,7 +430,8 @@ def _rsync_argv(
         argv.append("--delete-delay")
     if dry_run:
         argv.append("--dry-run")
-    for pattern in spec.excludes:
+    nested_git_excludes = source_stats(spec.repo_root, spec.excludes).nested_git_excludes
+    for pattern in tuple(spec.excludes) + tuple(nested_git_excludes):
         argv.extend(["--exclude", pattern])
     source = str(Path(spec.repo_root)) + "/"
     destination = destination_override or f"{config.destination}:{spec.remote_path.rstrip('/')}/"
@@ -436,17 +440,84 @@ def _rsync_argv(
 
 
 def _parse_rsync_changes(stdout: str) -> list[dict[str, str]]:
+    """Parse stable itemized rsync records while tolerating legacy output.
+
+    SSH-01 emits ``%i|%b|%l|%n%L`` so byte counters are machine-readable.
+    This helper intentionally preserves the long-standing ``code/path`` public
+    shape used by sync plans and diagnostics.
+    """
     changes: list[dict[str, str]] = []
     for raw in str(stdout or "").splitlines():
         line = raw.rstrip("\r\n")
         if not line:
             continue
-        if "|" in line:
+        parts = line.split("|", 3)
+        if len(parts) == 4 and parts[1].strip().isdigit() and parts[2].strip().isdigit():
+            code, _bytes_sent, _length, path = parts
+        elif "|" in line:
             code, path = line.split("|", 1)
         else:
             code, path = line[:12].strip(), line[12:].strip()
         changes.append({"code": code.strip(), "path": path})
     return changes
+
+
+def _parse_rsync_metrics(stdout: str) -> dict[str, int]:
+    """Aggregate rsync's machine-readable ``%b``/``%l`` records.
+
+    ``transferred_bytes`` is the payload rsync reports as actually transferred,
+    not the total repository size. This keeps warm-delta telemetry truthful.
+    Legacy two-field output is accepted and simply contributes no byte metrics.
+    """
+    transferred_bytes = 0
+    changed_source_bytes = 0
+    metric_records = 0
+    for raw in str(stdout or "").splitlines():
+        parts = raw.rstrip("\r\n").split("|", 3)
+        if len(parts) != 4:
+            continue
+        sent_text, length_text = parts[1].strip(), parts[2].strip()
+        if not sent_text.isdigit() or not length_text.isdigit():
+            continue
+        transferred_bytes += int(sent_text)
+        changed_source_bytes += int(length_text)
+        metric_records += 1
+    return {
+        "transferred_bytes": transferred_bytes,
+        "changed_source_bytes": changed_source_bytes,
+        "metric_records": metric_records,
+    }
+
+
+def _run_rsync(config: SSHRunnerConfig, argv: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=timeout)
+    if completed.returncode == 0:
+        return completed
+    detail = str(completed.stderr or completed.stdout or "")
+    if not multiplex_failure(detail):
+        return completed
+    disable_for_operation(config, detail.strip() or "rsync remote-shell multiplexing failed")
+    retry = list(argv)
+    try:
+        index = retry.index("-e")
+        if index + 1 < len(retry):
+            retry[index + 1] = strip_multiplex_from_shell(retry[index + 1])
+    except ValueError:
+        pass
+    return subprocess.run(retry, check=False, capture_output=True, text=True, timeout=timeout)
+
+
+def _remote_workspace_bytes(config: SSHRunnerConfig, spec: SSHWorkspaceSpec, status: SSHWorkspaceStatus) -> int:
+    if not status.exists or not status.safe:
+        return 0
+    target = status.canonical_path or spec.remote_path
+    completed = _run_remote(config, f"du -sk {shlex.quote(target)} 2>/dev/null | awk '{{print $1}}'", timeout=15)
+    if completed.returncode != 0:
+        return 0
+    try:
+        return max(0, int((completed.stdout or "0").strip().splitlines()[-1])) * 1024
+    except (ValueError, IndexError):
+        return 0
 
 
 def _local_missing_workspace_plan(config: SSHRunnerConfig, spec: SSHWorkspaceSpec) -> tuple[int, str, str]:
@@ -496,7 +567,7 @@ def plan_workspace_sync(
             destination_override=f"{config.destination}:{canonical.rstrip('/')}/",
             worker=worker,
         )
-        completed = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=300)
+        completed = _run_rsync(config, argv, timeout=300)
         rc, stdout, stderr = completed.returncode, completed.stdout, completed.stderr
     else:
         rc, stdout, stderr = _local_missing_workspace_plan(config, spec)
@@ -544,7 +615,7 @@ def _new_sync_id(spec: SSHWorkspaceSpec) -> str:
     return f"sync-{spec.workspace_id}-{stamp}-{uuid.uuid4().hex[:8]}"
 
 
-def _metadata_payload(spec: SSHWorkspaceSpec, *, changes: int, sync_id: str, source_revision: dict[str, Any]) -> dict[str, Any]:
+def _metadata_payload(spec: SSHWorkspaceSpec, *, changes: int, sync_id: str, source_revision: dict[str, Any], transport: dict[str, Any] | None = None, federation: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "workspace_id": spec.workspace_id,
@@ -562,6 +633,8 @@ def _metadata_payload(spec: SSHWorkspaceSpec, *, changes: int, sync_id: str, sou
         "last_sync_id": sync_id,
         "last_change_count": int(changes),
         "source_revision": dict(source_revision),
+        "transport": dict(transport or {}),
+        "federation_transport_identity": dict(federation or {}),
     }
 
 
@@ -613,8 +686,14 @@ def sync_workspace(
     worker: SSHWorkerProbe | None = None,
 ) -> dict[str, Any]:
     worker = worker or probe_worker(config)
+    federation = federation_transport_identity(spec.repo_root)
     if dry_run:
-        return plan_workspace_sync(config, spec, worker=worker)
+        payload = plan_workspace_sync(config, spec, worker=worker)
+        status = SSHWorkspaceStatus(**payload["status"])
+        remote_bytes = _remote_workspace_bytes(config, spec, status)
+        transport_plan = seed_plan(spec, status, worker, remote_bytes=remote_bytes)
+        payload["transport"] = {"plan": transport_plan.as_dict(), "federation_transport_identity": federation}
+        return payload
 
     # Fail before creating/claiming a managed directory if either side is not
     # ready for synchronization. This keeps bootstrap/tool failures non-mutating.
@@ -632,14 +711,35 @@ def sync_workspace(
 
     try:
         status_before = workspace_status(config, spec)
+        if status_before.exists and (not status_before.is_directory or not status_before.safe):
+            raise ValueError(f"Refusing to sync unsafe SSH workspace {spec.remote_path}: {status_before.detail}")
+        remote_bytes = _remote_workspace_bytes(config, spec, status_before)
+        transport_plan = seed_plan(spec, status_before, worker, remote_bytes=remote_bytes)
         prepared = prepare_workspace(config, spec)
         canonical = prepared.canonical_path or spec.remote_path
         sync_id = _new_sync_id(spec)
         source_revision = _source_revision(spec.repo_root)
+        transport: dict[str, Any] = {
+            "planned_mode": transport_plan.mode,
+            "effective_mode": "rsync-delta",
+            "plan": transport_plan.as_dict(),
+            "archive": {"used": False},
+            "reconciliation": {"required": True, "complete": False},
+        }
         _write_sync_state(config, spec, {
             "schema_version": 1, "state": "in-progress", "sync_id": sync_id,
             "started_unix": int(time.time()), "source_revision": source_revision,
+            "transport": transport, "federation_transport_identity": federation,
         })
+
+        if transport_plan.use_archive:
+            archive = run_archive_seed(config, spec, transport_plan, sync_id=sync_id)
+            transport["archive"] = archive
+            if archive.get("ok"):
+                transport["effective_mode"] = "archive-seed+reconcile"
+            else:
+                transport["archive_fallback"] = "rsync-delta"
+
         argv = _rsync_argv(
             config,
             spec,
@@ -647,17 +747,54 @@ def sync_workspace(
             destination_override=f"{config.destination}:{canonical.rstrip('/')}/",
             worker=worker,
         )
-        completed = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=None)
+        started = time.monotonic()
+        telemetry = SSHTransferTelemetry(
+            mode=str(transport["effective_mode"]),
+            state="running",
+            source_bytes=transport_plan.source_bytes,
+            source_files=transport_plan.source_files,
+            remaining_files=transport_plan.source_files,
+            workspace_sync_id=sync_id,
+            detail="rsync authoritative reconciliation",
+        )
+        telemetry.publish(run_id=str(config.operation_id or os.environ.get("DEVTOOL_RUN_ID") or ""))
+        completed = _run_rsync(config, argv, timeout=None)
+        elapsed = max(0.000001, time.monotonic() - started)
         changes = _parse_rsync_changes(completed.stdout)
+        rsync_metrics = _parse_rsync_metrics(completed.stdout)
+        transport["reconciliation"] = {
+            "required": True,
+            "complete": completed.returncode == 0,
+            "change_count": len(changes),
+            "returncode": int(completed.returncode),
+            "transferred_bytes": int(rsync_metrics["transferred_bytes"]),
+            "changed_source_bytes": int(rsync_metrics["changed_source_bytes"]),
+            "metric_records": int(rsync_metrics["metric_records"]),
+        }
+        telemetry.state = "complete" if completed.returncode == 0 else "failed"
+        telemetry.transferred_files = len(changes) if completed.returncode == 0 else 0
+        telemetry.transferred_bytes = int(rsync_metrics["transferred_bytes"])
+        telemetry.remaining_files = 0 if completed.returncode == 0 else max(0, transport_plan.source_files - len(changes))
+        telemetry.current_path = str(changes[-1].get("path") or "") if changes else ""
+        telemetry.elapsed_seconds = elapsed
+        telemetry.throughput_bps = (float(telemetry.transferred_bytes) / elapsed) if telemetry.transferred_bytes else 0.0
+        telemetry.eta_seconds = 0.0 if completed.returncode == 0 else None
+        telemetry.reconciliation_count = len(changes)
+        telemetry.detail = "rsync reconciliation complete" if completed.returncode == 0 else "rsync reconciliation failed; workspace remains recoverable"
+        telemetry.publish(run_id=str(config.operation_id or os.environ.get("DEVTOOL_RUN_ID") or ""))
+        transport["telemetry"] = telemetry.as_dict()
+
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "").strip()
             _write_sync_state(config, spec, {
                 "schema_version": 1, "state": "partial", "recoverable": True, "sync_id": sync_id,
                 "updated_unix": int(time.time()), "returncode": int(completed.returncode),
                 "source_revision": source_revision, "change_count": len(changes),
+                "transport": transport, "federation_transport_identity": federation,
             })
             if lease is not None:
                 release_workspace_lease(config, lease, runner=_run_remote)
+                lease = None
             return {
                 "schema_version": 1,
                 "kind": "ssh-workspace-sync",
@@ -669,20 +806,24 @@ def sync_workspace(
                 "status_before": status_before.as_dict(),
                 "changes": changes,
                 "change_count": len(changes),
+                "transport_mode": transport["effective_mode"],
+                "transport": transport,
+                "federation_transport_identity": federation,
                 "detail": detail or f"rsync failed with exit {completed.returncode}; the next sync will resume from rsync partial state",
             }
-        payload = _metadata_payload(spec, changes=len(changes), sync_id=sync_id, source_revision=source_revision)
+        payload = _metadata_payload(
+            spec, changes=len(changes), sync_id=sync_id, source_revision=source_revision,
+            transport=transport, federation=federation,
+        )
         _write_sync_state(config, spec, {
             "schema_version": 1, "state": "complete", "recoverable": False, "sync_id": sync_id,
             "completed_unix": int(time.time()), "source_revision": source_revision, "change_count": len(changes),
+            "transport": transport, "federation_transport_identity": federation,
         })
         _write_remote_metadata(config, spec, payload)
         status_after = workspace_status(config, spec)
         lease_payload = lease.as_dict() if lease is not None else {}
         if lease is not None and not retain_lease:
-            # A manual/prewarm sync must never leave a workspace locked. Only
-            # execution preparation deliberately carries the lease into the
-            # subsequent remote phase plan.
             release_workspace_lease(config, lease, runner=_run_remote)
             lease_payload = {}
             lease = None
@@ -698,6 +839,9 @@ def sync_workspace(
             "sync_id": sync_id,
             "source_revision": source_revision,
             "delete_enabled": spec.delete,
+            "transport_mode": transport["effective_mode"],
+            "transport": transport,
+            "federation_transport_identity": federation,
             "lease": lease_payload,
             "detail": "workspace synchronized" if status_after.safe else status_after.detail,
         }

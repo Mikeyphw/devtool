@@ -22,6 +22,7 @@ from typing import Any, Iterable
 
 from .execution_providers import SSH_PROOT_OCI, ensure_execution_provider_ready
 from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_remote_sh_argv, worker_session_name
+from .ssh_multiplex import run_with_multiplex_fallback
 from .ssh_worker import SSHWorkerProbe, bootstrap_worker, probe_worker
 from .ssh_workspace import (
     SSHWorkspaceSpec,
@@ -94,12 +95,9 @@ def _execution_kind(specs: Iterable[Any]) -> str:
 
 
 def _run_remote(config: SSHRunnerConfig, script: str, *, timeout: float = 90.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        build_ssh_remote_sh_argv(config, script, tty=False),
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
+    return run_with_multiplex_fallback(
+        config, build_ssh_remote_sh_argv(config, script, tty=False),
+        check=False, capture_output=True, text=True, timeout=timeout,
     )
 
 

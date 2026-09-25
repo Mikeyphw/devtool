@@ -13,9 +13,11 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import time
 from typing import Any, Mapping
 
 from .execution_providers import provider_metadata
+from .ssh_multiplex import evidence as multiplex_evidence
 from .ssh_tmux_runner import (
     SSHRunnerConfig,
     build_ssh_remote_sh_argv,
@@ -120,7 +122,9 @@ def _run_remote(
     timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     _preflight_transport(config)
-    return subprocess.run(
+    from .ssh_multiplex import run_with_multiplex_fallback
+    return run_with_multiplex_fallback(
+        config,
         _remote_shell_argv(config, script),
         check=False,
         capture_output=capture_output,
@@ -179,11 +183,20 @@ tool_rsync="$(find_cmd rsync)"
 tool_git="$(find_cmd git)"
 tool_java="$(find_cmd java)"
 tool_gradle="$(find_cmd gradle)"
+tool_tar="$(find_cmd tar)"
+tool_zstd="$(find_cmd zstd)"
+tool_node="$(find_cmd node)"
+tool_npm="$(find_cmd npm)"
+tool_go="$(find_cmd go)"
+tool_cmake="$(find_cmd cmake)"
+tool_ninja="$(find_cmd ninja)"
+tool_aapt2="$(find_cmd aapt2)"
+tool_aidl="$(find_cmd aidl)"
 tool_timeout="$(find_cmd timeout)"
 tool_proot_distro="$(find_cmd proot-distro)"; [ -n "$tool_proot_distro" ] || tool_proot_distro="$(find_cmd pd)"
 tool_proot="${PD_PROOT_BIN:-}"
 if [ -z "$tool_proot" ] || [ ! -x "$tool_proot" ]; then tool_proot="$(find_cmd proot)"; fi
-for logical in python tmux rsync git java gradle proot_distro proot; do eval "value=\${tool_$logical}"; kv "tool_$logical" "$value"; done
+for logical in python tmux rsync git java gradle tar zstd node npm go cmake ninja aapt2 aidl proot_distro proot; do eval "value=\${tool_$logical}"; kv "tool_$logical" "$value"; done
 version_python=""; [ -n "$tool_python" ] && version_python="$("$tool_python" --version 2>&1 | head -n1)"
 version_tmux=""; [ -n "$tool_tmux" ] && version_tmux="$("$tool_tmux" -V 2>/dev/null | head -n1)"
 version_rsync=""; [ -n "$tool_rsync" ] && version_rsync="$("$tool_rsync" --version 2>/dev/null | head -n1)"
@@ -206,7 +219,13 @@ version_proot=""
 if [ -n "$tool_proot" ] && [ -n "$tool_timeout" ]; then
   version_proot="$($tool_timeout 5 "$tool_proot" --version 2>&1 | awk 'NF {print; exit}')"
 fi
-for logical in python tmux rsync git java gradle proot_distro proot; do eval "value=\${version_$logical}"; kv "version_$logical" "$value"; done
+version_tar=""; [ -n "$tool_tar" ] && version_tar="$("$tool_tar" --version 2>/dev/null | head -n1)"
+version_zstd=""; [ -n "$tool_zstd" ] && version_zstd="$("$tool_zstd" --version 2>/dev/null | head -n1)"
+version_node=""; [ -n "$tool_node" ] && version_node="$("$tool_node" --version 2>/dev/null | head -n1)"
+version_npm=""; [ -n "$tool_npm" ] && version_npm="$("$tool_npm" --version 2>/dev/null | head -n1)"
+version_go=""; [ -n "$tool_go" ] && version_go="$("$tool_go" version 2>/dev/null | head -n1)"
+version_cmake=""; [ -n "$tool_cmake" ] && version_cmake="$("$tool_cmake" --version 2>/dev/null | head -n1)"
+for logical in python tmux rsync git java gradle tar zstd node npm go cmake ninja aapt2 aidl proot_distro proot; do eval "value=\${version_$logical}"; kv "version_$logical" "$value"; done
 exit 0
 '''
 
@@ -245,8 +264,9 @@ def probe_worker(config: SSHRunnerConfig) -> SSHWorkerProbe:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise ValueError(f"SSH worker probe failed with exit {completed.returncode}: {detail or 'no diagnostic output'}")
     values = _parse_kv(completed.stdout)
-    tools = {name: values.get(f"tool_{name}", "") for name in ("python", "tmux", "rsync", "git", "java", "gradle", "proot_distro", "proot")}
-    versions = {name: values.get(f"version_{name}", "") for name in ("python", "tmux", "rsync", "git", "java", "gradle", "proot_distro", "proot")}
+    inventory = ("python", "tmux", "rsync", "git", "java", "gradle", "tar", "zstd", "node", "npm", "go", "cmake", "ninja", "aapt2", "aidl", "proot_distro", "proot")
+    tools = {name: values.get(f"tool_{name}", "") for name in inventory}
+    versions = {name: values.get(f"version_{name}", "") for name in inventory}
     return SSHWorkerProbe(
         profile=config.profile,
         destination=config.destination,
@@ -269,7 +289,9 @@ def probe_worker(config: SSHRunnerConfig) -> SSHWorkerProbe:
 
 
 def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
+    started = time.monotonic()
     probe = probe_worker(config)
+    probe_latency = max(0.0, time.monotonic() - started)
     provider = provider_metadata(config.execution_provider, remote=True)
     from .proot_oci import probe_proot_oci_runtime
     oci_runtime: dict[str, Any] = {
@@ -331,6 +353,14 @@ def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
             "min_free_mb": config.min_free_mb,
         },
         "probe": probe.as_dict(),
+        "deep_probe": {
+            "latency_seconds": round(probe_latency, 4),
+            "multiplex": multiplex_evidence(config).as_dict(),
+            "transport_tools": {name: probe.tools.get(name, "") for name in ("rsync", "tar", "zstd")},
+            "target_tools": {name: probe.tools.get(name, "") for name in ("java", "gradle", "aapt2", "aidl", "node", "npm", "go", "cmake", "ninja")},
+            "free_storage_kib": probe.free_storage_kib,
+            "environment_command": "devtool ssh env",
+        },
         "sessions": sessions,
         "sessions_error": sessions_error,
         "healthy": (

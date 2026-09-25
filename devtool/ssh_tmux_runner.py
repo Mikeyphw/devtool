@@ -22,7 +22,7 @@ import subprocess
 import shutil
 import uuid
 import tomllib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -116,6 +116,12 @@ class SSHRunnerConfig:
     lease_timeout_seconds: int = 900
     min_free_mb: int = 1024
     execution_provider: str = SSH_NATIVE
+    multiplex: bool = True
+    control_persist_seconds: int = 90
+    control_root: str = ""
+    environment_policy: str = "remote"
+    environment_allowlist: tuple[str, ...] = ("CI", "TERM", "COLORTERM", "LANG", "LC_ALL", "TZ")
+    environment_overlay: dict[str, str] = field(default_factory=dict)
     oci_cache_root: str = "~/.cache/devtool/oci/workspace-caches"
     oci_env_allowlist: tuple[str, ...] = ("CI", "TERM", "COLORTERM", "LANG", "LC_ALL", "TZ")
     oci_image: str = "devtool/android-build:arm64-api36-v2"
@@ -287,6 +293,22 @@ def _ssh_profile_section(data: Mapping[str, Any], profile: str) -> dict[str, Any
                     result["sync_default_excludes"] = sync.get("default_excludes")
                 if "exclude" in sync:
                     result["sync_excludes"] = sync.get("exclude")
+            transport = candidate.get("transport", {})
+            if isinstance(transport, dict):
+                if "multiplex" in transport:
+                    result["multiplex"] = transport.get("multiplex")
+                if "control_persist_seconds" in transport:
+                    result["control_persist_seconds"] = transport.get("control_persist_seconds")
+                if "control_root" in transport:
+                    result["control_root"] = transport.get("control_root")
+            environment = candidate.get("environment", {})
+            if isinstance(environment, dict):
+                if "policy" in environment:
+                    result["environment_policy"] = environment.get("policy")
+                if "allowlist" in environment:
+                    result["environment_allowlist"] = environment.get("allowlist")
+                if "overlay" in environment:
+                    result["environment_overlay"] = environment.get("overlay")
             execution = candidate.get("execution", {})
             if isinstance(execution, dict) and "provider" in execution:
                 result["execution_provider"] = execution.get("provider")
@@ -310,7 +332,23 @@ def _ssh_section(data: Mapping[str, Any], target_name: str = "", profile: str = 
     top = data.get("ssh", {})
     if isinstance(top, dict):
         # Do not leak profile containers into scalar runner options.
-        merged.update({k: v for k, v in top.items() if k not in {"hosts", "profiles", "workers", "profile", "default_profile", "oci"}})
+        merged.update({k: v for k, v in top.items() if k not in {"hosts", "profiles", "workers", "profile", "default_profile", "oci", "transport", "environment"}})
+        transport = top.get("transport", {})
+        if isinstance(transport, dict):
+            if "multiplex" in transport:
+                merged["multiplex"] = transport.get("multiplex")
+            if "control_persist_seconds" in transport:
+                merged["control_persist_seconds"] = transport.get("control_persist_seconds")
+            if "control_root" in transport:
+                merged["control_root"] = transport.get("control_root")
+        environment = top.get("environment", {})
+        if isinstance(environment, dict):
+            if "policy" in environment:
+                merged["environment_policy"] = environment.get("policy")
+            if "allowlist" in environment:
+                merged["environment_allowlist"] = environment.get("allowlist")
+            if "overlay" in environment:
+                merged["environment_overlay"] = environment.get("overlay")
         oci = top.get("oci", {})
         if isinstance(oci, dict):
             if "cache_root" in oci:
@@ -491,6 +529,33 @@ def resolve_ssh_config(
     else:
         raise ValueError("SSH sync.exclude must be a string or list of strings")
 
+    multiplex = _bool_value(file_options.get("multiplex"), bool(profile)) if "multiplex" in file_options else bool(profile)
+    try:
+        control_persist_seconds = int(file_options.get("control_persist_seconds", 90) or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("SSH transport.control_persist_seconds must be an integer") from exc
+    if control_persist_seconds < 0:
+        raise ValueError("SSH transport.control_persist_seconds cannot be negative")
+    control_root = str(file_options.get("control_root", "") or "").strip()
+
+    environment_policy = str(file_options.get("environment_policy", "remote") or "remote").strip().lower().replace("_", "-")
+    if environment_policy not in {"remote", "overlay", "hermetic"}:
+        raise ValueError(f"SSH environment.policy must be remote, overlay, or hermetic, got {environment_policy!r}")
+    raw_environment_allowlist = file_options.get("environment_allowlist", ("CI", "TERM", "COLORTERM", "LANG", "LC_ALL", "TZ"))
+    if isinstance(raw_environment_allowlist, str):
+        environment_allowlist = tuple(item.strip() for item in raw_environment_allowlist.split(",") if item.strip())
+    elif isinstance(raw_environment_allowlist, (list, tuple)):
+        environment_allowlist = tuple(str(item).strip() for item in raw_environment_allowlist if str(item).strip())
+    else:
+        raise ValueError("SSH environment.allowlist must be a comma-separated string or list")
+    raw_environment_overlay = file_options.get("environment_overlay", {})
+    if raw_environment_overlay is None:
+        environment_overlay: dict[str, str] = {}
+    elif isinstance(raw_environment_overlay, Mapping):
+        environment_overlay = {str(key): str(value) for key, value in raw_environment_overlay.items()}
+    else:
+        raise ValueError("SSH environment.overlay must be a TOML table")
+
     host_key_policy = str(file_options.get("host_key_policy", "accept-new" if profile else "system") or "system").strip().lower().replace("_", "-")
     if host_key_policy not in {"system", "strict", "accept-new"}:
         raise ValueError(f"SSH host-key policy must be system, strict, or accept-new, got {host_key_policy!r}")
@@ -578,6 +643,12 @@ def resolve_ssh_config(
         lease_timeout_seconds=lease_timeout_seconds,
         min_free_mb=min_free_mb,
         execution_provider=execution_provider,
+        multiplex=multiplex,
+        control_persist_seconds=control_persist_seconds,
+        control_root=control_root,
+        environment_policy=environment_policy,
+        environment_allowlist=environment_allowlist,
+        environment_overlay=environment_overlay,
         oci_cache_root=oci_cache_root,
         oci_env_allowlist=oci_env_allowlist,
         oci_image=oci_image,
@@ -673,6 +744,8 @@ def build_ssh_base_argv(config: SSHRunnerConfig, *, tty: bool = True) -> list[st
     if config.identity:
         argv.extend(["-i", str(Path(config.identity).expanduser())])
     argv.extend(_host_key_argv(config))
+    from .ssh_multiplex import multiplex_options
+    argv.extend(multiplex_options(config))
     argv.append(config.destination)
     return argv
 
@@ -766,8 +839,10 @@ def build_scp_base_argv(config: SSHRunnerConfig) -> list[str]:
     argv = [scp, "-P", str(config.port)]
     if config.identity:
         argv.extend(["-i", str(Path(config.identity).expanduser())])
-    # scp accepts OpenSSH -o options too; keep host-key behavior identical to ssh.
+    # scp accepts OpenSSH -o options too; keep host-key/multiplex behavior identical to ssh.
     argv.extend(_host_key_argv(config))
+    from .ssh_multiplex import multiplex_options
+    argv.extend(multiplex_options(config))
     return argv
 
 
@@ -1184,15 +1259,29 @@ def _stage_support_files_for_spec(
     return rewritten, staged
 
 
-def _translate_env_for_repo(env: Mapping[str, str], local_root: Path, remote_root: str) -> dict[str, str]:
+def _translate_env_for_repo(
+    env: Mapping[str, str],
+    local_root: Path,
+    remote_root: str,
+    *,
+    config: SSHRunnerConfig | None = None,
+) -> dict[str, str]:
     translated: dict[str, str] = {}
+    policy = str(getattr(config, "environment_policy", "remote") or "remote").strip().lower().replace("_", "-")
+    allowlist = set(getattr(config, "environment_allowlist", ()) or ())
+    overlay = dict(getattr(config, "environment_overlay", {}) or {})
+    source: dict[str, str] = {str(key): str(value) for key, value in env.items()}
+    if policy == "overlay":
+        # Explicit remote overlay wins over the spec environment. Absolute host
+        # paths are still subjected to the same remote-owned path filter below.
+        source.update({str(key): str(value) for key, value in overlay.items()})
     run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
     if run_id:
         translated["DEVTOOL_RUN_ID"] = run_id
-    for key, raw in env.items():
-        key_text = str(key)
-        value = str(raw)
+    for key_text, value in source.items():
         if key_text in _HOST_EXECUTION_ENV_KEYS:
+            continue
+        if policy == "hermetic" and key_text not in allowlist and not key_text.startswith("DEVTOOL_"):
             continue
         mapped = _translate_repo_bound_path(value, local_root, remote_root)
         if mapped != value:
@@ -1641,6 +1730,8 @@ def wrap_specs_for_ssh_commands(
         run_identity = str(config.operation_id or os.environ.get("DEVTOOL_RUN_ID") or "").strip()
         base_session = _sanitize_session(config.session or _default_session(config, ["commands"]))
         preparation_metadata = {}
+    from .ssh_multiplex import evidence as _ssh_multiplex_evidence
+    preparation_metadata["ssh_multiplex"] = _ssh_multiplex_evidence(config).as_dict()
     oci_state = None
     if config.execution_provider == SSH_PROOT_OCI:
         if preparation is None or preparation.workspace is None:
@@ -1777,7 +1868,12 @@ def wrap_specs_for_ssh_commands(
                 )
                 remote_rsync = preparation.worker.tools.get("rsync", "") if preparation is not None else "rsync"
                 try:
-                    return_fragment = shell_return_fragment(config, return_bundle, remote_rsync=remote_rsync or "rsync")
+                    remote_zstd = preparation.worker.tools.get("zstd", "") if preparation is not None else ""
+                    remote_python = preparation.worker.tools.get("python", "") if preparation is not None else ""
+                    return_fragment = shell_return_fragment(
+                        config, return_bundle, remote_rsync=remote_rsync or "rsync",
+                        remote_zstd=remote_zstd, remote_python=remote_python,
+                    )
                 except ValueError as exc:
                     # Existing named checkouts predate managed rsync workspaces. Do
                     # not make them un-runnable solely because local return-rsync is
@@ -1811,7 +1907,7 @@ def wrap_specs_for_ssh_commands(
                 dry_run=dry_run,
                 metadata=metadata,
             )
-            translated_env = _translate_env_for_repo(getattr(spec, "env", {}) or {}, local_root, remote_root)
+            translated_env = _translate_env_for_repo(getattr(spec, "env", {}) or {}, local_root, remote_root, config=config)
             if config.execution_provider == SSH_PROOT_OCI:
                 translated_env = {
                     key: value for key, value in translated_env.items()
@@ -2115,7 +2211,14 @@ def run_ssh_tmux(
         print(f"SSH artifact copy: {local} -> {config.destination}:{remote}")
     print(f"tmux session: {config.session} (detach with Ctrl-b then d)")
     print("Reattach: " + shlex.join(reattach_command(config)))
-    completed = subprocess.run(command, check=False)
-    if staged and not _session_active(config, config.session):
-        _remove_remote_tree(config, _operation_stage_root(config, config.session))
-    return int(completed.returncode)
+    from .ssh_multiplex import close_master, run_with_multiplex_fallback
+    try:
+        completed = run_with_multiplex_fallback(config, command, check=False)
+        if staged and not _session_active(config, config.session):
+            _remove_remote_tree(config, _operation_stage_root(config, config.session))
+        return int(completed.returncode)
+    finally:
+        # Whole-process SSH has a concrete operation boundary, so close the
+        # ControlMaster eagerly instead of waiting for ControlPersist/atexit.
+        # Command-mode executions retain the process-level atexit cleanup.
+        close_master(config)

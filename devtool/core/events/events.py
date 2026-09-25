@@ -158,6 +158,56 @@ class NodeProgressChanged(DevtoolEvent):
 
 
 @dataclass(slots=True)
+class TransferProgressChanged(NodeProgressChanged):
+    """Typed byte/file transfer progress for remote/workspace/artifact transport.
+
+    This is deliberately a NodeProgressChanged subtype so existing EXO/RunStore
+    reducers and HUD projections continue to treat transport as canonical node
+    progress while newer consumers receive stable transfer-specific fields.
+    """
+
+    mode: str = ""
+    state: str = "running"
+    source_bytes: int = 0
+    transferred_bytes: int = 0
+    source_files: int = 0
+    transferred_files: int = 0
+    remaining_files: int = 0
+    current_path: str = ""
+    throughput_bps: float = 0.0
+    elapsed_seconds: float = 0.0
+    eta_seconds: float | None = None
+    compression_ratio: float | None = None
+    reconciliation_count: int = 0
+    workspace_sync_id: str = ""
+
+    protocol_type: ClassVar[str] = "transport.progress"
+
+    def __post_init__(self) -> None:
+        self.source_bytes = max(0, int(self.source_bytes or 0))
+        self.transferred_bytes = max(0, int(self.transferred_bytes or 0))
+        self.source_files = max(0, int(self.source_files or 0))
+        self.transferred_files = max(0, int(self.transferred_files or 0))
+        self.remaining_files = max(0, int(self.remaining_files or 0))
+        self.throughput_bps = max(0.0, float(self.throughput_bps or 0.0))
+        self.elapsed_seconds = max(0.0, float(self.elapsed_seconds or 0.0))
+        if self.eta_seconds is not None:
+            self.eta_seconds = max(0.0, float(self.eta_seconds))
+        if self.compression_ratio is not None:
+            self.compression_ratio = max(0.0, float(self.compression_ratio))
+        self.reconciliation_count = max(0, int(self.reconciliation_count or 0))
+        if self.total is None and self.source_bytes:
+            self.total = float(self.source_bytes)
+        if self.current is None:
+            self.current = float(self.transferred_bytes)
+        if self.percent is None and self.source_bytes:
+            self.percent = min(100.0, 100.0 * self.transferred_bytes / self.source_bytes)
+        if not self.unit:
+            self.unit = "bytes"
+        NodeProgressChanged.__post_init__(self)
+
+
+@dataclass(slots=True)
 class NodeFinished(DevtoolEvent):
     status: str = ExecutionStatus.SUCCEEDED.value
     exit_code: int = 0
@@ -445,6 +495,7 @@ _EVENT_CLASSES = (
     NodeDiscovered,
     NodeStarted,
     NodeProgressChanged,
+    TransferProgressChanged,
     NodeFinished,
     NodeBlocked,
     ProcessStarted,
@@ -512,6 +563,7 @@ __all__ = [
     "NodeDiscovered",
     "NodeStarted",
     "NodeProgressChanged",
+    "TransferProgressChanged",
     "NodeFinished",
     "NodeBlocked",
     "ProcessStarted",

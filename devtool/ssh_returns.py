@@ -61,6 +61,8 @@ class SSHReturnBundle:
 
     def metadata(self) -> dict[str, Any]:
         return {
+            "ssh_return_run_id": self.run_id,
+            "ssh_return_session": self.session,
             "ssh_return_root": str(self.root),
             "ssh_return_repo_root": str(self.repo_root),
             "ssh_return_project_root": str(self.project_root),
@@ -238,13 +240,63 @@ def build_return_rsync_argv(
     return argv
 
 
+def _return_archive_thresholds() -> tuple[int, int]:
+    try:
+        min_bytes = max(0, int(os.environ.get("DEVTOOL_SSH_RETURN_ARCHIVE_MIN_BYTES", str(8 * 1024 * 1024)) or 0))
+    except ValueError:
+        min_bytes = 8 * 1024 * 1024
+    try:
+        min_files = max(0, int(os.environ.get("DEVTOOL_SSH_RETURN_ARCHIVE_MIN_FILES", "256") or 0))
+    except ValueError:
+        min_files = 256
+    return min_bytes, min_files
+
+
+def _return_selection_python(bundle: SSHReturnBundle, *, archive: bool, remote_zstd: str = "") -> str:
+    root = str(bundle.remote_root)
+    patterns = list(bundle.patterns)
+    common = (
+        "import pathlib,json,os,sys;"
+        f"root=pathlib.Path({root!r}).resolve();patterns=json.loads({json.dumps(patterns)!r});"
+        "seen=set();files=[];"
+        "norm=lambda p:p.replace('***','**/*');"
+        "\nfor pat in patterns:\n"
+        "  for p in root.glob(norm(pat)):\n"
+        "    try:\n      rp=p.resolve();rp.relative_to(root)\n    except (OSError,ValueError):\n      continue\n"
+        "    if p.is_file() and rp not in seen:\n      seen.add(rp);files.append(p)\n"
+    )
+    if not archive:
+        return common + "\ntotal=sum((p.stat().st_size if p.exists() else 0) for p in files);print(str(total)+' '+str(len(files)))"
+    return common + (
+        "\nimport subprocess,tarfile;"
+        f"proc=subprocess.Popen([{remote_zstd!r},'-1','-T0','-q','-c'],stdin=subprocess.PIPE);"
+        "tf=tarfile.open(fileobj=proc.stdin,mode='w|');"
+        "\nfor p in sorted(files,key=lambda x:x.as_posix()):\n  tf.add(p,arcname=p.relative_to(root).as_posix(),recursive=False)\n"
+        "tf.close();proc.stdin.close();rc=proc.wait();raise SystemExit(rc)"
+    )
+
+
+def _remote_python_command(config: SSHRunnerConfig, script: str, *, remote_python: str) -> str:
+    from .ssh_tmux_runner import build_ssh_remote_sh_argv
+    remote = f"{shlex.quote(remote_python)} -c {shlex.quote(script)}"
+    return shlex.join(build_ssh_remote_sh_argv(config, remote, tty=False))
+
+
 def shell_return_fragment(
     config: SSHRunnerConfig,
     bundle: SSHReturnBundle,
     *,
     remote_rsync: str,
+    remote_zstd: str = "",
+    remote_python: str = "",
 ) -> str:
-    """Return local-shell fragment that retrieves evidence without masking build rc."""
+    """Return a local-shell fragment with adaptive compressed evidence return.
+
+    Tiny bundles and workers without the required streaming tools retain the
+    established resumable rsync path. Large bundles are selected remotely,
+    streamed as zstd-compressed tar data, extracted only after the SSH transfer
+    succeeds, and never marked complete on an interrupted transfer/extraction.
+    """
     rsync = build_return_rsync_argv(
         config,
         remote_root=bundle.remote_root,
@@ -254,20 +306,48 @@ def shell_return_fragment(
     )
     status = shlex.quote(str(bundle.status_path))
     repo = shlex.quote(str(bundle.repo_root))
-    # rc=125 means the user detached from the phase while it is still running;
-    # do not publish a misleading final evidence snapshot in that state.
     status_tmp = shlex.quote(str(bundle.status_path) + ".tmp")
+    min_bytes, min_files = _return_archive_thresholds()
+    adaptive = bool(remote_zstd and remote_python)
+    if adaptive:
+        stats_cmd = _remote_python_command(
+            config, _return_selection_python(bundle, archive=False), remote_python=remote_python,
+        )
+        archive_cmd = _remote_python_command(
+            config, _return_selection_python(bundle, archive=True, remote_zstd=remote_zstd), remote_python=remote_python,
+        )
+        zst = shlex.quote(str(bundle.root / ".return.tar.zst"))
+        tarfile = shlex.quote(str(bundle.root / ".return.tar"))
+        archive_branch = (
+            f"return_stats=$({stats_cmd} 2>/dev/null) || return_stats='0 0'; "
+            "set -- $return_stats; return_bytes=${1:-0}; return_files=${2:-0}; "
+            "return_transferred_bytes=0; "
+            f"if command -v zstd >/dev/null 2>&1 && command -v tar >/dev/null 2>&1 && "
+            f"{{ [ \"$return_bytes\" -ge {min_bytes} ] || [ \"$return_files\" -ge {min_files} ]; }}; then "
+            f"{archive_cmd} > {zst}; return_rc=$?; return_mode=archive-zstd; "
+            f"[ -f {zst} ] && return_transferred_bytes=$(wc -c < {zst} 2>/dev/null || printf 0); "
+            "if [ \"$return_rc\" -eq 0 ]; then "
+            f"zstd -d -q -c {zst} > {tarfile}; return_rc=$?; "
+            f"if [ \"$return_rc\" -eq 0 ]; then tar -C {repo} -xf {tarfile}; return_rc=$?; fi; "
+            "fi; "
+            f"rm -f -- {zst} {tarfile}; "
+            "else "
+            f"{shlex.join(rsync)}; return_rc=$?; return_mode=rsync-delta; "
+            "[ \"$return_rc\" -eq 0 ] && return_transferred_bytes=$return_bytes; "
+            "fi; "
+        )
+    else:
+        archive_branch = f"return_bytes=0; return_files=0; return_transferred_bytes=0; {shlex.join(rsync)}; return_rc=$?; return_mode=rsync-delta; "
     return (
-        "; return_rc=0; "
+        "; return_rc=0; return_mode=deferred; return_bytes=0; return_files=0; "
         "if [ \"$rc\" -eq 125 ]; then "
-        f"printf 'returncode=125\\nstate=deferred\\n' > {status_tmp}; mv -f -- {status_tmp} {status}; "
+        f"printf 'returncode=125\\nstate=deferred\\nmode=deferred\\n' > {status_tmp}; mv -f -- {status_tmp} {status}; "
         "else "
-        f"rm -rf -- {repo}; mkdir -p {repo}; {shlex.join(rsync)}; return_rc=$?; "
-        f"printf 'returncode=%s\\nstate=%s\\n' \"$return_rc\" \"$([ \"$return_rc\" -eq 0 ] && printf complete || printf partial)\" > {status_tmp}; "
+        f"rm -rf -- {repo}; mkdir -p {repo}; " + archive_branch +
+        f"printf 'returncode=%s\\nstate=%s\\nmode=%s\\nsource_bytes=%s\\nsource_files=%s\\ntransferred_bytes=%s\\n' \"$return_rc\" \"$([ \"$return_rc\" -eq 0 ] && printf complete || printf partial)\" \"$return_mode\" \"$return_bytes\" \"$return_files\" \"$return_transferred_bytes\" > {status_tmp}; "
         f"mv -f -- {status_tmp} {status}; "
         "fi"
     )
-
 
 def load_return_state(metadata: dict[str, Any]) -> dict[str, Any]:
     status_path = Path(str(metadata.get("ssh_return_status_file") or "")).expanduser()
@@ -289,6 +369,10 @@ def load_return_state(metadata: dict[str, Any]) -> dict[str, Any]:
     except ValueError:
         returncode = -1
     state = values.get("state") or ("pending" if returncode < 0 else "complete" if returncode == 0 else "partial")
+    source_bytes = int(values.get("source_bytes", "0") or 0) if str(values.get("source_bytes", "0")).isdigit() else 0
+    source_files = int(values.get("source_files", "0") or 0) if str(values.get("source_files", "0")).isdigit() else 0
+    transferred_bytes = int(values.get("transferred_bytes", "0") or 0) if str(values.get("transferred_bytes", "0")).isdigit() else 0
+    ratio = (float(transferred_bytes) / float(source_bytes)) if source_bytes > 0 and transferred_bytes >= 0 else None
     return {
         "state": state,
         "returncode": returncode,
@@ -301,7 +385,38 @@ def load_return_state(metadata: dict[str, Any]) -> dict[str, Any]:
         "source_sync_id": str(metadata.get("ssh_source_sync_id") or manifest.get("source_sync_id") or ""),
         "producer": dict(manifest.get("producer") or {}) if isinstance(manifest.get("producer"), Mapping) else {},
         "producer_sha256": str(manifest.get("producer_sha256") or ""),
+        "transport_mode": values.get("mode", ""),
+        "source_bytes": source_bytes,
+        "source_files": source_files,
+        "transferred_bytes": transferred_bytes,
+        "compression_ratio": ratio if values.get("mode", "") == "archive-zstd" else None,
     }
+
+
+def publish_return_transfer_event(metadata: Mapping[str, Any], state: Mapping[str, Any]) -> None:
+    """Publish authoritative post-return transport truth into EXO's event stream."""
+    from .ssh_transport import SSHTransferTelemetry
+
+    source_bytes = max(0, int(state.get("source_bytes") or 0))
+    source_files = max(0, int(state.get("source_files") or 0))
+    transferred_bytes = max(0, int(state.get("transferred_bytes") or 0))
+    complete = str(state.get("state") or "") == "complete"
+    telemetry = SSHTransferTelemetry(
+        mode=str(state.get("transport_mode") or "return"),
+        state=str(state.get("state") or "pending"),
+        source_bytes=source_bytes,
+        transferred_bytes=transferred_bytes,
+        source_files=source_files,
+        transferred_files=source_files if complete else 0,
+        remaining_files=0 if complete else source_files,
+        compression_ratio=(float(state["compression_ratio"]) if state.get("compression_ratio") is not None else None),
+        workspace_sync_id=str(state.get("source_sync_id") or ""),
+        detail="SSH return bundle completed" if complete else "SSH return bundle is incomplete/recoverable",
+    )
+    telemetry.publish(
+        run_id=str(metadata.get("ssh_return_run_id") or os.environ.get("DEVTOOL_RUN_ID") or ""),
+        node_id=str(metadata.get("ssh_return_session") or "ssh-return"),
+    )
 
 
 def map_returned_path(value: str, *, local_repo_root: Path, returned_repo_root: Path, project_root: Path) -> str:
