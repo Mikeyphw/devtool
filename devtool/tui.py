@@ -210,11 +210,23 @@ def _semantic_live_panels(snapshot: dict[str, Any], profile: TerminalProfile) ->
             fed_rows.append(("Workflow", federation.get("workflow")))
         if federation.get("repository"):
             fed_rows.append(("Repository", federation.get("repository")))
+        if federation.get("target"):
+            fed_rows.append(("Target", federation.get("target")))
+        if federation.get("federation_ref"):
+            fed_rows.append(("Ref", federation.get("federation_ref")))
+        elif federation.get("contract_ref"):
+            fed_rows.append(("Contract", federation.get("contract_ref")))
         if federation.get("parent_run_id") and not profile.compact:
             fed_rows.append(("Parent", str(federation.get("parent_run_id"))[:18]))
         children = federation.get("children") if isinstance(federation.get("children"), list) else []
         if children:
-            fed_rows.append(("Children", ", ".join(f"{item.get('repository') or item.get('step')}:{item.get('status')}" for item in children[:4] if isinstance(item, dict))))
+            fed_rows.append((
+                "Children",
+                ", ".join(
+                    f"{item.get('federation_ref') or item.get('contract_ref') or item.get('repository') or item.get('step')}:{item.get('status')}"
+                    for item in children[:4] if isinstance(item, dict)
+                ),
+            ))
         panels.append(_kv_panel("Federation run", fed_rows, profile=profile))
 
     completed_statuses = {"ok", "passed", "success", "completed", "cached", "skipped"}

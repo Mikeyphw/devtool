@@ -361,6 +361,42 @@ Completion state and zsh completion expose federation repository/workflow names
 for `list`, `inspect`, `status`, `plan`, `run`, and `exec` commands. The checked-
 in completion file is kept byte-identical to `devtool.completion.ZSH_COMPLETION`.
 
+## FRX-X02: canonical target/workflow execution identity convergence
+
+Target-qualified planning identity is carried unchanged through execution and
+observability. Every federated workflow child has one canonical
+`repository::target::workflow` reference after planning, even when the source
+configuration used the backward-compatible `repository::workflow` form. The
+original requested reference is retained separately for diagnostics.
+
+The child EXO lineage persists `repository`, resolved `target`, child workflow,
+canonical `federation_ref`, and `requested_ref` together with the existing parent
+run/node and repository fingerprint. Parent federation nodes use the same
+canonical reference as their label and metadata. The child re-entry environment
+forwards those fields, and the child execution store must persist them before the
+coordinator accepts the child snapshot as authoritative.
+
+Command-mode transport metadata and whole-run SSH/chroot delegation preserve the
+same target/workflow identity. When any new target-qualified lineage fields are
+present, transport validates them as a complete tuple and rejects a canonical
+reference that does not equal `repository::target::workflow`. Older persisted
+lineage without these additive fields remains readable. SSH/OCI return producer
+evidence also retains the child target, child workflow, canonical ref, and
+requested ref so returned artifacts remain attributable to the exact federated
+child contract.
+
+Direct WRAP/TLJ federation bridges do not pretend wrapper/job contracts are child
+workflows. They instead persist the resolved child target plus a distinct
+`child_contract`/`contract_ref` such as `repository::target::wrapper:build` or
+`repository::target::job:lint`. Explicit target-local-job references use the
+actually resolved target rather than the repository default.
+
+The shared federation observability projection exposes canonical refs in workflow
+configuration health, live parent/child EXO state, doctor/machine output, CLI
+status, HUD projections, and TUI federation panels. This prevents two workflows
+with the same name on different child targets from collapsing into one UI or
+provenance identity.
+
 ## FRX-12: final seal and release qualification
 
 The federation campaign closes with a read-only final qualification surface:

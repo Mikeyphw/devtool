@@ -55,6 +55,10 @@ class FederatedChildRun:
     repository_identity: dict[str, Any] = field(default_factory=dict)
     run_lineage: dict[str, Any] = field(default_factory=dict)
     operational_ownership: dict[str, Any] = field(default_factory=dict)
+    federation_ref: str = ""
+    requested_ref: str = ""
+    child_contract: str = ""
+    contract_ref: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +73,10 @@ class FederatedChildRun:
             "repository_identity": dict(self.repository_identity),
             "run_lineage": dict(self.run_lineage),
             "operational_ownership": dict(self.operational_ownership),
+            "federation_ref": self.federation_ref,
+            "requested_ref": self.requested_ref,
+            "child_contract": self.child_contract,
+            "contract_ref": self.contract_ref,
         }
 
 
@@ -135,6 +143,20 @@ def _step_target(plan: FederatedPlanGraph, step: FederatedWorkflowStep) -> str:
     return next(iter(targets))
 
 
+def _step_federation_ref(plan: FederatedPlanGraph, step: FederatedWorkflowStep) -> str:
+    refs = {
+        node.federation_ref
+        for node in plan.nodes
+        if not node.synthetic and str(node.metadata.get("federation_step") or "") == step.step_id and node.federation_ref
+    }
+    if len(refs) != 1:
+        rendered = ", ".join(sorted(refs)) or "<none>"
+        raise FederationExecutionError(
+            f"Federation step {step.step_id!r} did not resolve one canonical federation ref; resolved: {rendered}"
+        )
+    return next(iter(refs))
+
+
 def _step_identity(plan: FederatedPlanGraph, step: FederatedWorkflowStep) -> dict[str, Any]:
     for node in plan.nodes:
         if node.synthetic or str(node.metadata.get("federation_step") or "") != step.step_id:
@@ -187,6 +209,10 @@ def _assert_child_snapshot_authority(
     child_run_id: str,
     expected_identity: dict[str, Any],
     expected_parent_run_id: str,
+    expected_target: str = "",
+    expected_child_workflow: str = "",
+    expected_federation_ref: str = "",
+    expected_requested_ref: str = "",
     snapshot: Any,
 ) -> dict[str, Any]:
     if snapshot is None:
@@ -201,6 +227,18 @@ def _assert_child_snapshot_authority(
             f"Child run {child_run_id!r} persisted mismatched child_run_id "
             f"{persisted_lineage.get('child_run_id')!r}"
         )
+    expected_fields = {
+        "target": expected_target,
+        "child_workflow": expected_child_workflow,
+        "federation_ref": expected_federation_ref,
+        "requested_ref": expected_requested_ref,
+    }
+    for field_name, expected_value in expected_fields.items():
+        if expected_value and str(persisted_lineage.get(field_name) or "") != expected_value:
+            raise FederationExecutionError(
+                f"Child run {child_run_id!r} did not persist authoritative federation {field_name}: "
+                f"expected {expected_value!r}, got {persisted_lineage.get(field_name)!r}"
+            )
     persisted_identity = dict(getattr(snapshot, "repository_identity", {}) or {})
     if not persisted_identity:
         raise FederationExecutionError(
@@ -310,7 +348,7 @@ def run_federated_workflow(
         publish(NodeDiscovered(
             run_id=run_id,
             node_id=node_ids[step.step_id],
-            label=f"{step.repository}::{step.workflow}",
+            label=_step_federation_ref(plan, step),
             kind="federation-child",
             depends_on=tuple(node_ids[dep] for dep in step.depends_on),
             source="federation",
@@ -318,7 +356,10 @@ def run_federated_workflow(
                 "federation_workflow": name,
                 "federation_step": step.step_id,
                 "repository": step.repository,
+                "target": _step_target(plan, step),
                 "workflow": step.workflow,
+                "federation_ref": _step_federation_ref(plan, step),
+                "requested_ref": step.ref,
                 "repository_identity": _step_identity(plan, step),
             },
         ))
@@ -344,7 +385,8 @@ def run_federated_workflow(
                 blocked = FederatedChildRun(
                     step.step_id, step.repository, step.workflow, _step_target(plan, step), "",
                     node_ids[step.step_id], ExecutionStatus.BLOCKED.value, 1,
-                    _step_identity(plan, step), {},
+                    _step_identity(plan, step), {}, {},
+                    federation_ref=_step_federation_ref(plan, step), requested_ref=step.ref,
                 )
                 outcomes[step.step_id] = blocked
                 children.append(blocked)
@@ -357,6 +399,7 @@ def run_federated_workflow(
             if not resolution.available:
                 raise FederationExecutionError(f"Federation repository {step.repository!r} is unavailable at execution time")
             target = _step_target(plan, step)
+            federation_ref = _step_federation_ref(plan, step)
             identity = _step_identity(plan, step)
             _assert_planned_resolution_identity(
                 repository=step.repository,
@@ -378,6 +421,10 @@ def run_federated_workflow(
                 "federation_workflow": name,
                 "federation_step": step.step_id,
                 "repository": step.repository,
+                "target": target,
+                "child_workflow": step.workflow,
+                "federation_ref": federation_ref,
+                "requested_ref": step.ref,
                 "source_repository": owner_fingerprint,
                 "requested_repository": step.repository,
                 "effective_repository": effective_fingerprint,
@@ -390,11 +437,20 @@ def run_federated_workflow(
             publish(NodeStarted(
                 run_id=run_id,
                 node_id=parent_node,
-                label=f"{step.repository}::{step.workflow}",
+                label=federation_ref,
                 kind="federation-child",
                 argv=tuple(_child_argv(root=resolution.root, target=target, workflow=step.workflow, invocation_command=invocation_command)),
                 source="federation",
-                metadata={"child_run_id": child_run_id, "run_lineage": lineage, "resume_checkpoint": resume_checkpoint},
+                metadata={
+                    "child_run_id": child_run_id,
+                    "repository": step.repository,
+                    "target": target,
+                    "workflow": step.workflow,
+                    "federation_ref": federation_ref,
+                    "requested_ref": step.ref,
+                    "run_lineage": lineage,
+                    "resume_checkpoint": resume_checkpoint,
+                },
             ))
 
             env = {
@@ -405,6 +461,10 @@ def run_federated_workflow(
                 "DEVTOOL_FEDERATION_WORKFLOW": name,
                 "DEVTOOL_FEDERATION_STEP": step.step_id,
                 "DEVTOOL_FEDERATION_REPOSITORY": step.repository,
+                "DEVTOOL_FEDERATION_TARGET": target,
+                "DEVTOOL_FEDERATION_CHILD_WORKFLOW": step.workflow,
+                "DEVTOOL_FEDERATION_REF": federation_ref,
+                "DEVTOOL_FEDERATION_REQUESTED_REF": step.ref,
                 "DEVTOOL_FEDERATION_SOURCE_REPOSITORY": owner_fingerprint,
                 "DEVTOOL_FEDERATION_REQUESTED_REPOSITORY": step.repository,
                 "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
@@ -431,6 +491,10 @@ def run_federated_workflow(
                 child_run_id=child_run_id,
                 expected_identity=identity,
                 expected_parent_run_id=run_id,
+                expected_target=target,
+                expected_child_workflow=step.workflow,
+                expected_federation_ref=federation_ref,
+                expected_requested_ref=step.ref,
                 snapshot=child_snapshot,
             ) if child_snapshot is not None else {}
             operational = collect_federated_operational_snapshot(
@@ -458,6 +522,11 @@ def run_federated_workflow(
                 transition_reason=f"child run {child_run_id}",
                 metadata={
                     "child_run_id": child_run_id,
+                    "repository": step.repository,
+                    "target": target,
+                    "workflow": step.workflow,
+                    "federation_ref": federation_ref,
+                    "requested_ref": step.ref,
                     "run_lineage": persisted_lineage or lineage,
                     "operational_ownership": operational,
                 },
@@ -465,6 +534,7 @@ def run_federated_workflow(
             child = FederatedChildRun(
                 step.step_id, step.repository, step.workflow, target, child_run_id,
                 parent_node, child_status, rc, identity, persisted_lineage or lineage, operational,
+                federation_ref=federation_ref, requested_ref=step.ref,
             )
             outcomes[step.step_id] = child
             children.append(child)
@@ -501,6 +571,8 @@ def run_federated_workflow(
                     active_step.step_id, active_step.repository, active_step.workflow, active_target,
                     active_child_run_id, active_parent_node, ExecutionStatus.CANCELLED.value, 130,
                     dict(active_identity), persisted_lineage or dict(active_lineage), {},
+                    federation_ref=str(active_lineage.get("federation_ref") or ""),
+                    requested_ref=str(active_lineage.get("requested_ref") or active_step.ref),
                 )
                 outcomes[active_step.step_id] = cancelled_child
                 children.append(cancelled_child)
@@ -534,6 +606,7 @@ def run_federated_workflow(
                 pending.step_id, pending.repository, pending.workflow, _step_target(plan, pending), "",
                 node_ids[pending.step_id], ExecutionStatus.BLOCKED.value, 130,
                 _step_identity(plan, pending), {}, {},
+                federation_ref=_step_federation_ref(plan, pending), requested_ref=pending.ref,
             )
             outcomes[pending.step_id] = blocked
             children.append(blocked)
@@ -555,6 +628,8 @@ def run_federated_direct_child(
     operation: str,
     invocation_argv: Iterable[str],
     execute: Callable[[str, dict[str, Any]], int],
+    target: str = "",
+    child_contract: str = "",
     publish: Callable[[Any], None] = publish_event,
     snapshot_lookup: Callable[[str], Any] | None = None,
     parent_run_id: str = "",
@@ -586,6 +661,9 @@ def run_federated_direct_child(
     snapshot_lookup = snapshot_lookup or get_execution_store().snapshot
     request_child_cancel = request_child_cancel or (lambda run_id: request_federated_child_cancellation(run_id))
     argv = tuple(str(value) for value in invocation_argv)
+    direct_target = str(target or "").strip()
+    direct_contract = str(child_contract or operation or "").strip()
+    contract_ref = f"{repo_name}::{direct_target}::{direct_contract}" if direct_target and direct_contract else ""
     lineage = {
         "kind": "federation",
         "relationship": "child",
@@ -595,6 +673,9 @@ def run_federated_direct_child(
         "federation_workflow": "@direct",
         "federation_step": operation,
         "repository": repo_name,
+        "target": direct_target,
+        "child_contract": direct_contract,
+        "contract_ref": contract_ref,
         "source_repository": owner_fingerprint,
         "requested_repository": repo_name,
         "effective_repository": effective_fingerprint,
@@ -624,7 +705,13 @@ def run_federated_direct_child(
         label=f"{repo_name}::{operation}",
         kind="federation-child",
         source="federation",
-        metadata={"repository": repo_name, "repository_identity": identity},
+        metadata={
+            "repository": repo_name,
+            "target": direct_target,
+            "child_contract": direct_contract,
+            "contract_ref": contract_ref,
+            "repository_identity": identity,
+        },
     ))
     publish(GraphSealed(run_id=parent_id, reason="direct federation child resolved", source="federation"))
     publish(NodeStarted(
@@ -634,7 +721,15 @@ def run_federated_direct_child(
         kind="federation-child",
         argv=argv,
         source="federation",
-        metadata={"child_run_id": child_run_id, "run_lineage": lineage, "resume_checkpoint": resume_checkpoint},
+        metadata={
+            "child_run_id": child_run_id,
+            "repository": repo_name,
+            "target": direct_target,
+            "child_contract": direct_contract,
+            "contract_ref": contract_ref,
+            "run_lineage": lineage,
+            "resume_checkpoint": resume_checkpoint,
+        },
     ))
     env = {
         "DEVTOOL_RUN_ID": child_run_id,
@@ -644,6 +739,9 @@ def run_federated_direct_child(
         "DEVTOOL_FEDERATION_WORKFLOW": "@direct",
         "DEVTOOL_FEDERATION_STEP": operation,
         "DEVTOOL_FEDERATION_REPOSITORY": repo_name,
+        "DEVTOOL_FEDERATION_TARGET": direct_target,
+        "DEVTOOL_FEDERATION_CHILD_CONTRACT": direct_contract,
+        "DEVTOOL_FEDERATION_CONTRACT_REF": contract_ref,
         "DEVTOOL_FEDERATION_SOURCE_REPOSITORY": owner_fingerprint,
         "DEVTOOL_FEDERATION_REQUESTED_REPOSITORY": repo_name,
         "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
@@ -703,8 +801,9 @@ def run_federated_direct_child(
             source="federation",
         ))
         return FederatedChildRun(
-            operation, repo_name, operation, "", child_run_id, node_id, status, rc,
+            operation, repo_name, operation, direct_target, child_run_id, node_id, status, rc,
             identity, persisted_lineage or lineage, operational,
+            child_contract=direct_contract, contract_ref=contract_ref,
         )
     except KeyboardInterrupt:
         try:

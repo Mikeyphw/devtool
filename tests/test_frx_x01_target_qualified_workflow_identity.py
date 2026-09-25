@@ -305,13 +305,8 @@ depends_on = ["child::root_module::package"]''',
         seen_argv.append(tuple(argv))
         run_id = os.environ["DEVTOOL_RUN_ID"]
         root = Path(argv[argv.index("--repo") + 1])
-        lineage = {
-            "kind": "federation",
-            "relationship": "child",
-            "parent_run_id": os.environ["DEVTOOL_FEDERATION_PARENT_RUN_ID"],
-            "parent_node_id": os.environ["DEVTOOL_FEDERATION_PARENT_NODE_ID"],
-            "child_run_id": run_id,
-        }
+        from devtool.invocation_origin import federation_lineage_from_environment
+        lineage = federation_lineage_from_environment()
         bus.publish(RunStarted(
             run_id=run_id,
             command="invoke",

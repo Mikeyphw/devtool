@@ -11152,7 +11152,9 @@ def _federation_command(args: argparse.Namespace) -> int:
                         rows.append((f"workflow.{item.get('name')}", f"{item.get('status')}; nodes={item.get('node_count', 0)}"))
                 for item in payload.get("runs", []):
                     if isinstance(item, dict):
-                        rows.append((f"run.{str(item.get('run_id') or '')[:12]}", f"{item.get('relationship')}; {item.get('status')}; {item.get('workflow') or item.get('repository') or '-'}"))
+                        federation = item.get("federation") if isinstance(item.get("federation"), dict) else {}
+                        subject = federation.get("federation_ref") or federation.get("contract_ref") or item.get("workflow") or item.get("repository") or "-"
+                        rows.append((f"run.{str(item.get('run_id') or '')[:12]}", f"{item.get('relationship')}; {item.get('status')}; {subject}"))
                 render_status_table(rows)
             return 0 if bool((payload.get("summary") or {}).get("healthy", True)) else 1
         if action == "plan":
@@ -11189,7 +11191,8 @@ def _federation_command(args: argparse.Namespace) -> int:
                     ("children", str(len(report.children))),
                 ]
                 for child in report.children:
-                    rows.append((child.step_id, f"{child.repository}::{child.workflow}; {child.status}; run={child.run_id or '-'}"))
+                    subject = child.federation_ref or f"{child.repository}::{child.target}::{child.workflow}"
+                    rows.append((child.step_id, f"{subject}; {child.status}; run={child.run_id or '-'}"))
                 render_status_table(rows)
             return int(report.exit_code)
         if action == "exec":

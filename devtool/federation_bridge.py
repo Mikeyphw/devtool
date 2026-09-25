@@ -36,6 +36,8 @@ class FederatedBridgePlan:
     child_root: str
     repository_identity: dict[str, Any]
     target: str = ""
+    child_contract: str = ""
+    contract_ref: str = ""
     job_reference: str = ""
     spec_count: int = 0
     wrapper: dict[str, Any] = field(default_factory=dict)
@@ -48,6 +50,8 @@ class FederatedBridgePlan:
             "child_root": self.child_root,
             "repository_identity": dict(self.repository_identity),
             "target": self.target,
+            "child_contract": self.child_contract,
+            "contract_ref": self.contract_ref,
             "job_reference": self.job_reference,
             "spec_count": self.spec_count,
             "wrapper": dict(self.wrapper),
@@ -107,6 +111,11 @@ def plan_federated_wrapper(
             child_root=str(child.repo_root),
             repository_identity=child.repository_identity.as_dict() if child.repository_identity else {},
             target=str(resolution.target or _selected_target(child)),
+            child_contract=f"wrapper:{resolution.command}",
+            contract_ref=(
+                f"{repository}::{str(resolution.target or _selected_target(child))}::wrapper:{resolution.command}"
+                if str(resolution.target or _selected_target(child)) else ""
+            ),
             wrapper=payload,
         ),
         child,
@@ -139,6 +148,8 @@ def execute_federated_wrapper(
         operation=f"wrapper:{resolution.command}",
         invocation_argv=redacted_argv,
         execute=execute,
+        target=plan.target,
+        child_contract=plan.child_contract,
         publish=publish,
         snapshot_lookup=snapshot_lookup,
     )
@@ -150,18 +161,32 @@ def plan_federated_job(
     job_reference: str,
 ) -> tuple[FederatedBridgePlan, ProjectConfig, list[Any]]:
     child = _load_child(parent, repository)
-    target = _selected_target(child)
+    selected_target = _selected_target(child)
     try:
-        specs = build_direct_job_specs(child, job_reference, target_name=target)
+        specs = build_direct_job_specs(child, job_reference, target_name=selected_target)
     except WorkflowRuntimeError as exc:
         raise FederationBridgeError(str(exc)) from exc
+    resolved_target = selected_target
+    if specs:
+        resolved_target = str(specs[0].metadata.get("direct_job_target") or selected_target).strip()
+    raw_job_reference = str(job_reference).strip()
+    if ":job:" in raw_job_reference:
+        _target_part, local_job_name = raw_job_reference.split(":job:", 1)
+    elif raw_job_reference.startswith("job:"):
+        local_job_name = raw_job_reference[4:]
+    else:
+        local_job_name = raw_job_reference
+    child_contract = f"job:{local_job_name.strip()}"
+    contract_ref = f"{repository}::{resolved_target}::{child_contract}" if resolved_target else ""
     return (
         FederatedBridgePlan(
             repository=repository,
             contract="job",
             child_root=str(child.repo_root),
             repository_identity=child.repository_identity.as_dict() if child.repository_identity else {},
-            target=target,
+            target=resolved_target,
+            child_contract=child_contract,
+            contract_ref=contract_ref,
             job_reference=str(job_reference),
             spec_count=len(specs),
         ),
@@ -229,6 +254,8 @@ def execute_federated_job(
         operation=f"job:{job_reference}",
         invocation_argv=("job", str(job_reference)),
         execute=execute,
+        target=plan.target,
+        child_contract=plan.child_contract,
         publish=publish,
         snapshot_lookup=snapshot_lookup,
     )

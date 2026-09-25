@@ -83,6 +83,12 @@ def _safe_identity(value: Any) -> dict[str, Any]:
 def _safe_transport(metadata: Mapping[str, Any]) -> dict[str, Any]:
     allowed = (
         "federation_child_repository",
+        "federation_child_target",
+        "federation_child_workflow",
+        "federation_ref",
+        "federation_requested_ref",
+        "federation_child_contract",
+        "federation_contract_ref",
         "federation_child_repository_fingerprint",
         "federation_child_local_root",
         "federation_child_remote_root",
@@ -139,7 +145,12 @@ def runtime_federation_projection(execution: Mapping[str, Any] | Any | None) -> 
             "node_id": str(node.get("node_id") or ""),
             "step": str(metadata.get("federation_step") or child_lineage.get("federation_step") or ""),
             "repository": str(metadata.get("repository") or child_lineage.get("repository") or ""),
-            "workflow": str(metadata.get("workflow") or child_lineage.get("federation_workflow") or ""),
+            "target": str(metadata.get("target") or child_lineage.get("target") or ""),
+            "workflow": str(metadata.get("workflow") or child_lineage.get("child_workflow") or ""),
+            "federation_ref": str(metadata.get("federation_ref") or child_lineage.get("federation_ref") or ""),
+            "requested_ref": str(metadata.get("requested_ref") or child_lineage.get("requested_ref") or ""),
+            "child_contract": str(metadata.get("child_contract") or child_lineage.get("child_contract") or ""),
+            "contract_ref": str(metadata.get("contract_ref") or child_lineage.get("contract_ref") or ""),
             "child_run_id": str(metadata.get("child_run_id") or child_lineage.get("child_run_id") or ""),
             "status": str(node.get("status") or "planned"),
             "depends_on": [str(value) for value in node.get("depends_on", []) or []],
@@ -158,6 +169,12 @@ def runtime_federation_projection(execution: Mapping[str, Any] | Any | None) -> 
         "relationship": relationship,
         "workflow": str(lineage.get("federation_workflow") or ""),
         "repository": str(lineage.get("repository") or lineage.get("requested_repository") or ""),
+        "target": str(lineage.get("target") or ""),
+        "child_workflow": str(lineage.get("child_workflow") or ""),
+        "federation_ref": str(lineage.get("federation_ref") or ""),
+        "requested_ref": str(lineage.get("requested_ref") or ""),
+        "child_contract": str(lineage.get("child_contract") or ""),
+        "contract_ref": str(lineage.get("contract_ref") or ""),
         "parent_run_id": str(lineage.get("parent_run_id") or ""),
         "parent_node_id": str(lineage.get("parent_node_id") or ""),
         "child_run_id": str(lineage.get("child_run_id") or payload.get("run_id") or ""),
@@ -229,10 +246,20 @@ def _workflow_observations(config: "ProjectConfig", issues: list[dict[str, Any]]
             issues.append({"severity": "error", "code": "federation.workflow.plan", "subject": name, "message": str(exc)})
         else:
             ordered = graph.topological_order()
+            step_refs: dict[str, str] = {}
+            for node in graph.nodes:
+                if node.synthetic:
+                    continue
+                step_id = str(node.metadata.get("federation_step") or "")
+                if step_id and node.federation_ref:
+                    step_refs.setdefault(step_id, node.federation_ref)
+            for step in entry["steps"]:
+                step["canonical_ref"] = step_refs.get(str(step.get("id") or ""), "")
             entry.update({
                 "status": "ok",
                 "node_count": len(graph.nodes),
                 "topological_order": [node.key for node in ordered],
+                "federation_refs": sorted(set(step_refs.values())),
             })
         result.append(entry)
     return result
@@ -256,6 +283,9 @@ def _run_observations(snapshots: Iterable[Any]) -> list[dict[str, Any]]:
             "relationship": relationship,
             "workflow": str(projection.get("workflow") or ""),
             "repository": str(projection.get("repository") or ""),
+            "target": str(projection.get("target") or ""),
+            "federation_ref": str(projection.get("federation_ref") or ""),
+            "contract_ref": str(projection.get("contract_ref") or ""),
             "parent_run_id": parent_run_id,
             "orphan": bool(relationship == "child" and parent_run_id and parent_run_id not in run_ids),
             "federation": projection,

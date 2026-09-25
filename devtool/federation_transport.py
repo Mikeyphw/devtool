@@ -49,6 +49,12 @@ class FederationRepositoryAttestation:
 _TRANSPORT_KEYS = (
     "federation_source_repository",
     "federation_child_repository",
+    "federation_child_target",
+    "federation_child_workflow",
+    "federation_ref",
+    "federation_requested_ref",
+    "federation_child_contract",
+    "federation_contract_ref",
     "federation_child_repository_fingerprint",
     "federation_child_local_root",
     "federation_child_remote_root",
@@ -415,6 +421,24 @@ def build_federation_transport_metadata(
         )
 
     repository = str(lineage.get("repository") or lineage.get("requested_repository") or "").strip()
+    child_target = str(lineage.get("target") or "").strip()
+    child_workflow = str(lineage.get("child_workflow") or "").strip()
+    federation_ref = str(lineage.get("federation_ref") or "").strip()
+    requested_ref = str(lineage.get("requested_ref") or "").strip()
+    child_contract = str(lineage.get("child_contract") or "").strip()
+    contract_ref = str(lineage.get("contract_ref") or "").strip()
+    parent_workflow = str(lineage.get("federation_workflow") or "").strip()
+    identity_fields_present = any((child_target, child_workflow, federation_ref, requested_ref))
+    if parent_workflow and parent_workflow != "@direct" and identity_fields_present:
+        if not repository or not child_target or not child_workflow or not federation_ref:
+            raise FederationTransportError(
+                "Federated workflow transport has partial canonical repository/target/workflow identity"
+            )
+        expected_ref = f"{repository}::{child_target}::{child_workflow}"
+        if federation_ref != expected_ref:
+            raise FederationTransportError(
+                f"Federated workflow transport ref mismatch: expected {expected_ref!r}, got {federation_ref!r}"
+            )
     child_run_id = str(lineage.get("child_run_id") or "").strip()
     return_root = str(artifact_return_root or "").strip()
     if not return_root:
@@ -436,6 +460,12 @@ def build_federation_transport_metadata(
     return {
         "federation_source_repository": str(lineage.get("source_repository") or ""),
         "federation_child_repository": repository,
+        "federation_child_target": child_target,
+        "federation_child_workflow": child_workflow,
+        "federation_ref": federation_ref,
+        "federation_requested_ref": requested_ref,
+        "federation_child_contract": child_contract,
+        "federation_contract_ref": contract_ref,
         "federation_child_repository_fingerprint": identity.fingerprint,
         "federation_child_local_root": local,
         "federation_child_remote_root": remote,
