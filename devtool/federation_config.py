@@ -14,17 +14,20 @@ import tomllib
 from typing import Any, Mapping
 
 from .models import (
-    FederationConfig, FederationGroup, FederatedRepositoryConfig,
+    FederationCapabilityRequirement, FederationConfig, FederationGroup, FederatedRepositoryConfig,
     FederatedWorkflowConfig, FederatedWorkflowStep,
 )
 
 FEDERATION_SCHEMA_VERSION = 1
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _FEDERATION_KEYS = frozenset({"schema", "repositories", "groups", "workflows"})
-_REPOSITORY_KEYS = frozenset({"path", "required"})
+_REPOSITORY_KEYS = frozenset({"path", "required", "exports", "requires"})
 _GROUP_KEYS = frozenset({"repositories", "members"})
 _WORKFLOW_KEYS = frozenset({"depends_on", "steps"})
 _WORKFLOW_STEP_KEYS = frozenset({"id", "ref", "depends_on"})
+_CAPABILITY_TABLE_KEYS = frozenset({"capabilities"})
+_CAPABILITY_REQUIREMENT_KEYS = frozenset({"name", "optional", "compatible", "policy"})
+_CAPABILITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*/v[0-9]+$")
 
 
 class FederationConfigError(ValueError):
@@ -115,6 +118,80 @@ def _bool(value: object, *, path: str, default: bool) -> bool:
     if not isinstance(value, bool):
         raise _fail(f"{path} must be true or false")
     return value
+
+
+
+
+def _capability_name(value: object, *, path: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise _fail(f"{path} must be a non-empty versioned capability identifier")
+    name = value.strip()
+    if not _CAPABILITY_RE.fullmatch(name):
+        raise _fail(
+            f"{path} must be a versioned capability identifier such as 'securefs/v1'; got {name!r}"
+        )
+    return name
+
+
+def _capability_exports(value: object, *, path: str) -> tuple[str, ...]:
+    table = _table(value, path=path)
+    if not table:
+        return ()
+    _reject_unknown(table, _CAPABILITY_TABLE_KEYS, path=path)
+    raw = table.get("capabilities", [])
+    if not isinstance(raw, list):
+        raise _fail(f"{path}.capabilities must be an array")
+    result: list[str] = []
+    for index, item in enumerate(raw):
+        name = _capability_name(item, path=f"{path}.capabilities[{index}]")
+        if name in result:
+            raise _fail(f"{path}.capabilities contains duplicate capability {name!r}")
+        result.append(name)
+    return tuple(result)
+
+
+def _capability_requires(value: object, *, path: str) -> tuple[FederationCapabilityRequirement, ...]:
+    table = _table(value, path=path)
+    if not table:
+        return ()
+    _reject_unknown(table, _CAPABILITY_TABLE_KEYS, path=path)
+    raw = table.get("capabilities", [])
+    if not isinstance(raw, list):
+        raise _fail(f"{path}.capabilities must be an array")
+    result: list[FederationCapabilityRequirement] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw):
+        item_path = f"{path}.capabilities[{index}]"
+        if isinstance(item, str):
+            req = FederationCapabilityRequirement(name=_capability_name(item, path=item_path))
+        elif isinstance(item, dict):
+            row = dict(item)
+            _reject_unknown(row, _CAPABILITY_REQUIREMENT_KEYS, path=item_path)
+            name = _capability_name(row.get("name"), path=f"{item_path}.name")
+            optional = _bool(row.get("optional"), path=f"{item_path}.optional", default=False)
+            compatible_raw = row.get("compatible", [])
+            if not isinstance(compatible_raw, list):
+                raise _fail(f"{item_path}.compatible must be an array")
+            compatible: list[str] = []
+            for compat_index, compat in enumerate(compatible_raw):
+                candidate = _capability_name(compat, path=f"{item_path}.compatible[{compat_index}]")
+                if candidate != name and candidate not in compatible:
+                    compatible.append(candidate)
+            policy = str(row.get("policy") or ("explicit-list" if compatible else "exact")).strip()
+            if policy not in {"exact", "explicit-list"}:
+                raise _fail(f"{item_path}.policy must be 'exact' or 'explicit-list'")
+            if compatible and policy != "explicit-list":
+                raise _fail(f"{item_path}.compatible requires policy='explicit-list'")
+            req = FederationCapabilityRequirement(
+                name=name, optional=optional, compatible=tuple(compatible), policy=policy
+            )
+        else:
+            raise _fail(f"{item_path} must be a capability string or inline table")
+        if req.name in seen:
+            raise _fail(f"{path}.capabilities contains duplicate requirement {req.name!r}")
+        seen.add(req.name)
+        result.append(req)
+    return tuple(result)
 
 
 def _repo_members(value: object, *, path: str) -> tuple[str, ...]:
@@ -456,6 +533,8 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
             root=str(root),
             required=required,
             available=available,
+            exports=_capability_exports(item.get("exports"), path=f"[federation.repositories.{name}.exports]"),
+            requires=_capability_requires(item.get("requires"), path=f"[federation.repositories.{name}.requires]"),
         )
 
     groups_raw = _table(raw.get("groups"), path="[federation.groups]")
@@ -528,6 +607,18 @@ def federation_as_dict(config: FederationConfig) -> dict[str, Any]:
                 "root": repo.root,
                 "required": repo.required,
                 "available": repo.available,
+                "exports": {"capabilities": list(repo.exports)},
+                "requires": {
+                    "capabilities": [
+                        {
+                            "name": requirement.name,
+                            "optional": requirement.optional,
+                            "compatible": list(requirement.compatible),
+                            "policy": requirement.policy,
+                        }
+                        for requirement in repo.requires
+                    ]
+                },
             }
             for name, repo in sorted(config.repositories.items())
         },

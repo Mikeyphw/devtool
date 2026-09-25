@@ -280,12 +280,26 @@ class WrapperConfig:
 
 
 @dataclass(slots=True, frozen=True)
+class FederationCapabilityRequirement:
+    name: str
+    optional: bool = False
+    compatible: tuple[str, ...] = ()
+    policy: str = "exact"
+
+    @property
+    def accepted_capabilities(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((self.name, *self.compatible)))
+
+
+@dataclass(slots=True, frozen=True)
 class FederatedRepositoryConfig:
     name: str
     declared_path: str
     root: str
     required: bool = True
     available: bool = False
+    exports: tuple[str, ...] = ()
+    requires: tuple[FederationCapabilityRequirement, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)

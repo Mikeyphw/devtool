@@ -109,6 +109,11 @@ from .federation_gate import build_federation_gate1_report, federation_gate1_as_
 from .federation_gate2 import build_federation_gate2_report, federation_gate2_as_dict, render_federation_gate2
 from .federation_final_seal import build_federation_final_seal_report, federation_final_seal_as_dict, render_federation_final_seal
 from .federation_plan import FederationPlanError, build_federated_plan, build_federated_group_plan
+from .federation_capabilities import FederationCapabilityError, build_capability_graph
+from .federation_impact import (
+    FederationImpactError, analyze_federation_impact, explain_federation_impact,
+    project_affected_workflow,
+)
 from .federation_observability import build_federation_observability
 from .federation_execution import FederationExecutionError, run_federated_workflow, run_federated_group
 from .federation_bridge import (
@@ -1103,6 +1108,17 @@ def build_parser() -> argparse.ArgumentParser:
     federation_status = federation_sub.add_parser("status", aliases=["summary"], help="Show one coherent federation observability snapshot")
     federation_status.add_argument("--run", default="", help="Limit run observations to one parent or child EXO run ID")
     federation_status.add_argument("--json", action="store_true", help="Emit the machine-readable federation observability snapshot")
+    federation_capabilities = federation_sub.add_parser("capabilities", aliases=["graph"], help="Show the declared repository capability/dependency graph")
+    federation_capabilities.add_argument("--json", action="store_true", help="Emit the machine-readable capability graph")
+    federation_affected = federation_sub.add_parser("affected", help="Compute dependency-aware affected federation repositories/workflows/groups")
+    federation_affected.add_argument("--since", default="", help="Detect direct repository changes since this Git revision")
+    federation_affected.add_argument("--repository", action="append", default=[], help="Seed one directly changed federation repository; repeatable")
+    federation_affected.add_argument("--json", action="store_true", help="Emit machine-readable impact/reason evidence")
+    federation_why = federation_sub.add_parser("why", help="Explain why a federation repository/node/workflow/group is affected")
+    federation_why.add_argument("subject", help="Repository, repository::node, workflow, or group to explain")
+    federation_why.add_argument("--since", default="", help="Detect direct repository changes since this Git revision")
+    federation_why.add_argument("--repository", action="append", default=[], help="Seed one directly changed federation repository; repeatable")
+    federation_why.add_argument("--json", action="store_true", help="Emit machine-readable reason evidence")
     federation_plan = federation_sub.add_parser("plan", help="Build a deterministic planning-only cross-repository workflow/group DAG")
     federation_plan.add_argument("workflow", nargs="?", default="", help="Federation workflow name")
     federation_plan.add_argument("--group", default="", help="Executable federation group from [federation.groups]")
@@ -1112,6 +1128,9 @@ def build_parser() -> argparse.ArgumentParser:
     federation_run.add_argument("--group", default="", help="Executable federation group from [federation.groups]")
     federation_run.add_argument("--parallel", action="store_true", help="Run dependency-ready federation children concurrently when reservations allow")
     federation_run.add_argument("--max-parallel", type=int, default=None, metavar="N", help="Limit concurrent federation children; implies --parallel")
+    federation_run.add_argument("--affected", action="store_true", help="Run only dependency-aware affected workflow repositories")
+    federation_run.add_argument("--since", default="", help="With --affected, detect direct changes since this Git revision")
+    federation_run.add_argument("--repository", action="append", default=[], help="With --affected, seed one directly changed repository; repeatable")
     federation_run.add_argument("--json", action="store_true", help="Emit the machine-readable federated run, scheduler, and lineage report")
     federation_exec = federation_sub.add_parser("exec", help="Execute one enrolled child wrapper or target-local-job public contract")
     federation_exec.add_argument("repository", help="Federation repository name")
@@ -11568,6 +11587,59 @@ def _federation_command(args: argparse.Namespace) -> int:
                         rows.append((f"run.{str(item.get('run_id') or '')[:12]}", f"{item.get('relationship')}; {item.get('status')}; {subject}"))
                 render_status_table(rows)
             return 0 if bool((payload.get("summary") or {}).get("healthy", True)) else 1
+        if action in {"capabilities", "graph"}:
+            graph = build_capability_graph(config, strict=True)
+            payload = graph.as_dict()
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [("health", "ok" if graph.healthy else "attention"), ("edges", str(len(graph.edges)))]
+                for repository, capabilities in sorted(graph.exports.items()):
+                    rows.append((f"exports.{repository}", ", ".join(capabilities) or "-"))
+                for edge in graph.edges:
+                    rows.append((f"edge.{edge.provider}->{edge.consumer}", edge.reason))
+                for resolution in graph.resolutions:
+                    if resolution.status != "resolved":
+                        rows.append((f"require.{resolution.consumer}.{resolution.requirement}", resolution.status))
+                render_status_table(rows)
+            return 0
+        if action == "affected":
+            report = analyze_federation_impact(
+                config,
+                repositories=getattr(args, "repository", []) or [],
+                since=str(getattr(args, "since", "") or ""),
+            )
+            payload = report.as_dict()
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("direct", ", ".join(report.direct_repositories) or "-"),
+                    ("affected", ", ".join(report.affected_repositories) or "-"),
+                    ("capabilities", ", ".join(report.direct_capabilities) or "-"),
+                    ("workflows", ", ".join(report.workflows) or "-"),
+                    ("groups", ", ".join(report.groups) or "-"),
+                ]
+                for repository in report.affected_repositories:
+                    reason_text = "; ".join(str(item.get("reason") or item.get("kind") or "") for item in report.reasons.get(repository, ()))
+                    rows.append((f"why.{repository}", reason_text or "affected"))
+                render_status_table(rows)
+            return 0
+        if action == "why":
+            report = analyze_federation_impact(
+                config,
+                repositories=getattr(args, "repository", []) or [],
+                since=str(getattr(args, "since", "") or ""),
+            )
+            payload = explain_federation_impact(report, str(getattr(args, "subject", "") or ""))
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [("subject", str(payload.get("subject") or "")), ("affected", "yes" if payload.get("affected") else "no")]
+                for index, reason in enumerate(payload.get("reasons") or [], 1):
+                    rows.append((f"reason.{index}", str(reason.get("reason") or reason.get("kind") or "")))
+                render_status_table(rows)
+            return 0 if payload.get("affected") else 1
         if action == "plan":
             workflow_name = str(getattr(args, "workflow", "") or "").strip()
             group_name = str(getattr(args, "group", "") or "").strip()
@@ -11611,6 +11683,42 @@ def _federation_command(args: argparse.Namespace) -> int:
                 raise FederationExecutionError("--max-parallel must be a positive integer")
             max_parallel = int(raw_max_parallel or 0)
             parallel = bool(getattr(args, "parallel", False) or raw_max_parallel is not None)
+            impact_payload = None
+            if bool(getattr(args, "affected", False)):
+                if group_name:
+                    raise FederationImpactError("federation run --affected currently requires a named workflow, not --group")
+                impact = analyze_federation_impact(
+                    config,
+                    repositories=getattr(args, "repository", []) or [],
+                    since=str(getattr(args, "since", "") or ""),
+                )
+                impact_payload = impact.as_dict()
+                scoped = project_affected_workflow(config, workflow_name, impact.affected_repositories)
+                if scoped is not None:
+                    execution_repositories = sorted({
+                        step.repository for step in scoped.federation.workflows[workflow_name].steps
+                    })
+                    impact_payload["execution_repositories"] = execution_repositories
+                    impact_payload["prerequisite_repositories"] = sorted(
+                        set(execution_repositories) - set(impact.affected_repositories)
+                    )
+                if scoped is None:
+                    payload = {
+                        "schema_version": 1,
+                        "subject_kind": "workflow",
+                        "workflow": workflow_name,
+                        "status": "succeeded",
+                        "exit_code": 0,
+                        "children": [],
+                        "affected": impact_payload,
+                        "reason": "no affected federation steps",
+                    }
+                    if as_json:
+                        print(json.dumps(payload, indent=2, ensure_ascii=False))
+                    else:
+                        render_status_table([("workflow", workflow_name), ("status", "succeeded"), ("affected", "none")])
+                    return 0
+                config = scoped
             report = (
                 run_federated_group(
                     config, group_name, reenter=main, parallel=parallel, max_parallel=max_parallel
@@ -11620,6 +11728,8 @@ def _federation_command(args: argparse.Namespace) -> int:
                 )
             )
             payload = report.as_dict()
+            if impact_payload is not None:
+                payload["affected"] = impact_payload
             if group_name:
                 payload["subject_kind"] = "group"
                 payload["group"] = group_name
@@ -11701,7 +11811,7 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append(("job", str(payload.get("job_reference"))))
                 render_status_table(rows)
             return code
-    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError) as exc:
+    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 

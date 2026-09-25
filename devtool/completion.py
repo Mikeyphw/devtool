@@ -801,7 +801,7 @@ _devtool() {
           ;;
         federation|fed)
           if (( ${#line} < 2 )); then
-            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec
+            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec capabilities graph affected why
           else
             case $line[2] in
               list|preflight|gate1|gate2|execution-preflight|final-seal|seal)
@@ -810,6 +810,15 @@ _devtool() {
               status|summary)
                 _arguments '--run[parent or child EXO run ID]:run-id:' '--json[emit machine-readable federation observability]'
                 ;;
+              capabilities|graph)
+                _arguments '--json[emit machine-readable capability dependency graph]'
+                ;;
+              affected)
+                _arguments '--since[detect direct changes since revision]:revision:' '*--repository[seed directly changed federation repository]:repository:_devtool_federation_repositories' '--json[emit machine-readable impact evidence]'
+                ;;
+              why)
+                _arguments '1:repository node workflow or group:' '--since[detect direct changes since revision]:revision:' '*--repository[seed directly changed federation repository]:repository:_devtool_federation_repositories' '--json[emit machine-readable reason evidence]'
+                ;;
               inspect)
                 _arguments '1:federated repository:_devtool_federation_repositories' '--json[emit machine-readable repository boundary state]'
                 ;;
@@ -817,7 +826,7 @@ _devtool() {
                 _arguments '1:federation workflow:_devtool_federation_workflows' '--group[plan a federation group]:group:_devtool_federation_groups' '--json[emit machine-readable federation state]'
                 ;;
               run)
-                _arguments '1:federation workflow:_devtool_federation_workflows' '--group[execute/plan a federation group]:group:_devtool_federation_groups' '--parallel[run dependency-ready federation children concurrently when safe]' '--max-parallel[maximum concurrent federation children; implies --parallel]:count:' '--json[emit machine-readable federation state]'
+                _arguments '1:federation workflow:_devtool_federation_workflows' '--group[execute/plan a federation group]:group:_devtool_federation_groups' '--parallel[run dependency-ready federation children concurrently when safe]' '--max-parallel[maximum concurrent federation children; implies --parallel]:count:' '--affected[run only dependency-aware affected workflow repositories]' '--since[with --affected detect direct changes since revision]:revision:' '*--repository[with --affected seed changed repository]:repository:_devtool_federation_repositories' '--json[emit machine-readable federation state]'
                 ;;
               exec)
                 _arguments '1:federated repository:_devtool_federation_repositories' '--plan[resolve without execution]' '--json[emit machine-readable bridge state]' '*:child contract arguments:'

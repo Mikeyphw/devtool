@@ -221,6 +221,26 @@ def build_federation_gate1_report(config: "ProjectConfig") -> FederationGateRepo
 
     _append_project_surface_checks(checks, config, label="owner")
 
+    try:
+        from .federation_capabilities import build_capability_graph
+        capability_graph = build_capability_graph(config, strict=True)
+    except Exception as exc:
+        checks.append(_check(
+            "capabilities",
+            "dependency-graph",
+            "error",
+            f"capability dependency preflight failed: {exc}",
+        ))
+    else:
+        checks.append(_check(
+            "capabilities",
+            "dependency-graph",
+            "ok",
+            "mandatory capability requirements resolve to exactly one enrolled provider",
+            edge_count=len(capability_graph.edges),
+            requirement_count=len(capability_graph.resolutions),
+        ))
+
     seen_fingerprints: dict[str, str] = {}
     if owner_identity is not None and owner_identity.fingerprint:
         seen_fingerprints[owner_identity.fingerprint] = "owner"

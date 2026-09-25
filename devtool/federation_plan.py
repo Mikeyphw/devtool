@@ -63,6 +63,7 @@ class FederatedPlanGraph:
     workflow: str
     nodes: tuple[FederatedPlanNode, ...]
     repositories: tuple[str, ...]
+    capability_graph: dict[str, Any] = field(default_factory=dict)
 
     @property
     def by_key(self) -> dict[str, FederatedPlanNode]:
@@ -126,6 +127,7 @@ class FederatedPlanGraph:
             "leaves": [node.key for node in self.leaves],
             "order": [node.key for node in ordered],
             "nodes": [node.as_dict() for node in self.nodes],
+            "capability_graph": dict(self.capability_graph),
         }
 
 
@@ -417,6 +419,59 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
             next_index += 1
         invocation_bounds[step.step_id] = (tuple(prefixed_roots), tuple(prefixed_leaves))
 
+    # FRX-Y04 capability dependencies are architecture edges layered onto the
+    # child-owned workflow graphs. They order provider repository leaves before
+    # consumer repository roots only when both participate in this plan.
+    from .federation_capabilities import FederationCapabilityError, build_capability_graph
+    try:
+        capability_graph = build_capability_graph(parent, strict=True)
+    except FederationCapabilityError as exc:
+        raise FederationPlanError(str(exc)) from exc
+    by_repository: dict[str, list[FederatedPlanNode]] = {}
+    for node in nodes:
+        if not node.synthetic:
+            by_repository.setdefault(node.repository, []).append(node)
+    same_repo_dependents: dict[str, set[str]] = {node.key: set() for node in nodes}
+    for node in nodes:
+        for dependency in node.depends_on:
+            dep_node = next((candidate for candidate in nodes if candidate.key == dependency), None)
+            if dep_node is not None and dep_node.repository == node.repository:
+                same_repo_dependents.setdefault(dependency, set()).add(node.key)
+    extra_dependencies: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for edge in capability_graph.edges:
+        provider_nodes = by_repository.get(edge.provider, [])
+        consumer_nodes = by_repository.get(edge.consumer, [])
+        if not provider_nodes or not consumer_nodes:
+            continue
+        provider_leaves = [node for node in provider_nodes if not same_repo_dependents.get(node.key)]
+        consumer_roots = [
+            node for node in consumer_nodes
+            if not any(
+                candidate.repository == node.repository and candidate.key in node.depends_on
+                for candidate in consumer_nodes
+            )
+        ]
+        evidence = edge.as_dict()
+        for consumer_root in consumer_roots:
+            for provider_leaf in provider_leaves:
+                if provider_leaf.key != consumer_root.key:
+                    extra_dependencies.setdefault(consumer_root.key, []).append((provider_leaf.key, evidence))
+    if extra_dependencies:
+        rewritten: list[FederatedPlanNode] = []
+        for node in nodes:
+            additions = extra_dependencies.get(node.key, [])
+            if not additions:
+                rewritten.append(node)
+                continue
+            metadata = dict(node.metadata)
+            metadata["capability_dependencies"] = [dict(item[1]) for item in additions]
+            rewritten.append(replace(
+                node,
+                depends_on=tuple(dict.fromkeys([*node.depends_on, *(item[0] for item in additions)])),
+                metadata=metadata,
+            ))
+        nodes = rewritten
+
     # A synthetic aggregate makes the top-level federation workflow explicit
     # without inventing an executable child command.
     depended_steps = {dep for step in workflow.steps for dep in step.depends_on}
@@ -437,7 +492,9 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
         metadata={"planning_only": True},
     ))
 
-    graph = FederatedPlanGraph(name, tuple(nodes), tuple(repositories))
+    graph = FederatedPlanGraph(
+        name, tuple(nodes), tuple(repositories), capability_graph=capability_graph.as_dict()
+    )
     graph.topological_order()
     return graph
 

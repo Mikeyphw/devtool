@@ -15,6 +15,8 @@ EXPECTED_TESTS = {
     "roadmap-artifact-validation",
     "roadmap-frx-baseline",
     "roadmap-frx-y01",
+    "roadmap-frx-y04",
+    "roadmap-frx-y05",
     "roadmap-git-frx01",
     "roadmap-git-frx02",
     "roadmap-git-frx03",
@@ -24,7 +26,7 @@ EXPECTED_TESTS = {
     "roadmap-gate1-regressions",
     "roadmap-workflow-exo-baseline",
 }
-EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-git-frx04", "roadmap-git-frx05", "roadmap-gate1", "roadmap-current"}
+EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-frx-y04", "roadmap-frx-y05", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-git-frx04", "roadmap-git-frx05", "roadmap-gate1", "roadmap-current"}
 
 
 def _config():
@@ -152,6 +154,22 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
         "test:roadmap-workflow-exo-baseline",
     }
 
+    frx_y04 = plan_selected_workflow(cfg, "roadmap-frx-y04")
+    assert {node.ref.raw for node in frx_y04.nodes} == {
+        "job:source-syntax",
+        "test:roadmap-frx-baseline",
+        "test:roadmap-frx-y04",
+        "test:roadmap-workflow-exo-baseline",
+    }
+
+    frx_y05 = plan_selected_workflow(cfg, "roadmap-frx-y05")
+    assert {node.ref.raw for node in frx_y05.nodes} == {
+        "job:source-syntax",
+        "test:roadmap-frx-y04",
+        "test:roadmap-frx-y05",
+        "test:roadmap-workflow-exo-baseline",
+    }
+
     gate1 = plan_selected_workflow(cfg, "roadmap-gate1")
     assert {node.ref.raw for node in gate1.nodes} == {
         "job:source-syntax",
@@ -174,7 +192,7 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
         "job:source-syntax",
         *(f"test:{test_id}" for test_id in EXPECTED_TESTS),
     }
-    assert len(current.nodes) == 12
+    assert len(current.nodes) == 14
 
 
 def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons() -> None:
@@ -210,7 +228,7 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
 
     assert payload["action"] == "roadmap-current"
     assert payload["targets"] == ["devtool"]
-    assert payload["summary"]["node_count"] == 12
+    assert payload["summary"]["node_count"] == 14
     assert payload["summary"]["target_local_job_count"] == 1
     assert payload["summary"]["target_local_jobs"][0]["key"] == "devtool.source-syntax"
     assert payload["schedule"]["nodes"]
@@ -224,6 +242,8 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     assert by_ref["test:roadmap-git-frx06"]["target"] == "devtool"
     assert by_ref["test:roadmap-gate1-regressions"]["target"] == "devtool"
     assert by_ref["test:roadmap-frx-y01"]["target"] == "devtool"
+    assert by_ref["test:roadmap-frx-y04"]["target"] == "devtool"
+    assert by_ref["test:roadmap-frx-y05"]["target"] == "devtool"
     source_node = next(node for node in payload["schedule"]["nodes"] if node["job_key"] == "devtool.source-syntax")
     assert source_node["writes_known"] is True
     assert source_node["scope_reason"]

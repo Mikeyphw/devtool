@@ -34,6 +34,7 @@ from .core.events import (
     publish_event,
 )
 from .federation_discovery import resolve_federated_repository
+from .federation_capabilities import project_capability_dependencies
 from .federation_plan import FederatedPlanGraph, build_federated_plan, project_with_federation_group
 from .federation_scheduler import FederatedSchedulePlan, build_federated_schedule
 from .federation_operations import (
@@ -328,6 +329,7 @@ def _run_federated_workflow_sequential(
     if workflow is None:
         available = ", ".join(sorted(parent.federation.workflows)) or "<none>"
         raise FederationExecutionError(f"Unknown federation workflow {name!r}. Available workflows: {available}")
+    workflow = project_capability_dependencies(parent, workflow)
 
     plan = build_federated_plan(parent, name)
     run_id = str(parent_run_id or RunId.new(prefix="federation"))
@@ -737,6 +739,7 @@ def _run_federated_workflow_parallel(
     if workflow is None:
         available = ", ".join(sorted(parent.federation.workflows)) or "<none>"
         raise FederationExecutionError(f"Unknown federation workflow {name!r}. Available workflows: {available}")
+    workflow = project_capability_dependencies(parent, workflow)
 
     plan = build_federated_plan(parent, name)
     policy = parent.workspace.scheduler
