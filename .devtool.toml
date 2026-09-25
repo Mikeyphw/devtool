@@ -198,12 +198,14 @@ roadmap-smoke = [
 roadmap-frx-y01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "frx-baseline", ref = "test:roadmap-frx-baseline", depends_on = ["syntax"] },
-  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
+  { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["frx-baseline"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y01"] },
 ]
 roadmap-current = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "artifact-validation", ref = "test:roadmap-artifact-validation", depends_on = ["syntax"] },
   { id = "frx-baseline", ref = "test:roadmap-frx-baseline", depends_on = ["syntax"] },
+  { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["frx-baseline"] },
   { id = "git-frx01", ref = "test:roadmap-git-frx01", depends_on = ["syntax"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
 ]
@@ -231,6 +233,16 @@ command = [
   "tests/test_frx_x02_target_identity_convergence.py",
   "tests/test_frx_x03_executable_federation_groups.py",
   "tests/test_frx_x04_real_repo_adoption_reseal.py",
+]
+
+[[test]]
+id = "roadmap-frx-y01"
+name = "FRX-Y01 parallel federation DAG scheduler"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-frx-y01.xml",
+  "tests/test_frx_y01_parallel_federation_scheduler.py",
 ]
 
 [[test]]

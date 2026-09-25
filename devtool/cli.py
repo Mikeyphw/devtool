@@ -1088,7 +1088,9 @@ def build_parser() -> argparse.ArgumentParser:
     federation_run = federation_sub.add_parser("run", help="Execute a federated workflow or group with distinct parent/child EXO runs")
     federation_run.add_argument("workflow", nargs="?", default="", help="Federation workflow name")
     federation_run.add_argument("--group", default="", help="Executable federation group from [federation.groups]")
-    federation_run.add_argument("--json", action="store_true", help="Emit the machine-readable federated run and lineage report")
+    federation_run.add_argument("--parallel", action="store_true", help="Run dependency-ready federation children concurrently when reservations allow")
+    federation_run.add_argument("--max-parallel", type=int, default=None, metavar="N", help="Limit concurrent federation children; implies --parallel")
+    federation_run.add_argument("--json", action="store_true", help="Emit the machine-readable federated run, scheduler, and lineage report")
     federation_exec = federation_sub.add_parser("exec", help="Execute one enrolled child wrapper or target-local-job public contract")
     federation_exec.add_argument("repository", help="Federation repository name")
     federation_exec.add_argument("--plan", action="store_true", help="Resolve the child public contract without executing it")
@@ -11329,9 +11331,18 @@ def _federation_command(args: argparse.Namespace) -> int:
                 raise FederationExecutionError(
                     "federation run requires exactly one workflow name or --group <name>"
                 )
+            raw_max_parallel = getattr(args, "max_parallel", None)
+            if raw_max_parallel is not None and int(raw_max_parallel) <= 0:
+                raise FederationExecutionError("--max-parallel must be a positive integer")
+            max_parallel = int(raw_max_parallel or 0)
+            parallel = bool(getattr(args, "parallel", False) or raw_max_parallel is not None)
             report = (
-                run_federated_group(config, group_name, reenter=main)
-                if group_name else run_federated_workflow(config, workflow_name, reenter=main)
+                run_federated_group(
+                    config, group_name, reenter=main, parallel=parallel, max_parallel=max_parallel
+                )
+                if group_name else run_federated_workflow(
+                    config, workflow_name, reenter=main, parallel=parallel, max_parallel=max_parallel
+                )
             )
             payload = report.as_dict()
             if group_name:
@@ -11347,6 +11358,8 @@ def _federation_command(args: argparse.Namespace) -> int:
                     ("parent_run_id", report.parent_run_id),
                     ("status", report.status),
                     ("children", str(len(report.children))),
+                    ("parallel", "yes" if bool(report.schedule.get("parallel_requested")) else "no"),
+                    ("schedule_waves", str(len(report.schedule.get("waves") or [])) if report.schedule else "-"),
                 ]
                 for child in report.children:
                     subject = child.federation_ref or f"{child.repository}::{child.target}::{child.workflow}"

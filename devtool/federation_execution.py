@@ -9,10 +9,16 @@ authoritative run identity.
 """
 
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+import json
 import os
 from pathlib import Path
+import subprocess
+import sys
+import threading
 import time
+from types import SimpleNamespace
 from typing import Any, Callable, Iterable
 
 from .core.execution_contract import ExecutionStatus, RunId
@@ -29,6 +35,7 @@ from .core.events import (
 )
 from .federation_discovery import resolve_federated_repository
 from .federation_plan import FederatedPlanGraph, build_federated_plan, project_with_federation_group
+from .federation_scheduler import FederatedSchedulePlan, build_federated_schedule
 from .federation_operations import (
     capture_federated_resume_checkpoint,
     collect_federated_operational_snapshot,
@@ -88,6 +95,7 @@ class FederatedRunReport:
     exit_code: int
     children: tuple[FederatedChildRun, ...]
     plan: FederatedPlanGraph
+    schedule: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -108,6 +116,7 @@ class FederatedRunReport:
             "exit_code": self.exit_code,
             "children": [child.as_dict() for child in self.children],
             "plan": self.plan.as_dict(),
+            "schedule": dict(self.schedule),
         }
 
 
@@ -296,7 +305,7 @@ def _child_argv(
     ]
 
 
-def run_federated_workflow(
+def _run_federated_workflow_sequential(
     parent: ProjectConfig,
     workflow_name: str,
     *,
@@ -638,6 +647,577 @@ def run_federated_workflow(
 
 
 
+ParallelChildExecutor = Callable[[list[str], dict[str, str]], int]
+
+
+def _safe_state_component(value: str) -> str:
+    text = str(value or "").strip()
+    return "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in text) or "run"
+
+
+def _parallel_child_state_directory(parent_run_id: str, child_run_id: str) -> Path:
+    # Parallel federation children must never share the singleton HUD/tasker
+    # directory: each child owns independent durable EXO projection state.
+    from .tasker import DEFAULT_TASKER_DIR, tasker_dir_from_text
+
+    root = tasker_dir_from_text(os.environ.get("DEVTOOL_TASKER_DIR") or DEFAULT_TASKER_DIR)
+    return (
+        root
+        / "federation-children"
+        / _safe_state_component(parent_run_id)
+        / _safe_state_component(child_run_id)
+    )
+
+
+def _persisted_execution_snapshot(directory: Path, child_run_id: str) -> Any | None:
+    path = directory / "execution.json"
+    if not path.is_file():
+        return None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    payload = document.get("execution") if isinstance(document, dict) else None
+    if not isinstance(payload, dict):
+        payload = document if isinstance(document, dict) else {}
+    if str(payload.get("run_id") or "") != child_run_id:
+        return None
+
+    def rows(name: str) -> tuple[Any, ...]:
+        raw = payload.get(name)
+        if not isinstance(raw, list):
+            return ()
+        return tuple(SimpleNamespace(**dict(item)) for item in raw if isinstance(item, dict))
+
+    return SimpleNamespace(
+        run_id=child_run_id,
+        status=str(payload.get("status") or ""),
+        run_lineage=dict(payload.get("run_lineage") or {}),
+        repository_identity=dict(payload.get("repository_identity") or {}),
+        artifacts=rows("artifacts"),
+        diagnostics=rows("diagnostics"),
+        processes=rows("processes"),
+        metrics=dict(payload.get("metrics") or {}),
+    )
+
+
+def _default_parallel_child_executor(argv: list[str], env: dict[str, str]) -> int:
+    """Run one federation child in an isolated Python process.
+
+    Parallel recursive ``main()`` calls cannot safely share ``os.environ``.
+    A child process gives each federation child authoritative run/lineage
+    environment without serializing the scheduler behind a global env lock.
+    """
+
+    child_env = dict(os.environ)
+    child_env.update({str(key): str(value) for key, value in env.items() if str(value)})
+    completed = subprocess.run(
+        [sys.executable, "-m", "devtool", *argv],
+        env=child_env,
+        check=False,
+    )
+    return int(completed.returncode)
+
+
+def _run_federated_workflow_parallel(
+    parent: ProjectConfig,
+    workflow_name: str,
+    *,
+    reenter: Callable[[list[str]], int],
+    publish: Callable[[Any], None] = publish_event,
+    snapshot_lookup: Callable[[str], Any] | None = None,
+    parent_run_id: str = "",
+    request_child_cancel: Callable[[str], Any] | None = None,
+    max_parallel: int = 0,
+    child_executor: ParallelChildExecutor | None = None,
+) -> FederatedRunReport:
+    name = str(workflow_name or "").strip()
+    federation_group = name.split(":", 1)[1] if name.startswith("group:") else ""
+    workflow = parent.federation.workflows.get(name)
+    if workflow is None:
+        available = ", ".join(sorted(parent.federation.workflows)) or "<none>"
+        raise FederationExecutionError(f"Unknown federation workflow {name!r}. Available workflows: {available}")
+
+    plan = build_federated_plan(parent, name)
+    policy = parent.workspace.scheduler
+    effective_max = max(1, int(max_parallel or policy.max_parallel_nodes or 4))
+    schedule = build_federated_schedule(
+        workflow,
+        plan,
+        parallel_requested=True,
+        max_parallel=effective_max,
+        max_gradle=max(0, int(policy.max_gradle_nodes)),
+        max_dotnet=max(0, int(policy.max_dotnet_nodes)),
+    )
+    schedule_nodes = schedule.by_step
+    wave_for_step = {
+        step_id: wave.index
+        for wave in schedule.waves
+        for step_id in wave.nodes
+    }
+
+    run_id = str(parent_run_id or RunId.new(prefix="federation"))
+    owner_identity = parent.repository_identity.as_dict() if parent.repository_identity else {}
+    owner_fingerprint = str(owner_identity.get("fingerprint") or owner_identity.get("root") or parent.repo_root)
+    started = time.monotonic()
+    snapshot_lookup = snapshot_lookup or get_execution_store().snapshot
+    request_child_cancel = request_child_cancel or (
+        lambda child_run_id: request_federated_child_cancellation(child_run_id)
+    )
+    executor_fn = child_executor or _default_parallel_child_executor
+
+    parent_lineage = {
+        "kind": "federation",
+        "relationship": "coordinator",
+        "child_run_id": run_id,
+        "federation_workflow": name,
+        "source_repository": owner_fingerprint,
+        "effective_repository": owner_fingerprint,
+    }
+    if federation_group:
+        parent_lineage["federation_group"] = federation_group
+    publish(RunStarted(
+        run_id=run_id,
+        command=(
+            f"federation run --group {federation_group} --parallel"
+            if federation_group
+            else f"federation run {name} --parallel"
+        ),
+        project=str(parent.repo_root),
+        source="federation",
+        metadata={
+            "repository_identity": owner_identity,
+            "run_lineage": parent_lineage,
+            "federation_scheduler": schedule.as_dict(),
+        },
+    ))
+
+    ordered_steps = _ordered_steps(workflow)
+    steps_by_id = {step.step_id: step for step in ordered_steps}
+    node_ids = {step.step_id: _parent_node_id(name, step.step_id) for step in ordered_steps}
+    for step in ordered_steps:
+        scheduler_node = schedule_nodes[step.step_id]
+        publish(NodeDiscovered(
+            run_id=run_id,
+            node_id=node_ids[step.step_id],
+            label=_step_federation_ref(plan, step),
+            kind="federation-child",
+            depends_on=tuple(node_ids[dep] for dep in step.depends_on),
+            source="federation",
+            metadata={
+                "federation_workflow": name,
+                "federation_step": step.step_id,
+                "repository": step.repository,
+                "target": _step_target(plan, step),
+                "workflow": step.workflow,
+                "federation_ref": _step_federation_ref(plan, step),
+                "requested_ref": step.ref,
+                "repository_identity": _step_identity(plan, step),
+                "scheduler_state": "queued",
+                "scheduler_wave": wave_for_step.get(step.step_id, 0),
+                "scheduler": scheduler_node.as_dict(),
+            },
+        ))
+    publish(GraphSealed(
+        run_id=run_id,
+        reason="federation child workflow set resolved with FRX-Y01 scheduling plan",
+        source="federation",
+    ))
+
+    active_lock = threading.RLock()
+    active_children: dict[str, str] = {}
+    outcomes: dict[str, FederatedChildRun] = {}
+    cancelled = False
+    failed = False
+
+    def cancel_active(*, except_run_id: str = "") -> None:
+        with active_lock:
+            run_ids = sorted(active_children)
+        for child_run_id in run_ids:
+            if child_run_id == except_run_id:
+                continue
+            try:
+                request_child_cancel(child_run_id)
+            except Exception:
+                pass
+
+    def execute_step(step: FederatedWorkflowStep) -> FederatedChildRun:
+        resolution = resolve_federated_repository(parent, step.repository)
+        if not resolution.available:
+            raise FederationExecutionError(
+                f"Federation repository {step.repository!r} is unavailable at execution time"
+            )
+        target = _step_target(plan, step)
+        federation_ref = _step_federation_ref(plan, step)
+        identity = _step_identity(plan, step)
+        _assert_planned_resolution_identity(
+            repository=step.repository,
+            planned_identity=identity,
+            resolution=resolution,
+        )
+        effective_fingerprint = str(identity.get("fingerprint") or identity.get("root") or resolution.root)
+        resume_checkpoint = capture_federated_resume_checkpoint(resolution)
+        child_run_id = str(RunId.new(prefix=f"fed-{step.repository}"))
+        parent_node = node_ids[step.step_id]
+        invocation_command = f"{name}:{step.step_id}"
+        lineage = {
+            "kind": "federation",
+            "relationship": "child",
+            "parent_run_id": run_id,
+            "parent_node_id": parent_node,
+            "child_run_id": child_run_id,
+            "federation_workflow": name,
+            "federation_step": step.step_id,
+            "repository": step.repository,
+            "target": target,
+            "child_workflow": step.workflow,
+            "federation_ref": federation_ref,
+            "requested_ref": step.ref,
+            "source_repository": owner_fingerprint,
+            "requested_repository": step.repository,
+            "effective_repository": effective_fingerprint,
+            "execution_environment": "auto",
+        }
+        if federation_group:
+            lineage["federation_group"] = federation_group
+
+        child_state_dir = _parallel_child_state_directory(run_id, child_run_id)
+        argv = _child_argv(
+            root=resolution.root,
+            target=target,
+            workflow=step.workflow,
+            invocation_command=invocation_command,
+        )
+        env = {
+            "DEVTOOL_RUN_ID": child_run_id,
+            "DEVTOOL_FEDERATION_RELATIONSHIP": "child",
+            "DEVTOOL_FEDERATION_PARENT_RUN_ID": run_id,
+            "DEVTOOL_FEDERATION_PARENT_NODE_ID": parent_node,
+            "DEVTOOL_FEDERATION_WORKFLOW": name,
+            "DEVTOOL_FEDERATION_STEP": step.step_id,
+            "DEVTOOL_FEDERATION_REPOSITORY": step.repository,
+            "DEVTOOL_FEDERATION_TARGET": target,
+            "DEVTOOL_FEDERATION_CHILD_WORKFLOW": step.workflow,
+            "DEVTOOL_FEDERATION_REF": federation_ref,
+            "DEVTOOL_FEDERATION_REQUESTED_REF": step.ref,
+            "DEVTOOL_FEDERATION_SOURCE_REPOSITORY": owner_fingerprint,
+            "DEVTOOL_FEDERATION_REQUESTED_REPOSITORY": step.repository,
+            "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
+            "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
+            # Keep each parallel child's HUD/EXO files isolated while
+            # suppressing visible auto-HUD windows for internal children.
+            "DEVTOOL_TASKER_DIR": str(child_state_dir),
+            "DEVTOOL_NO_AUTO_HUD": "1",
+            "DEVTOOL_FEDERATION_CHILD_STATE_DIR": str(child_state_dir),
+        }
+        if federation_group:
+            env["DEVTOOL_FEDERATION_GROUP"] = federation_group
+        from .federation_transport import build_repository_attestation, federation_attestation_environment
+        env.update(federation_attestation_environment(build_repository_attestation(
+            resolution.root,
+            identity=RepositoryIdentity.from_dict(identity),
+            config_path=resolution.config_path or None,
+        )))
+
+        scheduler_node = schedule_nodes[step.step_id]
+        child_started = time.monotonic()
+        with active_lock:
+            active_children[child_run_id] = step.step_id
+        publish(NodeStarted(
+            run_id=run_id,
+            node_id=parent_node,
+            label=federation_ref,
+            kind="federation-child",
+            argv=tuple(argv),
+            source="federation",
+            metadata={
+                "child_run_id": child_run_id,
+                "repository": step.repository,
+                "target": target,
+                "workflow": step.workflow,
+                "federation_ref": federation_ref,
+                "requested_ref": step.ref,
+                "run_lineage": lineage,
+                "resume_checkpoint": resume_checkpoint,
+                "scheduler_state": "running",
+                "scheduler_wave": wave_for_step.get(step.step_id, 0),
+                "scheduler": scheduler_node.as_dict(),
+            },
+        ))
+        try:
+            try:
+                rc = int(executor_fn(argv, env))
+            except KeyboardInterrupt:
+                try:
+                    request_child_cancel(child_run_id)
+                except Exception:
+                    pass
+                rc = 130
+
+            child_snapshot = snapshot_lookup(child_run_id)
+            if child_snapshot is None:
+                child_snapshot = _persisted_execution_snapshot(child_state_dir, child_run_id)
+            persisted_lineage = _assert_child_snapshot_authority(
+                repository=step.repository,
+                child_run_id=child_run_id,
+                expected_identity=identity,
+                expected_parent_run_id=run_id,
+                expected_target=target,
+                expected_child_workflow=step.workflow,
+                expected_federation_ref=federation_ref,
+                expected_requested_ref=step.ref,
+                expected_federation_group=federation_group,
+                snapshot=child_snapshot,
+            ) if child_snapshot is not None else {}
+            operational = collect_federated_operational_snapshot(
+                resolution,
+                child_run_id=child_run_id,
+                execution_snapshot=child_snapshot,
+                resume_checkpoint=resume_checkpoint,
+            ).as_dict()
+            child_status = (
+                str(getattr(child_snapshot, "status", "") or "")
+                if child_snapshot is not None
+                else (
+                    ExecutionStatus.SUCCEEDED.value
+                    if rc == 0
+                    else ExecutionStatus.CANCELLED.value
+                    if rc == 130
+                    else ExecutionStatus.FAILED.value
+                )
+            )
+            if rc == 130 or child_status == ExecutionStatus.CANCELLED.value:
+                child_status = ExecutionStatus.CANCELLED.value
+                rc = 130
+            publish(NodeFinished(
+                run_id=run_id,
+                node_id=parent_node,
+                status=child_status,
+                exit_code=rc,
+                duration_seconds=time.monotonic() - child_started,
+                source="federation",
+                transition_reason=f"child run {child_run_id}; scheduler wave {wave_for_step.get(step.step_id, 0)}",
+                metadata={
+                    "child_run_id": child_run_id,
+                    "repository": step.repository,
+                    "target": target,
+                    "workflow": step.workflow,
+                    "federation_ref": federation_ref,
+                    "requested_ref": step.ref,
+                    "run_lineage": persisted_lineage or lineage,
+                    "operational_ownership": operational,
+                    "scheduler_state": child_status,
+                    "scheduler_wave": wave_for_step.get(step.step_id, 0),
+                    "scheduler": scheduler_node.as_dict(),
+                },
+            ))
+            return FederatedChildRun(
+                step.step_id,
+                step.repository,
+                step.workflow,
+                target,
+                child_run_id,
+                parent_node,
+                child_status,
+                rc,
+                identity,
+                persisted_lineage or lineage,
+                operational,
+                federation_ref=federation_ref,
+                requested_ref=step.ref,
+            )
+        finally:
+            with active_lock:
+                active_children.pop(child_run_id, None)
+
+    try:
+        for wave in schedule.waves:
+            if cancelled:
+                break
+            runnable: list[FederatedWorkflowStep] = []
+            for step_id in wave.nodes:
+                step = steps_by_id[step_id]
+                blocked_by = [
+                    dep
+                    for dep in step.depends_on
+                    if outcomes.get(dep) and outcomes[dep].status != ExecutionStatus.SUCCEEDED.value
+                ]
+                if blocked_by:
+                    publish(NodeBlocked(
+                        run_id=run_id,
+                        node_id=node_ids[step.step_id],
+                        blocked_by=tuple(node_ids[dep] for dep in blocked_by),
+                        reason="federation dependency did not succeed",
+                        source="federation",
+                    ))
+                    outcomes[step.step_id] = FederatedChildRun(
+                        step.step_id,
+                        step.repository,
+                        step.workflow,
+                        _step_target(plan, step),
+                        "",
+                        node_ids[step.step_id],
+                        ExecutionStatus.BLOCKED.value,
+                        1,
+                        _step_identity(plan, step),
+                        {},
+                        {},
+                        federation_ref=_step_federation_ref(plan, step),
+                        requested_ref=step.ref,
+                    )
+                    failed = True
+                else:
+                    runnable.append(step)
+
+            if not runnable:
+                continue
+            def record_child(child: FederatedChildRun) -> None:
+                nonlocal cancelled, failed
+                outcomes[child.step_id] = child
+                if child.status == ExecutionStatus.CANCELLED.value or child.exit_code == 130:
+                    cancelled = True
+                    # Cancellation is terminal for the federation run. Request
+                    # cancellation of still-running siblings immediately rather
+                    # than waiting for the whole wave to drain.
+                    cancel_active(except_run_id=child.run_id)
+                elif child.status != ExecutionStatus.SUCCEEDED.value or child.exit_code != 0:
+                    failed = True
+
+            if len(runnable) == 1:
+                record_child(execute_step(runnable[0]))
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=min(schedule.max_parallel, len(runnable)),
+                    thread_name_prefix="devtool-federation",
+                ) as pool:
+                    futures = {pool.submit(execute_step, step): step.step_id for step in runnable}
+                    for future in as_completed(futures):
+                        # Record each terminal child as soon as it finishes so a
+                        # cancelled child can stop active siblings deterministically.
+                        record_child(future.result())
+    except KeyboardInterrupt:
+        cancelled = True
+        cancel_active()
+    except BaseException:
+        cancel_active()
+        publish(RunFinished(
+            run_id=run_id,
+            status=ExecutionStatus.FAILED.value,
+            exit_code=1,
+            duration_seconds=time.monotonic() - started,
+            source="federation",
+        ))
+        raise
+
+    if cancelled:
+        for step in ordered_steps:
+            if step.step_id in outcomes:
+                continue
+            publish(NodeFinished(
+                run_id=run_id,
+                node_id=node_ids[step.step_id],
+                status=ExecutionStatus.CANCELLED.value,
+                exit_code=130,
+                duration_seconds=0.0,
+                source="federation",
+                transition_reason="federation cancelled before scheduling",
+                metadata={
+                    "scheduler_state": ExecutionStatus.CANCELLED.value,
+                    "scheduler_wave": wave_for_step.get(step.step_id, 0),
+                    "scheduler": schedule_nodes[step.step_id].as_dict(),
+                },
+            ))
+            outcomes[step.step_id] = FederatedChildRun(
+                step.step_id,
+                step.repository,
+                step.workflow,
+                _step_target(plan, step),
+                "",
+                node_ids[step.step_id],
+                ExecutionStatus.CANCELLED.value,
+                130,
+                _step_identity(plan, step),
+                {},
+                {},
+                federation_ref=_step_federation_ref(plan, step),
+                requested_ref=step.ref,
+            )
+
+    parent_status = (
+        ExecutionStatus.CANCELLED.value
+        if cancelled
+        else ExecutionStatus.FAILED.value
+        if failed
+        else ExecutionStatus.SUCCEEDED.value
+    )
+    parent_exit = 130 if cancelled else 1 if failed else 0
+    publish(RunFinished(
+        run_id=run_id,
+        status=parent_status,
+        exit_code=parent_exit,
+        duration_seconds=time.monotonic() - started,
+        source="federation",
+    ))
+    ordered_children = tuple(
+        outcomes[step.step_id]
+        for step in ordered_steps
+        if step.step_id in outcomes
+    )
+    return FederatedRunReport(
+        name,
+        run_id,
+        parent_status,
+        parent_exit,
+        ordered_children,
+        plan,
+        schedule=schedule.as_dict(),
+    )
+
+
+def run_federated_workflow(
+    parent: ProjectConfig,
+    workflow_name: str,
+    *,
+    reenter: Callable[[list[str]], int],
+    publish: Callable[[Any], None] = publish_event,
+    snapshot_lookup: Callable[[str], Any] | None = None,
+    parent_run_id: str = "",
+    request_child_cancel: Callable[[str], Any] | None = None,
+    parallel: bool = False,
+    max_parallel: int = 0,
+    child_executor: ParallelChildExecutor | None = None,
+) -> FederatedRunReport:
+    """Execute one federation workflow, optionally through FRX-Y01 safe waves.
+
+    Parallelism is deliberately opt-in.  The legacy sequential coordinator is
+    used unchanged unless ``parallel`` or ``max_parallel`` requests the new
+    scheduler.
+    """
+
+    requested = bool(parallel or int(max_parallel or 0) > 0)
+    if not requested:
+        return _run_federated_workflow_sequential(
+            parent,
+            workflow_name,
+            reenter=reenter,
+            publish=publish,
+            snapshot_lookup=snapshot_lookup,
+            parent_run_id=parent_run_id,
+            request_child_cancel=request_child_cancel,
+        )
+    return _run_federated_workflow_parallel(
+        parent,
+        workflow_name,
+        reenter=reenter,
+        publish=publish,
+        snapshot_lookup=snapshot_lookup,
+        parent_run_id=parent_run_id,
+        request_child_cancel=request_child_cancel,
+        max_parallel=max_parallel,
+        child_executor=child_executor,
+    )
+
+
 
 def run_federated_group(
     parent: ProjectConfig,
@@ -648,6 +1228,9 @@ def run_federated_group(
     snapshot_lookup: Callable[[str], Any] | None = None,
     parent_run_id: str = "",
     request_child_cancel: Callable[[str], Any] | None = None,
+    parallel: bool = False,
+    max_parallel: int = 0,
+    child_executor: ParallelChildExecutor | None = None,
 ) -> FederatedRunReport:
     """Execute an executable federation group through the normal FRX workflow coordinator."""
 
@@ -660,6 +1243,9 @@ def run_federated_group(
         snapshot_lookup=snapshot_lookup,
         parent_run_id=parent_run_id,
         request_child_cancel=request_child_cancel,
+        parallel=parallel,
+        max_parallel=max_parallel,
+        child_executor=child_executor,
     )
 
 

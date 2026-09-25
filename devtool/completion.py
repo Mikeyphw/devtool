@@ -806,8 +806,11 @@ _devtool() {
               inspect)
                 _arguments '1:federated repository:_devtool_federation_repositories' '--json[emit machine-readable repository boundary state]'
                 ;;
-              plan|run)
-                _arguments '1:federation workflow:_devtool_federation_workflows' '--group[execute/plan a federation group]:group:_devtool_federation_groups' '--json[emit machine-readable federation state]'
+              plan)
+                _arguments '1:federation workflow:_devtool_federation_workflows' '--group[plan a federation group]:group:_devtool_federation_groups' '--json[emit machine-readable federation state]'
+                ;;
+              run)
+                _arguments '1:federation workflow:_devtool_federation_workflows' '--group[execute/plan a federation group]:group:_devtool_federation_groups' '--parallel[run dependency-ready federation children concurrently when safe]' '--max-parallel[maximum concurrent federation children; implies --parallel]:count:' '--json[emit machine-readable federation state]'
                 ;;
               exec)
                 _arguments '1:federated repository:_devtool_federation_repositories' '--plan[resolve without execution]' '--json[emit machine-readable bridge state]' '*:child contract arguments:'

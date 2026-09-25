@@ -40,6 +40,7 @@ class WorkflowNodeScope:
     writes_known: bool = False
     read_only: bool = False
     resource_class: str = "normal"
+    global_reservations: tuple[str, ...] = ()
     scope_reason: str = ""
 
     @property
@@ -64,6 +65,7 @@ class WorkflowNodeScope:
             "read_only": self.read_only,
             "parallel_eligible": self.parallel_eligible,
             "resource_class": self.resource_class,
+            "global_reservations": list(self.global_reservations),
             "scope_reason": self.scope_reason,
         }
 
@@ -87,6 +89,7 @@ class WorkflowScheduleNode:
     writes_known: bool
     read_only: bool
     resource_class: str
+    global_reservations: tuple[str, ...]
     scope_reason: str
 
     @property
@@ -114,6 +117,7 @@ class WorkflowScheduleNode:
             "read_only": self.read_only,
             "parallel_eligible": self.parallel_eligible,
             "resource_class": self.resource_class,
+            "global_reservations": list(self.global_reservations),
             "scope_reason": self.scope_reason,
         }
 
@@ -263,8 +267,13 @@ def _safe_int(value: object, default: int = 0) -> int:
 
 
 def _resource_class(runner: str, metadata: Mapping[str, object]) -> str:
-    override = str(metadata.get("resource_class") or "").strip().lower()
-    if override in {"normal", "gradle", "dotnet"}:
+    override = str(metadata.get("resource_class") or "").strip().lower().replace("_", "-")
+    supported = {
+        "normal", "gradle", "dotnet",
+        "cpu-heavy", "gradle-heavy", "dotnet-heavy",
+        "device-exclusive", "network-heavy", "generic-read-only",
+    }
+    if override in supported:
         return override
     name = str(runner or "").strip().lower()
     if name in {"android", "gradle", "maven"}:
@@ -272,6 +281,19 @@ def _resource_class(runner: str, metadata: Mapping[str, object]) -> str:
     if name == "dotnet":
         return "dotnet"
     return "normal"
+
+
+def _global_reservations(metadata: Mapping[str, object]) -> tuple[str, ...]:
+    raw = metadata.get("global_reservations")
+    if raw in (None, ""):
+        return ()
+    values = raw if isinstance(raw, (list, tuple, set)) else (raw,)
+    normalized: list[str] = []
+    for value in values:
+        token = str(value or "").strip()
+        if token and token not in normalized:
+            normalized.append(token)
+    return tuple(normalized)
 
 
 def scope_for_graph_node(config: ProjectConfig, node: WorkflowNode) -> WorkflowNodeScope:
@@ -348,6 +370,7 @@ def scope_for_graph_node(config: ProjectConfig, node: WorkflowNode) -> WorkflowN
         writes_known=writes_known,
         read_only=read_only,
         resource_class=_resource_class(runner, metadata),
+        global_reservations=_global_reservations(metadata),
         scope_reason=reason,
     )
 
@@ -366,6 +389,7 @@ def annotate_specs_with_scopes(config: ProjectConfig, graph: ExecutionGraph, spe
             "workflow_write_scope_known": scope.writes_known,
             "workflow_read_only": scope.read_only,
             "workflow_resource_class": scope.resource_class,
+            "workflow_global_reservations": list(scope.global_reservations),
             "workflow_scope_reason": scope.scope_reason,
         })
         spec.metadata = metadata
@@ -384,6 +408,9 @@ def _overlap(left: Iterable[str], right: Iterable[str]) -> tuple[str, str] | Non
 
 
 def scheduling_conflict(left: WorkflowScheduleNode, right: WorkflowScheduleNode) -> str:
+    shared_reservations = sorted(set(left.global_reservations).intersection(right.global_reservations))
+    if shared_reservations:
+        return f"global reservation conflict: {', '.join(shared_reservations)}"
     if not left.parallel_eligible:
         return f"{left.key} has an unknown write set"
     if not right.parallel_eligible:
@@ -434,47 +461,53 @@ def _nodes_from_specs(specs: Sequence[CommandSpec]) -> tuple[WorkflowScheduleNod
             writes_known=_coerce_bool(metadata.get("workflow_write_scope_known", False), False),
             read_only=_coerce_bool(metadata.get("workflow_read_only", False), False),
             resource_class=_resource_class(str(metadata.get("workflow_runner") or metadata.get("runner") or ""), {**metadata, "resource_class": metadata.get("workflow_resource_class") or metadata.get("resource_class")}),
+            global_reservations=tuple(str(item) for item in _object_sequence(metadata.get("workflow_global_reservations", [])) if str(item)),
             scope_reason=str(metadata.get("workflow_scope_reason") or ""),
         ))
     return tuple(nodes)
 
 
 def _resource_allowed(selected: Sequence[WorkflowScheduleNode], candidate: WorkflowScheduleNode, *, max_gradle: int, max_dotnet: int) -> bool:
-    if candidate.resource_class == "gradle" and max_gradle > 0:
-        if sum(1 for node in selected if node.resource_class == "gradle") >= max_gradle:
+    gradle_classes = {"gradle", "gradle-heavy"}
+    dotnet_classes = {"dotnet", "dotnet-heavy"}
+    if candidate.resource_class in gradle_classes and max_gradle > 0:
+        if sum(1 for node in selected if node.resource_class in gradle_classes) >= max_gradle:
             return False
-    if candidate.resource_class == "dotnet" and max_dotnet > 0:
-        if sum(1 for node in selected if node.resource_class == "dotnet") >= max_dotnet:
+    if candidate.resource_class in dotnet_classes and max_dotnet > 0:
+        if sum(1 for node in selected if node.resource_class in dotnet_classes) >= max_dotnet:
+            return False
+    if candidate.resource_class in {"device-exclusive", "network-heavy"}:
+        if any(node.resource_class == candidate.resource_class for node in selected):
             return False
     return True
 
 
-def build_execution_plan_from_specs(
-    config: ProjectConfig,
-    specs: Sequence[CommandSpec],
+def build_safe_schedule_waves(
+    nodes: Sequence[WorkflowScheduleNode],
     *,
-    parallel_requested: bool | None = None,
-    max_parallel_nodes: int = 0,
-    max_gradle_nodes: int | None = None,
-    max_dotnet_nodes: int | None = None,
-) -> WorkflowExecutionPlan | None:
-    nodes = _nodes_from_specs(specs)
-    if not nodes:
-        return None
+    parallel_requested: bool,
+    max_parallel_nodes: int,
+    max_gradle_nodes: int = 1,
+    max_dotnet_nodes: int = 1,
+) -> tuple[tuple[WorkflowScheduleWave, ...], tuple[str, ...]]:
+    """Build deterministic dependency-ready waves using shared scope/resource safety.
+
+    This is the reusable scheduling kernel for both local workflow nodes and
+    FRX-Y01 federation child operations.  Callers own only how nodes/scopes are
+    derived and how each selected wave is executed.
+    """
     by_key = {node.key: node for node in nodes}
     for node in nodes:
         missing = [key for key in node.depends_on if key not in by_key]
         if missing:
-            raise WorkflowScheduleError(f"Workflow scheduling node {node.key!r} depends on unknown nodes: {', '.join(missing)}")
+            raise WorkflowScheduleError(
+                f"Workflow scheduling node {node.key!r} depends on unknown nodes: {', '.join(missing)}"
+            )
 
-    policy = config.workspace.scheduler
-    requested = policy.parallel if parallel_requested is None else _coerce_bool(parallel_requested, False)
-    max_nodes = int(max_parallel_nodes or policy.max_parallel_nodes or 2)
-    max_nodes = max(1, max_nodes)
-    gradle_limit = policy.max_gradle_nodes if max_gradle_nodes is None else _safe_int(max_gradle_nodes, 0)
-    dotnet_limit = policy.max_dotnet_nodes if max_dotnet_nodes is None else _safe_int(max_dotnet_nodes, 0)
-    gradle_limit = max(0, gradle_limit)
-    dotnet_limit = max(0, dotnet_limit)
+    requested = bool(parallel_requested)
+    max_nodes = max(1, int(max_parallel_nodes or 1))
+    gradle_limit = max(0, int(max_gradle_nodes or 0))
+    dotnet_limit = max(0, int(max_dotnet_nodes or 0))
 
     indegree = {node.key: len(node.depends_on) for node in nodes}
     dependents: dict[str, list[str]] = {node.key: [] for node in nodes}
@@ -499,9 +532,18 @@ def build_execution_plan_from_specs(
             for candidate in ready:
                 if len(selected) >= max_nodes:
                     break
-                if not _resource_allowed(selected, candidate, max_gradle=gradle_limit, max_dotnet=dotnet_limit):
+                if not _resource_allowed(
+                    selected, candidate, max_gradle=gradle_limit, max_dotnet=dotnet_limit
+                ):
                     continue
-                conflict = next((scheduling_conflict(existing, candidate) for existing in selected if scheduling_conflict(existing, candidate)), "")
+                conflict = next(
+                    (
+                        scheduling_conflict(existing, candidate)
+                        for existing in selected
+                        if scheduling_conflict(existing, candidate)
+                    ),
+                    "",
+                )
                 if conflict:
                     continue
                 if not candidate.parallel_eligible and selected:
@@ -516,29 +558,79 @@ def build_execution_plan_from_specs(
                 reason = "resource/scope safety serialization"
             elif len(selected) == 1 and len(ready) > 1 and not reason:
                 candidate = selected[0]
-                reason = candidate.scope_reason if not candidate.parallel_eligible else "resource/scope safety serialization"
-        waves.append(WorkflowScheduleWave(index=len(waves) + 1, nodes=tuple(node.key for node in selected), serialized_reason=reason))
+                reason = (
+                    candidate.scope_reason
+                    if not candidate.parallel_eligible
+                    else "resource/scope safety serialization"
+                )
+        waves.append(
+            WorkflowScheduleWave(
+                index=len(waves) + 1,
+                nodes=tuple(node.key for node in selected),
+                serialized_reason=reason,
+            )
+        )
         for node in selected:
             remaining.remove(node.key)
             for dependent in dependents[node.key]:
                 indegree[dependent] -= 1
 
-    parallel_effective = requested and any(len(wave.nodes) > 1 for wave in waves)
-    if requested and not parallel_effective:
-        notes.append("Parallel scheduling was requested, but dependency/scope/resource safety produced only serial waves.")
+    if requested and not any(len(wave.nodes) > 1 for wave in waves):
+        notes.append(
+            "Parallel scheduling was requested, but dependency/scope/resource safety produced only serial waves."
+        )
     if any(not node.parallel_eligible for node in nodes):
-        notes.append("Nodes without explicit outputs remain serialized because their write set is unknown.")
+        notes.append(
+            "Nodes without explicit outputs remain serialized because their write set is unknown."
+        )
+    return tuple(waves), tuple(notes)
 
+
+def build_execution_plan_from_specs(
+    config: ProjectConfig,
+    specs: Sequence[CommandSpec],
+    *,
+    parallel_requested: bool | None = None,
+    max_parallel_nodes: int = 0,
+    max_gradle_nodes: int | None = None,
+    max_dotnet_nodes: int | None = None,
+) -> WorkflowExecutionPlan | None:
+    nodes = _nodes_from_specs(specs)
+    if not nodes:
+        return None
+
+    policy = config.workspace.scheduler
+    requested = policy.parallel if parallel_requested is None else _coerce_bool(parallel_requested, False)
+    max_nodes = max(1, int(max_parallel_nodes or policy.max_parallel_nodes or 2))
+    gradle_limit = max(0, policy.max_gradle_nodes if max_gradle_nodes is None else _safe_int(max_gradle_nodes, 0))
+    dotnet_limit = max(0, policy.max_dotnet_nodes if max_dotnet_nodes is None else _safe_int(max_dotnet_nodes, 0))
+    waves, notes = build_safe_schedule_waves(
+        nodes,
+        parallel_requested=requested,
+        max_parallel_nodes=max_nodes,
+        max_gradle_nodes=gradle_limit,
+        max_dotnet_nodes=dotnet_limit,
+    )
+
+    parallel_effective = requested and any(len(wave.nodes) > 1 for wave in waves)
     reservation_known = all(node.parallel_eligible for node in nodes)
-    reservation_paths = _dedupe(path for node in nodes for path in (*node.reads, *node.writes)) if reservation_known else ()
+    reservation_paths = _dedupe(
+        path for node in nodes for path in (*node.reads, *node.writes)
+    ) if reservation_known else ()
     first = nodes[0]
-    workspace_targets = tuple(dict.fromkeys(str(spec.metadata.get("workflow_target") or "") for spec in specs if str(spec.metadata.get("workflow_target") or "")))
+    workspace_targets = tuple(
+        dict.fromkeys(
+            str(spec.metadata.get("workflow_target") or "")
+            for spec in specs
+            if str(spec.metadata.get("workflow_target") or "")
+        )
+    )
     return WorkflowExecutionPlan(
         target=workspace_targets[0] if len(workspace_targets) == 1 else "workspace",
         targets=workspace_targets,
         workflow=str(getattr(config.workspace, "action", "") or first.workflow),
         nodes=nodes,
-        waves=tuple(waves),
+        waves=waves,
         parallel_requested=requested,
         parallel_effective=parallel_effective,
         max_parallel_nodes=max_nodes,
@@ -546,7 +638,7 @@ def build_execution_plan_from_specs(
         max_dotnet_nodes=dotnet_limit,
         reservation_paths=reservation_paths,
         reservation_paths_known=reservation_known,
-        notes=tuple(notes),
+        notes=notes,
     )
 
 

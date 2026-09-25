@@ -15,6 +15,7 @@ from typing import Any, TYPE_CHECKING
 
 from .federation_discovery import FederationDiscoveryError, resolve_federated_repository
 from .workflow_runtime import WorkflowRuntimeError, plan_workspace_targets
+from .workflow_scheduler import scope_for_graph_node
 
 if TYPE_CHECKING:
     from .models import ProjectConfig, FederatedWorkflowConfig
@@ -394,6 +395,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                 prefixed_roots.append(key)
             if local.key in local_leaves:
                 prefixed_leaves.append(key)
+            schedule_scope = scope_for_graph_node(child, local)
             nodes.append(FederatedPlanNode(
                 key=key,
                 repository=step.repository,
@@ -409,6 +411,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     "target_explicit": step.target_qualified,
                     "repository_identity": identity,
                     "child_metadata": dict(local.metadata),
+                    "child_schedule": schedule_scope.as_dict(),
                 },
             ))
             next_index += 1
