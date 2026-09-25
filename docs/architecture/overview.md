@@ -50,6 +50,10 @@ UI11/UI12 complete the shared UI contract at the automation boundary. Machine JS
 
 FS01/FS02 make compatibility itself inspectable. `devtool compatibility --json` is the release-facing registry of retained legacy boundaries; `config migrate` canonicalizes every safe repository/global config shim found by the audit while refusing ambiguous rewrites. Canonical examples and migration documentation are consolidated under `docs/EXAMPLES.md`, `docs/MIGRATION_1.1.md`, and `docs/BACKWARD_COMPATIBILITY.md`. FS03 uses these contracts as final-seal inputs.
 
+## Git transaction foundation
+
+The GIT-FRX campaign makes Git state part of Devtool's authoritative execution graph. GIT-FRX-01 introduces `devtool git state` and a versioned repository Git-state model covering canonical repository identity, HEAD/upstream truth, index and dirty state, in-progress Git operations, linked worktrees, shallow/partial clones, submodules, object format, and capability evidence. It deliberately remains read-only; private transaction refs and journals begin in GIT-FRX-02. See [`git-transactions-and-federation.md`](git-transactions-and-federation.md).
+
 ## Repository-wide final seal
 
 FS03 turns the completed roadmap into a reproducible release invariant. `devtool final-seal --strict` audits canonical repository configuration, compatibility/schema registries, roadmap report/test coverage, canonical examples/documentation, completion synchronization, target roots, backup hygiene, and release discoverability. The side-effect-free seal complements `devtool validate --profile final-seal` and artifact validation, which execute the runtime/build/test evidence. See [`../FINAL_RELEASE_SEAL.md`](../FINAL_RELEASE_SEAL.md).

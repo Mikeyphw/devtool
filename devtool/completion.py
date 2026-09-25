@@ -369,6 +369,7 @@ _devtool_commands() {
     'ap:alias for ai-prompt'
     'completion:print shell completion'
     'completion-state:emit config-aware completion values for shells and editors'
+    'git:inspect authoritative repository Git state'
     'wrapper:resolve, inspect, and execute repository wrapper commands'
     'federation:inspect, plan, run, and observe explicitly enrolled repositories'
     'fed:alias for federation'
@@ -732,6 +733,17 @@ _devtool() {
       ;;
     args)
       case $line[1] in
+        git)
+          if (( ${#line} < 2 )); then
+            _values 'git action' state
+          else
+            case $line[2] in
+              state)
+                _arguments '--json[emit machine-readable Git state]'
+                ;;
+            esac
+          fi
+          ;;
         wrapper)
           if (( ${#line} < 2 )); then
             _values 'wrapper action' describe help discover resolve exec init update verify status seal

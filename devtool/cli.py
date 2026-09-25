@@ -138,6 +138,7 @@ from .log_commands import choose_active_log, format_log_entries, list_log_entrie
 from .logstore import latest_log, new_log_path, redact_sensitive_text, redact_sensitive_value, set_log_dir_override, state_dir as log_state_dir, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .repository_identity import RepositoryIdentityError, build_repository_identity
+from .git_state import GitStateError, collect_git_state, render_git_state_text
 from .project_runners import resolve_validation_plan
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
@@ -1057,6 +1058,11 @@ def build_parser() -> argparse.ArgumentParser:
     pytest_profile.add_argument("--top", type=int, default=30, help="Maximum number of slow entries to show")
     pytest_profile.add_argument("--strict", action="store_true", help="Fail when unmarked tests exceed the slow threshold")
     pytest_profile.add_argument("--json", action="store_true", help="Emit a structured pytest-profile report")
+
+    git_cmd = subparsers.add_parser("git", help="Inspect Devtool's authoritative Git repository state")
+    git_sub = git_cmd.add_subparsers(dest="git_command", required=True)
+    git_state = git_sub.add_parser("state", help="Show the authoritative repository Git-state snapshot")
+    git_state.add_argument("--json", action="store_true", help="Emit machine-readable Git state")
 
     federation_cmd = subparsers.add_parser("federation", aliases=["fed"], help="Inspect explicitly enrolled federated repositories")
     federation_sub = federation_cmd.add_subparsers(dest="federation_command", required=True)
@@ -12486,7 +12492,14 @@ def _main_after_parse(
     set_log_dir_override(log_dir_override or None)
 
     args._devtool_cli_repo_explicit = bool(str(getattr(args, "repo", "") or "").strip())
-    if args._devtool_cli_repo_explicit or args.command not in {"inspect-artifact", "ia", "bootstrap"}:
+    if args.command == "git":
+        # Git state must honor Git's own nearest-repository boundary. In
+        # particular, an unenrolled nested Git checkout must not borrow an
+        # ancestor .devtool.toml merely because normal project commands prefer
+        # config-owned repository roots. An explicit --repo remains authoritative.
+        git_probe_root = Path(str(args.repo)).expanduser() if args._devtool_cli_repo_explicit else Path.cwd()
+        args.repo = str(git_probe_root.resolve(strict=False))
+    elif args._devtool_cli_repo_explicit or args.command not in {"inspect-artifact", "ia", "bootstrap"}:
         args.repo = str(resolve_repository_root(args.repo, args.config))
     args._devtool_cli_target_explicit = bool(str(getattr(args, "target", "") or "").strip())
     args._devtool_cli_solution_explicit = bool(str(getattr(args, "solution", "") or "").strip())
@@ -12558,6 +12571,31 @@ def _main_after_parse(
         else:
             for value in completion_values(config, kind):
                 print(value)
+        return 0
+
+    if args.command == "git":
+        action = str(getattr(args, "git_command", "") or "")
+        if action != "state":
+            parser.error(f"Unknown git command: {action}")
+            return 2
+        try:
+            state = collect_git_state(Path(str(getattr(args, "repo", "") or Path.cwd())))
+        except GitStateError as exc:
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps({
+                    "schema_version": 1,
+                    "kind": "git-state",
+                    "ok": False,
+                    "available": False,
+                    "error": str(exc),
+                }, indent=2, ensure_ascii=False))
+            else:
+                print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+            print(json.dumps(state.as_dict(), indent=2, ensure_ascii=False))
+        else:
+            render_status_table(render_git_state_text(state))
         return 0
 
     if args.command in {"final-seal", "seal"}:

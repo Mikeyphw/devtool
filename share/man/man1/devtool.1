@@ -259,6 +259,11 @@ or
 or
 .BR apply-overlay=/path/file.zip .
 .TP
+.B git state
+Show Devtool's authoritative repository Git-state snapshot, including canonical Git root, repository/worktree identity, HEAD and upstream state, index/dirty state, active Git operations, shallow/partial clone state, submodules, and Git capability evidence. Use
+.B --json
+for the versioned machine-readable state.
+.TP
 .B commit " | " ci " MESSAGE"
 Create a Git commit.
 .TP

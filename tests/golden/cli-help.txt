@@ -48,12 +48,12 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET] [--group GROUP]
                [--native-cache {auto,ccache,off}]
                [--android-build-tools-provider {auto,commit451,none,sdk,termux}]
                [--aapt2-provider {auto,termux,sdk,revanced,none}]
-               {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server} ...
+               {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,git,federation,fed,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server} ...
 
 Apply artifacts, validate projects, and produce reviewable handoff commits.
 
 positional arguments:
-  {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server}
+  {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,git,federation,fed,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server}
     variants            List Android variant execution profiles for the
                         selected target
     start-validation (sv)
@@ -81,6 +81,8 @@ positional arguments:
                         Audit retained legacy interfaces and migration paths
     final-seal (seal)   Run the FS03 repository-wide final release seal audit
     pytest              Inspect and profile Devtool's pytest suite
+    git                 Inspect Devtool's authoritative Git repository state
+    federation (fed)    Inspect explicitly enrolled federated repositories
     ssh                 Manage, qualify, and operate named SSH build workers
     oci                 Manage PRoot-Distro OCI runtime state on named SSH
                         workers
@@ -125,6 +127,10 @@ positional arguments:
     groups (gr)         List workspace target groups and their expanded
                         targets
     jobs (jb)           List reusable polyglot jobs declared under [jobs.*]
+                        and target-local jobs
+    target-local-jobs (tlj)
+                        Report target-local job adoption, workflow wiring, and
+                        migration commands
     workflows (wf)      List configured target workflows without executing
                         them
     plan (pl)           Plan the expanded workflow DAG, safe scheduling waves,
