@@ -323,6 +323,26 @@ class FederationInterface:
 
 
 @dataclass(slots=True, frozen=True)
+class FederatedArtifactInput:
+    name: str
+    ref: str
+    producer_step: str
+    selector: str
+    artifact_type: str = ""
+    schema: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "name": self.name,
+            "ref": self.ref,
+            "producer_step": self.producer_step,
+            "selector": self.selector,
+            "artifact_type": self.artifact_type,
+            "schema": self.schema,
+        }
+
+
+@dataclass(slots=True, frozen=True)
 class FederatedWorkflowStep:
     step_id: str
     ref: str
@@ -333,6 +353,7 @@ class FederatedWorkflowStep:
     target: str = ""
     contract_type: str = "workflow"
     contract_name: str = ""
+    artifact_inputs: tuple[FederatedArtifactInput, ...] = ()
 
     @property
     def target_qualified(self) -> bool:

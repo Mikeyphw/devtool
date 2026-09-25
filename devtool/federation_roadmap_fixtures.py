@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import tempfile
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 from .config import load_project_config
 from .federation_interfaces import build_interface_report
@@ -12,6 +15,9 @@ from .federation_plan import build_federated_plan
 from .git_ownership import GitFederatedOwnershipError, resolve_federated_git_owner
 from .federation_lock import FederationSourceLock, compare_federation_source_locks
 from .federation_git_lineage import finalize_federated_git_lineage, planned_federated_git_lineage
+from .artifact_registry import register_paths
+from .federation_execution import run_federated_workflow
+from .federation_resume import build_resume_plan, load_checkpoint
 
 
 def _load(root: Path):
@@ -263,11 +269,112 @@ def resume_invalidation_fixture() -> dict[str, object]:
             "ssh_history_authority": "referenced-not-copied",
         }
 
+
+def artifact_edge_fixture() -> dict[str, object]:
+    """Exercise FRX-Y08 immutable producer -> consumer artifact edges."""
+    with tempfile.TemporaryDirectory(prefix="devtool-frx-y08-") as td:
+        root = Path(td)
+        parent = root / "parent"
+        producer = root / "producer"
+        consumer = root / "consumer"
+        state = root / "state"
+        parent.mkdir(); producer.mkdir(); consumer.mkdir()
+        child_toml = (
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="app"\n'
+            '[targets.app]\nrunner="command"\n[targets.app.jobs.check]\nrunner="command"\n'
+            'command=["echo","ok"]\n[targets.app.workflows]\nvalidate=["job:check"]\n'
+        )
+        for child in (producer, consumer):
+            (child / ".devtool.toml").write_text(child_toml, encoding="utf-8")
+            (child / "source.txt").write_text("base\n", encoding="utf-8")
+            _init_git(child)
+        (parent / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="root"\n[targets.root]\nrunner="command"\n'
+            '[federation]\nschema=1\n[federation.repositories.platform]\npath="../producer"\n'
+            '[federation.repositories.app]\npath="../consumer"\n[federation.workflows.integration]\n'
+            'steps=[{id="contracts",ref="platform::app::workflow:validate"},'
+            '{id="app",ref="app::app::workflow:validate",depends_on=["contracts"],'
+            'inputs={contracts={ref="contracts:artifact:schemas.json",type="json",schema="contracts/v1"}}}]\n',
+            encoding="utf-8",
+        )
+        config = _load(parent)
+        observed: dict[str, object] = {}
+
+        def reenter(argv: list[str]) -> int:
+            repo = Path(argv[argv.index("--repo") + 1]).resolve()
+            run_id = os.environ["DEVTOOL_RUN_ID"]
+            if repo == producer.resolve():
+                artifact = producer / ".devtool" / "build-artifacts" / "schemas.json"
+                artifact.parent.mkdir(parents=True, exist_ok=True)
+                artifact.write_bytes(b'{"schema":1}\n')
+                register_paths(
+                    producer, [artifact],
+                    metadata={
+                        "run_id": run_id, "type": "json",
+                        "artifact_schema": "contracts/v1", "producer": "frx-y08-fixture",
+                    },
+                )
+                observed["producer_digest"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            elif repo == consumer.resolve():
+                payload = json.loads(os.environ["DEVTOOL_FEDERATION_ARTIFACT_INPUTS"])
+                edge = payload["contracts"]
+                if str(producer.resolve()) in json.dumps(payload, sort_keys=True):
+                    raise SystemExit("FRX-Y08 fixture leaked producer filesystem path")
+                materialized = consumer / str(edge["path"])
+                if hashlib.sha256(materialized.read_bytes()).hexdigest() != edge["sha256"]:
+                    raise SystemExit("FRX-Y08 fixture materialization digest mismatch")
+                observed["consumer_edge"] = dict(edge)
+            return 0
+
+        with patch("devtool.federation_resume.state_dir", lambda: state), patch(
+            "devtool.federation_git_lineage.state_dir", lambda: state
+        ):
+            first = run_federated_workflow(
+                config, "integration", reenter=reenter, snapshot_lookup=lambda _run_id: None
+            )
+            if not first.ok or "consumer_edge" not in observed:
+                raise SystemExit("FRX-Y08 artifact edge fixture did not complete successfully")
+            checkpoint = load_checkpoint(config, first.parent_run_id)
+            artifact = producer / ".devtool" / "build-artifacts" / "schemas.json"
+            artifact.write_bytes(b'{"schema":2,"mutated":true}\n')
+            resume = build_resume_plan(config, checkpoint, mode="resume")
+
+        decisions = {row.step_id: row for row in resume.decisions}
+        producer_decision = decisions.get("contracts")
+        consumer_decision = decisions.get("app")
+        if producer_decision is None or producer_decision.action != "reused":
+            raise SystemExit("FRX-Y08 fixture did not preserve reusable producer")
+        if consumer_decision is None or consumer_decision.action != "rerun_due_to_drift":
+            raise SystemExit("FRX-Y08 fixture did not invalidate artifact consumer")
+        if "consumed artifact digest changed: contracts" not in consumer_decision.reasons:
+            raise SystemExit("FRX-Y08 fixture did not attribute artifact digest drift")
+        child = next(row for row in first.children if row.step_id == "app")
+        edge = dict(child.artifact_inputs.get("contracts") or {})
+        if not edge.get("registry_id") or edge.get("sha256") != observed.get("producer_digest"):
+            raise SystemExit("FRX-Y08 fixture did not preserve immutable registry identity")
+        return {
+            "schema_version": 1,
+            "roadmap_id": "FRX-Y08",
+            "edge": {
+                "registry_id": edge.get("registry_id"),
+                "sha256": edge.get("sha256"),
+                "type": edge.get("type"),
+                "schema": edge.get("schema"),
+                "remote_transfer_authority": "SSH-02",
+            },
+            "producer_action": producer_decision.action,
+            "consumer_action": consumer_decision.action,
+            "consumer_reasons": list(consumer_decision.reasons),
+            "producer_path_exposed": False,
+            "consumer_materialization": "managed-relative-path",
+        }
+
+
 def main(argv: list[str] | None=None) -> int:
     p=argparse.ArgumentParser(prog='python -m devtool.federation_roadmap_fixtures')
-    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage','resume-invalidation'])
+    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage','resume-invalidation','artifact-edge'])
     ns=p.parse_args(argv)
-    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else resume_invalidation_fixture() if ns.fixture=='resume-invalidation' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
+    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else resume_invalidation_fixture() if ns.fixture=='resume-invalidation' else artifact_edge_fixture() if ns.fixture=='artifact-edge' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping, TYPE_CHECKING
 
 from .federation_git_lineage import lineage_evidence_path
+from .federation_artifacts import artifact_edges_identity, checkpoint_artifact_reasons
 from .federation_plan import FederatedPlanGraph, build_federated_plan, project_with_federation_group
 from .reservations import repo_key
 from .xdg import state_dir
@@ -231,6 +232,9 @@ def child_result_identity(child: "FederatedChildRun") -> str:
         "result_commit": str(child.git_lineage.get("result_commit") or ""),
         "result_ref": str(child.git_lineage.get("result_ref") or ""),
         "artifact_identity": _artifact_identity(child),
+        "consumed_artifact_inputs": artifact_edges_identity(
+            getattr(child, "artifact_inputs", {}) or {}
+        ),
     })
 
 
@@ -264,11 +268,13 @@ def _child_checkpoint(
     upstream_artifacts = {dep: str(artifact_ids.get(dep) or "") for dep in step.depends_on}
     result_identity = child_result_identity(child)
     artifact_identity = _artifact_identity(child)
+    artifact_inputs = dict(getattr(child, "artifact_inputs", {}) or {})
     evidence_payload = {
         "child_run_id": child.run_id,
         "git_lineage": child.git_lineage,
         "operational_ownership": child.operational_ownership,
         "run_lineage": child.run_lineage,
+        "artifact_inputs": artifact_inputs,
     }
     return {
         "step_id": child.step_id,
@@ -295,7 +301,9 @@ def _child_checkpoint(
             "capability_interface_identity": capability_interface_identity(parent, plan, step),
             "upstream_result_identities": upstream,
             "artifact_input_identities": upstream_artifacts,
+            "consumed_artifact_inputs_identity": artifact_edges_identity(artifact_inputs),
         },
+        "artifact_inputs": artifact_inputs,
         "result_identity": result_identity,
         "artifact_identity": artifact_identity,
         "evidence_digest": _digest(evidence_payload),
@@ -454,6 +462,11 @@ def build_resume_plan(parent: "ProjectConfig", checkpoint: Mapping[str, Any], *,
             reasons.append("target/workflow/contract identity changed")
         if str(predicates.get("capability_interface_identity") or "") != capability_interface_identity(working_parent, current, step):
             reasons.append("capability/interface contract changed")
+        prior_inputs = prior.get("artifact_inputs") if isinstance(prior.get("artifact_inputs"), Mapping) else {}
+        expected_inputs_identity = str(predicates.get("consumed_artifact_inputs_identity") or "")
+        if expected_inputs_identity and expected_inputs_identity != artifact_edges_identity(prior_inputs):
+            reasons.append("consumed artifact input identity changed")
+        reasons.extend(checkpoint_artifact_reasons(prior_inputs, prior_rows))
         expected_upstream = predicates.get("upstream_result_identities") if isinstance(predicates.get("upstream_result_identities"), Mapping) else {}
         expected_artifacts = predicates.get("artifact_input_identities") if isinstance(predicates.get("artifact_input_identities"), Mapping) else {}
         for dep in step.depends_on:
@@ -493,6 +506,7 @@ def child_from_checkpoint(row: Mapping[str, Any]):
         operational_ownership=dict(row.get("operational_ownership") or {}), federation_ref=str(row.get("federation_ref") or ""),
         requested_ref=str(row.get("requested_ref") or ""), child_contract=str(row.get("child_contract") or ""),
         contract_ref=str(row.get("contract_ref") or ""), git_lineage=dict(row.get("git_lineage") or {}), lifecycle="reused",
+        artifact_inputs=dict(row.get("artifact_inputs") or {}),
     )
 
 

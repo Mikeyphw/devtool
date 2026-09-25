@@ -14,7 +14,7 @@ import tomllib
 from typing import Any, Mapping
 
 from .models import (
-    FederationCapabilityRequirement, FederationConfig, FederationGroup, FederationInterface, FederatedRepositoryConfig,
+    FederatedArtifactInput, FederationCapabilityRequirement, FederationConfig, FederationGroup, FederationInterface, FederatedRepositoryConfig,
     FederatedWorkflowConfig, FederatedWorkflowStep,
 )
 
@@ -24,10 +24,11 @@ _FEDERATION_KEYS = frozenset({"schema", "repositories", "interfaces", "groups", 
 _REPOSITORY_KEYS = frozenset({"path", "required", "exports", "requires"})
 _GROUP_KEYS = frozenset({"repositories", "members", "interface"})
 _WORKFLOW_KEYS = frozenset({"depends_on", "steps"})
-_WORKFLOW_STEP_KEYS = frozenset({"id", "ref", "depends_on"})
+_WORKFLOW_STEP_KEYS = frozenset({"id", "ref", "depends_on", "inputs"})
 _INTERFACE_KEYS = frozenset({"required_workflows", "required_wrapper_commands", "required_artifacts"})
 _CAPABILITY_TABLE_KEYS = frozenset({"capabilities"})
 _CAPABILITY_REQUIREMENT_KEYS = frozenset({"name", "optional", "compatible", "policy"})
+_WORKFLOW_INPUT_KEYS = frozenset({"ref", "type", "schema"})
 _CAPABILITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*/v[0-9]+$")
 _INTERFACE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:/v[0-9]+)?$")
 
@@ -428,6 +429,52 @@ def _workflow_ref(
     return normalized, repository, target, workflow, "workflow", workflow
 
 
+def _artifact_selector(value: object, *, path: str) -> tuple[str, str]:
+    if not isinstance(value, str) or not value.strip():
+        raise _fail(f"{path} must be '<producer-step>:artifact:<registry-id-or-name>'")
+    text = value.strip()
+    parts = text.split(":", 2)
+    if len(parts) != 3 or parts[1] != "artifact":
+        raise _fail(f"{path} must be '<producer-step>:artifact:<registry-id-or-name>'")
+    producer = _name(parts[0], path=f"{path} producer step")
+    raw_selector = parts[2].strip()
+    if "/" in raw_selector or "\\" in raw_selector:
+        raise _fail(f"{path} artifact selector must be a registry id/name, not a filesystem path")
+    selector = _name(raw_selector, path=f"{path} artifact selector")
+    return producer, selector
+
+
+def _artifact_inputs(value: object, *, path: str) -> tuple[FederatedArtifactInput, ...]:
+    if value in (None, ""):
+        return ()
+    if not isinstance(value, dict):
+        raise _fail(f"{path} must be a table mapping input names to artifact references")
+    result: list[FederatedArtifactInput] = []
+    for raw_name, raw_value in value.items():
+        name = _name(raw_name, path=f"{path} input name")
+        artifact_type = ""
+        schema = ""
+        if isinstance(raw_value, str):
+            ref = raw_value.strip()
+        elif isinstance(raw_value, dict):
+            row = dict(raw_value)
+            _reject_unknown(row, _WORKFLOW_INPUT_KEYS, path=f"{path}.{name}")
+            raw_ref = row.get("ref")
+            if not isinstance(raw_ref, str) or not raw_ref.strip():
+                raise _fail(f"{path}.{name}.ref must be a non-empty artifact reference")
+            ref = raw_ref.strip()
+            artifact_type = str(row.get("type") or "").strip()
+            schema = str(row.get("schema") or "").strip()
+            for label, candidate in (("type", artifact_type), ("schema", schema)):
+                if candidate and ("\x00" in candidate or "\n" in candidate or "\r" in candidate):
+                    raise _fail(f"{path}.{name}.{label} contains unsafe control characters")
+        else:
+            raise _fail(f"{path}.{name} must be an artifact reference string or inline table")
+        producer, selector = _artifact_selector(ref, path=f"{path}.{name}")
+        result.append(FederatedArtifactInput(name, ref, producer, selector, artifact_type, schema))
+    return tuple(result)
+
+
 def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str, FederatedRepositoryConfig]) -> tuple[FederatedWorkflowStep, ...]:
     _reject_unknown(raw, _WORKFLOW_KEYS, path=f"[federation.workflows.{name}]")
     shorthand = raw.get("depends_on")
@@ -493,6 +540,9 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
                 target=target,
                 contract_type=contract_type,
                 contract_name=contract_name,
+                artifact_inputs=_artifact_inputs(
+                    item.get("inputs"), path=f"federation.workflows.{name}.steps[{index}].inputs"
+                ),
             ))
         known = {step.step_id for step in steps}
         for step in steps:
@@ -501,6 +551,37 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
                 raise _fail(f"federation workflow {name!r} step {step.step_id!r} depends on unknown step id(s): {', '.join(missing)}")
             if step.step_id in step.depends_on:
                 raise _fail(f"federation workflow {name!r} step {step.step_id!r} cannot depend on itself")
+        ancestors: dict[str, set[str]] = {}
+        by_id = {step.step_id: step for step in steps}
+        def collect_ancestors(step_id: str) -> set[str]:
+            cached = ancestors.get(step_id)
+            if cached is not None:
+                return cached
+            found: set[str] = set()
+            stack = list(by_id[step_id].depends_on)
+            while stack:
+                dep = stack.pop()
+                if dep in found:
+                    continue
+                found.add(dep)
+                candidate = by_id.get(dep)
+                if candidate is not None:
+                    stack.extend(candidate.depends_on)
+            ancestors[step_id] = found
+            return found
+        for step in steps:
+            available = collect_ancestors(step.step_id)
+            for artifact_input in step.artifact_inputs:
+                if artifact_input.producer_step not in known:
+                    raise _fail(
+                        f"federation workflow {name!r} step {step.step_id!r} artifact input {artifact_input.name!r} "
+                        f"references unknown producer step {artifact_input.producer_step!r}"
+                    )
+                if artifact_input.producer_step not in available:
+                    raise _fail(
+                        f"federation workflow {name!r} step {step.step_id!r} artifact input {artifact_input.name!r} "
+                        f"must reference a predecessor declared through depends_on: {artifact_input.producer_step!r}"
+                    )
     else:
         raise _fail(f"federation workflow {name!r} must declare depends_on or steps")
     return tuple(steps)

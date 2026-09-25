@@ -465,6 +465,26 @@ def load_return_state(metadata: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def load_return_manifest_state(path: str | Path) -> dict[str, Any]:
+    """Load SSH-02 per-artifact return truth from its immutable manifest.
+
+    FRX-Y08 consumes this projection but does not own or duplicate SSH return
+    state. The adjacent transfer.status remains the physical-transfer authority.
+    """
+    manifest_path = Path(path).expanduser().resolve(strict=False)
+    manifest = _read_manifest(manifest_path)
+    metadata = {
+        "ssh_return_manifest": str(manifest_path),
+        "ssh_return_status_file": str(manifest_path.parent / "transfer.status"),
+        "ssh_return_repo_root": str(manifest.get("local_return_repo_root") or ""),
+        "ssh_return_root": str(manifest.get("local_return_root") or ""),
+        "ssh_return_project_root": str(manifest.get("local_return_project_root") or ""),
+        "ssh_return_remote_root": str(manifest.get("remote_root") or ""),
+        "ssh_source_sync_id": str(manifest.get("source_sync_id") or ""),
+    }
+    return load_return_state(metadata)
+
+
 def publish_return_transfer_event(metadata: Mapping[str, Any], state: Mapping[str, Any]) -> None:
     """Publish authoritative post-return transport truth into EXO's event stream."""
     from .ssh_transport import SSHTransferTelemetry

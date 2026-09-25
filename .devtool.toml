@@ -270,6 +270,12 @@ command = ["python", "-m", "devtool.federation_roadmap_fixtures", "resume-invali
 inputs = ["devtool/federation_resume.py", "devtool/federation_execution.py", "devtool/federation_plan.py", "devtool/federation_roadmap_fixtures.py"]
 metadata = { read_only = true, roadmap_id = "FRX-Y02" }
 
+[targets.devtool.jobs.federation-artifact-edge-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "artifact-edge"]
+inputs = ["devtool/federation_artifacts.py", "devtool/federation_config.py", "devtool/federation_execution.py", "devtool/federation_operations.py", "devtool/federation_plan.py", "devtool/federation_resume.py", "devtool/ssh_returns.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "FRX-Y08" }
+
 [targets.devtool.jobs.ssh01-contract-fixture]
 runner = "command"
 command = ["python", "-m", "devtool.ssh_roadmap_fixtures", "contract", "--json"]
@@ -319,6 +325,14 @@ roadmap-frx-y02 = [
   { id = "frx-y02", ref = "test:roadmap-frx-y02", depends_on = ["frx-y01", "git-frx09"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y02"] },
   { id = "resume-fixture", ref = "job:federation-resume-invalidation-fixture", depends_on = ["workflow-exo"] },
+]
+roadmap-frx-y08 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "frx-y02", ref = "test:roadmap-frx-y02", depends_on = ["syntax"] },
+  { id = "ssh02", ref = "test:roadmap-ssh02", depends_on = ["syntax"] },
+  { id = "frx-y08", ref = "test:roadmap-frx-y08", depends_on = ["frx-y02", "ssh02"] },
+  { id = "artifact-edge-fixture", ref = "job:federation-artifact-edge-fixture", depends_on = ["frx-y08"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["artifact-edge-fixture"] },
 ]
 roadmap-git-frx02 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -468,8 +482,20 @@ roadmap-current = [
   { id = "ssh03", ref = "test:roadmap-ssh03", depends_on = ["ssh03-fixture"] },
   { id = "frx-y02", ref = "test:roadmap-frx-y02", depends_on = ["ssh03", "frx-y01", "git-frx09"] },
   { id = "frx-y02-fixture", ref = "job:federation-resume-invalidation-fixture", depends_on = ["frx-y02"] },
+  { id = "frx-y08", ref = "test:roadmap-frx-y08", depends_on = ["frx-y02-fixture", "ssh02"] },
+  { id = "frx-y08-fixture", ref = "job:federation-artifact-edge-fixture", depends_on = ["frx-y08"] },
 ]
 
+
+[[test]]
+id = "roadmap-frx-y08"
+name = "FRX-Y08 explicit artifact producer consumer edges"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-frx-y08.xml",
+  "tests/test_frx_y08_artifact_producer_consumer_edges.py",
+]
 
 [[test]]
 id = "roadmap-frx-y02"

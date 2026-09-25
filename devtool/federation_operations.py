@@ -195,6 +195,48 @@ def _hook_events_from_snapshot(snapshot: Any) -> list[dict[str, Any]]:
     return events
 
 
+def _ssh_return_lifecycle_by_digest(execution_snapshot: Any) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
+    if execution_snapshot is None:
+        return result
+    for process in getattr(execution_snapshot, "processes", ()) or ():
+        provenance = getattr(process, "provenance", {}) or {}
+        if not isinstance(provenance, Mapping) or str(provenance.get("transport") or "") != "ssh":
+            continue
+        manifest = str(provenance.get("return_manifest") or "").strip()
+        if not manifest or manifest in seen:
+            continue
+        seen.add(manifest)
+        try:
+            from .ssh_returns import load_return_manifest_state
+            state = load_return_manifest_state(manifest)
+        except Exception:
+            continue
+        producer = dict(state.get("producer") or {}) if isinstance(state.get("producer"), Mapping) else {}
+        for row in state.get("artifacts", []) if isinstance(state.get("artifacts"), list) else []:
+            if not isinstance(row, Mapping):
+                continue
+            digest = str(row.get("sha256") or "").strip().lower()
+            if not digest:
+                continue
+            result[digest] = {
+                "produced": bool(row.get("produced")),
+                "staged": bool(row.get("staged")),
+                "transferred": bool(row.get("transferred")),
+                "verified": bool(row.get("verified")),
+                "restored_locally": bool(row.get("restored_locally")),
+                "failed": bool(row.get("failed")),
+                "recoverable": bool(row.get("recoverable")),
+                "state": str(state.get("state") or ""),
+                "transport_mode": str(state.get("transport_mode") or ""),
+                "producer": producer,
+                "producer_sha256": str(state.get("producer_sha256") or ""),
+                "source_sync_id": str(state.get("source_sync_id") or ""),
+            }
+    return result
+
+
 def collect_federated_operational_snapshot(
     resolution: FederatedRepositoryResolution,
     *,
@@ -214,6 +256,7 @@ def collect_federated_operational_snapshot(
         raise FederationOperationalBoundaryError("Federated operational snapshot requires child_run_id")
 
     refs: list[FederatedOperationalReference] = []
+    remote_lifecycle = _ssh_return_lifecycle_by_digest(execution_snapshot)
 
     registry = load_registry(Path(root))
     artifact_items = []
@@ -242,6 +285,24 @@ def collect_federated_operational_snapshot(
             metadata={
                 "record_ids": [str(item.get("id") or "") for item in artifact_items],
                 "artifact_paths": [str(item.get("path") or "") for item in artifact_items],
+                "records": [
+                    {
+                        "id": str(item.get("id") or ""),
+                        "name": str(item.get("name") or ""),
+                        "path": str(item.get("path") or ""),
+                        "type": str(item.get("type") or ""),
+                        "size": int(item.get("size") or 0),
+                        "sha256": str(item.get("sha256") or ""),
+                        "state": str(item.get("state") or ""),
+                        "valid": bool(item.get("valid", True)),
+                        "verification_status": str(item.get("verification_status") or ""),
+                        "schema": str((item.get("metadata") or {}).get("artifact_schema") or (item.get("metadata") or {}).get("schema") or "")
+                            if isinstance(item.get("metadata"), Mapping) else "",
+                        "event_key": str(item.get("event_key") or ""),
+                        "remote_transfer": dict(remote_lifecycle.get(str(item.get("sha256") or "").lower()) or {}),
+                    }
+                    for item in artifact_items
+                ],
             },
         ))
 
@@ -346,7 +407,13 @@ def collect_federated_operational_snapshot(
                 identifier=str(getattr(artifact, "artifact_id", "") or ""),
                 path=str(getattr(artifact, "path", "") or ""),
                 status=str(getattr(artifact, "verification_status", "") or "reference"),
-                metadata={"sha256": str(getattr(artifact, "sha256", "") or "")},
+                metadata={
+                    "sha256": str(getattr(artifact, "sha256", "") or ""),
+                    "registry_artifact_id": str(getattr(artifact, "registry_artifact_id", "") or ""),
+                    "artifact_type": str(getattr(artifact, "artifact_type", "") or ""),
+                    "size": int(getattr(artifact, "size", 0) or 0),
+                    "remote_transfer": dict(remote_lifecycle.get(str(getattr(artifact, "sha256", "") or "").lower()) or {}),
+                },
             ))
         for diagnostic in getattr(execution_snapshot, "diagnostics", ()) or ():
             refs.append(_reference(

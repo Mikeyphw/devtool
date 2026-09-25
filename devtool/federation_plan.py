@@ -328,6 +328,14 @@ def materialize_federation_group(parent: "ProjectConfig", group_name: str):
                 contract_name=step.contract_name,
                 depends_on=tuple(id_map[dep] for dep in step.depends_on),
                 depends_on_declared=step.depends_on_declared,
+                artifact_inputs=tuple(
+                    replace(
+                        artifact_input,
+                        producer_step=id_map[artifact_input.producer_step],
+                        ref=f"{id_map[artifact_input.producer_step]}:artifact:{artifact_input.selector}",
+                    )
+                    for artifact_input in step.artifact_inputs
+                ),
             ))
 
     def visit(current: str, *, prefix: str) -> None:
@@ -509,6 +517,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     "git_ownership": dict(ownership),
                     "bridge_plan": bridge.as_dict(),
                     "child_schedule": schedule,
+                    "artifact_inputs": [item.as_dict() for item in step.artifact_inputs],
                 },
             )
             nodes.append(node)
@@ -566,6 +575,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     "git_ownership": dict(ownership),
                     "child_metadata": dict(local.metadata),
                     "child_schedule": schedule_scope.as_dict(),
+                    "artifact_inputs": [item.as_dict() for item in step.artifact_inputs],
                 },
             ))
             next_index += 1

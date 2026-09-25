@@ -58,6 +58,27 @@ class FederationExecutionError(RuntimeError):
     pass
 
 
+def _resolved_artifact_inputs(
+    step: FederatedWorkflowStep,
+    outcomes: Mapping[str, "FederatedChildRun"],
+    *,
+    consumer_root: str | Path,
+    parent_run_id: str,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    if not step.artifact_inputs:
+        return {}, {}
+    from .federation_artifacts import FederationArtifactError, artifact_input_environment, resolve_artifact_inputs
+    try:
+        edges = resolve_artifact_inputs(
+            step, outcomes, consumer_root=consumer_root, parent_run_id=parent_run_id
+        )
+    except FederationArtifactError as exc:
+        raise FederationExecutionError(
+            f"Federation artifact inputs for step {step.step_id!r} are not consumable: {exc}"
+        ) from exc
+    return edges, artifact_input_environment(edges)
+
+
 def _resolve_frozen_execution_plan(parent: ProjectConfig, plan: FederatedPlanGraph, *, drift_policy: str) -> tuple[FederatedPlanGraph, dict[str, Any]]:
     from .federation_lock import FederationSourceLockError, resolve_execution_source_lock
 
@@ -87,6 +108,7 @@ class FederatedChildRun:
     contract_ref: str = ""
     git_lineage: dict[str, Any] = field(default_factory=dict)
     lifecycle: str = ""
+    artifact_inputs: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -107,6 +129,7 @@ class FederatedChildRun:
             "contract_ref": self.contract_ref,
             "git_lineage": dict(self.git_lineage),
             "lifecycle": self.lifecycle,
+            "artifact_inputs": dict(self.artifact_inputs),
         }
 
 
@@ -566,6 +589,7 @@ def _run_federated_workflow_sequential(
                 "federation_ref": _step_federation_ref(plan, step),
                 "requested_ref": step.ref,
                 "repository_identity": _step_identity(plan, step),
+                "artifact_inputs": [item.as_dict() for item in step.artifact_inputs],
             },
         ))
     publish(GraphSealed(run_id=run_id, reason="federation child workflow set resolved", source="federation"))
@@ -644,6 +668,9 @@ def _run_federated_workflow_sequential(
                 resolution=resolution,
             )
             effective_fingerprint = str(identity.get("fingerprint") or identity.get("root") or resolution.root)
+            artifact_inputs, artifact_env = _resolved_artifact_inputs(
+                step, outcomes, consumer_root=resolution.root, parent_run_id=run_id
+            )
             resume_checkpoint = capture_federated_resume_checkpoint(resolution)
             child_run_id = str(RunId.new(prefix=f"fed-{step.repository}"))
             active_child_run_id = child_run_id
@@ -674,6 +701,7 @@ def _run_federated_workflow_sequential(
                 "frozen_source_lock_digest": str(plan.source_lock.get("lock_digest") or ""),
                 "frozen_source_equivalence_digest": str(plan.source_lock.get("equivalence_digest") or ""),
                 "git_lineage": planned_git_lineage,
+                "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
             }
             if federation_group:
                 lineage["federation_group"] = federation_group
@@ -703,6 +731,7 @@ def _run_federated_workflow_sequential(
                     "requested_ref": step.ref,
                     "run_lineage": lineage,
                     "resume_checkpoint": resume_checkpoint,
+                    "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
                 },
             ))
 
@@ -728,6 +757,7 @@ def _run_federated_workflow_sequential(
                 "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
             }
             env.update(git_lineage_environment(planned_git_lineage))
+            env.update(artifact_env)
             if federation_group:
                 env["DEVTOOL_FEDERATION_GROUP"] = federation_group
             from .federation_transport import build_repository_attestation, federation_attestation_environment
@@ -801,6 +831,7 @@ def _run_federated_workflow_sequential(
                     "run_lineage": persisted_lineage or lineage,
                     "operational_ownership": operational,
                     "git_lineage": git_lineage,
+                    "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
                 },
             ))
             child = FederatedChildRun(
@@ -814,6 +845,7 @@ def _run_federated_workflow_sequential(
                     "failed" if child_status != ExecutionStatus.SUCCEEDED.value or rc != 0 else
                     str(lifecycle_actions.get(step.step_id) or "executed")
                 ),
+                artifact_inputs=dict(artifact_inputs),
             )
             outcomes[step.step_id] = child
             children.append(child)
@@ -1136,6 +1168,9 @@ def _run_federated_workflow_parallel(
             resolution=resolution,
         )
         effective_fingerprint = str(identity.get("fingerprint") or identity.get("root") or resolution.root)
+        artifact_inputs, artifact_env = _resolved_artifact_inputs(
+            step, outcomes, consumer_root=resolution.root, parent_run_id=run_id
+        )
         resume_checkpoint = capture_federated_resume_checkpoint(resolution)
         child_run_id = str(RunId.new(prefix=f"fed-{step.repository}"))
         parent_node = node_ids[step.step_id]
@@ -1165,6 +1200,7 @@ def _run_federated_workflow_parallel(
             "frozen_source_lock_digest": str(plan.source_lock.get("lock_digest") or ""),
             "frozen_source_equivalence_digest": str(plan.source_lock.get("equivalence_digest") or ""),
             "git_lineage": planned_git_lineage,
+            "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
         }
         if federation_group:
             lineage["federation_group"] = federation_group
@@ -1207,6 +1243,7 @@ def _run_federated_workflow_parallel(
             "DEVTOOL_FEDERATION_CHILD_STATE_DIR": str(child_state_dir),
         }
         env.update(git_lineage_environment(planned_git_lineage))
+        env.update(artifact_env)
         if federation_group:
             env["DEVTOOL_FEDERATION_GROUP"] = federation_group
         from .federation_transport import build_repository_attestation, federation_attestation_environment
@@ -1239,6 +1276,7 @@ def _run_federated_workflow_parallel(
                 "requested_ref": step.ref,
                 "run_lineage": lineage,
                 "resume_checkpoint": resume_checkpoint,
+                "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
                 "scheduler_state": "running",
                 "scheduler_wave": wave_for_step.get(step.step_id, 0),
                 "scheduler": scheduler_node.as_dict(),
@@ -1328,6 +1366,7 @@ def _run_federated_workflow_parallel(
                     "scheduler_wave": wave_for_step.get(step.step_id, 0),
                     "scheduler": scheduler_node.as_dict(),
                     "git_lineage": git_lineage,
+                    "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
                 },
             ))
             return FederatedChildRun(
@@ -1347,6 +1386,7 @@ def _run_federated_workflow_parallel(
                 child_contract=_step_child_contract(step),
                 contract_ref=_step_contract_ref(plan, step),
                 git_lineage=git_lineage,
+                artifact_inputs=dict(artifact_inputs),
             )
         finally:
             with active_lock:
