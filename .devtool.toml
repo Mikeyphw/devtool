@@ -220,6 +220,12 @@ command = ["python", "-m", "devtool.artifact_base_contract", "fixture"]
 inputs = ["devtool/artifact_base_contract.py", "devtool/artifacts.py"]
 metadata = { read_only = true, roadmap_id = "GIT-FRX-05" }
 
+[targets.devtool.jobs.overlay-rebase-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.overlay_gate_fixture"]
+inputs = ["devtool/overlay/**", "devtool/overlay_gate_fixture.py", "devtool/artifact_base_contract.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-06" }
+
 [targets.devtool.workflows]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -260,6 +266,21 @@ roadmap-git-frx05 = [
   { id = "git-frx05", ref = "test:roadmap-git-frx05", depends_on = ["git-frx04", "base-fixture"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx05"] },
 ]
+roadmap-gate1 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "rebase-fixture", ref = "job:overlay-rebase-fixture", depends_on = ["syntax"] },
+  { id = "artifact-validation", ref = "test:roadmap-artifact-validation", depends_on = ["syntax"] },
+  { id = "frx-baseline", ref = "test:roadmap-frx-baseline", depends_on = ["syntax"] },
+  { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["frx-baseline"] },
+  { id = "git-frx01", ref = "test:roadmap-git-frx01", depends_on = ["syntax"] },
+  { id = "git-frx02", ref = "test:roadmap-git-frx02", depends_on = ["git-frx01"] },
+  { id = "git-frx03", ref = "test:roadmap-git-frx03", depends_on = ["git-frx02"] },
+  { id = "git-frx04", ref = "test:roadmap-git-frx04", depends_on = ["git-frx03"] },
+  { id = "git-frx05", ref = "test:roadmap-git-frx05", depends_on = ["git-frx04"] },
+  { id = "git-frx06", ref = "test:roadmap-git-frx06", depends_on = ["git-frx05", "rebase-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
+  { id = "gate-regressions", ref = "test:roadmap-gate1-regressions", depends_on = ["git-frx06", "frx-y01", "artifact-validation", "workflow-exo"] },
+]
 roadmap-current = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "artifact-validation", ref = "test:roadmap-artifact-validation", depends_on = ["syntax"] },
@@ -270,7 +291,9 @@ roadmap-current = [
   { id = "git-frx03", ref = "test:roadmap-git-frx03", depends_on = ["git-frx02"] },
   { id = "git-frx04", ref = "test:roadmap-git-frx04", depends_on = ["git-frx03"] },
   { id = "git-frx05", ref = "test:roadmap-git-frx05", depends_on = ["git-frx04"] },
+  { id = "git-frx06", ref = "test:roadmap-git-frx06", depends_on = ["git-frx05"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
+  { id = "gate-regressions", ref = "test:roadmap-gate1-regressions", depends_on = ["git-frx06", "frx-y01", "artifact-validation", "workflow-exo"] },
 ]
 
 [[test]]
@@ -346,6 +369,35 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-git-frx05.xml",
   "tests/test_git_frx05_touched_file_base_contracts.py",
+]
+
+[[test]]
+id = "roadmap-git-frx06"
+name = "GIT-FRX-06 three-way rebase and patch equivalence"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx06.xml",
+  "tests/test_git_frx06_three_way_rebase_equivalence.py",
+]
+
+[[test]]
+id = "roadmap-gate1-regressions"
+name = "GIT-FRX Gate 1 overlay EXO WRAP TLJ FRX regressions"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-gate1-regressions.xml",
+  "tests/test_arch_ov06_07_overlay_plugins_json.py",
+  "tests/test_arch_final_seal.py",
+  "tests/test_artifact_pipeline_v2.py",
+  "tests/test_artifact_finalize.py",
+  "tests/test_artifact_preflight.py",
+  "tests/test_exo_roadmap_current_reseal.py",
+  "tests/test_exo_target_local_jobs_final_seal.py",
+  "tests/test_wrap09_wrapper_final_seal.py",
+  "tests/test_wrapper_reseal_hotfix.py",
+  "tests/test_test_workflow_convergence.py",
 ]
 
 [[test]]

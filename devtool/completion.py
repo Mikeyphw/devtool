@@ -1230,7 +1230,7 @@ _devtool() {
           ;;
         overlay)
           if (( ${#line} < 2 )); then
-            _values 'overlay action' check rebase
+            _values 'overlay action' check status rebase
           else
             case ${line[2]} in
               check)

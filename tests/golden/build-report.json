@@ -44,6 +44,13 @@
   },
   "command": "build",
   "duration_s": 3.0,
+  "execution_context": {
+    "repository_job_count": 0,
+    "repository_jobs": [],
+    "target_local_job_count": 0,
+    "target_local_jobs": [],
+    "targets_with_target_local_jobs": []
+  },
   "exit_code": 0,
   "finished_at": "2026-08-25T12:00:03Z",
   "machine": {
@@ -141,6 +148,7 @@
         "warnings": 0
       }
     },
+    "federation": {},
     "navigation": [
       {
         "icon": "nav.dashboard",
@@ -387,6 +395,12 @@
         "semantics_version": 2,
         "skipped_nodes": 0,
         "succeeded_nodes": 1,
+        "test_assemblies": 0,
+        "test_metrics_available": false,
+        "tests_failed": 0,
+        "tests_passed": 0,
+        "tests_skipped": 0,
+        "tests_total": 0,
         "total_nodes": 1
       },
       "tree": [
@@ -506,5 +520,6 @@
     "failed": 0,
     "skipped": 0,
     "warnings": 0
-  }
+  },
+  "workflow": {}
 }

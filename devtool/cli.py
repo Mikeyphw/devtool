@@ -76,7 +76,7 @@ from .artifact_registry import load_registry, find_record, verify_record, prune_
 from .api_output import extract_universal_json_flag, run_json_invocation
 from .core import configure_logging, finalize_execution_run
 from .core.events import BuildStarted, OverlayApplied, configure_event_console, publish_event
-from .overlay import check_overlay, rebase_overlay
+from .overlay import check_overlay, inspect_patch_equivalence, rebase_overlay
 from .plugins import discover_plugins, doctor_plugin
 from .doctor import collect_doctor_checks, doctor_payload
 from .validation_profiles import apply_profile as apply_validation_workflow_profile, available_profiles as available_validation_profiles
@@ -924,7 +924,10 @@ def build_parser() -> argparse.ArgumentParser:
     overlay_check.add_argument("--max-diff-lines", type=int, default=4000)
     overlay_check.add_argument("--ignore-checksum", action="store_true")
     overlay_check.add_argument("--json", action="store_true", help="Emit structured overlay preflight JSON")
-    overlay_rebase = overlay_sub.add_parser("rebase", help="Regenerate overlay inventory source hashes against the current repository")
+    overlay_status = overlay_sub.add_parser("status", help="Classify overlay patch equivalence against the current repository")
+    overlay_status.add_argument("artifact")
+    overlay_status.add_argument("--json", action="store_true", help="Emit structured patch-equivalence JSON")
+    overlay_rebase = overlay_sub.add_parser("rebase", help="Three-way rebase an overlay against the current repository")
     overlay_rebase.add_argument("artifact")
     overlay_rebase.add_argument("-o", "--output", default="", help="Output archive; defaults to <name>.rebased.<ext>")
     overlay_rebase.add_argument("--json", action="store_true", help="Emit structured rebase JSON")
@@ -7976,7 +7979,7 @@ def _maybe_commit_after_apply(
     commit_message = str(getattr(args, "commit", "") or "").strip()
     raw_commit_mode = str(getattr(args, "commit_mode", "") or "").strip().lower()
     commit_mode = raw_commit_mode or ("new" if commit_message else "none")
-    if args.command not in APPLY_COMMANDS or commit_mode == "none":
+    if args.command not in APPLY_COMMANDS or commit_mode == "none" or bool(getattr(args, "_devtool_overlay_already_applied", False)):
         return results, raw_output
     # Failed applies or failed validation are never committed.
     if not results or any(result.returncode != 0 for result in results):
@@ -9363,6 +9366,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     temp_bundle: tempfile.TemporaryDirectory[str] | None = None
     rebase_temp: tempfile.TemporaryDirectory[str] | None = None
     source_artifacts: list[Path] = []
+    rebase_result = None
     if name in {"apply-overlays", "aos"} and len(artifact_items) > 1:
         temp_bundle, temp_path, source_artifacts = _make_ad_hoc_overlay_bundle(artifact_items, name="adhoc_overlay_bundle")
         artifact = str(temp_path)
@@ -9375,7 +9379,9 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         rebased_path = Path(rebase_temp.name) / Path(str(artifact)).name
         rebase_result = rebase_overlay(config.repo_root, str(artifact), output=rebased_path)
         args._devtool_rebase_result = rebase_result.to_dict()
-        artifact = str(rebased_path)
+        if not rebase_result.noop:
+            artifact = str(rebased_path)
+            args._devtool_effective_artifact = str(rebased_path)
     if tasker_progress is not None:
         tasker_progress.phase_started(name, index=1, total=1, argv=[name, display_artifact or str(artifact)])
 
@@ -9387,6 +9393,21 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         if rebase_temp is not None:
             rebase_temp.cleanup()
         return [result], text
+
+    if rebase_result is not None and rebase_result.noop:
+        args._devtool_overlay_already_applied = True
+        result = OperationResult(
+            "overlay-already-applied",
+            [name, display_artifact or str(artifact), "--rebase"],
+            0,
+            0.0,
+            "Overlay patch is already fully present; no repository mutation was required.",
+            [],
+            skipped=True,
+            metadata={"patch_equivalence": rebase_result.to_dict()},
+        )
+        text = "$ " + " ".join(result.argv) + "\n" + result.output
+        return _return_apply(result, text)
 
     if getattr(args, "validate_only", False):
         result = OperationResult(
@@ -10930,7 +10951,10 @@ def _verify_applied_artifact_effects(config: ProjectConfig, args: argparse.Names
     start = time.perf_counter()
     artifact_type = str(getattr(args, "_devtool_artifact_type", "") or "").strip()
     snapshot = artifact_type == "snapshot" or "snapshot" in str(getattr(args, "command", ""))
-    payload_hashes = _artifact_payload_hashes(getattr(args, "artifact", ""), snapshot=snapshot)
+    payload_hashes = _artifact_payload_hashes(
+        getattr(args, "_devtool_effective_artifact", "") or getattr(args, "artifact", ""),
+        snapshot=snapshot,
+    )
     problems: list[str] = []
     checked = 0
 
@@ -14061,6 +14085,28 @@ def _main_after_parse(
                 if result.diff:
                     print(result.diff, end="" if result.diff.endswith("\n") else "\n")
             return 0 if result.ok else 1
+        if action == "status":
+            try:
+                result = inspect_patch_equivalence(repo, args.artifact)
+            except Exception as exc:
+                if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                    print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Overlay status failed: {exc}", file=sys.stderr)
+                return 2
+            payload = {"ok": True, **result.to_dict()}
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([
+                    ("artifact", result.artifact),
+                    ("status", result.status),
+                    ("overlay_patch_id", result.overlay_patch_id or "<unavailable>"),
+                    ("current_patch_id", result.current_patch_id or "<none>"),
+                ])
+                for message in result.messages:
+                    console.print(message)
+            return 0
         if action == "rebase":
             try:
                 result = rebase_overlay(repo, args.artifact, output=(args.output or None))
@@ -14074,7 +14120,16 @@ def _main_after_parse(
             if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
             else:
-                render_status_table([("output", result.output), ("changed_entries", str(result.changed_entries)), ("actions_changed", str(result.actions_changed)), ("validation", "passed")])
+                render_status_table([
+                    ("output", result.output or "<none>"),
+                    ("equivalence_before", result.equivalence_before or "legacy"),
+                    ("changed_entries", str(result.changed_entries)),
+                    ("actions_changed", str(result.actions_changed)),
+                    ("noop", "yes" if result.noop else "no"),
+                    ("validation", "passed" if result.validation_ok else "failed"),
+                ])
+                for message in result.messages:
+                    console.print(message)
             return 0
 
     if args.command in {"plugin", "plugins"}:
