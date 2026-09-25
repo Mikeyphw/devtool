@@ -168,6 +168,33 @@ targets, missing child workflows, unavailable repositories, ownership changes,
 unknown dependencies, and dependency cycles fail closed. The planner is
 read-only and must not execute a child job, hook, or runner action.
 
+## FRX-X01: target-qualified child workflow identity
+
+FRX-X01 extends the sealed FRX-05 reference grammar without changing the
+legacy form. Federation workflow references may now be either:
+
+```text
+repository::workflow
+repository::target::workflow
+```
+
+`repository::workflow` remains backward compatible and resolves through the
+child repository's selected/default target. `repository::target::workflow`
+selects the named child target explicitly, including a non-default target in a
+multi-target repository. The parser records whether the target was explicit;
+target existence remains a child-owned planning check rather than a parent
+configuration-time discovery side effect.
+
+Once a child target is resolved, the planner normalizes both forms to one
+canonical invocation identity: `repository::resolved-target::workflow`. Every
+non-synthetic machine plan node exposes that value as `federation_ref`, and
+plan metadata retains both the normalized identity and original requested ref.
+The existing execution coordinator already consumes the planner's resolved
+target, so a qualified reference re-enters the child with the explicit
+`--target` selection. FRX-X02 is responsible for propagating that canonical
+identity through all execution lineage, provider, UI, doctor, and summary
+surfaces.
+
 ## FRX-06: EXO parent/child execution lineage
 
 Federated execution uses a coordinator run plus one authoritative EXO child run

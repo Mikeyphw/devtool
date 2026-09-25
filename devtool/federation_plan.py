@@ -36,9 +36,16 @@ class FederatedPlanNode:
     synthetic: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def federation_ref(self) -> str:
+        if self.synthetic or not self.target:
+            return ""
+        return f"{self.repository}::{self.target}::{self.workflow}"
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "key": self.key,
+            "federation_ref": self.federation_ref,
             "repository": self.repository,
             "target": self.target,
             "workflow": self.workflow,
@@ -139,24 +146,39 @@ def _load_child(parent: "ProjectConfig", repository: str) -> "ProjectConfig":
     return child
 
 
-def _child_graph(parent: "ProjectConfig", repository: str, workflow: str):
+def _child_graph(
+    parent: "ProjectConfig",
+    repository: str,
+    workflow: str,
+    requested_target: str = "",
+):
     child = _load_child(parent, repository)
-    target = str(child.selected_target or "").strip()
-    if not target:
+    explicit_target = str(requested_target or "").strip()
+    target = explicit_target or str(child.selected_target or "").strip()
+    if explicit_target:
+        if target not in child.targets:
+            available = ", ".join(sorted(child.targets)) or "<none>"
+            raise FederationPlanError(
+                f"Federation repository {repository!r} has no target {target!r} for "
+                f"target-qualified workflow {repository}::{target}::{workflow}. "
+                f"Available targets: {available}"
+            )
+    elif not target:
         if len(child.targets) == 1:
             target = next(iter(child.targets))
         else:
             available = ", ".join(sorted(child.targets)) or "<none>"
             raise FederationPlanError(
                 f"Federation repository {repository!r} has no unambiguous selected target for workflow {workflow!r}. "
-                f"Available targets: {available}"
+                f"Available targets: {available}. Use repository::target::workflow to select one explicitly."
             )
     target_config = child.targets.get(target)
     if target_config is None or workflow not in target_config.workflows:
         available = ", ".join(sorted(target_config.workflows)) if target_config is not None else "<none>"
+        ref = f"{repository}::{target}::{workflow}"
         raise FederationPlanError(
-            f"Federation repository {repository!r} target {target!r} has no workflow {workflow!r}. "
-            f"Available workflows: {available or '<none>'}"
+            f"Federation repository {repository!r} target {target!r} has no workflow {workflow!r} "
+            f"for {ref}. Available workflows: {available or '<none>'}"
         )
     try:
         graph = plan_workspace_targets(child, [target], workflow)
@@ -206,7 +228,9 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
 
     ordered_steps = _ordered_steps(workflow)
     for step in ordered_steps:
-        child, target, local_graph = _child_graph(parent, step.repository, step.workflow)
+        child, target, local_graph = _child_graph(
+            parent, step.repository, step.workflow, step.target
+        )
         if step.repository not in repositories:
             repositories.append(step.repository)
         local_roots = {node.key for node in local_graph.roots}
@@ -227,7 +251,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
             if key in seen_keys:
                 raise FederationPlanError(
                     f"Federation workflow {name!r} invokes duplicate child graph node {key!r}; "
-                    "duplicate repository/workflow invocations require distinct child graph identities"
+                    "duplicate repository/target/workflow invocations require distinct child graph identities"
                 )
             seen_keys.add(key)
             deps = [f"{step.repository}::{dep}" for dep in local.depends_on]
@@ -246,6 +270,9 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                 index=next_index,
                 metadata={
                     "federation_step": step.step_id,
+                    "federation_ref": step.canonical_ref(target),
+                    "requested_ref": step.ref,
+                    "target_explicit": step.target_qualified,
                     "repository_identity": identity,
                     "child_metadata": dict(local.metadata),
                 },

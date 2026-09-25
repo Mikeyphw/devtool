@@ -214,6 +214,8 @@ def _workflow_observations(config: "ProjectConfig", issues: list[dict[str, Any]]
                     "id": step.step_id,
                     "ref": step.ref,
                     "repository": step.repository,
+                    "target": step.target,
+                    "target_qualified": step.target_qualified,
                     "workflow": step.workflow,
                     "depends_on": list(step.depends_on),
                 }

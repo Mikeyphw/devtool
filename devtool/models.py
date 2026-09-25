@@ -302,6 +302,17 @@ class FederatedWorkflowStep:
     workflow: str
     depends_on: tuple[str, ...] = ()
     depends_on_declared: bool = False
+    target: str = ""
+
+    @property
+    def target_qualified(self) -> bool:
+        return bool(self.target)
+
+    def canonical_ref(self, resolved_target: str = "") -> str:
+        target = str(resolved_target or self.target or "").strip()
+        if not target:
+            return f"{self.repository}::{self.workflow}"
+        return f"{self.repository}::{target}::{self.workflow}"
 
 
 @dataclass(slots=True, frozen=True)

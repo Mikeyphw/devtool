@@ -133,19 +133,56 @@ def _repo_members(value: object, *, path: str) -> tuple[str, ...]:
     return tuple(result)
 
 
-def _workflow_ref(value: object, *, path: str, repositories: Mapping[str, FederatedRepositoryConfig]) -> tuple[str, str, str]:
+def _workflow_ref(
+    value: object,
+    *,
+    path: str,
+    repositories: Mapping[str, FederatedRepositoryConfig],
+) -> tuple[str, str, str, str]:
+    """Parse a federation child-workflow reference.
+
+    Backward-compatible references use ``repository::workflow`` and defer
+    target resolution to the child repository's selected/default target.
+    Target-qualified references use ``repository::target::workflow`` and
+    select that target explicitly.  Parsing remains repository-local: target
+    existence is verified by the FRX planner when the child config is loaded.
+    """
+
     if not isinstance(value, str) or not value.strip():
-        raise _fail(f"{path} must be a non-empty repository::workflow reference")
+        raise _fail(
+            f"{path} must be a non-empty repository::workflow or "
+            "repository::target::workflow reference"
+        )
     raw = value.strip()
-    if raw.count("::") != 1:
-        raise _fail(f"{path} must use repository::workflow syntax, got {raw!r}")
-    repository, workflow = (part.strip() for part in raw.split("::", 1))
-    repository = _name(repository, path=f"{path} repository")
-    workflow = _name(workflow, path=f"{path} workflow")
+    parts = [part.strip() for part in raw.split("::")]
+    if len(parts) not in {2, 3}:
+        raise _fail(
+            f"{path} must use repository::workflow or repository::target::workflow syntax, "
+            f"got {raw!r}"
+        )
+    if any(not part for part in parts):
+        raise _fail(
+            f"{path} must use non-empty repository, target (when present), and workflow names, "
+            f"got {raw!r}"
+        )
+
+    repository = _name(parts[0], path=f"{path} repository")
+    if len(parts) == 2:
+        target = ""
+        workflow = _name(parts[1], path=f"{path} workflow")
+        normalized = f"{repository}::{workflow}"
+    else:
+        target = _name(parts[1], path=f"{path} target")
+        workflow = _name(parts[2], path=f"{path} workflow")
+        normalized = f"{repository}::{target}::{workflow}"
+
     if repository not in repositories:
         available = ", ".join(sorted(repositories)) or "<none>"
-        raise _fail(f"{path} references unknown federation repository {repository!r}. Available repositories: {available}")
-    return raw, repository, workflow
+        raise _fail(
+            f"{path} references unknown federation repository {repository!r}. "
+            f"Available repositories: {available}"
+        )
+    return normalized, repository, target, workflow
 
 
 def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str, FederatedRepositoryConfig]) -> tuple[FederatedWorkflowStep, ...]:
@@ -159,9 +196,21 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
         if not isinstance(shorthand, list) or not shorthand:
             raise _fail(f"federation.workflows.{name}.depends_on must be a non-empty array")
         for index, value in enumerate(shorthand, 1):
-            ref, repository, workflow = _workflow_ref(value, path=f"federation.workflows.{name}.depends_on[{index - 1}]", repositories=repositories)
+            ref, repository, target, workflow = _workflow_ref(
+                value,
+                path=f"federation.workflows.{name}.depends_on[{index - 1}]",
+                repositories=repositories,
+            )
             step_id = f"step-{index:02d}"
-            steps.append(FederatedWorkflowStep(step_id, ref, repository, workflow, (), True))
+            steps.append(FederatedWorkflowStep(
+                step_id=step_id,
+                ref=ref,
+                repository=repository,
+                workflow=workflow,
+                depends_on=(),
+                depends_on_declared=True,
+                target=target,
+            ))
     elif structured is not None:
         if not isinstance(structured, list) or not structured:
             raise _fail(f"federation.workflows.{name}.steps must be a non-empty array of inline tables")
@@ -175,7 +224,11 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
             if step_id in seen_ids:
                 raise _fail(f"federation workflow {name!r} declares duplicate step id {step_id!r}")
             seen_ids.add(step_id)
-            ref, repository, workflow = _workflow_ref(item.get("ref"), path=f"federation.workflows.{name}.steps[{index}].ref", repositories=repositories)
+            ref, repository, target, workflow = _workflow_ref(
+                item.get("ref"),
+                path=f"federation.workflows.{name}.steps[{index}].ref",
+                repositories=repositories,
+            )
             deps_raw = item.get("depends_on", [])
             if not isinstance(deps_raw, list):
                 raise _fail(f"federation.workflows.{name}.steps[{index}].depends_on must be an array of step ids")
@@ -185,7 +238,15 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
                 if dep_name in deps:
                     raise _fail(f"federation workflow {name!r} step {step_id!r} repeats dependency {dep_name!r}")
                 deps.append(dep_name)
-            steps.append(FederatedWorkflowStep(step_id, ref, repository, workflow, tuple(deps), "depends_on" in item))
+            steps.append(FederatedWorkflowStep(
+                step_id=step_id,
+                ref=ref,
+                repository=repository,
+                workflow=workflow,
+                depends_on=tuple(deps),
+                depends_on_declared="depends_on" in item,
+                target=target,
+            ))
         known = {step.step_id for step in steps}
         for step in steps:
             missing = [dep for dep in step.depends_on if dep not in known]
@@ -334,6 +395,8 @@ def federation_as_dict(config: FederationConfig) -> dict[str, Any]:
                         "id": step.step_id,
                         "ref": step.ref,
                         "repository": step.repository,
+                        "target": step.target,
+                        "target_qualified": step.target_qualified,
                         "workflow": step.workflow,
                         "depends_on": list(step.depends_on),
                     }
