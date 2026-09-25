@@ -19,9 +19,10 @@ EXPECTED_TESTS = {
     "roadmap-git-frx02",
     "roadmap-git-frx03",
     "roadmap-git-frx04",
+    "roadmap-git-frx05",
     "roadmap-workflow-exo-baseline",
 }
-EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-git-frx04", "roadmap-current"}
+EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-git-frx04", "roadmap-git-frx05", "roadmap-current"}
 
 
 def _config():
@@ -32,7 +33,7 @@ def test_roadmap00_declares_truthful_target_local_non_test_jobs() -> None:
     cfg = _config()
     target = cfg.targets["devtool"]
 
-    assert set(target.jobs) == {"source-syntax", "transaction-worktree-fixture", "self-refresh-root-probe", "commit-policy-fixture", "signing-policy-probe"}
+    assert set(target.jobs) == {"source-syntax", "transaction-worktree-fixture", "self-refresh-root-probe", "commit-policy-fixture", "signing-policy-probe", "overlay-base-fixture"}
     syntax = target.jobs["source-syntax"]
     assert syntax.name == "devtool.source-syntax"
     assert syntax.runner == "command"
@@ -61,6 +62,11 @@ def test_roadmap00_declares_truthful_target_local_non_test_jobs() -> None:
     assert signing_probe.command == ("python", "-m", "devtool.git_commit_policy", "probe", "--repo", ".")
     assert signing_probe.metadata["read_only"] is True
     assert signing_probe.metadata["roadmap_id"] == "GIT-FRX-04"
+
+    base_fixture = target.jobs["overlay-base-fixture"]
+    assert base_fixture.command == ("python", "-m", "devtool.artifact_base_contract", "fixture")
+    assert base_fixture.metadata["read_only"] is True
+    assert base_fixture.metadata["roadmap_id"] == "GIT-FRX-05"
 
 
 def test_roadmap00_declared_tests_use_unique_structured_junit_evidence() -> None:
@@ -130,12 +136,21 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
         "test:roadmap-workflow-exo-baseline",
     }
 
+    git_frx05 = plan_selected_workflow(cfg, "roadmap-git-frx05")
+    assert {node.ref.raw for node in git_frx05.nodes} == {
+        "job:source-syntax",
+        "job:overlay-base-fixture",
+        "test:roadmap-git-frx04",
+        "test:roadmap-git-frx05",
+        "test:roadmap-workflow-exo-baseline",
+    }
+
     current = plan_selected_workflow(cfg, "roadmap-current")
     assert {node.ref.raw for node in current.nodes} == {
         "job:source-syntax",
         *(f"test:{test_id}" for test_id in EXPECTED_TESTS),
     }
-    assert len(current.nodes) == 9
+    assert len(current.nodes) == 10
 
 
 def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons() -> None:
@@ -145,9 +160,10 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     with redirect_stdout(jobs_out):
         _jobs(cfg, as_json=True, selected_target="devtool")
     jobs = json.loads(jobs_out.getvalue())
-    assert jobs["summary"]["target_local_jobs"] == 5
+    assert jobs["summary"]["target_local_jobs"] == 6
     assert jobs["completion"]["target_job_keys"] == [
         "devtool.commit-policy-fixture",
+        "devtool.overlay-base-fixture",
         "devtool.self-refresh-root-probe",
         "devtool.signing-policy-probe",
         "devtool.source-syntax",
@@ -169,7 +185,7 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
 
     assert payload["action"] == "roadmap-current"
     assert payload["targets"] == ["devtool"]
-    assert payload["summary"]["node_count"] == 9
+    assert payload["summary"]["node_count"] == 10
     assert payload["summary"]["target_local_job_count"] == 1
     assert payload["summary"]["target_local_jobs"][0]["key"] == "devtool.source-syntax"
     assert payload["schedule"]["nodes"]
@@ -179,6 +195,7 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     assert by_ref["test:roadmap-git-frx02"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx03"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx04"]["target"] == "devtool"
+    assert by_ref["test:roadmap-git-frx05"]["target"] == "devtool"
     assert by_ref["test:roadmap-frx-y01"]["target"] == "devtool"
     source_node = next(node for node in payload["schedule"]["nodes"] if node["job_key"] == "devtool.source-syntax")
     assert source_node["writes_known"] is True

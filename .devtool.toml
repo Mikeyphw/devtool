@@ -214,6 +214,12 @@ command = ["python", "-m", "devtool.git_commit_policy", "probe", "--repo", "."]
 inputs = ["devtool/git_commit_policy.py", ".git/HEAD", ".git/config"]
 metadata = { read_only = true, roadmap_id = "GIT-FRX-04" }
 
+[targets.devtool.jobs.overlay-base-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.artifact_base_contract", "fixture"]
+inputs = ["devtool/artifact_base_contract.py", "devtool/artifacts.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-05" }
+
 [targets.devtool.workflows]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -247,6 +253,13 @@ roadmap-git-frx04 = [
   { id = "git-frx04", ref = "test:roadmap-git-frx04", depends_on = ["git-frx03", "policy-fixture", "signing-probe"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx04"] },
 ]
+roadmap-git-frx05 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "base-fixture", ref = "job:overlay-base-fixture", depends_on = ["syntax"] },
+  { id = "git-frx04", ref = "test:roadmap-git-frx04", depends_on = ["syntax"] },
+  { id = "git-frx05", ref = "test:roadmap-git-frx05", depends_on = ["git-frx04", "base-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx05"] },
+]
 roadmap-current = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "artifact-validation", ref = "test:roadmap-artifact-validation", depends_on = ["syntax"] },
@@ -256,6 +269,7 @@ roadmap-current = [
   { id = "git-frx02", ref = "test:roadmap-git-frx02", depends_on = ["git-frx01"] },
   { id = "git-frx03", ref = "test:roadmap-git-frx03", depends_on = ["git-frx02"] },
   { id = "git-frx04", ref = "test:roadmap-git-frx04", depends_on = ["git-frx03"] },
+  { id = "git-frx05", ref = "test:roadmap-git-frx05", depends_on = ["git-frx04"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
 ]
 
@@ -322,6 +336,16 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-git-frx04.xml",
   "tests/test_git_frx04_commit_policy.py",
+]
+
+[[test]]
+id = "roadmap-git-frx05"
+name = "GIT-FRX-05 touched-file base contracts"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx05.xml",
+  "tests/test_git_frx05_touched_file_base_contracts.py",
 ]
 
 [[test]]

@@ -20,6 +20,7 @@ from typing import Any, Iterable
 
 from .console_utils import resolve_cli_path
 from .logstore import state_dir
+from .artifact_base_contract import path_source_sha256, validate_base_contract, validate_base_contract_shape
 
 MANIFEST_NAMES = {".devtool-artifact.json", "artifact.devtool.json", "devtool-artifact.json"}
 DELETE_MANIFEST_NAME = ".devtool-delete"
@@ -2444,12 +2445,20 @@ def _validate_inventory(
                 messages.append(f"Inventory source_sha256 is not a valid SHA-256 for {path}.")
         if check_source_state:
             if action in {"modify", "delete"}:
-                if not target.exists() or not target.is_file():
+                exists = target.exists() or target.is_symlink()
+                if not exists or (not target.is_file() and not target.is_symlink()):
                     ok = False
-                    messages.append(f"Inventory expects existing file for {action}: {path}")
-                elif not ignore_checksum and source_sha and sha256_file(target).lower() != source_sha:
-                    ok = False
-                    messages.append(f"Source SHA-256 mismatch for {path}.")
+                    messages.append(f"Inventory expects existing file or symlink for {action}: {path}")
+                elif not ignore_checksum and source_sha:
+                    try:
+                        actual_source = path_source_sha256(target).lower()
+                    except RuntimeError as exc:
+                        ok = False
+                        messages.append(str(exc))
+                    else:
+                        if actual_source != source_sha:
+                            ok = False
+                            messages.append(f"Source SHA-256 mismatch for {path}.")
             elif action == "add" and target.exists() and conflict_policy == "fail":
                 ok = False
                 messages.append(f"Inventory add conflicts with existing path: {path}")
@@ -2529,6 +2538,9 @@ def validate_artifact(
     if manifest and _schema_version(manifest, messages) is None:
         ok = False
     if not _validate_inventory_shape(manifest, messages):
+        ok = False
+    inventory_entries = artifact_inventory_entries(manifest)
+    if not validate_base_contract_shape(manifest, inventory_entries, messages):
         ok = False
 
     if check_repository_identity and not _validate_repository_identity(repo_root, manifest, messages):
@@ -2650,6 +2662,18 @@ def validate_artifact(
         ignore_checksum=ignore_checksum,
     ):
         ok = False
+
+    if check_source_state and str(manifest.get("base_contract_mode") or "").strip():
+        try:
+            base_result = validate_base_contract(repo_root, manifest, inventory_entries)
+        except Exception as exc:
+            base_result = None
+            ok = False
+            messages.append(f"Base contract verification failed: {type(exc).__name__}: {exc}")
+        if base_result is not None:
+            if not base_result.ok:
+                ok = False
+            messages.extend(base_result.messages)
 
     script = artifact_validation_script(manifest)
     if script:

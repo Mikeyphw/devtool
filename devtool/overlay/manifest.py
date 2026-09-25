@@ -18,6 +18,12 @@ def manifest_summary(artifact: str | Path) -> dict[str, Any]:
         "name": manifest.get("name") or Path(artifact).name,
         "repository": dict(repository),
         "inventory_entries": len(entries),
+        "base_contract": {
+            "mode": str(manifest.get("base_contract_mode") or ""),
+            "base_commit": str(manifest.get("base_commit") or ""),
+            "base_tree": str(manifest.get("base_tree") or ""),
+            "touched_paths": list(manifest.get("touched_paths") or []) if isinstance(manifest.get("touched_paths"), list) else [],
+        },
         "commit": {
             "enabled": commit.get("enabled") is True,
             "strategy": str(commit.get("strategy") or "single"),

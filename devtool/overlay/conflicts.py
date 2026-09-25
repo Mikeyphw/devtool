@@ -4,7 +4,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import artifact_inventory_entries, sha256_file
+from ..artifacts import artifact_inventory_entries
+from ..artifact_base_contract import path_source_sha256
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,14 +42,14 @@ def detect_inventory_conflicts(repo_root: Path, manifest: dict[str, Any]) -> lis
                     rebaseable=target.is_file(),
                 ))
             continue
-        if not target.exists() or not target.is_file():
+        if not (target.exists() or target.is_symlink()) or (not target.is_file() and not target.is_symlink()):
             conflicts.append(OverlayConflict(
                 path, "missing-source", action, expected, "<missing>",
                 f"Overlay declares {action} but the source file is missing.",
                 rebaseable=action == "modify",
             ))
             continue
-        actual = sha256_file(target).lower()
+        actual = path_source_sha256(target).lower()
         if expected and actual != expected:
             conflicts.append(OverlayConflict(
                 path, "source-sha-mismatch", action, expected, actual,

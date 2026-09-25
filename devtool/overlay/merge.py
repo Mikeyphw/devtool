@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..artifact_base_contract import build_base_contract, path_source_sha256
 from ..artifacts import (
     MANIFEST_NAMES,
     artifact_inventory_entries,
@@ -78,27 +79,27 @@ def rebase_overlay(repo_root: Path, artifact: str | Path, *, output: str | Path 
         target = repo_root / path
         before = dict(entry)
         if action == "add":
-            if target.exists():
-                if not target.is_file():
+            if target.exists() or target.is_symlink():
+                if not target.is_file() and not target.is_symlink():
                     raise RuntimeError(f"Cannot rebase add over non-file target: {path}")
                 entry["action"] = "modify"
-                entry["source_sha256"] = sha256_file(target)
+                entry["source_sha256"] = path_source_sha256(target)
                 actions_changed += 1
             else:
                 entry.pop("source_sha256", None)
         elif action == "modify":
-            if target.is_file():
-                entry["source_sha256"] = sha256_file(target)
-            elif not target.exists():
+            if target.is_file() or target.is_symlink():
+                entry["source_sha256"] = path_source_sha256(target)
+            elif not (target.exists() or target.is_symlink()):
                 entry["action"] = "add"
                 entry.pop("source_sha256", None)
                 actions_changed += 1
             else:
                 raise RuntimeError(f"Cannot rebase modify over non-file target: {path}")
         elif action == "delete":
-            if not target.is_file():
+            if not target.is_file() and not target.is_symlink():
                 raise RuntimeError(f"Cannot rebase delete because source file is missing or not a file: {path}")
-            entry["source_sha256"] = sha256_file(target)
+            entry["source_sha256"] = path_source_sha256(target)
         else:
             raise RuntimeError(f"Unsupported inventory action while rebasing {path!r}: {action!r}")
 
@@ -120,6 +121,9 @@ def rebase_overlay(repo_root: Path, artifact: str | Path, *, output: str | Path 
     inventory = dict(inventory)
     inventory["entries"] = new_entries
     manifest["inventory"] = inventory
+    base_mode = str(manifest.get("base_contract_mode") or "").strip().lower()
+    if base_mode in {"exact-tree", "touched-files"}:
+        manifest.update(build_base_contract(repo_root, new_entries, mode=base_mode))
     payload[manifest_member] = (json.dumps(manifest, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
     destination = Path(output).expanduser() if output else _default_output(source)
