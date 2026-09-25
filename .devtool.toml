@@ -177,3 +177,82 @@ lint = [
   ":app:lintDebug",
 ]
 
+
+# DEVTOOL-ROADMAP-00: native self-hosted roadmap execution contract.
+# Keep roadmap checks first-class: tests own test identity, TLJ owns non-test
+# operations, and workflows own milestone dependency order.
+[targets.devtool.jobs.source-syntax]
+runner = "command"
+command = ["python", "-m", "compileall", "-q", "devtool", "tests"]
+inputs = ["devtool/**", "tests/**"]
+outputs = [".devtool/cache/roadmap-pyc/**"]
+
+[targets.devtool.jobs.source-syntax.env]
+PYTHONPYCACHEPREFIX = ".devtool/cache/roadmap-pyc"
+
+[targets.devtool.workflows]
+roadmap-smoke = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
+]
+roadmap-frx-y01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "frx-baseline", ref = "test:roadmap-frx-baseline", depends_on = ["syntax"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
+]
+roadmap-current = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "artifact-validation", ref = "test:roadmap-artifact-validation", depends_on = ["syntax"] },
+  { id = "frx-baseline", ref = "test:roadmap-frx-baseline", depends_on = ["syntax"] },
+  { id = "git-frx01", ref = "test:roadmap-git-frx01", depends_on = ["syntax"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
+]
+
+[[test]]
+id = "roadmap-artifact-validation"
+name = "Roadmap artifact validation baseline"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-artifact-validation.xml",
+  "tests/test_artifact_validation_fail_closed_hotfix.py",
+  "tests/test_tsys04_artifact_test_protocol.py",
+]
+
+[[test]]
+id = "roadmap-frx-baseline"
+name = "Roadmap federation baseline"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-frx-baseline.xml",
+  "tests/test_frx_full_roadmap_reseal.py",
+  "tests/test_frx_x01_target_qualified_workflow_identity.py",
+  "tests/test_frx_x02_target_identity_convergence.py",
+  "tests/test_frx_x03_executable_federation_groups.py",
+  "tests/test_frx_x04_real_repo_adoption_reseal.py",
+]
+
+[[test]]
+id = "roadmap-git-frx01"
+name = "Roadmap Git FRX-01 baseline"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx01.xml",
+  "tests/test_git_frx01_repository_git_state.py",
+]
+
+[[test]]
+id = "roadmap-workflow-exo-baseline"
+name = "Roadmap workflow and EXO baseline"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-workflow-exo-baseline.xml",
+  "tests/test_tsys_declared_test_bridge_hotfix.py",
+  "tests/test_exo_target_local_jobs_gate_seal.py",
+  "tests/test_exo_target_local_jobs_plan_export.py",
+  "tests/test_test_workflow_convergence.py",
+  "tests/test_devtool_roadmap_native_execution_contract.py",
+]
