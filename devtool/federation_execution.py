@@ -10,7 +10,7 @@ authoritative run identity.
 
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import os
 from pathlib import Path
@@ -48,6 +48,16 @@ from .repository_identity import RepositoryIdentity, same_repository_identity
 
 class FederationExecutionError(RuntimeError):
     pass
+
+
+def _resolve_frozen_execution_plan(parent: ProjectConfig, plan: FederatedPlanGraph, *, drift_policy: str) -> tuple[FederatedPlanGraph, dict[str, Any]]:
+    from .federation_lock import FederationSourceLockError, resolve_execution_source_lock
+
+    try:
+        lock, verification = resolve_execution_source_lock(parent, plan, drift_policy=drift_policy)
+    except FederationSourceLockError as exc:
+        raise FederationExecutionError(str(exc)) from exc
+    return replace(plan, source_lock=lock.as_dict()), verification
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,6 +402,7 @@ def _run_federated_workflow_sequential(
     snapshot_lookup: Callable[[str], Any] | None = None,
     parent_run_id: str = "",
     request_child_cancel: Callable[[str], Any] | None = None,
+    drift_policy: str = "fail",
 ) -> FederatedRunReport:
     """Execute a configured federation workflow sequentially with EXO lineage.
 
@@ -409,6 +420,7 @@ def _run_federated_workflow_sequential(
     workflow = project_capability_dependencies(parent, workflow)
 
     plan = build_federated_plan(parent, name)
+    plan, source_verification = _resolve_frozen_execution_plan(parent, plan, drift_policy=drift_policy)
     run_id = str(parent_run_id or RunId.new(prefix="federation"))
     owner_identity = parent.repository_identity.as_dict() if parent.repository_identity else {}
     owner_fingerprint = str(owner_identity.get("fingerprint") or owner_identity.get("root") or parent.repo_root)
@@ -438,7 +450,12 @@ def _run_federated_workflow_sequential(
         command=(f"federation run --group {federation_group}" if federation_group else f"federation run {name}"),
         project=str(parent.repo_root),
         source="federation",
-        metadata={"repository_identity": owner_identity, "run_lineage": parent_lineage},
+        metadata={
+            "repository_identity": owner_identity,
+            "run_lineage": parent_lineage,
+            "federation_source_lock": dict(plan.source_lock),
+            "federation_source_verification": dict(source_verification),
+        },
     ))
 
     ordered_steps = _ordered_steps(workflow)
@@ -534,6 +551,8 @@ def _run_federated_workflow_sequential(
                 "requested_repository": step.repository,
                 "effective_repository": effective_fingerprint,
                 "execution_environment": "auto",
+                "frozen_source_lock_digest": str(plan.source_lock.get("lock_digest") or ""),
+                "frozen_source_equivalence_digest": str(plan.source_lock.get("equivalence_digest") or ""),
             }
             if federation_group:
                 lineage["federation_group"] = federation_group
@@ -584,6 +603,8 @@ def _run_federated_workflow_sequential(
                 "DEVTOOL_FEDERATION_REQUESTED_REPOSITORY": step.repository,
                 "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
                 "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
+                "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
+                "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
             }
             if federation_group:
                 env["DEVTOOL_FEDERATION_GROUP"] = federation_group
@@ -834,6 +855,7 @@ def _run_federated_workflow_parallel(
     request_child_cancel: Callable[[str], Any] | None = None,
     max_parallel: int = 0,
     child_executor: ParallelChildExecutor | None = None,
+    drift_policy: str = "fail",
 ) -> FederatedRunReport:
     name = str(workflow_name or "").strip()
     federation_group = name.split(":", 1)[1] if name.startswith("group:") else ""
@@ -844,6 +866,7 @@ def _run_federated_workflow_parallel(
     workflow = project_capability_dependencies(parent, workflow)
 
     plan = build_federated_plan(parent, name)
+    plan, source_verification = _resolve_frozen_execution_plan(parent, plan, drift_policy=drift_policy)
     policy = parent.workspace.scheduler
     effective_max = max(1, int(max_parallel or policy.max_parallel_nodes or 4))
     schedule = build_federated_schedule(
@@ -894,6 +917,8 @@ def _run_federated_workflow_parallel(
             "repository_identity": owner_identity,
             "run_lineage": parent_lineage,
             "federation_scheduler": schedule.as_dict(),
+            "federation_source_lock": dict(plan.source_lock),
+            "federation_source_verification": dict(source_verification),
         },
     ))
 
@@ -987,6 +1012,8 @@ def _run_federated_workflow_parallel(
             "requested_repository": step.repository,
             "effective_repository": effective_fingerprint,
             "execution_environment": "auto",
+            "frozen_source_lock_digest": str(plan.source_lock.get("lock_digest") or ""),
+            "frozen_source_equivalence_digest": str(plan.source_lock.get("equivalence_digest") or ""),
         }
         if federation_group:
             lineage["federation_group"] = federation_group
@@ -1020,6 +1047,8 @@ def _run_federated_workflow_parallel(
             "DEVTOOL_FEDERATION_REQUESTED_REPOSITORY": step.repository,
             "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
             "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
+            "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
+            "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
             # Keep each parallel child's HUD/EXO files isolated while
             # suppressing visible auto-HUD windows for internal children.
             "DEVTOOL_TASKER_DIR": str(child_state_dir),
@@ -1326,6 +1355,7 @@ def run_federated_workflow(
     parallel: bool = False,
     max_parallel: int = 0,
     child_executor: ParallelChildExecutor | None = None,
+    drift_policy: str = "fail",
 ) -> FederatedRunReport:
     """Execute one federation workflow, optionally through FRX-Y01 safe waves.
 
@@ -1344,6 +1374,7 @@ def run_federated_workflow(
             snapshot_lookup=snapshot_lookup,
             parent_run_id=parent_run_id,
             request_child_cancel=request_child_cancel,
+            drift_policy=drift_policy,
         )
     return _run_federated_workflow_parallel(
         parent,
@@ -1355,6 +1386,7 @@ def run_federated_workflow(
         request_child_cancel=request_child_cancel,
         max_parallel=max_parallel,
         child_executor=child_executor,
+        drift_policy=drift_policy,
     )
 
 
@@ -1371,6 +1403,7 @@ def run_federated_group(
     parallel: bool = False,
     max_parallel: int = 0,
     child_executor: ParallelChildExecutor | None = None,
+    drift_policy: str = "fail",
 ) -> FederatedRunReport:
     """Execute an executable federation group through the normal FRX workflow coordinator."""
 
@@ -1386,6 +1419,7 @@ def run_federated_group(
         parallel=parallel,
         max_parallel=max_parallel,
         child_executor=child_executor,
+        drift_policy=drift_policy,
     )
 
 

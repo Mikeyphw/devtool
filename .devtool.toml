@@ -244,6 +244,18 @@ command = ["python", "-m", "devtool.federation_roadmap_fixtures", "repository-ow
 inputs = ["devtool/git_ownership.py", "devtool/federation_discovery.py", "devtool/git_state.py", "devtool/federation_roadmap_fixtures.py"]
 metadata = { read_only = true, roadmap_id = "GIT-FRX-07" }
 
+[targets.devtool.jobs.federation-source-lock-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "source-lock"]
+inputs = ["devtool/federation_lock.py", "devtool/federation_plan.py", "devtool/git_state.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-08+FRX-Y03" }
+
+[targets.devtool.jobs.federation-source-drift-probe]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "source-drift"]
+inputs = ["devtool/federation_lock.py", "devtool/federation_execution.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-08+FRX-Y03" }
+
 [targets.devtool.workflows]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -317,6 +329,14 @@ roadmap-git-frx07 = [
   { id = "git-frx07", ref = "test:roadmap-git-frx07", depends_on = ["frx-y07", "ownership-fixture"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx07"] },
 ]
+roadmap-git-frx08-freeze = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "source-lock-fixture", ref = "job:federation-source-lock-fixture", depends_on = ["syntax"] },
+  { id = "source-drift-probe", ref = "job:federation-source-drift-probe", depends_on = ["syntax"] },
+  { id = "git-frx07", ref = "test:roadmap-git-frx07", depends_on = ["syntax"] },
+  { id = "git-frx08-freeze", ref = "test:roadmap-git-frx08-freeze", depends_on = ["git-frx07", "source-lock-fixture", "source-drift-probe"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx08-freeze"] },
+]
 roadmap-gate1 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "rebase-fixture", ref = "job:overlay-rebase-fixture", depends_on = ["syntax"] },
@@ -350,6 +370,17 @@ roadmap-current = [
   { id = "frx-y06", ref = "test:roadmap-frx-y06", depends_on = ["frx-y05"] },
   { id = "frx-y07", ref = "test:roadmap-frx-y07", depends_on = ["frx-y06"] },
   { id = "git-frx07", ref = "test:roadmap-git-frx07", depends_on = ["frx-y07"] },
+  { id = "git-frx08-freeze", ref = "test:roadmap-git-frx08-freeze", depends_on = ["git-frx07"] },
+]
+
+[[test]]
+id = "roadmap-git-frx08-freeze"
+name = "GIT-FRX-08 + FRX-Y03 federated Git plan and frozen source lock"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx08-freeze.xml",
+  "tests/test_git_frx08_y03_frozen_source_lock.py",
 ]
 
 [[test]]

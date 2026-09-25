@@ -10,6 +10,7 @@ from .config import load_project_config
 from .federation_interfaces import build_interface_report
 from .federation_plan import build_federated_plan
 from .git_ownership import GitFederatedOwnershipError, resolve_federated_git_owner
+from .federation_lock import FederationSourceLock, compare_federation_source_locks
 
 
 def _load(root: Path):
@@ -94,11 +95,47 @@ def repository_ownership_fixture() -> dict[str, object]:
             "outside_rejected": outside_rejected,
         }
 
+
+def source_lock_fixture(*, mutate: bool = False) -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="devtool-git-frx08-") as td:
+        root = Path(td)
+        parent = root / "parent"
+        child = root / "child"
+        parent.mkdir(); child.mkdir()
+        (child / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="app"\n[targets.app]\nrunner="command"\n'
+            '[targets.app.jobs.check]\nrunner="command"\ncommand=["echo","ok"]\n[targets.app.workflows]\nvalidate=["job:check"]\n',
+            encoding="utf-8",
+        )
+        (child / "source.txt").write_text("base\n", encoding="utf-8")
+        _init_git(child)
+        (parent / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="root"\n[targets.root]\nrunner="command"\n'
+            '[federation]\nschema=1\n[federation.repositories.child]\npath="../child"\n'
+            '[federation.workflows.release]\nsteps=[{id="child",ref="child::app::workflow:validate"}]\n',
+            encoding="utf-8",
+        )
+        config = _load(parent)
+        first = FederationSourceLock.from_dict(build_federated_plan(config, "release").source_lock)
+        if not mutate:
+            entry = first.repositories[0]
+            if not entry.start_commit or not entry.index_tree or not first.lock_digest:
+                raise SystemExit("GIT-FRX-08 source lock fixture did not freeze Git state")
+            return first.as_dict()
+        (child / "source.txt").write_text("drift\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(child), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(child), "commit", "-qm", "drift"], check=True)
+        second = FederationSourceLock.from_dict(build_federated_plan(config, "release").source_lock)
+        comparison = compare_federation_source_locks(first, second, policy="fail")
+        if comparison.get("matched"):
+            raise SystemExit("GIT-FRX-08 drift fixture failed to detect source mutation")
+        return comparison
+
 def main(argv: list[str] | None=None) -> int:
     p=argparse.ArgumentParser(prog='python -m devtool.federation_roadmap_fixtures')
-    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership'])
+    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift'])
     ns=p.parse_args(argv)
-    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture())
+    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 

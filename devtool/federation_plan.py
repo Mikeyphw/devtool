@@ -69,6 +69,7 @@ class FederatedPlanGraph:
     repositories: tuple[str, ...]
     capability_graph: dict[str, Any] = field(default_factory=dict)
     repository_ownership: dict[str, Any] = field(default_factory=dict)
+    source_lock: dict[str, Any] = field(default_factory=dict)
 
     @property
     def by_key(self) -> dict[str, FederatedPlanNode]:
@@ -137,6 +138,7 @@ class FederatedPlanGraph:
                 str(name): dict(value) if isinstance(value, dict) else value
                 for name, value in sorted(self.repository_ownership.items())
             },
+            "source_lock": dict(self.source_lock),
         }
 
 
@@ -650,7 +652,12 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
         repository_ownership={name: dict(value) for name, value in sorted(repository_ownership.items())},
     )
     graph.topological_order()
-    return graph
+    from .federation_lock import FederationSourceLockError, build_federation_source_lock
+    try:
+        source_lock = build_federation_source_lock(parent, graph)
+    except FederationSourceLockError as exc:
+        raise FederationPlanError(str(exc)) from exc
+    return replace(graph, source_lock=source_lock.as_dict())
 
 
 __all__ = [

@@ -109,6 +109,7 @@ from .federation_gate import build_federation_gate1_report, federation_gate1_as_
 from .federation_gate2 import build_federation_gate2_report, federation_gate2_as_dict, render_federation_gate2
 from .federation_final_seal import build_federation_final_seal_report, federation_final_seal_as_dict, render_federation_final_seal
 from .federation_plan import FederationPlanError, build_federated_plan, build_federated_group_plan
+from .federation_lock import FederationSourceLockError
 from .federation_capabilities import FederationCapabilityError, build_capability_graph
 from .federation_impact import (
     FederationImpactError, analyze_federation_impact, explain_federation_impact,
@@ -1131,7 +1132,12 @@ def build_parser() -> argparse.ArgumentParser:
     federation_plan = federation_sub.add_parser("plan", help="Build a deterministic planning-only cross-repository workflow/group DAG")
     federation_plan.add_argument("workflow", nargs="?", default="", help="Federation workflow name")
     federation_plan.add_argument("--group", default="", help="Executable federation group from [federation.groups]")
+    federation_plan.add_argument("--freeze", action="store_true", help="Persist the plan's frozen multi-repository source lock")
+    federation_plan.add_argument("--drift-policy", choices=("fail", "replan", "allow-if-equivalent"), default="fail", help="Drift policy recorded with --freeze (default: fail)")
     federation_plan.add_argument("--json", action="store_true", help="Emit the machine-readable federated plan graph")
+    federation_lock = federation_sub.add_parser("lock", help="Inspect or explicitly update the persisted frozen federation source lock")
+    federation_lock.add_argument("--update", default="", metavar="REPOSITORY", help="Refresh exactly one participating repository in the persisted lock")
+    federation_lock.add_argument("--json", action="store_true", help="Emit the machine-readable lock and verification state")
     federation_run = federation_sub.add_parser("run", help="Execute a federated workflow or group with distinct parent/child EXO runs")
     federation_run.add_argument("workflow", nargs="?", default="", help="Federation workflow name")
     federation_run.add_argument("--group", default="", help="Executable federation group from [federation.groups]")
@@ -1140,6 +1146,7 @@ def build_parser() -> argparse.ArgumentParser:
     federation_run.add_argument("--affected", action="store_true", help="Run only dependency-aware affected workflow repositories")
     federation_run.add_argument("--since", default="", help="With --affected, detect direct changes since this Git revision")
     federation_run.add_argument("--repository", action="append", default=[], help="With --affected, seed one directly changed repository; repeatable")
+    federation_run.add_argument("--drift-policy", choices=("fail", "replan", "allow-if-equivalent"), default="fail", help="Frozen source drift policy (default: fail)")
     federation_run.add_argument("--json", action="store_true", help="Emit the machine-readable federated run, scheduler, and lineage report")
     federation_exec = federation_sub.add_parser("exec", help="Execute one enrolled child wrapper or target-local-job public contract")
     federation_exec.add_argument("repository", help="Federation repository name")
@@ -11707,6 +11714,14 @@ def _federation_command(args: argparse.Namespace) -> int:
                 payload["group"] = group_name
             else:
                 payload["subject_kind"] = "workflow"
+            if bool(getattr(args, "freeze", False)):
+                from dataclasses import replace as _dc_replace
+                from .federation_lock import FederationSourceLock, write_federation_source_lock
+                frozen = FederationSourceLock.from_dict(payload.get("source_lock") or {})
+                frozen = _dc_replace(frozen, drift_policy=str(getattr(args, "drift_policy", "fail") or "fail"))
+                lock_path = write_federation_source_lock(config, frozen)
+                payload["source_lock"] = frozen.as_dict()
+                payload["frozen_lock_path"] = str(lock_path)
             if as_json:
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
             else:
@@ -11721,6 +11736,53 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append((node.key, f"{kind}; depends_on={deps}"))
                 render_status_table(rows)
             return 0
+        if action == "lock":
+            from .federation_lock import (
+                compare_federation_source_locks,
+                read_federation_source_lock,
+                source_lock_path,
+                update_federation_source_lock_repository,
+            )
+            frozen = read_federation_source_lock(config)
+            if frozen is None:
+                raise FederationSourceLockError(
+                    "No persisted federation source lock; run 'devtool federation plan <workflow> --freeze' first"
+                )
+            if frozen.subject_kind == "group":
+                current_graph = build_federated_group_plan(config, frozen.group)
+            else:
+                current_graph = build_federated_plan(config, frozen.workflow)
+            update_repository = str(getattr(args, "update", "") or "").strip()
+            if update_repository:
+                frozen = update_federation_source_lock_repository(config, current_graph, update_repository)
+                if frozen.subject_kind == "group":
+                    current_graph = build_federated_group_plan(config, frozen.group)
+                else:
+                    current_graph = build_federated_plan(config, frozen.workflow)
+            from .federation_lock import FederationSourceLock
+            current = FederationSourceLock.from_dict(current_graph.source_lock)
+            verification = compare_federation_source_locks(frozen, current, policy=frozen.drift_policy)
+            payload = {
+                "schema_version": 1,
+                "path": str(source_lock_path(config)),
+                "lock": frozen.as_dict(),
+                "verification": verification,
+            }
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("subject", frozen.group if frozen.subject_kind == "group" else frozen.workflow),
+                    ("kind", frozen.subject_kind),
+                    ("lock_digest", frozen.lock_digest),
+                    ("local_digest", frozen.local_digest),
+                    ("equivalence_digest", frozen.equivalence_digest),
+                    ("repositories", ", ".join(item.repository for item in frozen.repositories) or "-"),
+                    ("verification", "matched" if verification.get("matched") else "drift"),
+                    ("policy", frozen.drift_policy),
+                ]
+                render_status_table(rows)
+            return 0 if verification.get("matched") else 1
         if action == "run":
             workflow_name = str(getattr(args, "workflow", "") or "").strip()
             group_name = str(getattr(args, "group", "") or "").strip()
@@ -11771,10 +11833,12 @@ def _federation_command(args: argparse.Namespace) -> int:
                 config = scoped
             report = (
                 run_federated_group(
-                    config, group_name, reenter=main, parallel=parallel, max_parallel=max_parallel
+                    config, group_name, reenter=main, parallel=parallel, max_parallel=max_parallel,
+                    drift_policy=str(getattr(args, "drift_policy", "fail") or "fail")
                 )
                 if group_name else run_federated_workflow(
-                    config, workflow_name, reenter=main, parallel=parallel, max_parallel=max_parallel
+                    config, workflow_name, reenter=main, parallel=parallel, max_parallel=max_parallel,
+                    drift_policy=str(getattr(args, "drift_policy", "fail") or "fail")
                 )
             )
             payload = report.as_dict()
@@ -11861,7 +11925,7 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append(("job", str(payload.get("job_reference"))))
                 render_status_table(rows)
             return code
-    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError) as exc:
+    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 
