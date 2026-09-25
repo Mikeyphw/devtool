@@ -20,6 +20,7 @@ from .models import Issue, OperationResult
 from .logstore import redact_sensitive_text, redact_sensitive_value
 from .rich_progress import compact_display_target
 from .repair_policy import build_repair_report, repair_summary_lines_from_results, applied_repair_findings_from_results
+from .test_counts import aggregate_structured_counts
 from .ui_core.machine import MACHINE_SCHEMA_VERSION, machine_state_from_runtime
 
 console = create_console()
@@ -423,17 +424,11 @@ def _human_duration(seconds: float) -> str:
 
 
 def _extract_test_totals(results: list[OperationResult]) -> tuple[int, int, int, int] | None:
-    structured = [
-        result.metadata.get("tests")
-        for result in results
-        if isinstance(result.metadata, dict) and isinstance(result.metadata.get("tests"), dict)
-    ]
-    if structured:
-        passed = sum(_safe_int(item.get("passed")) for item in structured)
-        failed = sum(_safe_int(item.get("failed")) for item in structured)
-        skipped = sum(_safe_int(item.get("skipped")) for item in structured)
-        total = sum(_safe_int(item.get("total")) for item in structured)
-        return passed, failed, skipped, total
+    structured = aggregate_structured_counts(
+        result.metadata for result in results if isinstance(result.metadata, dict)
+    )
+    if structured is not None:
+        return structured.passed, structured.failed, structured.skipped, structured.total
 
     output = "\n".join(result.output or "" for result in results if "test" in result.name.lower())
     if not output:
@@ -1156,6 +1151,13 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
             for result in results
         ],
     }
+    if (test_totals := _extract_test_totals(results)) is not None:
+        data["tests"] = {
+            "passed": test_totals[0],
+            "failed": test_totals[1],
+            "skipped": test_totals[2],
+            "total": test_totals[3],
+        }
     workflow_results = [
         result for result in results
         if isinstance(result.metadata, dict) and str(result.metadata.get("workflow_node_key") or "").strip()

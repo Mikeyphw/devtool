@@ -1893,6 +1893,15 @@ class TerminalHud:
         if state.repo_name:
             summary_bits.append(state.repo_name)
         table.add_row(Text(" • ".join(bit for bit in summary_bits if bit), style="dim"))
+        progress_summary = ui.progress_summary if isinstance(ui.progress_summary, dict) else {}
+        if progress_summary.get("test_metrics_available"):
+            table.add_row(Text(
+                "tests: "
+                f"{int(progress_summary.get('tests_passed') or 0)} passed · "
+                f"{int(progress_summary.get('tests_failed') or 0)} failed · "
+                f"{int(progress_summary.get('tests_skipped') or 0)} skipped",
+                style="dim",
+            ))
 
         visible = [node for node in ui.progress if ui.presentation.show_completed_steps or node.status not in {"ok", "skipped"}]
         if ui.presentation.max_steps > 0:
@@ -1978,39 +1987,6 @@ class AndroidAppHud:
             else:
                 value += max(0, min(100, int(step.progress)))
         return max(0, min(100, int(round(value / len(steps)))))
-
-    @staticmethod
-    def _live_test_metrics(state: HudState) -> dict[str, int]:
-        raw = state.raw if isinstance(state.raw, dict) else {}
-        result = {"passed": 0, "failed": 0, "skipped": 0, "total": 0, "assemblies": 0}
-        phase_progress = raw.get("phase_progress") if isinstance(raw.get("phase_progress"), list) else []
-        for item in phase_progress:
-            if not isinstance(item, dict):
-                continue
-            name = _operation_step_key(str(item.get("name") or item.get("command") or ""))
-            has_metrics = any(item.get(key) is not None for key in (
-                "tests_passed", "tests_failed", "tests_skipped", "tests_total", "test_assemblies",
-            ))
-            if name != "test" and not has_metrics:
-                continue
-            result["passed"] += max(0, int(_coerce_int(item.get("tests_passed")) or 0))
-            result["failed"] += max(0, int(_coerce_int(item.get("tests_failed")) or 0))
-            result["skipped"] += max(0, int(_coerce_int(item.get("tests_skipped")) or 0))
-            result["total"] += max(0, int(_coerce_int(item.get("tests_total")) or 0))
-            result["assemblies"] += max(0, int(_coerce_int(item.get("test_assemblies")) or 0))
-
-        completion = completion_from_state(state) or {}
-        tests = completion.get("tests") if isinstance(completion.get("tests"), dict) else {}
-        if tests:
-            # Completion is the final authority and avoids double counting when
-            # a workflow reports aggregate plus per-workspace phase metrics.
-            result["passed"] = max(0, int(tests.get("passed", 0) or 0))
-            result["failed"] = max(0, int(tests.get("failed", 0) or 0))
-            result["skipped"] = max(0, int(tests.get("skipped", 0) or 0))
-            result["total"] = max(0, int(tests.get("total", 0) or 0))
-        if result["total"] <= 0:
-            result["total"] = result["passed"] + result["failed"] + result["skipped"]
-        return result
 
     @staticmethod
     def _workspace_rows(state: HudState) -> list[dict[str, Any]]:
@@ -2137,7 +2113,19 @@ class AndroidAppHud:
         completion = completion_from_state(state) or {}
         steps = operation_steps(state, [])
         error_count, warning_count = live_issue_counts([], state)
-        tests = self._live_test_metrics(state)
+        semantic_android_ui = runtime_state_to_ui_snapshot(
+            state.raw,
+            surface="android",
+            preferences=(state.raw.get("ui_presentations", {}) or {}).get("android"),
+        ).as_dict()
+        semantic_progress = semantic_android_ui.get("progress_summary", {}) if isinstance(semantic_android_ui.get("progress_summary"), dict) else {}
+        tests = {
+            "passed": int(_coerce_int(semantic_progress.get("tests_passed")) or 0),
+            "failed": int(_coerce_int(semantic_progress.get("tests_failed")) or 0),
+            "skipped": int(_coerce_int(semantic_progress.get("tests_skipped")) or 0),
+            "total": int(_coerce_int(semantic_progress.get("tests_total")) or 0),
+            "assemblies": int(_coerce_int(semantic_progress.get("test_assemblies")) or 0),
+        }
         run_id = str(state.raw.get("run_id") or state.raw.get("task_id") or directory.name or "devtool")
         started_at = self.run_started_at.setdefault(
             run_id,
@@ -2208,11 +2196,6 @@ class AndroidAppHud:
             and state.raw.get("progress", {}).get("measured_percent") is not None
             else self._pipeline_percent(steps, terminal_ok=status in {"ok", "skipped"})
         )
-        semantic_android_ui = runtime_state_to_ui_snapshot(
-            state.raw,
-            surface="android",
-            preferences=(state.raw.get("ui_presentations", {}) or {}).get("android"),
-        ).as_dict()
         payload: dict[str, Any] = {
             "run_id": run_id,
             "sequence": int(_coerce_int(state.raw.get("sequence")) or 0),

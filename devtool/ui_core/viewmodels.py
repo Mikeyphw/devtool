@@ -355,7 +355,8 @@ def runtime_state_to_ui_snapshot(
         preferences=resolved_preferences,
         capabilities=capabilities,
     )
-    progress_summary = summarize_progress(progress_nodes)
+    completion_tests = completion.get("tests") if isinstance(completion.get("tests"), Mapping) else None
+    progress_summary = summarize_progress(progress_nodes, authoritative_tests=completion_tests)
     diagnostic_summary = summarize_diagnostics(diagnostics)
 
     phase_state = state.get("phase") if isinstance(state.get("phase"), Mapping) else {}

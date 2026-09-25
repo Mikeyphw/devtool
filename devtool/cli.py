@@ -188,6 +188,7 @@ from .workflow_scheduler import (
 )
 from .summary import artifact_confirmation_text, build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
+from .test_counts import structured_counts_from_payload
 from .toolchains import apply_destination_toolchain_wrapper, apply_toolchain_wrapper, toolchain_doctor_rows
 from .toolchain_requirements import analyze_toolchain_requirements
 from .termux_toolchains import (
@@ -2225,6 +2226,10 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
     def _test_totals() -> tuple[int, int, int, int] | None:
         """Extract and aggregate test totals from captured command output."""
+
+        structured = structured_counts_from_payload(payload)
+        if structured is not None:
+            return structured.passed, structured.failed, structured.skipped, structured.total
 
         # Modern dotnet test:
         # Passed! - Failed: 0, Passed: 16, Skipped: 0, Total: 16

@@ -5,7 +5,7 @@ __test__ = False  # Prevent pytest from collecting production TSYS modules.
 from dataclasses import dataclass, field
 import json
 import re
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _CARGO_RE = re.compile(r"test result:\s+\w+\.\s+(\d+) passed;\s+(\d+) failed;\s+(\d+) ignored(?:;\s+(\d+) measured)?(?:;\s+(\d+) filtered out)?", re.I)
@@ -21,6 +21,124 @@ class TestCounts:
     failed: int = 0
     skipped: int = 0
     total: int = 0
+
+
+def _count_int(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def counts_from_mapping(value: Mapping[str, Any] | None) -> TestCounts | None:
+    """Normalize a structured test-count mapping without scraping console text.
+
+    Accept both canonical ``passed/failed/skipped/total`` fields and the live
+    progress ``tests_*`` projection. Presence of any counter is authoritative,
+    including an all-zero result (for example, a test command that discovered
+    no tests).
+    """
+    if not isinstance(value, Mapping):
+        return None
+    canonical_keys = ("passed", "failed", "skipped", "total")
+    progress_keys = ("tests_passed", "tests_failed", "tests_skipped", "tests_total")
+    if any(key in value for key in canonical_keys):
+        counts = TestCounts(
+            passed=_count_int(value.get("passed")),
+            failed=_count_int(value.get("failed")),
+            skipped=_count_int(value.get("skipped")),
+            total=_count_int(value.get("total")),
+        )
+    elif any(key in value for key in progress_keys):
+        counts = TestCounts(
+            passed=_count_int(value.get("tests_passed")),
+            failed=_count_int(value.get("tests_failed")),
+            skipped=_count_int(value.get("tests_skipped")),
+            total=_count_int(value.get("tests_total")),
+        )
+    else:
+        return None
+    if counts.total <= 0:
+        counts.total = counts.passed + counts.failed + counts.skipped
+    return counts
+
+
+def structured_counts_from_metadata(metadata: Mapping[str, Any] | None) -> TestCounts | None:
+    """Return one authoritative structured count set for a result/phase.
+
+    ``metadata.tests`` is the canonical runner projection. ``go_test.tests`` is
+    accepted as a compatibility bridge for Go results produced before that
+    projection was attached. The two are alternatives, never additive, which
+    prevents one Go result from being counted twice.
+    """
+    if not isinstance(metadata, Mapping):
+        return None
+    tests = metadata.get("tests")
+    counts = counts_from_mapping(tests if isinstance(tests, Mapping) else None)
+    if counts is not None:
+        return counts
+    go_test = metadata.get("go_test")
+    if isinstance(go_test, Mapping):
+        go_tests = go_test.get("tests")
+        counts = counts_from_mapping(go_tests if isinstance(go_tests, Mapping) else None)
+        if counts is not None:
+            return counts
+    if any(key in metadata for key in ("tests_passed", "tests_failed", "tests_skipped", "tests_total")):
+        return counts_from_mapping(metadata)
+    return None
+
+
+def aggregate_structured_counts(items: Iterable[Mapping[str, Any]]) -> TestCounts | None:
+    """Aggregate independent structured result/phase counters exactly once."""
+    found = False
+    total = TestCounts()
+    for item in items:
+        counts = structured_counts_from_metadata(item)
+        if counts is None:
+            continue
+        found = True
+        total.passed += counts.passed
+        total.failed += counts.failed
+        total.skipped += counts.skipped
+        total.total += counts.total
+    return total if found else None
+
+
+def structured_counts_from_payload(payload: Mapping[str, Any] | None) -> TestCounts | None:
+    """Resolve final structured counts from a machine/CLI payload.
+
+    Final completion/top-level summaries are authoritative. Older payloads are
+    recovered from per-result metadata, including ``metadata.go_test.tests``.
+    """
+    if not isinstance(payload, Mapping):
+        return None
+    completion = payload.get("completion")
+    if isinstance(completion, Mapping):
+        tests = completion.get("tests")
+        counts = counts_from_mapping(tests if isinstance(tests, Mapping) else None)
+        if counts is not None:
+            return counts
+    tests = payload.get("tests")
+    counts = counts_from_mapping(tests if isinstance(tests, Mapping) else None)
+    if counts is not None:
+        return counts
+    go_test = payload.get("go_test")
+    if isinstance(go_test, Mapping):
+        go_tests = go_test.get("tests")
+        counts = counts_from_mapping(go_tests if isinstance(go_tests, Mapping) else None)
+        if counts is not None:
+            return counts
+    results = payload.get("results")
+    if isinstance(results, list):
+        metadata_items = [
+            item.get("metadata")
+            for item in results
+            if isinstance(item, Mapping) and isinstance(item.get("metadata"), Mapping)
+        ]
+        counts = aggregate_structured_counts(metadata_items)
+        if counts is not None:
+            return counts
+    return None
 
 @dataclass(slots=True)
 class TestCountAccumulator:

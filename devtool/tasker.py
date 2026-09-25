@@ -29,6 +29,7 @@ from .console_utils import resolve_cli_path
 from .models import OperationResult
 from .core.execution_contract import EventId, NodeId, RunId, legacy_phase_node_id
 from .logstore import redact_sensitive_text, redact_sensitive_value
+from .test_counts import aggregate_structured_counts
 from .ui_core.viewmodels import runtime_state_to_ui_snapshot
 from .ui_core.machine import TASKER_SCHEMA_VERSION, machine_state_from_runtime, tasker_fields
 
@@ -521,17 +522,15 @@ def _completion_test_totals(results: list[OperationResult]) -> dict[str, int]:
     """Aggregate authoritative structured reports before console fallbacks."""
     import re
 
-    structured = [
-        result.metadata.get("tests")
-        for result in results
-        if isinstance(result.metadata, dict) and isinstance(result.metadata.get("tests"), dict)
-    ]
-    if structured:
+    structured = aggregate_structured_counts(
+        result.metadata for result in results if isinstance(result.metadata, dict)
+    )
+    if structured is not None:
         return {
-            "failed": sum(_safe_test_int(item.get("failed")) for item in structured),
-            "passed": sum(_safe_test_int(item.get("passed")) for item in structured),
-            "skipped": sum(_safe_test_int(item.get("skipped")) for item in structured),
-            "total": sum(_safe_test_int(item.get("total")) for item in structured),
+            "failed": structured.failed,
+            "passed": structured.passed,
+            "skipped": structured.skipped,
+            "total": structured.total,
         }
 
     text = "\n".join(result.output or "" for result in results if result.name in {"test", "tests", "wine-test"})

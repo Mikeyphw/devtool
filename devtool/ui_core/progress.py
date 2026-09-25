@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
+from ..test_counts import aggregate_structured_counts, counts_from_mapping
 from .state import UIOperationState, UIProgressState
 
 PROGRESS_SCHEMA_VERSION = 1
@@ -55,6 +56,12 @@ class UIProgressSummary:
     measured_percent: int | None = None
     measurement_coverage_percent: int | None = None
     resolution_percent: int | None = None
+    test_metrics_available: bool = False
+    tests_passed: int = 0
+    tests_failed: int = 0
+    tests_skipped: int = 0
+    tests_total: int = 0
+    test_assemblies: int = 0
     active_ids: list[str] = field(default_factory=list)
     schema_version: int = PROGRESS_SCHEMA_VERSION
     semantics_version: int = PROGRESS_SEMANTICS_VERSION
@@ -63,7 +70,11 @@ class UIProgressSummary:
         return asdict(self)
 
 
-def summarize_progress(nodes: Iterable[UIProgressState]) -> UIProgressSummary:
+def summarize_progress(
+    nodes: Iterable[UIProgressState],
+    *,
+    authoritative_tests: Mapping[str, Any] | None = None,
+) -> UIProgressSummary:
     """Summarize lifecycle resolution separately from measured work progress.
 
     Terminal status no longer implies 100% measured work. A node contributes to
@@ -75,6 +86,24 @@ def summarize_progress(nodes: Iterable[UIProgressState]) -> UIProgressSummary:
     """
     rows = list(nodes)
     summary = UIProgressSummary(total_nodes=len(rows))
+    structured_tests = counts_from_mapping(authoritative_tests)
+    if structured_tests is None:
+        structured_tests = aggregate_structured_counts(
+            node.metrics for node in rows if isinstance(node.metrics, Mapping)
+        )
+    if structured_tests is not None:
+        summary.test_metrics_available = True
+        summary.tests_passed = structured_tests.passed
+        summary.tests_failed = structured_tests.failed
+        summary.tests_skipped = structured_tests.skipped
+        summary.tests_total = structured_tests.total
+    for node in rows:
+        if not isinstance(node.metrics, Mapping):
+            continue
+        try:
+            summary.test_assemblies += max(0, int(node.metrics.get("test_assemblies") or 0))
+        except (TypeError, ValueError, OverflowError):
+            continue
     measured: list[int] = []
     for node in rows:
         status = str(node.status or "pending").lower()

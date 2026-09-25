@@ -492,6 +492,13 @@ class Gtk4CompactHud:
                 _clear_flowbox(Gtk, metrics)
                 _append_metric_chip(Gtk, metrics, "Errors", str(errors), "live diagnostics")
                 _append_metric_chip(Gtk, metrics, "Warnings", str(warnings), "live diagnostics")
+                if semantic_progress.get("test_metrics_available"):
+                    tests_text = (
+                        f"{int(semantic_progress.get('tests_passed') or 0)} passed · "
+                        f"{int(semantic_progress.get('tests_failed') or 0)} failed · "
+                        f"{int(semantic_progress.get('tests_skipped') or 0)} skipped"
+                    )
+                    _append_metric_chip(Gtk, metrics, "Tests", tests_text, "canonical test result")
                 _append_metric_chip(Gtk, metrics, "Events", str(len(events)), "recent log")
                 _append_metric_chip(Gtk, metrics, "Counts", state_metric_text(hud_state, events), "canonical")
 

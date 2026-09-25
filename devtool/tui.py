@@ -194,6 +194,13 @@ def _semantic_live_panels(snapshot: dict[str, Any], profile: TerminalProfile) ->
         ("Phase", ui.operation.phase or "-"),
         ("Progress", progress_text),
     ]
+    if progress.get("test_metrics_available"):
+        rows.append((
+            "Tests",
+            f"{int(progress.get('tests_passed') or 0)} passed · "
+            f"{int(progress.get('tests_failed') or 0)} failed · "
+            f"{int(progress.get('tests_skipped') or 0)} skipped",
+        ))
     if not profile.compact:
         rows.extend([
             ("Target", ui.operation.target or ", ".join(ui.selection.targets) or "-"),
