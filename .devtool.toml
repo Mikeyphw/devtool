@@ -201,12 +201,19 @@ roadmap-frx-y01 = [
   { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["frx-baseline"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y01"] },
 ]
+roadmap-git-frx02 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx01", ref = "test:roadmap-git-frx01", depends_on = ["syntax"] },
+  { id = "git-frx02", ref = "test:roadmap-git-frx02", depends_on = ["git-frx01"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx02"] },
+]
 roadmap-current = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "artifact-validation", ref = "test:roadmap-artifact-validation", depends_on = ["syntax"] },
   { id = "frx-baseline", ref = "test:roadmap-frx-baseline", depends_on = ["syntax"] },
   { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["frx-baseline"] },
   { id = "git-frx01", ref = "test:roadmap-git-frx01", depends_on = ["syntax"] },
+  { id = "git-frx02", ref = "test:roadmap-git-frx02", depends_on = ["git-frx01"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
 ]
 
@@ -243,6 +250,16 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-frx-y01.xml",
   "tests/test_frx_y01_parallel_federation_scheduler.py",
+]
+
+[[test]]
+id = "roadmap-git-frx02"
+name = "GIT-FRX-02 private transaction refs and journals"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx02.xml",
+  "tests/test_git_frx02_private_transaction_journal.py",
 ]
 
 [[test]]

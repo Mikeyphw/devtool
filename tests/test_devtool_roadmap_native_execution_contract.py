@@ -16,9 +16,10 @@ EXPECTED_TESTS = {
     "roadmap-frx-baseline",
     "roadmap-frx-y01",
     "roadmap-git-frx01",
+    "roadmap-git-frx02",
     "roadmap-workflow-exo-baseline",
 }
-EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-current"}
+EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-git-frx02", "roadmap-current"}
 
 
 def _config():
@@ -81,12 +82,20 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
         "test:roadmap-workflow-exo-baseline",
     }
 
+    git_frx02 = plan_selected_workflow(cfg, "roadmap-git-frx02")
+    assert [node.ref.raw for node in git_frx02.topological_order()] == [
+        "job:source-syntax",
+        "test:roadmap-git-frx01",
+        "test:roadmap-git-frx02",
+        "test:roadmap-workflow-exo-baseline",
+    ]
+
     current = plan_selected_workflow(cfg, "roadmap-current")
     assert {node.ref.raw for node in current.nodes} == {
         "job:source-syntax",
         *(f"test:{test_id}" for test_id in EXPECTED_TESTS),
     }
-    assert len(current.nodes) == 6
+    assert len(current.nodes) == 7
 
 
 def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons() -> None:
@@ -114,13 +123,14 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
 
     assert payload["action"] == "roadmap-current"
     assert payload["targets"] == ["devtool"]
-    assert payload["summary"]["node_count"] == 6
+    assert payload["summary"]["node_count"] == 7
     assert payload["summary"]["target_local_job_count"] == 1
     assert payload["summary"]["target_local_jobs"][0]["key"] == "devtool.source-syntax"
     assert payload["schedule"]["nodes"]
     by_ref = {node["ref"]: node for node in payload["graph"]["nodes"]}
     assert by_ref["job:source-syntax"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx01"]["target"] == "devtool"
+    assert by_ref["test:roadmap-git-frx02"]["target"] == "devtool"
     assert by_ref["test:roadmap-frx-y01"]["target"] == "devtool"
     source_node = next(node for node in payload["schedule"]["nodes"] if node["job_key"] == "devtool.source-syntax")
     assert source_node["writes_known"] is True

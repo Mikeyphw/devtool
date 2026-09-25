@@ -18,6 +18,11 @@ from .models import OperationResult
 from .reservations import ReservationConflict, active_reservations, assert_reservation_available, normalize_paths, reservation_coordinator
 from .xdg import data_dir
 from .federation_ownership import federation_operational_owner_from_environment
+from .git_transaction_journal import (
+    cleanup_created_recovery_refs,
+    establish_git_transaction_recovery,
+    update_git_transaction_journal,
+)
 
 
 def devtool_xdg_dir() -> Path:
@@ -324,6 +329,7 @@ def checkpoint_transaction_applied(transaction_path: str | Path | None) -> None:
             continue
         rel = _safe_rel(str(entry.get("path") or ""))
         entry["applied_identity"] = _path_identity(repo_root / rel)
+    update_git_transaction_journal(tx, recovery_state="mutation-applied")
     tx["applied_checkpoint_at"] = _utc_now()
     tx["updated_at"] = _utc_now()
     _atomic_write_json(path, tx)
@@ -639,6 +645,7 @@ def record_transaction_git_commit(transaction_path: str | Path | None, commit_ha
     git_state["post_apply_index_identity"] = _git_index_identity(index_path)
     git_state["recorded_at"] = _utc_now()
     tx["git_state"] = git_state
+    update_git_transaction_journal(tx, recovery_state="commit-recorded", result_commit=str(commit_hash).strip())
     tx["updated_at"] = _utc_now()
     _atomic_write_json(path, tx)
     _write_transaction_active_marker(path, tx)
@@ -726,11 +733,12 @@ def create_apply_transaction(
     artifact_type: str,
     preview: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create an active local rsync backup for an overlay/snapshot apply.
+    """Create an active apply transaction with recoverable Git pre-state.
 
-    The transaction remains active until validation/commit succeeds. If devtool is
-    killed before that point, the next devtool command can detect the active marker
-    and restore the backup.
+    GIT-FRX-02 extends the existing path/index backup journal rather than
+    introducing a second transaction authority.  For real Git worktrees,
+    private recovery refs and the durable Git-recovery journal are established
+    and verified before artifact extraction is allowed to mutate the worktree.
     """
     repo_root = repo_root.resolve()
     artifact_path = artifact_path.resolve()
@@ -773,48 +781,76 @@ def create_apply_transaction(
             existing.append(str(rel))
         entries.append(entry)
 
-    tx = {
-        "schema_version": 3,
-        "status": "active",
-        "transaction_id": transaction_id,
-        "path": str(_transaction_file(tx_dir)),
-        "repo_root": str(repo_root),
-        "artifact": str(artifact_path),
-        "artifact_name": artifact_path.name,
-        "artifact_type": artifact_type,
-        "backup_dir": str(backup_dir),
-        "devtool_xdg_dir": str(devtool_xdg_dir()),
-        "repo_key": _repo_key(repo_root),
-        "started_at": _utc_now(),
-        "updated_at": _utc_now(),
-        "pid": os.getpid(),
-        "process_start": _process_start_token(os.getpid()),
-        "run_id": os.environ.get("DEVTOOL_RUN_ID", ""),
-        "target": os.environ.get("DEVTOOL_ACTIVE_TARGET", ""),
-        "reserved_paths": [str(item.get("path") or "") for item in entries],
-        "affected_paths": entries,
-        "preview_counts": preview.get("counts", {}),
-        "git_state": {**_capture_git_state(repo_root, tx_dir), "rollback_scope": "paths-v1"},
-    }
-    federation_owner = federation_operational_owner_from_environment(repo_root, run_id=str(tx.get("run_id") or ""))
-    if federation_owner:
-        tx["federation_owner"] = federation_owner
-    _atomic_write_json(_transaction_file(tx_dir), tx)
+    run_id = os.environ.get("DEVTOOL_RUN_ID", "").strip()
+    commit_mode = os.environ.get("DEVTOOL_TRANSACTION_COMMIT_MODE", "none").strip() or "none"
+    intended_mutation = {
+        "overlay": "apply-overlay",
+        "overlay_bundle": "apply-overlays",
+        "snapshot": "apply-snapshot",
+    }.get(artifact_type, f"apply-{artifact_type}")
+    git_state = _capture_git_state(repo_root, tx_dir)
+    created_recovery_refs: tuple[dict[str, str], ...] = ()
 
-    tx["backup_method"] = "none"
-    if existing:
-        tx["backup_method"] = _backup_existing_paths(repo_root, backup_dir, existing, tx_dir)
-        for entry in entries:
-            if not bool(entry.get("existed")):
-                continue
-            backup_path = backup_dir / _safe_rel(str(entry.get("path") or ""))
-            entry["backup_sha256"] = _hash_path(backup_path)
-            entry["backup_identity"] = _path_identity(backup_path)
-    tx["status"] = "backup-ready"
-    tx["updated_at"] = _utc_now()
-    _atomic_write_json(_transaction_file(tx_dir), tx)
-    _write_transaction_active_marker(_transaction_file(tx_dir), tx)
-    return tx
+    try:
+        git_recovery, created_recovery_refs = establish_git_transaction_recovery(
+            repo_root,
+            transaction_id=transaction_id,
+            run_id=run_id,
+            intended_mutation=intended_mutation,
+            worktree_path=repo_root,
+            commit_mode=commit_mode,
+            captured_git_state=git_state,
+        )
+        tx = {
+            "schema_version": 4,
+            "status": "active",
+            "transaction_id": transaction_id,
+            "path": str(_transaction_file(tx_dir)),
+            "repo_root": str(repo_root),
+            "artifact": str(artifact_path),
+            "artifact_name": artifact_path.name,
+            "artifact_type": artifact_type,
+            "backup_dir": str(backup_dir),
+            "devtool_xdg_dir": str(devtool_xdg_dir()),
+            "repo_key": _repo_key(repo_root),
+            "started_at": _utc_now(),
+            "updated_at": _utc_now(),
+            "pid": os.getpid(),
+            "process_start": _process_start_token(os.getpid()),
+            "run_id": run_id,
+            "target": os.environ.get("DEVTOOL_ACTIVE_TARGET", ""),
+            "reserved_paths": [str(item.get("path") or "") for item in entries],
+            "affected_paths": entries,
+            "preview_counts": preview.get("counts", {}),
+            "git_state": {**git_state, "rollback_scope": "paths-v1"},
+            "git_recovery": git_recovery,
+        }
+        federation_owner = federation_operational_owner_from_environment(repo_root, run_id=str(tx.get("run_id") or ""))
+        if federation_owner:
+            tx["federation_owner"] = federation_owner
+        _atomic_write_json(_transaction_file(tx_dir), tx)
+
+        tx["backup_method"] = "none"
+        if existing:
+            tx["backup_method"] = _backup_existing_paths(repo_root, backup_dir, existing, tx_dir)
+            for entry in entries:
+                if not bool(entry.get("existed")):
+                    continue
+                backup_path = backup_dir / _safe_rel(str(entry.get("path") or ""))
+                entry["backup_sha256"] = _hash_path(backup_path)
+                entry["backup_identity"] = _path_identity(backup_path)
+        tx["status"] = "backup-ready"
+        tx["updated_at"] = _utc_now()
+        _atomic_write_json(_transaction_file(tx_dir), tx)
+        _write_transaction_active_marker(_transaction_file(tx_dir), tx)
+        return tx
+    except BaseException:
+        # No artifact worktree mutation has happened yet.  Undo only private
+        # refs created by this setup attempt and remove the incomplete XDG
+        # journal so a failed recovery bootstrap never looks resumable.
+        cleanup_created_recovery_refs(repo_root, created_recovery_refs)
+        shutil.rmtree(tx_dir, ignore_errors=True)
+        raise
 
 
 def register_transaction_paths(
@@ -1024,6 +1060,7 @@ def mark_transaction_completed(transaction_path: str | Path | None) -> None:
         return
     tx = _read_json(path)
     tx["status"] = "completed"
+    update_git_transaction_journal(tx, recovery_state="completed", finalization_state="completed")
     tx["completed_at"] = _utc_now()
     tx["updated_at"] = _utc_now()
     _atomic_write_json(path, tx)
@@ -1056,6 +1093,7 @@ def abandon_transaction(
         "process_start": "",
         "run_id": "",
     })
+    update_git_transaction_journal(tx, recovery_state="abandoned", finalization_state="abandoned")
     _atomic_write_json(path, tx)
     repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
     _archive_transaction_summary(path, tx)
@@ -1312,6 +1350,7 @@ def rollback_transaction(
             "process_start": "",
             "run_id": "",
         })
+        update_git_transaction_journal(tx, recovery_state="rolled-back", finalization_state="rolled-back")
         _atomic_write_json(path, tx)
         _archive_transaction_summary(path, tx)
         _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
@@ -1347,6 +1386,12 @@ def rollback_transaction(
                 for item in tx.get("affected_paths", []) or []:
                     if isinstance(item, dict) and str(item.get("restore_state") or "") not in {"verified"}:
                         item.setdefault("error", "")
+                update_git_transaction_journal(
+                    tx,
+                    recovery_state="rollback-failed",
+                    finalization_state="rollback-failed",
+                    error=f"{type(exc).__name__}: {exc}",
+                )
                 _atomic_write_json(path, tx)
                 _write_transaction_active_marker(path, tx)
             except Exception:
@@ -1396,6 +1441,9 @@ def transaction_pending_validation(transaction_path: str | Path | None) -> bool:
 def _write_transaction_active_marker(path: Path, tx: dict[str, Any]) -> None:
     repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
     transaction_id = str(tx.get("transaction_id") or "")
+    git_recovery = tx.get("git_recovery") if isinstance(tx.get("git_recovery"), dict) else {}
+    recovery = git_recovery.get("recovery") if isinstance(git_recovery.get("recovery"), dict) else {}
+    finalization = git_recovery.get("finalization") if isinstance(git_recovery.get("finalization"), dict) else {}
     marker_payload = {
         "transaction_id": transaction_id,
         "path": str(path),
@@ -1408,6 +1456,9 @@ def _write_transaction_active_marker(path: Path, tx: dict[str, Any]) -> None:
         "reserved_paths": list(tx.get("reserved_paths") or []),
         "validation_session_id": str(tx.get("validation_session_id") or ""),
         "next_validation_phase": str(tx.get("next_validation_phase") or ""),
+        "repository_id": str(git_recovery.get("repository_id") or ""),
+        "git_recovery_state": str(recovery.get("state") or ""),
+        "git_finalization_state": str(finalization.get("state") or ""),
     }
     _atomic_write_json(_active_file(repo_root, transaction_id), marker_payload)
     # Keep the legacy singleton marker for older callers while it refers to the

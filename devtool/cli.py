@@ -9328,48 +9328,58 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         if tasker_progress is not None:
             tasker_progress.phase_finished(result)
 
-    if name in {"apply-overlays", "aos"}:
-        result = apply_overlay_bundle(
-            config.repo_root,
-            artifact,
-            force=args.force,
-            yes=args.yes,
-            dry_run=args.dry_run,
-            log_path=log_path,
-            preview=preview,
-            source_artifacts=source_artifacts or None,
-            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
-            skip_artifact_validation=bool(getattr(args, "no_manifest_check", False)),
-            lifecycle_progress=_artifact_lifecycle_progress,
-            render_hook_progress=render_hook_progress,
-            stream_hook_output=stream_hook_output,
-        )
-    elif name.startswith("apply-overlay") or name == "ao":
-        result = apply_overlay(
-            config.repo_root,
-            artifact,
-            force=args.force,
-            yes=args.yes,
-            dry_run=args.dry_run,
-            log_path=log_path,
-            preview=preview,
-            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
-            skip_artifact_validation=bool(getattr(args, "no_manifest_check", False)),
-            lifecycle_progress=_artifact_lifecycle_progress,
-            render_hook_progress=render_hook_progress,
-            stream_hook_output=stream_hook_output,
-        )
-    else:
-        result = apply_snapshot(
-            config.repo_root,
-            artifact,
-            force=args.force,
-            yes=args.yes,
-            dry_run=args.dry_run,
-            log_path=log_path,
-            preview=preview,
-            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
-        )
+    _previous_transaction_commit_mode = os.environ.get("DEVTOOL_TRANSACTION_COMMIT_MODE")
+    os.environ["DEVTOOL_TRANSACTION_COMMIT_MODE"] = (
+        "new" if str(getattr(args, "commit", "") or "").strip() else "none"
+    )
+    try:
+        if name in {"apply-overlays", "aos"}:
+            result = apply_overlay_bundle(
+                config.repo_root,
+                artifact,
+                force=args.force,
+                yes=args.yes,
+                dry_run=args.dry_run,
+                log_path=log_path,
+                preview=preview,
+                source_artifacts=source_artifacts or None,
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+                skip_artifact_validation=bool(getattr(args, "no_manifest_check", False)),
+                lifecycle_progress=_artifact_lifecycle_progress,
+                render_hook_progress=render_hook_progress,
+                stream_hook_output=stream_hook_output,
+            )
+        elif name.startswith("apply-overlay") or name == "ao":
+            result = apply_overlay(
+                config.repo_root,
+                artifact,
+                force=args.force,
+                yes=args.yes,
+                dry_run=args.dry_run,
+                log_path=log_path,
+                preview=preview,
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+                skip_artifact_validation=bool(getattr(args, "no_manifest_check", False)),
+                lifecycle_progress=_artifact_lifecycle_progress,
+                render_hook_progress=render_hook_progress,
+                stream_hook_output=stream_hook_output,
+            )
+        else:
+            result = apply_snapshot(
+                config.repo_root,
+                artifact,
+                force=args.force,
+                yes=args.yes,
+                dry_run=args.dry_run,
+                log_path=log_path,
+                preview=preview,
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+            )
+    finally:
+        if _previous_transaction_commit_mode is None:
+            os.environ.pop("DEVTOOL_TRANSACTION_COMMIT_MODE", None)
+        else:
+            os.environ["DEVTOOL_TRANSACTION_COMMIT_MODE"] = _previous_transaction_commit_mode
     if _artifact_lifecycle_steps:
         result.metadata.setdefault("lifecycle_steps", []).extend(_artifact_lifecycle_steps)
         result.metadata.setdefault("lifecycle_steps_position", "before")
