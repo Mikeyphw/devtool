@@ -48,6 +48,7 @@ class FederationRepositoryAttestation:
 
 _TRANSPORT_KEYS = (
     "federation_source_repository",
+    "federation_group",
     "federation_child_repository",
     "federation_child_target",
     "federation_child_workflow",
@@ -459,6 +460,7 @@ def build_federation_transport_metadata(
 
     return {
         "federation_source_repository": str(lineage.get("source_repository") or ""),
+        "federation_group": str(lineage.get("federation_group") or ""),
         "federation_child_repository": repository,
         "federation_child_target": child_target,
         "federation_child_workflow": child_workflow,

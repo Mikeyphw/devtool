@@ -292,6 +292,11 @@ class FederatedRepositoryConfig:
 class FederationGroup:
     name: str
     repositories: tuple[str, ...] = ()
+    members: tuple[str, ...] = ()
+
+    @property
+    def executable(self) -> bool:
+        return bool(self.members)
 
 
 @dataclass(slots=True, frozen=True)

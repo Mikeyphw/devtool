@@ -108,9 +108,9 @@ from .federation_discovery import FederationDiscoveryError, federation_boundary_
 from .federation_gate import build_federation_gate1_report, federation_gate1_as_dict, render_federation_gate1
 from .federation_gate2 import build_federation_gate2_report, federation_gate2_as_dict, render_federation_gate2
 from .federation_final_seal import build_federation_final_seal_report, federation_final_seal_as_dict, render_federation_final_seal
-from .federation_plan import FederationPlanError, build_federated_plan
+from .federation_plan import FederationPlanError, build_federated_plan, build_federated_group_plan
 from .federation_observability import build_federation_observability
-from .federation_execution import FederationExecutionError, run_federated_workflow
+from .federation_execution import FederationExecutionError, run_federated_workflow, run_federated_group
 from .federation_bridge import (
     FederationBridgeError,
     execute_federated_job,
@@ -1080,11 +1080,13 @@ def build_parser() -> argparse.ArgumentParser:
     federation_status = federation_sub.add_parser("status", aliases=["summary"], help="Show one coherent federation observability snapshot")
     federation_status.add_argument("--run", default="", help="Limit run observations to one parent or child EXO run ID")
     federation_status.add_argument("--json", action="store_true", help="Emit the machine-readable federation observability snapshot")
-    federation_plan = federation_sub.add_parser("plan", help="Build a deterministic planning-only cross-repository workflow DAG")
-    federation_plan.add_argument("workflow", help="Federation workflow name")
+    federation_plan = federation_sub.add_parser("plan", help="Build a deterministic planning-only cross-repository workflow/group DAG")
+    federation_plan.add_argument("workflow", nargs="?", default="", help="Federation workflow name")
+    federation_plan.add_argument("--group", default="", help="Executable federation group from [federation.groups]")
     federation_plan.add_argument("--json", action="store_true", help="Emit the machine-readable federated plan graph")
-    federation_run = federation_sub.add_parser("run", help="Execute a federated workflow with distinct parent/child EXO runs")
-    federation_run.add_argument("workflow", help="Federation workflow name")
+    federation_run = federation_sub.add_parser("run", help="Execute a federated workflow or group with distinct parent/child EXO runs")
+    federation_run.add_argument("workflow", nargs="?", default="", help="Federation workflow name")
+    federation_run.add_argument("--group", default="", help="Executable federation group from [federation.groups]")
     federation_run.add_argument("--json", action="store_true", help="Emit the machine-readable federated run and lineage report")
     federation_exec = federation_sub.add_parser("exec", help="Execute one enrolled child wrapper or target-local-job public contract")
     federation_exec.add_argument("repository", help="Federation repository name")
@@ -11068,8 +11070,14 @@ def _federation_command(args: argparse.Namespace) -> int:
                     target = str(item.get("selected_target") or "-")
                     relation = str(item.get("relation") or "unknown")
                     rows.append((f"repo.{item.get('name')}", f"{status}; {relation}; target={target}; {item.get('root')}"))
+                group_details = payload.get("group_details") if isinstance(payload.get("group_details"), dict) else {}
                 for group_name, members in sorted((payload.get("groups") or {}).items()):
-                    rows.append((f"group.{group_name}", ", ".join(str(x) for x in members)))
+                    detail = group_details.get(group_name) if isinstance(group_details.get(group_name), dict) else {}
+                    executable_members = detail.get("members") if isinstance(detail.get("members"), list) else []
+                    if executable_members:
+                        rows.append((f"group.{group_name}", f"executable; members={', '.join(str(x) for x in executable_members)}"))
+                    else:
+                        rows.append((f"group.{group_name}", f"metadata; repositories={', '.join(str(x) for x in members) or '-'}"))
                 render_status_table(rows)
             return 0
         if action in {"inspect", "show"}:
@@ -11147,6 +11155,11 @@ def _federation_command(args: argparse.Namespace) -> int:
                         f"{item.get('boundary_status')}; target={item.get('selected_target') or '-'}; "
                         f"wrappers={len(contracts.get('wrapper_commands') or [])}; jobs={len(contracts.get('target_local_jobs') or [])}"
                     ))
+                for group_name, detail in sorted((payload.get("group_details") or {}).items()):
+                    if isinstance(detail, dict):
+                        mode = "executable" if detail.get("executable") else "metadata"
+                        members = detail.get("members") if isinstance(detail.get("members"), list) else []
+                        rows.append((f"group.{group_name}", f"{mode}; members={len(members)}"))
                 for item in payload.get("workflows", []):
                     if isinstance(item, dict):
                         rows.append((f"workflow.{item.get('name')}", f"{item.get('status')}; nodes={item.get('node_count', 0)}"))
@@ -11158,13 +11171,27 @@ def _federation_command(args: argparse.Namespace) -> int:
                 render_status_table(rows)
             return 0 if bool((payload.get("summary") or {}).get("healthy", True)) else 1
         if action == "plan":
-            graph = build_federated_plan(config, str(getattr(args, "workflow", "") or ""))
+            workflow_name = str(getattr(args, "workflow", "") or "").strip()
+            group_name = str(getattr(args, "group", "") or "").strip()
+            if bool(workflow_name) == bool(group_name):
+                raise FederationPlanError(
+                    "federation plan requires exactly one workflow name or --group <name>"
+                )
+            graph = (
+                build_federated_group_plan(config, group_name)
+                if group_name else build_federated_plan(config, workflow_name)
+            )
             payload = graph.as_dict()
+            if group_name:
+                payload["subject_kind"] = "group"
+                payload["group"] = group_name
+            else:
+                payload["subject_kind"] = "workflow"
             if as_json:
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
             else:
                 rows = [
-                    ("workflow", graph.workflow),
+                    (("group" if group_name else "workflow"), group_name or graph.workflow),
                     ("repositories", ", ".join(graph.repositories) or "-"),
                     ("nodes", str(len(graph.nodes))),
                 ]
@@ -11175,17 +11202,27 @@ def _federation_command(args: argparse.Namespace) -> int:
                 render_status_table(rows)
             return 0
         if action == "run":
-            report = run_federated_workflow(
-                config,
-                str(getattr(args, "workflow", "") or ""),
-                reenter=main,
+            workflow_name = str(getattr(args, "workflow", "") or "").strip()
+            group_name = str(getattr(args, "group", "") or "").strip()
+            if bool(workflow_name) == bool(group_name):
+                raise FederationExecutionError(
+                    "federation run requires exactly one workflow name or --group <name>"
+                )
+            report = (
+                run_federated_group(config, group_name, reenter=main)
+                if group_name else run_federated_workflow(config, workflow_name, reenter=main)
             )
             payload = report.as_dict()
+            if group_name:
+                payload["subject_kind"] = "group"
+                payload["group"] = group_name
+            else:
+                payload["subject_kind"] = "workflow"
             if as_json:
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
             else:
                 rows = [
-                    ("workflow", report.workflow),
+                    (("group" if group_name else "workflow"), group_name or report.workflow),
                     ("parent_run_id", report.parent_run_id),
                     ("status", report.status),
                     ("children", str(len(report.children))),

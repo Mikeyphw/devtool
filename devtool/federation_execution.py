@@ -28,7 +28,7 @@ from .core.events import (
     publish_event,
 )
 from .federation_discovery import resolve_federated_repository
-from .federation_plan import FederatedPlanGraph, build_federated_plan
+from .federation_plan import FederatedPlanGraph, build_federated_plan, project_with_federation_group
 from .federation_operations import (
     capture_federated_resume_checkpoint,
     collect_federated_operational_snapshot,
@@ -93,9 +93,15 @@ class FederatedRunReport:
     def ok(self) -> bool:
         return self.exit_code == 0 and self.status == ExecutionStatus.SUCCEEDED.value
 
+    @property
+    def group(self) -> str:
+        return self.workflow.split(":", 1)[1] if self.workflow.startswith("group:") else ""
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "schema_version": 1,
+            "subject_kind": "group" if self.group else "workflow",
+            "group": self.group,
             "workflow": self.workflow,
             "parent_run_id": self.parent_run_id,
             "status": self.status,
@@ -213,6 +219,7 @@ def _assert_child_snapshot_authority(
     expected_child_workflow: str = "",
     expected_federation_ref: str = "",
     expected_requested_ref: str = "",
+    expected_federation_group: str = "",
     snapshot: Any,
 ) -> dict[str, Any]:
     if snapshot is None:
@@ -232,6 +239,7 @@ def _assert_child_snapshot_authority(
         "child_workflow": expected_child_workflow,
         "federation_ref": expected_federation_ref,
         "requested_ref": expected_requested_ref,
+        "federation_group": expected_federation_group,
     }
     for field_name, expected_value in expected_fields.items():
         if expected_value and str(persisted_lineage.get(field_name) or "") != expected_value:
@@ -306,6 +314,7 @@ def run_federated_workflow(
     """
 
     name = str(workflow_name or "").strip()
+    federation_group = name.split(":", 1)[1] if name.startswith("group:") else ""
     workflow = parent.federation.workflows.get(name)
     if workflow is None:
         available = ", ".join(sorted(parent.federation.workflows)) or "<none>"
@@ -334,9 +343,11 @@ def run_federated_workflow(
         "source_repository": owner_fingerprint,
         "effective_repository": owner_fingerprint,
     }
+    if federation_group:
+        parent_lineage["federation_group"] = federation_group
     publish(RunStarted(
         run_id=run_id,
-        command=f"federation run {name}",
+        command=(f"federation run --group {federation_group}" if federation_group else f"federation run {name}"),
         project=str(parent.repo_root),
         source="federation",
         metadata={"repository_identity": owner_identity, "run_lineage": parent_lineage},
@@ -430,6 +441,8 @@ def run_federated_workflow(
                 "effective_repository": effective_fingerprint,
                 "execution_environment": "auto",
             }
+            if federation_group:
+                lineage["federation_group"] = federation_group
             active_target = target
             active_identity = identity
             active_lineage = lineage
@@ -470,6 +483,8 @@ def run_federated_workflow(
                 "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
                 "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
             }
+            if federation_group:
+                env["DEVTOOL_FEDERATION_GROUP"] = federation_group
             from .federation_transport import build_repository_attestation, federation_attestation_environment
             env.update(federation_attestation_environment(build_repository_attestation(
                 resolution.root,
@@ -495,6 +510,7 @@ def run_federated_workflow(
                 expected_child_workflow=step.workflow,
                 expected_federation_ref=federation_ref,
                 expected_requested_ref=step.ref,
+                expected_federation_group=federation_group,
                 snapshot=child_snapshot,
             ) if child_snapshot is not None else {}
             operational = collect_federated_operational_snapshot(
@@ -619,6 +635,32 @@ def run_federated_workflow(
         source="federation",
     ))
     return FederatedRunReport(name, run_id, parent_status, parent_exit, tuple(children), plan)
+
+
+
+
+def run_federated_group(
+    parent: ProjectConfig,
+    group_name: str,
+    *,
+    reenter: Callable[[list[str]], int],
+    publish: Callable[[Any], None] = publish_event,
+    snapshot_lookup: Callable[[str], Any] | None = None,
+    parent_run_id: str = "",
+    request_child_cancel: Callable[[str], Any] | None = None,
+) -> FederatedRunReport:
+    """Execute an executable federation group through the normal FRX workflow coordinator."""
+
+    scoped, workflow = project_with_federation_group(parent, group_name)
+    return run_federated_workflow(
+        scoped,
+        workflow.name,
+        reenter=reenter,
+        publish=publish,
+        snapshot_lookup=snapshot_lookup,
+        parent_run_id=parent_run_id,
+        request_child_cancel=request_child_cancel,
+    )
 
 
 def run_federated_direct_child(
@@ -846,5 +888,6 @@ __all__ = [
     "FederatedChildRun",
     "FederatedRunReport",
     "run_federated_workflow",
+    "run_federated_group",
     "run_federated_direct_child",
 ]

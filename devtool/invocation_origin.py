@@ -64,6 +64,7 @@ def federation_lineage_from_environment() -> dict[str, object]:
         "parent_run_id": parent_run_id,
         "parent_node_id": str(os.environ.get("DEVTOOL_FEDERATION_PARENT_NODE_ID") or "").strip(),
         "federation_workflow": str(os.environ.get("DEVTOOL_FEDERATION_WORKFLOW") or "").strip(),
+        "federation_group": str(os.environ.get("DEVTOOL_FEDERATION_GROUP") or "").strip(),
         "federation_step": str(os.environ.get("DEVTOOL_FEDERATION_STEP") or "").strip(),
         "repository": str(os.environ.get("DEVTOOL_FEDERATION_REPOSITORY") or "").strip(),
         "target": str(os.environ.get("DEVTOOL_FEDERATION_TARGET") or "").strip(),

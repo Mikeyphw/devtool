@@ -434,3 +434,72 @@ UI/machine, doctor, and completion coverage. Repositories without federation
 remain in standalone mode and keep the existing build/test/validate/wrapper/TLJ
 execution contracts unchanged.
 
+
+## FRX-X03: executable federation groups
+
+FRX-X03 makes federation groups an execution surface without creating a second
+planner or scheduler. Executable groups compile into a synthetic federation
+workflow and then use the existing FRX planner/coordinator unchanged. This
+preserves repository ownership, target resolution, canonical
+`repository::target::workflow` identity, EXO parent/child lineage, cancellation,
+remote attestation, and child-owned workflow behavior.
+
+Legacy repository-only groups remain valid metadata:
+
+```toml
+[federation.groups.product]
+repositories = ["backend", "android"]
+```
+
+They are not executable because repository membership alone does not identify
+work. Attempting `federation run --group product` fails closed with guidance to
+add executable members.
+
+Executable groups may use a shorthand array:
+
+```toml
+[federation.groups]
+ready = [
+  "validate-ready",
+  "chrootctl::chrootctl_root_module::package",
+]
+```
+
+or table form when repository metadata and executable membership are both
+useful:
+
+```toml
+[federation.groups.release]
+repositories = ["backend", "android"]
+members = ["workflow:validate-ready", "group:package-ready"]
+```
+
+Members normalize to exactly one of three kinds:
+
+- `workflow:<name>` — a named `[federation.workflows]` workflow;
+- `group:<name>` (or `@name`) — a nested executable federation group;
+- `repository::workflow` or `repository::target::workflow` — a direct child
+  workflow reference using the FRX-X01 grammar.
+
+A bare name is accepted only when it resolves unambiguously to one workflow or
+one group. If a workflow and group share the same name, configuration must use
+an explicit `workflow:` or `group:` prefix. Unknown members, duplicate normalized
+members, group cycles, and executable groups that nest metadata-only groups fail
+at configuration time. Overlapping expanded child graphs fail closed in the
+normal FRX planner rather than silently executing duplicate work.
+
+Planning and execution are available through:
+
+```text
+devtool federation plan --group <group>
+devtool federation plan --group <group> --json
+devtool federation run --group <group>
+devtool federation run --group <group> --json
+```
+
+The group plan is represented internally as `group:<name>` and exposes
+`subject_kind = "group"` plus the original group name in machine output. Group
+runs persist `federation_group` in coordinator and child lineage, forward it
+through whole-run/provider environments, retain it in transport/return-artifact
+provenance, and expose executable-vs-metadata group details in federation
+observability. Completion only offers executable groups for `--group`.

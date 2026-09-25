@@ -351,6 +351,14 @@ def federation_boundary_payload(parent: "ProjectConfig", *, tolerate_errors: boo
             name: list(group.repositories)
             for name, group in sorted(parent.federation.groups.items())
         },
+        "group_details": {
+            name: {
+                "repositories": list(group.repositories),
+                "members": list(group.members),
+                "executable": group.executable,
+            }
+            for name, group in sorted(parent.federation.groups.items())
+        },
         "healthy": not errors,
         "errors": errors,
     }

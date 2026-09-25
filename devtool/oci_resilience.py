@@ -49,6 +49,7 @@ OCI_PROVENANCE_KEYS: tuple[str, ...] = (
     "oci_dry_run",
     "oci_phase_node_id",
     "federation_source_repository",
+    "federation_group",
     "federation_child_repository",
     "federation_child_target",
     "federation_child_workflow",
@@ -178,6 +179,7 @@ def producer_identity(
     }
     federation_keys = (
         "federation_source_repository",
+        "federation_group",
         "federation_child_repository",
         "federation_child_target",
         "federation_child_workflow",

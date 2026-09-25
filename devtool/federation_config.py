@@ -22,7 +22,7 @@ FEDERATION_SCHEMA_VERSION = 1
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _FEDERATION_KEYS = frozenset({"schema", "repositories", "groups", "workflows"})
 _REPOSITORY_KEYS = frozenset({"path", "required"})
-_GROUP_KEYS = frozenset({"repositories"})
+_GROUP_KEYS = frozenset({"repositories", "members"})
 _WORKFLOW_KEYS = frozenset({"depends_on", "steps"})
 _WORKFLOW_STEP_KEYS = frozenset({"id", "ref", "depends_on"})
 
@@ -132,6 +132,134 @@ def _repo_members(value: object, *, path: str) -> tuple[str, ...]:
         result.append(name)
     return tuple(result)
 
+
+
+
+def _group_members(value: object, *, path: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise _fail(f"{path} must be a TOML array of federation workflow/group/ref members")
+    if not value:
+        raise _fail(f"{path} cannot be empty")
+    result: list[str] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value):
+        if not isinstance(raw, str) or not raw.strip():
+            raise _fail(
+                f"{path}[{index}] must be a non-empty federation workflow name, group reference, "
+                "or repository::workflow / repository::target::workflow reference"
+            )
+        member = raw.strip()
+        if member in seen:
+            raise _fail(f"{path} contains duplicate member {member!r}")
+        seen.add(member)
+        result.append(member)
+    return tuple(result)
+
+
+def _normalize_group_members(
+    groups: Mapping[str, FederationGroup],
+    workflows: Mapping[str, FederatedWorkflowConfig],
+    repositories: Mapping[str, FederatedRepositoryConfig],
+) -> dict[str, FederationGroup]:
+    """Resolve executable group members to explicit stable member kinds.
+
+    Normalized forms are ``workflow:<name>``, ``group:<name>``, and canonical
+    child workflow references. Bare names are accepted only when they resolve
+    unambiguously to exactly one federation workflow or federation group.
+    """
+
+    normalized: dict[str, FederationGroup] = {}
+    for group_name, group in groups.items():
+        members: list[str] = []
+        seen: set[str] = set()
+        for index, raw_member in enumerate(group.members):
+            path = f"federation.groups.{group_name}.members[{index}]"
+            member = str(raw_member or "").strip()
+            resolved = ""
+            if "::" in member:
+                ref, _repository, _target, _workflow = _workflow_ref(
+                    member, path=path, repositories=repositories
+                )
+                resolved = ref
+            elif member.startswith("workflow:"):
+                name = _name(member.split(":", 1)[1], path=f"{path} workflow")
+                if name not in workflows:
+                    available = ", ".join(sorted(workflows)) or "<none>"
+                    raise _fail(
+                        f"{path} references unknown federation workflow {name!r}. "
+                        f"Available workflows: {available}"
+                    )
+                resolved = f"workflow:{name}"
+            elif member.startswith("group:") or member.startswith("@"):
+                raw_name = member.split(":", 1)[1] if member.startswith("group:") else member[1:]
+                name = _name(raw_name, path=f"{path} group")
+                if name not in groups:
+                    available = ", ".join(sorted(groups)) or "<none>"
+                    raise _fail(
+                        f"{path} references unknown federation group {name!r}. "
+                        f"Available groups: {available}"
+                    )
+                resolved = f"group:{name}"
+            else:
+                name = _name(member, path=f"{path} member")
+                is_workflow = name in workflows
+                is_group = name in groups
+                if is_workflow and is_group:
+                    raise _fail(
+                        f"{path} member {name!r} is ambiguous because both a federation workflow and group "
+                        f"use that name. Use workflow:{name} or group:{name}."
+                    )
+                if is_workflow:
+                    resolved = f"workflow:{name}"
+                elif is_group:
+                    resolved = f"group:{name}"
+                else:
+                    available_workflows = ", ".join(sorted(workflows)) or "<none>"
+                    available_groups = ", ".join(sorted(groups)) or "<none>"
+                    raise _fail(
+                        f"{path} references unknown federation workflow/group {name!r}. "
+                        f"Available workflows: {available_workflows}; groups: {available_groups}"
+                    )
+            if resolved in seen:
+                raise _fail(
+                    f"federation group {group_name!r} resolves duplicate executable member {resolved!r}"
+                )
+            seen.add(resolved)
+            members.append(resolved)
+        normalized[group_name] = FederationGroup(
+            name=group.name, repositories=group.repositories, members=tuple(members)
+        )
+
+    # Validate nested-group cycles at configuration time. Metadata-only groups
+    # have no executable members and therefore cannot participate in a cycle.
+    stack: list[str] = []
+    complete: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in complete:
+            return
+        if name in stack:
+            start = stack.index(name)
+            cycle = [*stack[start:], name]
+            raise _fail(f"federation group cycle detected: {' -> '.join(cycle)}")
+        stack.append(name)
+        try:
+            for member in normalized[name].members:
+                if member.startswith("group:"):
+                    nested_name = member.split(":", 1)[1]
+                    if not normalized[nested_name].members:
+                        raise _fail(
+                            f"executable federation group {name!r} references metadata-only group {nested_name!r}; "
+                            "add executable members to the nested group"
+                        )
+                    visit(nested_name)
+        finally:
+            stack.pop()
+        complete.add(name)
+
+    for name in normalized:
+        visit(name)
+    return normalized
 
 def _workflow_ref(
     value: object,
@@ -340,17 +468,41 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
             raise _fail(
                 f"federation group {name!r} conflicts with a repository of the same name; choose a distinct name"
             )
-        group = _table(raw_group, path=f"[federation.groups.{name}]")
-        _reject_unknown(group, _GROUP_KEYS, path=f"[federation.groups.{name}]")
-        members = _repo_members(group.get("repositories"), path=f"federation.groups.{name}.repositories")
-        unknown = [member for member in members if member not in repositories]
+
+        # X03 adds executable group members while retaining FRX-02's
+        # repository-only metadata group tables. A list shorthand is treated
+        # as executable members; table form can carry both repositories and
+        # members.
+        if isinstance(raw_group, list):
+            repository_members: tuple[str, ...] = ()
+            executable_members = _group_members(raw_group, path=f"federation.groups.{name}")
+        else:
+            group = _table(raw_group, path=f"[federation.groups.{name}]")
+            _reject_unknown(group, _GROUP_KEYS, path=f"[federation.groups.{name}]")
+            has_repositories = "repositories" in group
+            has_members = "members" in group
+            if not has_repositories and not has_members:
+                raise _fail(
+                    f"federation group {name!r} must declare repositories and/or executable members"
+                )
+            repository_members = (
+                _repo_members(group.get("repositories"), path=f"federation.groups.{name}.repositories")
+                if has_repositories else ()
+            )
+            executable_members = (
+                _group_members(group.get("members"), path=f"federation.groups.{name}.members")
+                if has_members else ()
+            )
+        unknown = [member for member in repository_members if member not in repositories]
         if unknown:
             available = ", ".join(sorted(repositories)) or "<none>"
             raise _fail(
                 f"federation group {name!r} references unknown repository/repositories: {', '.join(unknown)}. "
                 f"Available repositories: {available}"
             )
-        groups[name] = FederationGroup(name=name, repositories=members)
+        groups[name] = FederationGroup(
+            name=name, repositories=repository_members, members=executable_members
+        )
 
     workflows_raw = _table(raw.get("workflows"), path="[federation.workflows]")
     workflows: dict[str, FederatedWorkflowConfig] = {}
@@ -361,6 +513,7 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
         item = _table(raw_workflow, path=f"[federation.workflows.{name}]")
         workflows[name] = FederatedWorkflowConfig(name=name, steps=_workflow_steps(name, item, repositories))
 
+    groups = _normalize_group_members(groups, workflows, repositories)
     return FederationConfig(schema=schema, repositories=repositories, groups=groups, workflows=workflows)
 
 
@@ -382,6 +535,8 @@ def federation_as_dict(config: FederationConfig) -> dict[str, Any]:
             name: {
                 "name": group.name,
                 "repositories": list(group.repositories),
+                "members": list(group.members),
+                "executable": group.executable,
             }
             for name, group in sorted(config.groups.items())
         },

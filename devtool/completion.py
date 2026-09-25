@@ -89,6 +89,16 @@ _devtool_federation_workflows() {
   fi
 }
 
+_devtool_federation_groups() {
+  local -a values
+  values=(${(f)"$(_devtool_completion_values federation-executable-groups)"})
+  if (( ${#values} )); then
+    _describe -t federation-groups 'executable federation group' values
+  else
+    _message 'executable group from [federation.groups]'
+  fi
+}
+
 _devtool_targets() {
   local repo config
   local -a targets
@@ -797,7 +807,7 @@ _devtool() {
                 _arguments '1:federated repository:_devtool_federation_repositories' '--json[emit machine-readable repository boundary state]'
                 ;;
               plan|run)
-                _arguments '1:federation workflow:_devtool_federation_workflows' '--json[emit machine-readable federation state]'
+                _arguments '1:federation workflow:_devtool_federation_workflows' '--group[execute/plan a federation group]:group:_devtool_federation_groups' '--json[emit machine-readable federation state]'
                 ;;
               exec)
                 _arguments '1:federated repository:_devtool_federation_repositories' '--plan[resolve without execution]' '--json[emit machine-readable bridge state]' '*:child contract arguments:'

@@ -27,6 +27,7 @@ class CompletionState:
     pytest_tests: list[str]
     federation_repositories: list[str] = field(default_factory=list)
     federation_groups: list[str] = field(default_factory=list)
+    federation_executable_groups: list[str] = field(default_factory=list)
     federation_workflows: list[str] = field(default_factory=list)
     schema_version: int = COMPLETION_STATE_SCHEMA_VERSION
 
@@ -160,6 +161,7 @@ def build_completion_state(config: ProjectConfig, *, include_pytest: bool = Fals
         pytest_tests=_pytest_tests(config) if include_pytest else [],
         federation_repositories=sorted(config.federation.repositories),
         federation_groups=sorted(config.federation.groups),
+        federation_executable_groups=sorted(name for name, group in config.federation.groups.items() if group.executable),
         federation_workflows=sorted(config.federation.workflows),
     )
 
@@ -171,7 +173,7 @@ def completion_values(config: ProjectConfig, kind: str) -> list[str]:
     key = normalized.replace("-", "_")
     if normalized == "all":
         values: list[str] = []
-        for name in ("targets", "groups", "ui_profiles", "test_profiles", "variants", "jobs", "target_jobs", "target_job_keys", "target_job_refs", "workflows", "wrapper_commands", "wrapper_aliases", "wrapper_options", "pytest_tests", "federation_repositories", "federation_groups", "federation_workflows"):
+        for name in ("targets", "groups", "ui_profiles", "test_profiles", "variants", "jobs", "target_jobs", "target_job_keys", "target_job_refs", "workflows", "wrapper_commands", "wrapper_aliases", "wrapper_options", "pytest_tests", "federation_repositories", "federation_groups", "federation_executable_groups", "federation_workflows"):
             values.extend(mapping.get(name) or [])
         return list(dict.fromkeys(str(value) for value in values if value))
     value = mapping.get(key, [])

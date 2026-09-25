@@ -109,10 +109,16 @@ class FederatedPlanGraph:
             )
         return tuple(result)
 
+    @property
+    def group(self) -> str:
+        return self.workflow.split(":", 1)[1] if self.workflow.startswith("group:") else ""
+
     def as_dict(self) -> dict[str, Any]:
         ordered = self.topological_order()
         return {
             "schema_version": 1,
+            "subject_kind": "group" if self.group else "workflow",
+            "group": self.group,
             "workflow": self.workflow,
             "repositories": list(self.repositories),
             "roots": [node.key for node in self.roots],
@@ -213,6 +219,134 @@ def _ordered_steps(workflow: "FederatedWorkflowConfig"):
     return tuple(result)
 
 
+
+
+def materialize_federation_group(parent: "ProjectConfig", group_name: str):
+    """Expand one executable federation group into a synthetic workflow.
+
+    Groups deliberately compile down to the existing FRX workflow contract so
+    planning and execution use exactly the same child discovery, target
+    resolution, dependency, ownership, and EXO machinery as named workflows.
+    """
+
+    from .models import FederatedWorkflowConfig, FederatedWorkflowStep
+
+    name = str(group_name or "").strip()
+    group = parent.federation.groups.get(name)
+    if group is None:
+        available = ", ".join(sorted(parent.federation.groups)) or "<none>"
+        raise FederationPlanError(f"Unknown federation group {name!r}. Available groups: {available}")
+    if not group.members:
+        raise FederationPlanError(
+            f"Federation group {name!r} has no executable members. "
+            "Add members = [\"workflow-name\", \"repository::target::workflow\"] "
+            "or use the group only as repository metadata."
+        )
+
+    steps: list[FederatedWorkflowStep] = []
+    stack: list[str] = []
+    sequence = 0
+
+    def append_direct(ref: str, *, prefix: str) -> None:
+        nonlocal sequence
+        parts = [part.strip() for part in ref.split("::")]
+        if len(parts) == 2:
+            repository, workflow = parts
+            target = ""
+        elif len(parts) == 3:
+            repository, target, workflow = parts
+        else:
+            raise FederationPlanError(f"Invalid normalized federation group child ref {ref!r}")
+        sequence += 1
+        steps.append(FederatedWorkflowStep(
+            step_id=f"g{sequence:03d}.{prefix}.direct",
+            ref=ref,
+            repository=repository,
+            target=target,
+            workflow=workflow,
+            depends_on=(),
+            depends_on_declared=True,
+        ))
+
+    def append_workflow(workflow_name: str, *, prefix: str) -> None:
+        nonlocal sequence
+        workflow = parent.federation.workflows.get(workflow_name)
+        if workflow is None:
+            available = ", ".join(sorted(parent.federation.workflows)) or "<none>"
+            raise FederationPlanError(
+                f"Federation group {name!r} references unknown workflow {workflow_name!r}. "
+                f"Available workflows: {available}"
+            )
+        id_map: dict[str, str] = {}
+        base = sequence
+        for offset, step in enumerate(workflow.steps, 1):
+            id_map[step.step_id] = f"g{base + offset:03d}.{prefix}.{workflow_name}.{step.step_id}"
+        for step in workflow.steps:
+            sequence += 1
+            steps.append(FederatedWorkflowStep(
+                step_id=id_map[step.step_id],
+                ref=step.ref,
+                repository=step.repository,
+                target=step.target,
+                workflow=step.workflow,
+                depends_on=tuple(id_map[dep] for dep in step.depends_on),
+                depends_on_declared=step.depends_on_declared,
+            ))
+
+    def visit(current: str, *, prefix: str) -> None:
+        if current in stack:
+            start = stack.index(current)
+            cycle = [*stack[start:], current]
+            raise FederationPlanError(f"Federation group cycle detected while planning: {' -> '.join(cycle)}")
+        nested = parent.federation.groups.get(current)
+        if nested is None:
+            available = ", ".join(sorted(parent.federation.groups)) or "<none>"
+            raise FederationPlanError(f"Unknown federation group {current!r}. Available groups: {available}")
+        if not nested.members:
+            raise FederationPlanError(
+                f"Federation group {current!r} is metadata-only and cannot be expanded by executable group {name!r}"
+            )
+        stack.append(current)
+        try:
+            for index, member in enumerate(nested.members, 1):
+                member_prefix = f"{prefix}.m{index:02d}"
+                if member.startswith("workflow:"):
+                    append_workflow(member.split(":", 1)[1], prefix=member_prefix)
+                elif member.startswith("group:"):
+                    visit(member.split(":", 1)[1], prefix=member_prefix)
+                elif "::" in member:
+                    append_direct(member, prefix=member_prefix)
+                else:
+                    raise FederationPlanError(
+                        f"Federation group {current!r} contains unresolved member {member!r}"
+                    )
+        finally:
+            stack.pop()
+
+    visit(name, prefix=name)
+    return FederatedWorkflowConfig(name=f"group:{name}", steps=tuple(steps))
+
+
+def project_with_federation_group(parent: "ProjectConfig", group_name: str):
+    """Return a shallow ProjectConfig copy with one materialized group workflow."""
+
+    from .models import FederationConfig
+
+    workflow = materialize_federation_group(parent, group_name)
+    federation = FederationConfig(
+        schema=parent.federation.schema,
+        repositories=dict(parent.federation.repositories),
+        groups=dict(parent.federation.groups),
+        workflows={**parent.federation.workflows, workflow.name: workflow},
+    )
+    return replace(parent, federation=federation), workflow
+
+
+def build_federated_group_plan(parent: "ProjectConfig", group_name: str) -> FederatedPlanGraph:
+    scoped, workflow = project_with_federation_group(parent, group_name)
+    return build_federated_plan(scoped, workflow.name)
+
+
 def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> FederatedPlanGraph:
     name = str(workflow_name or "").strip()
     workflow: FederatedWorkflowConfig | None = parent.federation.workflows.get(name)
@@ -309,5 +443,8 @@ __all__ = [
     "FederationPlanError",
     "FederatedPlanNode",
     "FederatedPlanGraph",
+    "materialize_federation_group",
+    "project_with_federation_group",
     "build_federated_plan",
+    "build_federated_group_plan",
 ]

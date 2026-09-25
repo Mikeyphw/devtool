@@ -36,6 +36,7 @@ class FederationObservation:
     summary: dict[str, Any] = field(default_factory=dict)
     repositories: tuple[dict[str, Any], ...] = ()
     groups: dict[str, list[str]] = field(default_factory=dict)
+    group_details: dict[str, dict[str, Any]] = field(default_factory=dict)
     workflows: tuple[dict[str, Any], ...] = ()
     gates: dict[str, Any] = field(default_factory=dict)
     runs: tuple[dict[str, Any], ...] = ()
@@ -51,6 +52,7 @@ class FederationObservation:
             "healthy": bool(self.summary.get("healthy", True)),
             "repositories": [dict(item) for item in self.repositories],
             "groups": {name: list(values) for name, values in self.groups.items()},
+            "group_details": {name: dict(values) for name, values in self.group_details.items()},
             "workflows": [dict(item) for item in self.workflows],
             "gates": dict(self.gates),
             "runs": [dict(item) for item in self.runs],
@@ -82,6 +84,7 @@ def _safe_identity(value: Any) -> dict[str, Any]:
 
 def _safe_transport(metadata: Mapping[str, Any]) -> dict[str, Any]:
     allowed = (
+        "federation_group",
         "federation_child_repository",
         "federation_child_target",
         "federation_child_workflow",
@@ -147,6 +150,7 @@ def runtime_federation_projection(execution: Mapping[str, Any] | Any | None) -> 
             "repository": str(metadata.get("repository") or child_lineage.get("repository") or ""),
             "target": str(metadata.get("target") or child_lineage.get("target") or ""),
             "workflow": str(metadata.get("workflow") or child_lineage.get("child_workflow") or ""),
+            "group": str(child_lineage.get("federation_group") or ""),
             "federation_ref": str(metadata.get("federation_ref") or child_lineage.get("federation_ref") or ""),
             "requested_ref": str(metadata.get("requested_ref") or child_lineage.get("requested_ref") or ""),
             "child_contract": str(metadata.get("child_contract") or child_lineage.get("child_contract") or ""),
@@ -168,6 +172,7 @@ def runtime_federation_projection(execution: Mapping[str, Any] | Any | None) -> 
         "schema_version": 1,
         "relationship": relationship,
         "workflow": str(lineage.get("federation_workflow") or ""),
+        "group": str(lineage.get("federation_group") or ""),
         "repository": str(lineage.get("repository") or lineage.get("requested_repository") or ""),
         "target": str(lineage.get("target") or ""),
         "child_workflow": str(lineage.get("child_workflow") or ""),
@@ -357,6 +362,7 @@ def build_federation_observability(
         "required_missing": required_missing,
         "unhealthy_repositories": unhealthy_repositories,
         "groups": len(config.federation.groups),
+        "executable_groups": sum(1 for group in config.federation.groups.values() if group.executable),
         "workflows": len(workflows),
         "workflow_errors": workflow_errors,
         "runs": len(runs),
@@ -373,6 +379,14 @@ def build_federation_observability(
         summary=summary,
         repositories=tuple(repositories),
         groups={name: list(group.repositories) for name, group in sorted(config.federation.groups.items())},
+        group_details={
+            name: {
+                "repositories": list(group.repositories),
+                "members": list(group.members),
+                "executable": group.executable,
+            }
+            for name, group in sorted(config.federation.groups.items())
+        },
         workflows=tuple(workflows),
         gates=gates,
         runs=tuple(runs),
