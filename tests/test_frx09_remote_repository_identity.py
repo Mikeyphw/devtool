@@ -170,12 +170,160 @@ def test_remote_tmux_forwards_federation_lineage_environment(tmp_path: Path) -> 
     ssh = SSHRunnerConfig(host="worker", user="mike", cwd="/srv/child", profile="builder")
     env = {
         "DEVTOOL_RUN_ID": "fed-child-1",
+        "DEVTOOL_FEDERATION_RELATIONSHIP": "child",
         "DEVTOOL_FEDERATION_PARENT_RUN_ID": "federation-parent",
         "DEVTOOL_FEDERATION_REPOSITORY": "child",
         "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": identity["fingerprint"],
     }
+    from devtool.federation_transport import build_repository_attestation, federation_attestation_environment
+    env.update(federation_attestation_environment(build_repository_attestation(root, identity=identity)))
     with mock.patch.dict(os.environ, env, clear=False):
         script = build_remote_tmux_script(ssh, ["status"])
     assert "DEVTOOL_FEDERATION_PARENT_RUN_ID=federation-parent" in script
     assert "DEVTOOL_FEDERATION_REPOSITORY=child" in script
     assert f"DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY={identity['fingerprint']}" in script
+
+
+def test_command_mode_attestation_probe_covers_ssh_chroot_proot_and_oci(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every remote command provider must attest the mapped child before phase execution."""
+    from devtool.execution_providers import SSH_PROOT_OCI
+    from devtool.oci_workspace import OciWorkspaceBind, OciWorkspacePlan
+    from devtool.proot_distro_runner import ProotRunnerConfig, wrap_specs_for_proot_distro
+
+    root, identity, lineage = _child(tmp_path)
+    spec = CommandSpec("echo", ["echo", "ok"], cwd=str(root), metadata=_metadata(identity, lineage))
+    project = _config(root)
+
+    native = wrap_specs_for_ssh_commands(
+        [spec],
+        SSHRunnerConfig(
+            host="worker.example", user="mike", cwd="/srv/build/child", mode="commands",
+            profile="", copy_artifacts=False, execution_provider=SSH_NATIVE,
+        ),
+        project_config=project, repo_root=root, dry_run=True,
+    )[0]
+    assert "frx_expected_config" in " ".join(native.argv)
+    assert native.metadata["federation_attestation_required"] is True
+
+    monkeypatch.setattr(
+        "devtool.termux_chroot_runner.resolve_chroot_identity",
+        lambda *args, **kwargs: SimpleNamespace(user="mike", home="/home/mike", shell="/bin/bash", source="test"),
+    )
+    chroot = wrap_specs_for_termux_host_chroot(
+        [spec], "androidos", repo_root=root,
+        path_map=[(str(root.resolve()), "/home/mike/Code/child")],
+        env={"DEVTOOL_CHROOTCTL": "chrootctl", "DEVTOOL_CHROOT_SUDO": ""},
+    )[0]
+    assert "frx_expected_config" in " ".join(chroot.argv)
+    assert chroot.metadata["federation_attestation_required"] is True
+
+    proot = wrap_specs_for_proot_distro(
+        [spec], ProotRunnerConfig(distro="ubuntu"), repo_root=root, dry_run=True,
+    )[0]
+    assert "frx_expected_config" in " ".join(proot.argv)
+    assert proot.metadata["federation_attestation_required"] is True
+
+    workspace = SimpleNamespace(workspace_id="wid", instance_id="wid", mode="managed")
+
+    class _Preparation:
+        remote_root = "/remote/repo"
+        lease = {}
+        run_id = "run-oci"
+        sync = {"would_create_workspace": False}
+
+        def __init__(self) -> None:
+            self.workspace = workspace
+
+        def metadata(self) -> dict:
+            return {
+                "ssh_source_sync_id": "sync",
+                "ssh_source_revision": {},
+                "ssh_workspace_id": "wid",
+                "ssh_workspace_path": self.remote_root,
+            }
+
+    plan = OciWorkspacePlan(
+        "tablet", "wid", "/remote/repo", "/remote/cache", "sync", "/workspace",
+        (
+            OciWorkspaceBind("/remote/repo", "/workspace", "repository"),
+            OciWorkspaceBind("/remote/cache", "/var/cache/devtool", "cache"),
+        ),
+        {"DEVTOOL_WORKSPACE": "/workspace"}, {},
+    )
+
+    class _OciState:
+        image_reference = "devtool/android-build:arm64-api36-v2"
+        image_digest = ""
+        build_context_sha256 = "ctx"
+
+        def __init__(self) -> None:
+            self.plan = plan
+
+        def metadata(self) -> dict:
+            return {"oci_runtime": "proot-distro-oci", "oci_container": "devtool-android-api36"}
+
+    monkeypatch.setattr("devtool.ssh_execution.prepare_ssh_command_execution", lambda *args, **kwargs: _Preparation())
+    monkeypatch.setattr("devtool.oci_execution.prepare_oci_execution", lambda *args, **kwargs: _OciState())
+    monkeypatch.setattr("devtool.oci_reuse.oci08_execution_metadata", lambda *args, **kwargs: {})
+    monkeypatch.setattr("devtool.oci_diagnostics.oci09_phase_metadata", lambda *args, **kwargs: {})
+    oci = wrap_specs_for_ssh_commands(
+        [spec],
+        SSHRunnerConfig(
+            host="worker.example", user="mike", profile="tablet", workspace_mode="managed",
+            mode="commands", copy_artifacts=False, execution_provider=SSH_PROOT_OCI, operation_id="run-oci",
+        ),
+        project_config=SimpleNamespace(runner_options={}), repo_root=root, dry_run=True,
+    )[0]
+    assert "frx_expected_config" in " ".join(oci.argv)
+    assert oci.metadata["federation_execution_environment"] == "ssh-proot-oci"
+    assert oci.metadata["federation_attestation_required"] is True
+
+
+def test_whole_run_chroot_forwards_federation_attestation_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    from devtool.termux_chroot_runner import RunnerConfig, build_inner_command
+
+    cfg = RunnerConfig(chroot_name="androidos", cwd="/home/mike/Code/child", tool="devtool")
+    identity = SimpleNamespace(user="mike", home="/home/mike", shell="/bin/bash", source="test")
+    values = {
+        "DEVTOOL_RUN_ID": "child-run",
+        "DEVTOOL_FEDERATION_RELATIONSHIP": "child",
+        "DEVTOOL_FEDERATION_ATTESTATION_SCHEMA_VERSION": "1",
+        "DEVTOOL_FEDERATION_ATTESTATION_AVAILABLE": "1",
+        "DEVTOOL_FEDERATION_ATTESTATION_CONFIG_SHA256": "a" * 64,
+    }
+    with mock.patch.dict(os.environ, values, clear=False):
+        inner = build_inner_command(cfg, ["status"], identity=identity)
+    assert "DEVTOOL_FEDERATION_RELATIONSHIP=child" in inner
+    assert "DEVTOOL_FEDERATION_ATTESTATION_CONFIG_SHA256=" + ("a" * 64) in inner
+
+
+def test_whole_run_remote_federation_refuses_missing_or_truncated_attestation(monkeypatch: pytest.MonkeyPatch) -> None:
+    from devtool.federation_transport import FederationTransportError
+    from devtool.termux_chroot_runner import RunnerConfig, build_inner_command
+
+    child_env = {
+        "DEVTOOL_FEDERATION_RELATIONSHIP": "child",
+        "DEVTOOL_FEDERATION_PARENT_RUN_ID": "parent",
+        "DEVTOOL_FEDERATION_ATTESTATION_SCHEMA_VERSION": "1",
+        "DEVTOOL_FEDERATION_ATTESTATION_AVAILABLE": "0",
+        "DEVTOOL_FEDERATION_ATTESTATION_CONFIG_SHA256": "",
+        "DEVTOOL_FEDERATION_ATTESTATION_GIT_REMOTE_SHA256": "",
+    }
+    with mock.patch.dict(os.environ, child_env, clear=False):
+        with pytest.raises(FederationTransportError, match="requires a portable repository attestation"):
+            build_remote_tmux_script(SSHRunnerConfig(host="worker", user="mike", cwd="/srv/child"), ["status"])
+        with pytest.raises(FederationTransportError, match="requires a portable repository attestation"):
+            build_inner_command(
+                RunnerConfig(chroot_name="androidos", cwd="/home/mike/child", tool="devtool"),
+                ["status"],
+                identity=SimpleNamespace(user="mike", home="/home/mike", shell="/bin/bash", source="test"),
+            )
+
+    truncated = dict(child_env)
+    truncated.update({
+        "DEVTOOL_FEDERATION_ATTESTATION_AVAILABLE": "1",
+        "DEVTOOL_FEDERATION_ATTESTATION_CONFIG_SHA256": "",
+    })
+    with mock.patch.dict(os.environ, truncated, clear=False):
+        with pytest.raises(FederationTransportError, match="availability marker"):
+            build_remote_tmux_script(SSHRunnerConfig(host="worker", user="mike", cwd="/srv/child"), ["status"])

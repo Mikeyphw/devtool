@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .core.events import get_execution_store
-from .federation_discovery import FederationDiscoveryError, federation_boundary_payload, resolve_federated_repository
+from .federation_discovery import (
+    FederationDiscoveryError,
+    federation_boundary_payload,
+    resolve_federated_repository,
+    resolve_federation_repository_owner,
+)
 from .federation_gate import build_federation_gate1_report, federation_gate1_as_dict
 from .federation_gate2 import build_federation_gate2_report, federation_gate2_as_dict
 from .federation_plan import FederationPlanError, build_federated_plan
@@ -274,6 +279,14 @@ def build_federation_observability(
             row["public_contracts"] = _child_capabilities(config, name) if row.get("available") else {
                 "wrapper_commands": [], "target_local_jobs": [], "workflow_count": 0,
             }
+            if row.get("available") and row.get("root"):
+                owner = resolve_federation_repository_owner(config, str(row.get("root")))
+                row["path_owner"] = owner.as_dict() if owner is not None else None
+                if owner is None or owner.repository != name:
+                    raise FederationDiscoveryError(
+                        f"Federation owner resolver mapped enrolled root {row.get('root')} to "
+                        f"{owner.repository if owner is not None else '<none>'!r}, expected {name!r}"
+                    )
         except Exception as exc:
             row["public_contracts"] = {"wrapper_commands": [], "target_local_jobs": [], "workflow_count": 0}
             row["observability_error"] = str(exc)

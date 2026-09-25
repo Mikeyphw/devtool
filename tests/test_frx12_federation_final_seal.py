@@ -88,12 +88,12 @@ def test_final_seal_standalone_has_exact_roadmap_inventory(tmp_path: Path, capsy
     assert machine["ok"] is True
 
 
-def test_healthy_federation_qualifies_all_fourteen_areas(tmp_path: Path) -> None:
+def test_healthy_federation_qualifies_all_sealed_areas(tmp_path: Path) -> None:
     parent, _ = _healthy_fixture(tmp_path)
     report = build_federation_final_seal_report(_load(parent))
     assert report.ok is True
     assert report.mode == "federated"
-    assert len(report.checks) == 14
+    assert len(report.checks) == len(FEDERATION_FINAL_SEAL_AREAS) == 14
     assert all(item.status == "ok" for item in report.checks)
     by_area = {item.area: item for item in report.checks}
     assert by_area["graph-planning"].data["workflows"] == 1
@@ -210,3 +210,35 @@ def test_cancellation_during_child_environment_transition_restores_parent_enviro
     assert os.environ["DEVTOOL_RUN_ID"] == "outer-run"
     assert "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT" not in os.environ
 
+
+
+def test_final_seal_fails_when_required_safety_evidence_is_unresolvable(tmp_path: Path, monkeypatch) -> None:
+    import devtool.federation_final_seal as seal
+
+    repo = tmp_path / "standalone-evidence"
+    _write_repo(repo, '[project]\nrunner="command"\n')
+    original = seal.FEDERATION_FINAL_SEAL_SAFETY_EVIDENCE
+    broken = list(original)
+    first = broken[0]
+    broken[0] = seal.FederationSafetyEvidence(first.case_id, first.promise, ("tests/missing.py::test_missing",))
+    monkeypatch.setattr(seal, "FEDERATION_FINAL_SEAL_SAFETY_EVIDENCE", tuple(broken))
+    report = seal.build_federation_final_seal_report(_load(repo))
+    payload = seal.federation_final_seal_as_dict(report)
+    assert report.ok is False and report.status == "error"
+    assert len(report.checks) == len(seal.FEDERATION_FINAL_SEAL_AREAS) == 14
+    assert report.safety_evidence_errors
+    assert payload["summary"]["safety_evidence_errors"] >= 1
+    rendered = seal.render_federation_final_seal(report)
+    assert "Safety evidence failures:" in rendered
+    assert "tests/missing.py::test_missing" in rendered
+
+
+def test_standalone_repo_without_config_or_git_remote_still_qualifies_fail_closed_transport(tmp_path: Path) -> None:
+    repo = tmp_path / "plain-standalone"
+    repo.mkdir()
+    report = build_federation_final_seal_report(_load(repo))
+    by_area = {item.area: item for item in report.checks}
+    assert report.ok is True
+    assert by_area["local-remote-identity"].status == "ok"
+    assert by_area["local-remote-identity"].data["portable_attestation"] is False
+    assert by_area["local-remote-identity"].data["remote_fail_closed"] is True

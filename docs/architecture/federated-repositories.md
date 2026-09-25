@@ -79,6 +79,16 @@ selected target, runner/platform, parent-relative relation (`nested`,
 `external`, or `ancestor`), and a boundary status/detail. Symlink enrollments are
 canonicalized before identity resolution.
 
+FRX-03 also exposes a first-class path-owner resolver for repository-aware
+consumers. It canonicalizes the requested path, walks only the recursively
+**explicit** enrollment graph, and selects the longest containing enrolled root.
+An explicitly enrolled grandchild therefore owns paths below its root instead of
+its parent; an unenrolled nested Git checkout never becomes a federation member.
+Symlink paths resolve to canonical ownership, paths outside the known federation
+roots have no owner, and duplicate/ambiguous canonical ownership fails closed.
+FRX-11 status/doctor projections consume the same resolver rather than deriving
+ownership independently.
+
 The public inspection surface is:
 
 ```text
@@ -171,7 +181,13 @@ identity, and execution-environment request.
 honors explicit federation dependencies, blocks dependent steps after a failed
 prerequisite, preserves the first concrete child exit code, propagates
 cancellation, and restores the caller's execution environment after every
-recursive child invocation.  The child itself still runs through canonical
+recursive child invocation. Exit `130` and `KeyboardInterrupt` are authoritative
+cancellation signals: the parent enters a cancelled terminal state, requests
+cancellation of the active child EXO run, records that child's cancelled lineage
+for later inspection, and does not schedule otherwise-independent later branches.
+Unscheduled branches are explicitly blocked by cancellation; the parent still
+never rolls back child-owned state. Direct wrapper/job federation execution uses
+the same cancellation semantics. The child itself still runs through canonical
 `devtool invoke`, so ordinary workflow, runner, EXO, logging, and validation
 semantics remain authoritative inside that repository.
 
@@ -237,11 +253,22 @@ Provider integration follows the existing execution contracts:
 Remote-required providers fail closed when no explicit provider-resolved child
 root is available, when lineage names a different effective repository, or when
 the local execution root no longer belongs to the planned repository identity.
-Whole-run SSH/tmux forwarding carries the federation environment variables so
-recursive Devtool execution reconstructs the same lineage remotely. Returned
+A mapped path alone is not accepted as identity. Devtool derives portable,
+secret-neutral attestation from the child root `.devtool.toml` byte digest when
+present and the normalized Git-origin digest when present. Remote federation
+requires at least one such signal and never compares local and remote absolute
+paths as identity.
+
+Command-mode SSH, Termux-to-chroot, PRoot, and SSH+OCI execute a fail-closed
+pre-command probe against the provider-resolved repository root before the child
+phase. Whole-run SSH and chroot delegation require the same attestation signal,
+forward it with federation lineage, and the remote Devtool re-verifies the
+repository after config ownership is resolved. Missing, truncated, stale, or
+mismatched evidence fails before child work begins. Managed `~`/`$HOME` SSH
+workspace roots retain safe HOME-relative expansion during the probe. Returned
 SSH/OCI producer evidence includes the child identity, mapped roots, lineage,
-and actual artifact-return location so diagnostics and artifacts remain
-attributable to the owning repository.
+attestation metadata, and actual artifact-return location so diagnostics and
+artifacts remain attributable to the owning repository.
 
 ## FRX-10: artifacts, hooks, validation, and transactional boundaries
 
@@ -300,8 +327,9 @@ Repositories without federation continue to emit an empty/additive field and do
 not change execution behavior.
 
 `doctor` now cross-checks the unified projection: enrollment/config boundaries,
-canonical root uniqueness, workflow-plan/cycle health, child wrapper/TLJ public
-contracts, Gate 1/Gate 2, observed remote path mappings, and orphan child runs.
+canonical root uniqueness, canonical path ownership from the FRX-03 owner
+resolver, workflow-plan/cycle health, child wrapper/TLJ public contracts, Gate
+1/Gate 2, observed remote path mappings, and orphan child runs.
 Completion state and zsh completion expose federation repository/workflow names
 for `list`, `inspect`, `status`, `plan`, `run`, and `exec` commands. The checked-
 in completion file is kept byte-identical to `devtool.completion.ZSH_COMPLETION`.
@@ -329,6 +357,13 @@ closes deep registration cycles such as `A -> B -> C -> A` while preserving the
 explicit-enrollment rule. Optional missing children remain optional; required
 children, identity collapse, boundary borrowing, or cyclic explicit enrollment
 fail the seal.
+
+The twenty required adversarial safety cases are also bound to a machine-readable
+`case -> promise -> executable evidence` contract. Source qualification resolves
+every referenced pytest node, and FRX-12's top-level status fails if a required
+case is missing or its evidence cannot be resolved. This evidence contract does
+not create a fifteenth qualification area: the public roadmap inventory remains
+exactly fourteen checks.
 
 The final release validation replays all FRX-01..12 contract suites together
 with WRAP, target-local-job, EXO, remote-provider, operational-boundary,

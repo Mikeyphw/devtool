@@ -1127,6 +1127,18 @@ def load_project_config(
         tests=declared_tests,
     )
 
+    # FRX-09: a whole-run federated remote re-entry may carry portable
+    # repository-attestation signals in the environment. Verify only the
+    # top-level config-resolution boundary. Internal federation child reloads
+    # deliberately use allow_parent_config=False and must not inherit the
+    # caller repository's attestation as if it identified a grandchild.
+    if allow_parent_config:
+        from .federation_transport import FederationTransportError, verify_federation_environment_attestation
+        try:
+            verify_federation_environment_attestation(repo_root, config_path=config_path)
+        except FederationTransportError as exc:
+            raise SystemExit(str(exc)) from exc
+
     # MP05 validates the complete configured cross-target workspace graph at
     # config-load time. Local workflow DAG syntax is already validated while
     # parsing; this second pass catches target-to-target cycles before an

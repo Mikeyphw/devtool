@@ -1737,7 +1737,7 @@ def wrap_specs_for_ssh_commands(
                 # explicit remote repo root rather than inventing a remote path.
                 remote_cwd = remote_root
 
-            from .federation_transport import attach_federation_transport_metadata
+            from .federation_transport import attach_federation_transport_metadata, build_federation_attestation_shell
             federation_environment = "ssh-proot-oci" if config.execution_provider == SSH_PROOT_OCI else "ssh-command"
             metadata = attach_federation_transport_metadata(
                 metadata,
@@ -1784,6 +1784,8 @@ def wrap_specs_for_ssh_commands(
                     # unavailable; retain the manifest and surface the limitation.
                     metadata["ssh_return_disabled_reason"] = str(exc)
                     return_fragment = ""
+
+            federation_attestation_probe = build_federation_attestation_shell(metadata, remote_root=remote_root)
 
             if config.execution_provider == SSH_PROOT_OCI:
                 remote_base_argv = _oci_rewrite_runtime_argv(remote_base_argv, metadata)
@@ -1905,6 +1907,8 @@ def wrap_specs_for_ssh_commands(
                     command = "sh -c " + shlex.quote(inner)
                 else:
                     command = "cd " + _remote_shell_path(remote_cwd) + " && " + actual_command
+            if federation_attestation_probe:
+                command = federation_attestation_probe + " && " + command
             workspace_id = str(preparation_metadata.get("ssh_workspace_id") or "")
             lease_meta = preparation_metadata.get("ssh_workspace_lease") or {}
             lease_dir = str(lease_meta.get("lease_dir") or "") if isinstance(lease_meta, dict) else ""
@@ -2005,6 +2009,8 @@ def wrap_specs_for_ssh_commands(
 
 
 def build_remote_tmux_script(config: SSHRunnerConfig, forwarded: list[str]) -> str:
+    from .federation_transport import require_federation_remote_attestation_environment
+    require_federation_remote_attestation_environment()
     session = _sanitize_session(config.session or _default_session(config, forwarded))
     config.session = session
     state_dir = '${XDG_STATE_HOME:-$HOME/.local/state}/devtool/ssh-tmux'

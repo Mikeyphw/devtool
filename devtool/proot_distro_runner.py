@@ -583,9 +583,8 @@ def wrap_specs_for_proot_distro(
                 helper_pythonpath=helper_pythonpath,
             ):
                 command.extend(["--env", item])
-            command.extend(["--", "/bin/sh", guest_exec, *argv])
             metadata = dict(spec.metadata)
-            from .federation_transport import attach_federation_transport_metadata
+            from .federation_transport import attach_federation_transport_metadata, build_federation_attestation_shell
             metadata = attach_federation_transport_metadata(
                 metadata,
                 local_root=str(Path(repo_root).expanduser().resolve()),
@@ -593,6 +592,15 @@ def wrap_specs_for_proot_distro(
                 remote_root=federated_guest_root,
                 path_mapping="proot-bind",
             )
+            attestation_probe = build_federation_attestation_shell(metadata, remote_root=federated_guest_root)
+            if attestation_probe:
+                command.extend([
+                    "--", "/bin/sh", "-c",
+                    attestation_probe + '; exec /bin/sh "$@"',
+                    "devtool-federation-attest", guest_exec, *argv,
+                ])
+            else:
+                command.extend(["--", "/bin/sh", guest_exec, *argv])
             metadata.setdefault("progress_argv", list(spec.argv))
             metadata.setdefault("progress_cwd", spec.cwd or str(repo_root))
             metadata.update({

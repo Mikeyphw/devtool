@@ -214,6 +214,10 @@ def execute_federated_job(
             publish(GraphSealed(run_id=child_run_id, reason="direct target-local job execution complete", source="federation-job"))
             publish(RunFinished(run_id=child_run_id, status=status, exit_code=rc, source="federation-job"))
             return rc
+        except KeyboardInterrupt:
+            publish(GraphSealed(run_id=child_run_id, reason="direct target-local job execution cancelled", source="federation-job"))
+            publish(RunFinished(run_id=child_run_id, status="cancelled", exit_code=130, source="federation-job"))
+            raise
         except BaseException:
             publish(GraphSealed(run_id=child_run_id, reason="direct target-local job execution aborted", source="federation-job"))
             publish(RunFinished(run_id=child_run_id, status="failed", exit_code=1, source="federation-job"))

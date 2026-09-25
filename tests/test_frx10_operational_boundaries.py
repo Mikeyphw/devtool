@@ -227,8 +227,13 @@ def test_parent_cancellation_requests_child_cancel_without_parent_rollback(tmp_p
     assert report.status == "cancelled"
     assert report.exit_code == 130
     assert len(requested) == 1
-    # Parent cancellation does not manufacture a rollback/validation outcome.
-    assert report.children == ()
+    # Parent cancellation records the active child as cancelled so EXO lineage
+    # remains inspectable, but it does not manufacture rollback/validation
+    # ownership for that child.
+    assert len(report.children) == 1
+    child = report.children[0]
+    assert child.status == "cancelled" and child.exit_code == 130
+    assert child.operational_ownership == {}
 
 
 def test_collector_rejects_mismatched_child_owner_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -281,6 +281,12 @@ def run_federated_workflow(
     snapshot_lookup = snapshot_lookup or get_execution_store().snapshot
     request_child_cancel = request_child_cancel or (lambda child_run_id: request_federated_child_cancellation(child_run_id))
     active_child_run_id = ""
+    active_step: FederatedWorkflowStep | None = None
+    active_target = ""
+    active_identity: dict[str, Any] = {}
+    active_lineage: dict[str, Any] = {}
+    active_parent_node = ""
+    active_child_started = 0.0
 
     parent_lineage = {
         "kind": "federation",
@@ -325,6 +331,7 @@ def run_federated_workflow(
 
     try:
         for step in ordered_steps:
+            active_step = step
             blocked_by = [dep for dep in step.depends_on if outcomes.get(dep) and outcomes[dep].status != ExecutionStatus.SUCCEEDED.value]
             if blocked_by:
                 publish(NodeBlocked(
@@ -376,6 +383,10 @@ def run_federated_workflow(
                 "effective_repository": effective_fingerprint,
                 "execution_environment": "auto",
             }
+            active_target = target
+            active_identity = identity
+            active_lineage = lineage
+            active_parent_node = parent_node
             publish(NodeStarted(
                 run_id=run_id,
                 node_id=parent_node,
@@ -399,7 +410,14 @@ def run_federated_workflow(
                 "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
                 "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
             }
+            from .federation_transport import build_repository_attestation, federation_attestation_environment
+            env.update(federation_attestation_environment(build_repository_attestation(
+                resolution.root,
+                identity=RepositoryIdentity.from_dict(identity),
+                config_path=resolution.config_path or None,
+            )))
             child_started = time.monotonic()
+            active_child_started = child_started
             with _federation_child_environment(env):
                 rc = int(reenter(_child_argv(
                     root=resolution.root,
@@ -427,6 +445,9 @@ def run_federated_workflow(
                 if child_snapshot is not None
                 else (ExecutionStatus.SUCCEEDED.value if rc == 0 else ExecutionStatus.CANCELLED.value if rc == 130 else ExecutionStatus.FAILED.value)
             )
+            if rc == 130 or child_status == ExecutionStatus.CANCELLED.value:
+                child_status = ExecutionStatus.CANCELLED.value
+                rc = 130
             publish(NodeFinished(
                 run_id=run_id,
                 node_id=parent_node,
@@ -450,6 +471,7 @@ def run_federated_workflow(
             if child_status == ExecutionStatus.CANCELLED.value or rc == 130:
                 parent_status = ExecutionStatus.CANCELLED.value
                 parent_exit = 130
+                break
             elif child_status != ExecutionStatus.SUCCEEDED.value or rc != 0:
                 parent_status = ExecutionStatus.FAILED.value
                 parent_exit = rc or 1
@@ -459,6 +481,30 @@ def run_federated_workflow(
                 request_child_cancel(active_child_run_id)
             except Exception:
                 pass
+            snapshot = snapshot_lookup(active_child_run_id)
+            persisted_lineage = dict(getattr(snapshot, "run_lineage", {}) or {}) if snapshot is not None else {}
+            publish(NodeFinished(
+                run_id=run_id,
+                node_id=active_parent_node,
+                status=ExecutionStatus.CANCELLED.value,
+                exit_code=130,
+                duration_seconds=max(0.0, time.monotonic() - active_child_started),
+                source="federation",
+                transition_reason=f"child run {active_child_run_id} cancelled by interrupt",
+                metadata={
+                    "child_run_id": active_child_run_id,
+                    "run_lineage": persisted_lineage or active_lineage,
+                },
+            ))
+            if active_step is not None:
+                cancelled_child = FederatedChildRun(
+                    active_step.step_id, active_step.repository, active_step.workflow, active_target,
+                    active_child_run_id, active_parent_node, ExecutionStatus.CANCELLED.value, 130,
+                    dict(active_identity), persisted_lineage or dict(active_lineage), {},
+                )
+                outcomes[active_step.step_id] = cancelled_child
+                children.append(cancelled_child)
+            active_child_run_id = ""
         parent_status = ExecutionStatus.CANCELLED.value
         parent_exit = 130
     except BaseException:
@@ -472,6 +518,25 @@ def run_federated_workflow(
             source="federation",
         ))
         raise
+
+    if parent_status == ExecutionStatus.CANCELLED.value:
+        for pending in ordered_steps:
+            if pending.step_id in outcomes:
+                continue
+            publish(NodeBlocked(
+                run_id=run_id,
+                node_id=node_ids[pending.step_id],
+                blocked_by=(),
+                reason="federation cancelled before scheduling",
+                source="federation",
+            ))
+            blocked = FederatedChildRun(
+                pending.step_id, pending.repository, pending.workflow, _step_target(plan, pending), "",
+                node_ids[pending.step_id], ExecutionStatus.BLOCKED.value, 130,
+                _step_identity(plan, pending), {}, {},
+            )
+            outcomes[pending.step_id] = blocked
+            children.append(blocked)
 
     publish(RunFinished(
         run_id=run_id,
@@ -493,6 +558,7 @@ def run_federated_direct_child(
     publish: Callable[[Any], None] = publish_event,
     snapshot_lookup: Callable[[str], Any] | None = None,
     parent_run_id: str = "",
+    request_child_cancel: Callable[[str], Any] | None = None,
 ) -> FederatedChildRun:
     """Run one explicitly selected federated child contract with EXO lineage.
 
@@ -518,6 +584,7 @@ def run_federated_direct_child(
     node_id = f"federation:exec:{repo_name}:{operation}"
     started = time.monotonic()
     snapshot_lookup = snapshot_lookup or get_execution_store().snapshot
+    request_child_cancel = request_child_cancel or (lambda run_id: request_federated_child_cancellation(run_id))
     argv = tuple(str(value) for value in invocation_argv)
     lineage = {
         "kind": "federation",
@@ -582,6 +649,12 @@ def run_federated_direct_child(
         "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
         "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
     }
+    from .federation_transport import build_repository_attestation, federation_attestation_environment
+    env.update(federation_attestation_environment(build_repository_attestation(
+        resolution.root,
+        identity=RepositoryIdentity.from_dict(identity),
+        config_path=resolution.config_path or None,
+    )))
     child_started = time.monotonic()
     try:
         with _federation_child_environment(env):
@@ -605,6 +678,9 @@ def run_federated_direct_child(
             if snapshot is not None
             else (ExecutionStatus.SUCCEEDED.value if rc == 0 else ExecutionStatus.CANCELLED.value if rc == 130 else ExecutionStatus.FAILED.value)
         )
+        if rc == 130 or status == ExecutionStatus.CANCELLED.value:
+            status = ExecutionStatus.CANCELLED.value
+            rc = 130
         publish(NodeFinished(
             run_id=parent_id,
             node_id=node_id,
@@ -630,6 +706,31 @@ def run_federated_direct_child(
             operation, repo_name, operation, "", child_run_id, node_id, status, rc,
             identity, persisted_lineage or lineage, operational,
         )
+    except KeyboardInterrupt:
+        try:
+            request_child_cancel(child_run_id)
+        except Exception:
+            pass
+        snapshot = snapshot_lookup(child_run_id)
+        persisted_lineage = dict(getattr(snapshot, "run_lineage", {}) or {}) if snapshot is not None else {}
+        publish(NodeFinished(
+            run_id=parent_id,
+            node_id=node_id,
+            status=ExecutionStatus.CANCELLED.value,
+            exit_code=130,
+            duration_seconds=time.monotonic() - child_started,
+            source="federation",
+            transition_reason=f"child run {child_run_id} cancelled by interrupt",
+            metadata={"child_run_id": child_run_id, "run_lineage": persisted_lineage or lineage},
+        ))
+        publish(RunFinished(
+            run_id=parent_id,
+            status=ExecutionStatus.CANCELLED.value,
+            exit_code=130,
+            duration_seconds=time.monotonic() - started,
+            source="federation",
+        ))
+        raise
     except BaseException:
         publish(RunFinished(
             run_id=parent_id,

@@ -56,6 +56,26 @@ class FederatedRepositoryResolution:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class FederatedRepositoryOwner:
+    requested_path: str
+    canonical_path: str
+    repository: str
+    root: str
+    source: str
+    repository_identity: RepositoryIdentity | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "requested_path": self.requested_path,
+            "canonical_path": self.canonical_path,
+            "repository": self.repository,
+            "root": self.root,
+            "source": self.source,
+            "repository_identity": self.repository_identity.as_dict() if self.repository_identity else {},
+        }
+
+
 def _canonical(path: str | Path) -> Path:
     return Path(path).expanduser().resolve(strict=False)
 
@@ -186,6 +206,112 @@ def resolve_federated_repository(parent: "ProjectConfig", name: str) -> Federate
     )
 
 
+def resolve_federation_repository_owner(
+    parent: "ProjectConfig",
+    path: str | Path,
+) -> FederatedRepositoryOwner | None:
+    """Resolve a path to its explicit federation repository owner.
+
+    Candidates are the config-owning parent plus the recursively explicit
+    enrollment graph reachable from it.  Filesystem Git discovery is never
+    consulted.  Canonical roots are compared after symlink resolution and the
+    longest containing enrolled root wins.  Duplicate canonical ownership is
+    rejected instead of choosing an arbitrary alias.
+    """
+
+    requested = str(Path(path).expanduser())
+    canonical = _canonical(path)
+    parent_identity = parent.repository_identity
+    parent_root = _canonical(parent_identity.root if parent_identity else parent.repo_root)
+
+    candidates: list[tuple[str, Path, str, RepositoryIdentity | None]] = [
+        ("@owner", parent_root, "owner", parent_identity),
+    ]
+    seen_roots: dict[str, str] = {str(parent_root): "@owner"}
+    expanded: set[str] = set()
+
+    def visit(config: "ProjectConfig", prefix: tuple[str, ...]) -> None:
+        config_identity = config.repository_identity
+        config_root = _canonical(config_identity.root if config_identity else config.repo_root)
+        config_key = str(config_root)
+        if config_key in expanded:
+            return
+        expanded.add(config_key)
+
+        for name in sorted(config.federation.repositories):
+            enrollment = config.federation.repositories[name]
+            if not enrollment.available:
+                continue
+            resolution = resolve_federated_repository(config, name)
+            if not resolution.available:
+                continue
+            root = _canonical(resolution.root)
+            qualified = "::".join((*prefix, name))
+            key = str(root)
+            previous = seen_roots.get(key)
+            if previous is not None and previous != qualified:
+                raise FederationDiscoveryError(
+                    f"Ambiguous federation ownership: {previous!r} and {qualified!r} "
+                    f"resolve to canonical root {root}"
+                )
+            seen_roots[key] = qualified
+            candidates.append((qualified, root, "enrolled", resolution.repository_identity))
+
+            # Recurse only by following this child's own explicit federation
+            # contract.  This preserves nested autonomy and never treats an
+            # unenrolled nested Git checkout as a federation member.
+            from .config import load_project_config
+            child = load_project_config(
+                resolution.root,
+                resolution.config_path or None,
+                target_name="",
+                variant_name="",
+                allow_ambiguous_target=True,
+                allow_ambiguous_project_kind=True,
+                allow_parent_config=False,
+            )
+            visit(child, (*prefix, name))
+
+    visit(parent, ())
+
+    matches: list[tuple[int, str, Path, str, RepositoryIdentity | None]] = []
+    for name, root, source, identity in candidates:
+        try:
+            canonical.relative_to(root)
+        except ValueError:
+            continue
+        matches.append((len(root.parts), name, root, source, identity))
+    if not matches:
+        return None
+
+    matches.sort(key=lambda item: item[0], reverse=True)
+    longest = matches[0][0]
+    winners = [item for item in matches if item[0] == longest]
+    roots = {str(item[2]) for item in winners}
+    if len(winners) != 1 or len(roots) != 1:
+        rendered = ", ".join(sorted(f"{item[1]}={item[2]}" for item in winners))
+        raise FederationDiscoveryError(
+            f"Ambiguous federation ownership for {canonical}: {rendered}"
+        )
+    _, name, root, source, identity = winners[0]
+    return FederatedRepositoryOwner(
+        requested_path=requested,
+        canonical_path=str(canonical),
+        repository=name,
+        root=str(root),
+        source=source,
+        repository_identity=identity,
+    )
+
+def federation_owner_payload(parent: "ProjectConfig", path: str | Path) -> dict[str, Any]:
+    owner = resolve_federation_repository_owner(parent, path)
+    return {
+        "schema_version": 1,
+        "path": str(path),
+        "owner": owner.as_dict() if owner is not None else None,
+    }
+
+
 def federation_boundary_payload(parent: "ProjectConfig", *, tolerate_errors: bool = False) -> dict[str, Any]:
     repositories: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
@@ -240,9 +366,12 @@ def federation_inspect_payload(parent: "ProjectConfig", name: str) -> dict[str, 
 
 
 __all__ = [
+    "FederatedRepositoryOwner",
     "FederatedRepositoryResolution",
     "FederationDiscoveryError",
     "federation_boundary_payload",
     "federation_inspect_payload",
+    "federation_owner_payload",
     "resolve_federated_repository",
+    "resolve_federation_repository_owner",
 ]

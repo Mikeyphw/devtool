@@ -448,6 +448,8 @@ def build_inner_command(
     *,
     identity: ChrootIdentity | None = None,
 ) -> str:
+    from .federation_transport import require_federation_remote_attestation_environment
+    require_federation_remote_attestation_environment()
     devtool_argv = [config.tool, *forwarded]
     env_prefix = [
         "env",
@@ -458,6 +460,13 @@ def build_inner_command(
     run_id = os.environ.get("DEVTOOL_RUN_ID", "").strip()
     if run_id:
         env_prefix.append(f"DEVTOOL_RUN_ID={run_id}")
+    # Whole-process federation delegation must carry the same lineage and
+    # repository-attestation contract as command-mode delegation.  These keys
+    # contain identifiers/digests only; secrets remain governed by the normal
+    # environment boundary.
+    for key, value in sorted(os.environ.items()):
+        if key.startswith("DEVTOOL_FEDERATION_") and str(value).strip():
+            env_prefix.append(f"{key}={value}")
     payload = "cd " + shlex.quote(config.cwd or "/") + " && exec " + _shell_join_tool_argv([*env_prefix, *devtool_argv])
     if identity is None:
         raise ValueError("Chroot executor identity must be resolved before full-process delegation")
@@ -997,17 +1006,22 @@ def wrap_specs_for_termux_host_chroot(
             f"PATH={chroot_path}",
         ])
         assignments = " ".join(shlex.quote(item) for item in assignment_values)
-        payload = "cd " + shlex.quote(chroot_cwd or "/") + " && exec env -i " + assignments + " " + shlex.join(argv)
-        command = _identity_switch_command(identity, payload)
         metadata = dict(spec.metadata)
-        from .federation_transport import attach_federation_transport_metadata
+        from .federation_transport import attach_federation_transport_metadata, build_federation_attestation_shell
+        federation_remote_root = remote_repo_root or chroot_cwd
         metadata = attach_federation_transport_metadata(
             metadata,
             local_root=str(host_repo.resolve()) if host_repo is not None else host_cwd,
             execution_environment="termux-host-chroot",
-            remote_root=remote_repo_root or chroot_cwd,
+            remote_root=federation_remote_root,
             path_mapping="chroot-path-map",
         )
+        attestation_probe = build_federation_attestation_shell(metadata, remote_root=federation_remote_root)
+        payload = "cd " + shlex.quote(chroot_cwd or "/") + " && "
+        if attestation_probe:
+            payload += attestation_probe + " && "
+        payload += "exec env -i " + assignments + " " + shlex.join(argv)
+        command = _identity_switch_command(identity, payload)
         metadata["execution_mode"] = "termux-host-chroot"
         metadata["chroot"] = chroot_name
         metadata["chroot_runner"] = "termux-host-toolchain"

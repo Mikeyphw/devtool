@@ -27,24 +27,64 @@ FEDERATION_FINAL_SEAL_SCHEMA_VERSION = 1
 FEDERATION_FINAL_SEAL_SAFETY_CASES = (
     "parent-child-same-directory",
     "symlink-back-to-parent",
-    "direct-a-b-a-cycle",
+    "direct-a-b-cycle",
     "deep-a-b-c-a-cycle",
-    "child-moved-after-plan",
-    "same-target-name-across-repositories",
-    "same-wrapper-command-name-across-repositories",
-    "missing-child-config-boundary",
-    "unenrolled-nested-git-not-discovered",
-    "enrolled-non-git-child",
+    "moved-replaced-child",
+    "aliases-sharing-one-canonical-root",
+    "child-missing-config",
+    "nested-git-not-enrolled",
+    "enrolled-non-git-repository",
     "wrong-remote-repository-mapping",
-    "child-exo-parent-identity-mismatch",
-    "parent-wrapper-routing-leak",
-    "child-secret-parent-output",
-    "parent-validation-does-not-satisfy-child",
-    "parent-rollback-does-not-own-child",
-    "duplicate-canonical-child-root",
-    "launch-inside-child-parent-federation",
-    "cancellation-during-environment-transition",
-    "resume-after-child-revision-change",
+    "exo-repository-mismatch",
+    "wrapper-routing-leakage",
+    "parent-secret-leakage",
+    "validation-evidence-crossing-repository-boundary",
+    "rollback-transaction-crossing-repository-boundary",
+    "child-referencing-parent",
+    "cancellation-across-environment-transition",
+    "resume-after-child-revision-changes",
+    "ambiguous-owner-path",
+    "duplicate-identity-ownership",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class FederationSafetyEvidence:
+    case_id: str
+    promise: str
+    evidence: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"case_id": self.case_id, "promise": self.promise, "evidence": list(self.evidence)}
+
+
+FEDERATION_FINAL_SEAL_SAFETY_EVIDENCE = (
+    FederationSafetyEvidence("parent-child-same-directory", "Parent and child cannot resolve to the same directory.", ("tests/test_frx02_federation_config.py::test_self_reference_is_rejected_for_direct_relative_absolute_and_symlink_forms",)),
+    FederationSafetyEvidence("symlink-back-to-parent", "Symlink enrollment cannot escape back to the parent owner.", ("tests/test_frx02_federation_config.py::test_self_reference_is_rejected_for_direct_relative_absolute_and_symlink_forms",)),
+    FederationSafetyEvidence("direct-a-b-cycle", "Direct explicit enrollment cycles fail closed.", ("tests/test_frx02_federation_config.py::test_obvious_direct_parent_child_cycle_is_rejected",)),
+    FederationSafetyEvidence("deep-a-b-c-a-cycle", "Deep explicit enrollment cycles are detected recursively.", ("tests/test_frx12_federation_final_seal.py::test_deep_explicit_registration_cycle_a_b_c_a_fails_final_seal",)),
+    FederationSafetyEvidence("moved-replaced-child", "A child moved or replaced after planning fails identity validation.", ("tests/test_frx08_execution_contract_gate2.py::test_execution_fails_closed_if_repository_identity_changes_after_planning",)),
+    FederationSafetyEvidence("aliases-sharing-one-canonical-root", "Aliases resolving to one canonical root are rejected.", ("tests/test_frx02_federation_config.py::test_duplicate_canonical_child_roots_are_rejected_including_symlink_alias",)),
+    FederationSafetyEvidence("child-missing-config", "A nested child without its own config cannot borrow the parent config.", ("tests/test_frx03_federation_discovery.py::test_nested_child_without_own_config_never_borrows_parent_config",)),
+    FederationSafetyEvidence("nested-git-not-enrolled", "Nested Git repositories are not federation members unless enrolled.", ("tests/test_frx03_federation_discovery.py::test_nested_git_repo_not_enrolled_is_not_discovered_implicitly",)),
+    FederationSafetyEvidence("enrolled-non-git-repository", "Explicitly enrolled non-Git repositories remain supported.", ("tests/test_frx12_federation_final_seal.py::test_non_git_child_is_allowed_and_unenrolled_nested_git_is_not_discovered",)),
+    FederationSafetyEvidence("wrong-remote-repository-mapping", "Remote child mapping is independently attested before execution.", ("tests/test_frx_full_roadmap_reseal.py::test_remote_attestation_rejects_wrong_mapping_and_accepts_different_path_checkout",)),
+    FederationSafetyEvidence("exo-repository-mismatch", "Persisted child EXO repository identity mismatches fail closed.", ("tests/test_frx08_execution_contract_gate2.py::test_execution_rejects_corrupt_child_snapshot_authority",)),
+    FederationSafetyEvidence("wrapper-routing-leakage", "Child wrapper routing cannot inject protected parent target routing.", ("tests/test_frx08_execution_contract_gate2.py::test_wrapper_cannot_inject_protected_target_routing",)),
+    FederationSafetyEvidence("parent-secret-leakage", "Sensitive wrapper values remain redacted across federation planning.", ("tests/test_frx07_wrapper_tlj_federation_bridge.py::test_wrapper_bridge_plan_redacts_sensitive_values",)),
+    FederationSafetyEvidence("validation-evidence-crossing-repository-boundary", "Parent validation evidence never satisfies child-owned validation.", ("tests/test_frx10_operational_boundaries.py::test_parent_validation_never_satisfies_child_operational_validation",)),
+    FederationSafetyEvidence("rollback-transaction-crossing-repository-boundary", "Parent cancellation cannot roll back child-owned transaction state.", ("tests/test_frx10_operational_boundaries.py::test_parent_cancellation_requests_child_cancel_without_parent_rollback",)),
+    FederationSafetyEvidence("child-referencing-parent", "Child-to-parent recursion is rejected as an explicit cycle.", ("tests/test_frx02_federation_config.py::test_obvious_direct_parent_child_cycle_is_rejected",)),
+    FederationSafetyEvidence("cancellation-across-environment-transition", "Cancellation remains authoritative across environment transitions.", (
+        "tests/test_frx12_federation_final_seal.py::test_cancellation_during_child_environment_transition_restores_parent_environment",
+        "tests/test_frx_full_roadmap_reseal.py::test_cancellation_stops_independent_branches_and_direct_exec_is_cancelled",
+    )),
+    FederationSafetyEvidence("resume-after-child-revision-changes", "Resume rejects child revision drift.", ("tests/test_frx10_operational_boundaries.py::test_resume_checkpoint_rejects_child_revision_change",)),
+    FederationSafetyEvidence("ambiguous-owner-path", "Path ownership uses canonical longest explicit enrollment and rejects ambiguity.", (
+        "tests/test_frx_full_roadmap_reseal.py::test_recursive_owner_resolver_longest_match_symlink_and_outside",
+        "tests/test_frx_full_roadmap_reseal.py::test_owner_resolver_duplicate_canonical_ownership_fails_closed",
+    )),
+    FederationSafetyEvidence("duplicate-identity-ownership", "Duplicate canonical ownership fails closed.", ("tests/test_frx_full_roadmap_reseal.py::test_owner_resolver_duplicate_canonical_ownership_fails_closed",)),
 )
 
 FEDERATION_FINAL_SEAL_AREAS = (
@@ -87,6 +127,8 @@ class FederationFinalSealReport:
     mode: str
     status: str
     checks: tuple[FederationFinalSealCheck, ...]
+    safety_evidence: tuple[dict[str, Any], ...] = ()
+    safety_evidence_errors: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -321,7 +363,11 @@ def _bridge_capabilities(config: "ProjectConfig") -> tuple[bool, bool, dict[str,
 
 def _transport_probe(config: "ProjectConfig") -> tuple[bool, str, dict[str, Any]]:
     try:
-        from .federation_transport import build_federation_transport_metadata
+        from .federation_transport import (
+            FederationTransportError,
+            build_federation_transport_metadata,
+            build_repository_attestation,
+        )
     except Exception as exc:
         return False, f"transport contract unavailable: {exc}", {}
     identity = config.repository_identity
@@ -346,6 +392,13 @@ def _transport_probe(config: "ProjectConfig") -> tuple[bool, str, dict[str, Any]
             execution_environment="local",
             execution_provider="local",
         )
+    except Exception as exc:
+        return False, f"local transport identity probe failed: {exc}", {}
+
+    attestation = build_repository_attestation(identity.root, identity=identity, config_path=identity.config_path or None)
+    remote: dict[str, Any] = {}
+    remote_fail_closed = False
+    try:
         remote = build_federation_transport_metadata(
             metadata,
             local_root=identity.root,
@@ -354,19 +407,34 @@ def _transport_probe(config: "ProjectConfig") -> tuple[bool, str, dict[str, Any]
             execution_provider="ssh",
             path_mapping="frx12-probe",
         )
-    except Exception as exc:
-        return False, f"transport identity probe failed: {exc}", {}
-    ok = (
+    except FederationTransportError as exc:
+        if not attestation.available and "cannot be independently attested" in str(exc):
+            remote_fail_closed = True
+        else:
+            return False, f"transport identity probe failed: {exc}", {}
+
+    local_ok = (
         local.get("federation_child_repository_fingerprint") == identity.fingerprint
         and local.get("federation_child_local_root") == _canonical(identity.root)
-        and remote.get("federation_child_remote_root") == "/srv/devtool/frx12-child"
-        and remote.get("federation_parent_run_id") == "frx12-parent"
-        and remote.get("federation_child_run_id") == "frx12-child"
     )
-    return ok, (
-        "local and provider-resolved remote roots retain repository identity and lineage"
-        if ok else "transport metadata lost repository identity or lineage"
-    ), {"local_mapping": local.get("federation_path_mapping"), "remote_mapping": remote.get("federation_path_mapping")}
+    if attestation.available:
+        remote_ok = (
+            remote.get("federation_child_remote_root") == "/srv/devtool/frx12-child"
+            and remote.get("federation_parent_run_id") == "frx12-parent"
+            and remote.get("federation_child_run_id") == "frx12-child"
+            and bool(remote.get("federation_attestation_required"))
+        )
+        detail = "local identity and independently attested provider-resolved remote identity are sealed"
+    else:
+        remote_ok = remote_fail_closed
+        detail = "local identity is sealed and remote federation fails closed when no portable attestation signal exists"
+    ok = local_ok and remote_ok
+    return ok, (detail if ok else "transport metadata lost repository identity, lineage, or fail-closed attestation"), {
+        "local_mapping": local.get("federation_path_mapping"),
+        "remote_mapping": remote.get("federation_path_mapping"),
+        "portable_attestation": attestation.available,
+        "remote_fail_closed": remote_fail_closed,
+    }
 
 
 def _ownership_probe(config: "ProjectConfig") -> tuple[bool, str]:
@@ -484,6 +552,55 @@ def _documentation_completion_probe(config: "ProjectConfig") -> tuple[bool, str,
     ), {"source_tree": source_tree, "docs": docs_ok, "completion_state": completion_ok, "checked_in_completion": completion_file_ok}
 
 
+def validate_federation_safety_evidence(package_root: str | Path | None = None) -> tuple[bool, tuple[dict[str, Any], ...], tuple[str, ...]]:
+    """Resolve every required adversarial case to executable source evidence."""
+
+    root = Path(package_root).expanduser().resolve(strict=False) if package_root else Path(__file__).resolve().parents[1]
+    declared = {item.case_id: item for item in FEDERATION_FINAL_SEAL_SAFETY_EVIDENCE}
+    errors: list[str] = []
+    rows: list[dict[str, Any]] = []
+    if tuple(declared) != FEDERATION_FINAL_SEAL_SAFETY_CASES:
+        missing = [case for case in FEDERATION_FINAL_SEAL_SAFETY_CASES if case not in declared]
+        extra = [case for case in declared if case not in FEDERATION_FINAL_SEAL_SAFETY_CASES]
+        if missing:
+            errors.append("missing safety evidence: " + ", ".join(missing))
+        if extra:
+            errors.append("unexpected safety evidence: " + ", ".join(extra))
+
+    for case_id in FEDERATION_FINAL_SEAL_SAFETY_CASES:
+        item = declared.get(case_id)
+        resolved: list[str] = []
+        unresolved: list[str] = []
+        if item is None or not item.evidence:
+            unresolved.append("<missing>")
+        else:
+            for ref in item.evidence:
+                path_text, sep, node = ref.partition("::")
+                path = root / path_text
+                if not sep or not node or not path.is_file():
+                    unresolved.append(ref)
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except OSError:
+                    unresolved.append(ref)
+                    continue
+                if f"def {node}(" not in text and f"async def {node}(" not in text:
+                    unresolved.append(ref)
+                    continue
+                resolved.append(ref)
+        if unresolved:
+            errors.append(f"{case_id}: unresolved executable evidence: {', '.join(unresolved)}")
+        rows.append({
+            "case_id": case_id,
+            "promise": item.promise if item is not None else "",
+            "evidence": list(item.evidence) if item is not None else [],
+            "resolved": resolved,
+            "status": "proved" if resolved and not unresolved else "error",
+        })
+    return not errors, tuple(rows), tuple(errors)
+
+
 def build_federation_final_seal_report(config: "ProjectConfig") -> FederationFinalSealReport:
     checks: list[FederationFinalSealCheck] = []
     identity = config.repository_identity
@@ -572,6 +689,12 @@ def build_federation_final_seal_report(config: "ProjectConfig") -> FederationFin
     surface_ok, surface_detail, surface_data = _surface_probe(config)
     checks.append(_check("machine-ui-doctor", "ok" if surface_ok else "error", surface_detail, **surface_data))
 
+    # Safety evidence is a qualification contract, not a fifteenth roadmap
+    # area.  FRX-12 promised exactly fourteen areas; unresolved evidence still
+    # fails the seal through the top-level status while preserving that public
+    # inventory.
+    safety_ok, safety_rows, safety_errors = validate_federation_safety_evidence()
+
     standalone_ok = True
     standalone_detail = "federation is additive and opt-in; standalone gate contracts remain side-effect free"
     if mode == "standalone":
@@ -598,8 +721,10 @@ def build_federation_final_seal_report(config: "ProjectConfig") -> FederationFin
         gate="FRX-12",
         repository=repository,
         mode=mode,
-        status=_overall(checks),
+        status="error" if not safety_ok else _overall(checks),
         checks=tuple(checks),
+        safety_evidence=tuple(dict(item) for item in safety_rows),
+        safety_evidence_errors=tuple(safety_errors),
     )
 
 
@@ -614,12 +739,16 @@ def federation_final_seal_as_dict(report: FederationFinalSealReport) -> dict[str
         "summary": {
             "areas": len(FEDERATION_FINAL_SEAL_AREAS),
             "checks": len(report.checks),
-            "errors": sum(item.status == "error" for item in report.checks),
+            "errors": sum(item.status == "error" for item in report.checks) + len(report.safety_evidence_errors),
             "warnings": sum(item.status == "warning" for item in report.checks),
             "qualified": sum(item.status == "ok" for item in report.checks),
+            "safety_evidence_errors": len(report.safety_evidence_errors),
         },
         "required_areas": list(FEDERATION_FINAL_SEAL_AREAS),
         "required_safety_cases": list(FEDERATION_FINAL_SEAL_SAFETY_CASES),
+        "safety_evidence_contract": [item.as_dict() for item in FEDERATION_FINAL_SEAL_SAFETY_EVIDENCE],
+        "safety_evidence": [dict(item) for item in report.safety_evidence],
+        "safety_evidence_errors": list(report.safety_evidence_errors),
         "checks": [item.as_dict() for item in report.checks],
     }
 
@@ -634,6 +763,11 @@ def render_federation_final_seal(report: FederationFinalSealReport) -> str:
     ]
     for item in report.checks:
         lines.append(f"{item.status.upper():8} {item.area}: {item.detail}")
+    if report.safety_evidence_errors:
+        lines.append("")
+        lines.append("Safety evidence failures:")
+        for error in report.safety_evidence_errors:
+            lines.append(f"ERROR    {error}")
     return "\n".join(lines) + "\n"
 
 
@@ -641,9 +775,12 @@ __all__ = [
     "FEDERATION_FINAL_SEAL_AREAS",
     "FEDERATION_FINAL_SEAL_SCHEMA_VERSION",
     "FEDERATION_FINAL_SEAL_SAFETY_CASES",
+    "FEDERATION_FINAL_SEAL_SAFETY_EVIDENCE",
+    "FederationSafetyEvidence",
     "FederationFinalSealCheck",
     "FederationFinalSealReport",
     "build_federation_final_seal_report",
     "federation_final_seal_as_dict",
     "render_federation_final_seal",
+    "validate_federation_safety_evidence",
 ]
