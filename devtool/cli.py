@@ -139,10 +139,11 @@ from .logstore import latest_log, new_log_path, redact_sensitive_text, redact_se
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .repository_identity import RepositoryIdentityError, build_repository_identity
 from .git_state import GitStateError, collect_git_state, render_git_state_text
+from .git_commit_policy import GitCommitPolicyError, migrate_devtool_note, preflight_commit_policy
 from .project_runners import resolve_validation_plan
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
-from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
+from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, git_commit_with_policy, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
 from .wrapper_config import wrapper_as_dict
 from .wrapper_resolution import (
     WrapperResolution,
@@ -466,7 +467,18 @@ def _add_apply_policy_flags(cmd: argparse.ArgumentParser) -> None:
     )
     cmd.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
     cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
-    cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
+    cmd.add_argument(
+        "--commit-mode",
+        choices=("new", "amend", "fixup", "none"),
+        default="",
+        help="Git result policy: new, amend, fixup, or none (default inferred from artifact/flags)",
+    )
+    cmd.add_argument("--amend", action="store_true", help="Safely amend HEAD after apply; alias for --commit-mode amend")
+    cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest; alias for --commit-mode none")
+    cmd.add_argument("--fixup-target", default="", metavar="REV", help="Create a fixup! commit targeting REV (defaults to HEAD in fixup mode)")
+    cmd.add_argument("--reset-author", action="store_true", help="With amend mode, reset commit author to the current Git identity")
+    cmd.add_argument("--allow-merge-amend", action="store_true", help="Allow amending a merge commit (refused by default)")
+    cmd.add_argument("--allow-published-rewrite", action="store_true", help="Allow amending HEAD when reachable from a protected upstream/remote ref; never pushes")
     cmd.add_argument(
         "--isolation",
         choices=("worktree", "direct"),
@@ -3713,11 +3725,66 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
     if (
         enabled
         and not getattr(args, "no_commit", False)
+        and str(getattr(args, "commit_mode", "") or "").strip().lower() != "none"
         and not getattr(args, "validate_only", False)
         and not preview_only
         and not str(getattr(args, "commit", "") or "").strip()
     ):
         args.commit = message
+        args._devtool_commit_message_source = "manifest"
+
+
+def _normalize_apply_commit_policy_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if str(getattr(args, "command", "") or "") not in APPLY_COMMANDS:
+        return
+
+    requested = str(getattr(args, "commit_mode", "") or "").strip().lower()
+    amend_alias = bool(getattr(args, "amend", False))
+    no_commit = bool(getattr(args, "no_commit", False))
+    fixup_target = str(getattr(args, "fixup_target", "") or "").strip()
+
+    aliases: list[str] = []
+    if amend_alias:
+        aliases.append("amend")
+    if no_commit:
+        aliases.append("none")
+    if fixup_target:
+        aliases.append("fixup")
+    if requested:
+        aliases.append(requested)
+    if len(set(aliases)) > 1:
+        parser.error("Conflicting commit policy flags were supplied; choose one of new, amend, fixup, or none.")
+
+    mode = aliases[0] if aliases else ("new" if str(getattr(args, "commit", "") or "").strip() else "none")
+    if mode not in {"new", "amend", "fixup", "none"}:
+        parser.error(f"Unsupported commit mode: {mode}")
+
+    source = str(getattr(args, "_devtool_commit_message_source", "") or "")
+    if mode in {"amend", "fixup"} and source == "manifest" and not bool(getattr(args, "_devtool_cli_commit_explicit", False)):
+        # Manifest commit messages describe a normal new commit. Explicit history
+        # modes should preserve amend/fixup message semantics unless the user
+        # explicitly supplied --commit.
+        args.commit = ""
+
+    message = str(getattr(args, "commit", "") or "").strip()
+    if mode == "new" and not message:
+        parser.error("--commit-mode new requires --commit MESSAGE or an artifact manifest commit message.")
+    if mode == "none" and message:
+        parser.error("--commit-mode none/--no-commit cannot be combined with --commit.")
+    if mode != "amend" and bool(getattr(args, "reset_author", False)):
+        parser.error("--reset-author is valid only with --commit-mode amend/--amend.")
+    if mode != "amend" and bool(getattr(args, "allow_merge_amend", False)):
+        parser.error("--allow-merge-amend is valid only with --commit-mode amend/--amend.")
+    if mode != "amend" and bool(getattr(args, "allow_published_rewrite", False)):
+        parser.error("--allow-published-rewrite is valid only with --commit-mode amend/--amend.")
+    if mode != "fixup" and fixup_target:
+        parser.error("--fixup-target requires --commit-mode fixup.")
+    if mode == "fixup" and not fixup_target:
+        args.fixup_target = "HEAD"
+
+    args.commit_mode = mode
+    if mode == "none":
+        args.commit = ""
 
 
 def _rollback_on_failure_enabled(args: argparse.Namespace, policy: dict[str, object] | None = None) -> bool:
@@ -4042,13 +4109,17 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
         parser.error("--task on apply requires --validate, --validate-only, or --defer-validate.")
     if args.validate_only and args.validate:
         parser.error("--validate and --validate-only cannot be combined.")
-    if args.validate_only and args.commit:
-        parser.error("--validate-only cannot be combined with --commit.")
+    if args.validate_only and str(getattr(args, "commit_mode", "none") or "none") != "none":
+        parser.error("--validate-only cannot be combined with commit policy flags.")
     manifest = dict(getattr(args, "_devtool_declared_manifest", {}) or {})
     if deferred and manifest and not bool(artifact_validation_policy(manifest).get("allow_deferred", True)):
         parser.error("This artifact explicitly forbids deferred validation.")
     preview_only = getattr(args, "preview", False) or (getattr(args, "diff", False) and not getattr(args, "interactive", False))
-    if preview_only and (args.validate or args.validate_only or args.commit):
+    if preview_only and (
+        args.validate
+        or args.validate_only
+        or str(getattr(args, "commit_mode", "none") or "none") != "none"
+    ):
         parser.error("--preview/--diff cannot be combined with validation or commit flags unless --interactive is used with --diff.")
 
 
@@ -5781,6 +5852,11 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
         "manifest": manifest,
         "preview": dict(getattr(args, "_devtool_artifact_preview", {}) or {}),
         "commit": str(getattr(args, "commit", "") or ""),
+        "commit_mode": str(getattr(args, "commit_mode", "none") or "none"),
+        "fixup_target": str(getattr(args, "fixup_target", "") or ""),
+        "reset_author": bool(getattr(args, "reset_author", False)),
+        "allow_merge_amend": bool(getattr(args, "allow_merge_amend", False)),
+        "allow_published_rewrite": bool(getattr(args, "allow_published_rewrite", False)),
         "keep_artifact": bool(getattr(args, "keep_artifact", False)),
         "delete_artifact_on_failure": bool(getattr(args, "delete_artifact_on_failure", False)),
         "no_artifact_script": bool(getattr(args, "no_artifact_script", False)),
@@ -6127,6 +6203,11 @@ def _finalize_validation_session(
     final_args.command = str(context.get("command") or "apply-overlay")
     final_args.artifact = context.get("artifact") or context.get("artifacts") or ""
     final_args.commit = str(context.get("commit") or "")
+    final_args.commit_mode = str(context.get("commit_mode") or ("new" if final_args.commit else "none"))
+    final_args.fixup_target = str(context.get("fixup_target") or "")
+    final_args.reset_author = bool(context.get("reset_author", False))
+    final_args.allow_merge_amend = bool(context.get("allow_merge_amend", False))
+    final_args.allow_published_rewrite = bool(context.get("allow_published_rewrite", False))
     final_args.keep_artifact = bool(context.get("keep_artifact", False))
     final_args.delete_artifact_on_failure = bool(context.get("delete_artifact_on_failure", False))
     final_args.no_artifact_script = bool(context.get("no_artifact_script", False))
@@ -6252,7 +6333,7 @@ def _finalize_validation_session(
         mark_transaction_validated(
             session.transaction_path,
             session_id=session.session_id,
-            commit_pending=bool(str(final_args.commit or "").strip()),
+            commit_pending=str(getattr(final_args, "commit_mode", "none") or "none") != "none",
         )
     commit_start = len(results)
     results, raw_output = _maybe_commit_after_apply(config, final_args, results, raw_output, log_path=log_path, tasker_progress=tasker_progress)
@@ -6295,7 +6376,7 @@ def _finalize_validation_session(
             results.append(cleanup)
             raw_output += ("\n\n" if raw_output else "") + "$ " + " ".join(cleanup.argv) + "\n" + cleanup.output
 
-    commit_requested = bool(str(final_args.commit or "").strip())
+    commit_requested = str(getattr(final_args, "commit_mode", "none") or "none") != "none"
     commit_hash = latest_commit_hash(history_root) if commit_requested else ""
     commit_status = "committed" if commit_requested else "not-requested"
     mark_validation_completed(session, commit_status=commit_status, commit_hash=commit_hash)
@@ -7825,6 +7906,51 @@ def _git_commit_with_optional_log(
             if not removed:
                 raise
 
+
+
+def _git_commit_policy_with_optional_log(
+    repo_root: Path,
+    message: str,
+    *,
+    mode: str,
+    fixup_target: str,
+    reset_author: bool,
+    verbose: bool,
+    dry_run: bool,
+    log_path: Path | str | None,
+    paths: list[str] | None = None,
+) -> tuple[list[OperationResult], str]:
+    if str(mode or "new").strip().lower() == "new":
+        return _git_commit_with_optional_log(
+            repo_root, message, verbose=verbose, dry_run=dry_run, log_path=log_path, paths=paths
+        )
+    kwargs: dict[str, object] = {
+        "mode": mode,
+        "fixup_target": fixup_target,
+        "reset_author": reset_author,
+        "verbose": verbose,
+        "dry_run": dry_run,
+    }
+    if log_path is not None:
+        kwargs["log_path"] = log_path
+    if paths is not None:
+        kwargs["paths"] = paths
+    return git_commit_with_policy(repo_root, message, **kwargs)
+
+
+def _commit_policy_failure_result(mode: str, exc: BaseException) -> OperationResult:
+    message = str(exc).strip() or type(exc).__name__
+    return OperationResult(
+        "git-commit-policy",
+        ["git", "commit", f"--mode={mode}"],
+        2,
+        0.0,
+        message,
+        [Issue("error", "git-commit-policy", "", type(exc).__name__, message)],
+        failure_kind="git_commit_policy",
+        metadata={"commit_mode": mode, "policy_refused": True},
+    )
+
 def _artifact_hook_presentation(args: argparse.Namespace) -> tuple[bool, bool]:
     """Return (render_progress, stream_output) for embedded artifact hooks.
 
@@ -7848,7 +7974,9 @@ def _maybe_commit_after_apply(
     tasker_progress: TaskerProgressSink | None = None,
 ) -> tuple[list[OperationResult], str]:
     commit_message = str(getattr(args, "commit", "") or "").strip()
-    if args.command not in APPLY_COMMANDS or not commit_message:
+    raw_commit_mode = str(getattr(args, "commit_mode", "") or "").strip().lower()
+    commit_mode = raw_commit_mode or ("new" if commit_message else "none")
+    if args.command not in APPLY_COMMANDS or commit_mode == "none":
         return results, raw_output
     # Failed applies or failed validation are never committed.
     if not results or any(result.returncode != 0 for result in results):
@@ -7863,6 +7991,32 @@ def _maybe_commit_after_apply(
             artifact_path = resolve_artifact_path(artifact_value)
         except Exception:
             artifact_path = None
+    transaction_path = _apply_transaction_path(results)
+    transaction: dict[str, object] = {}
+    if transaction_path:
+        try:
+            transaction = read_transaction(transaction_path)
+        except Exception as exc:
+            failure = _commit_policy_failure_result(commit_mode, exc)
+            results.append(failure)
+            failure_raw = "$ " + " ".join(failure.argv) + "\n" + failure.output
+            return results, raw_output + ("\n\n" if raw_output else "") + failure_raw
+
+    try:
+        policy_evidence = preflight_commit_policy(
+            config.repo_root,
+            mode=commit_mode,
+            transaction=transaction,
+            fixup_target=str(getattr(args, "fixup_target", "") or ""),
+            allow_merge_amend=bool(getattr(args, "allow_merge_amend", False)),
+            allow_published_rewrite=bool(getattr(args, "allow_published_rewrite", False)),
+        )
+    except GitCommitPolicyError as exc:
+        failure = _commit_policy_failure_result(commit_mode, exc)
+        results.append(failure)
+        failure_raw = "$ " + " ".join(failure.argv) + "\n" + failure.output
+        return results, raw_output + ("\n\n" if raw_output else "") + failure_raw
+
     render_hook_progress, stream_hook_output = _artifact_hook_presentation(args)
     if artifact_path is not None and manifest:
         finalize_display = "Artifact finalize: before commit"
@@ -7915,14 +8069,28 @@ def _maybe_commit_after_apply(
             if finalize_result.returncode != 0:
                 return results, raw_output
 
-    commit_results, commit_raw = _git_commit_with_optional_log(
+    commit_results, commit_raw = _git_commit_policy_with_optional_log(
         config.repo_root,
         commit_message,
+        mode=commit_mode,
+        fixup_target=policy_evidence.fixup_target or str(getattr(args, "fixup_target", "") or ""),
+        reset_author=bool(getattr(args, "reset_author", False)),
         verbose=args.verbose,
         dry_run=args.dry_run,
         log_path=log_path,
         paths=commit_paths,
     )
+    evidence_payload = policy_evidence.as_dict()
+    for commit_result in commit_results:
+        if commit_result.name == "git-commit":
+            commit_result.metadata.update({
+                "commit_mode": commit_mode,
+                "commit_policy": evidence_payload,
+                "supersedes_commit": policy_evidence.supersedes_commit,
+                "fixup_target": policy_evidence.fixup_target,
+                "published_rewrite": bool(policy_evidence.published_refs and policy_evidence.allow_published_rewrite),
+                "signing_required": policy_evidence.signing_required,
+            })
     results.extend(commit_results)
     if raw_output:
         raw_output = raw_output + "\n\n" + commit_raw
@@ -7930,6 +8098,37 @@ def _maybe_commit_after_apply(
         raw_output = commit_raw
 
     commit_succeeded = any(result.name == "git-commit" and result.returncode == 0 for result in commit_results)
+    if commit_succeeded and commit_mode == "amend" and policy_evidence.supersedes_commit:
+        new_commit = latest_commit_hash(config.repo_root)
+        try:
+            note_evidence = migrate_devtool_note(config.repo_root, policy_evidence.supersedes_commit, new_commit)
+            note_result = OperationResult(
+                "git-note-migrate",
+                ["git", "notes", "--ref=refs/notes/devtool", "show", policy_evidence.supersedes_commit],
+                0,
+                0.0,
+                "Migrated Devtool note evidence." if note_evidence.get("migrated") else "No Devtool note existed on the superseded commit.",
+                [],
+                skipped=not bool(note_evidence.get("migrated")),
+                metadata={**note_evidence, "commit_mode": "amend"},
+            )
+        except GitCommitPolicyError as exc:
+            note_result = OperationResult(
+                "git-note-migrate",
+                ["git", "notes", "--ref=refs/notes/devtool"],
+                1,
+                0.0,
+                str(exc),
+                [Issue("error", "git-note-migrate", "", type(exc).__name__, str(exc))],
+                failure_kind="git_note_migration",
+                metadata={"commit_mode": "amend", "supersedes_commit": policy_evidence.supersedes_commit},
+            )
+        results.append(note_result)
+        note_raw = "$ " + " ".join(note_result.argv) + "\n" + note_result.output
+        raw_output = raw_output + ("\n\n" if raw_output else "") + note_raw
+        if note_result.returncode != 0:
+            return results, raw_output
+
     if commit_succeeded and artifact_path is not None and manifest:
         finalize_display = "Artifact finalize: after commit"
         if tasker_progress is not None and "after_commit" in set(artifact_finalize_phases(manifest)):
@@ -8008,12 +8207,23 @@ def _record_transaction_commit_from_results(
 ) -> None:
     if not transaction_path:
         return
-    committed = any(
-        result.name == "git-commit" and result.returncode == 0 and not result.skipped
+    committed = next((
+        result
         for result in results[start_index:]
+        if result.name == "git-commit" and result.returncode == 0 and not result.skipped
+    ), None)
+    if committed is None:
+        return
+    metadata = dict(committed.metadata or {})
+    record_transaction_git_commit(
+        transaction_path,
+        latest_commit_hash(repo_root),
+        commit_mode=str(metadata.get("commit_mode") or "new"),
+        supersedes_commit=str(metadata.get("supersedes_commit") or ""),
+        fixup_target=str(metadata.get("fixup_target") or ""),
+        published_rewrite=bool(metadata.get("published_rewrite", False)),
+        signing_required=bool(metadata.get("signing_required", False)),
     )
-    if committed:
-        record_transaction_git_commit(transaction_path, latest_commit_hash(repo_root))
 
 
 def _resolved_artifact_paths_for_args(args: argparse.Namespace) -> list[Path]:
@@ -9347,9 +9557,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
 
     _previous_transaction_commit_mode = os.environ.get("DEVTOOL_TRANSACTION_COMMIT_MODE")
     _previous_transaction_isolation = os.environ.get("DEVTOOL_TRANSACTION_ISOLATION")
-    os.environ["DEVTOOL_TRANSACTION_COMMIT_MODE"] = (
-        "new" if str(getattr(args, "commit", "") or "").strip() else "none"
-    )
+    os.environ["DEVTOOL_TRANSACTION_COMMIT_MODE"] = str(getattr(args, "commit_mode", "none") or "none")
     os.environ["DEVTOOL_TRANSACTION_ISOLATION"] = str(getattr(args, "isolation", "worktree") or "worktree")
     try:
         if name in {"apply-overlays", "aos"}:
@@ -12725,7 +12933,11 @@ def _main_after_parse(
     args._devtool_cli_pytest_marker_explicit = _argv_contains_option(parse_argv, ("--pytest-marker",))
     args._devtool_cli_pytest_k_explicit = _argv_contains_option(parse_argv, ("--pytest-k",))
     args._devtool_cli_pytest_arg_explicit = _argv_contains_option(parse_argv, ("--pytest-arg",))
+    args._devtool_cli_commit_explicit = _argv_contains_option(parse_argv, ("--commit",))
+    if args._devtool_cli_commit_explicit:
+        args._devtool_commit_message_source = "cli"
     _apply_artifact_manifest_defaults(args)
+    _normalize_apply_commit_policy_args(args, parser)
     _validate_apply_args(args, parser)
     effective_payload, _copy_mode = _validate_output_flags(args, parser)
     auto_chroot_rc = _maybe_prepare_termux_auto_chroot(raw_argv, args)

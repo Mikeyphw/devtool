@@ -4193,6 +4193,140 @@ def git_commit(
         return results, raw
 
 
+
+
+def git_commit_with_policy(
+    repo_root: Path,
+    message: str,
+    *,
+    mode: str,
+    fixup_target: str = "",
+    reset_author: bool = False,
+    verbose: bool = False,
+    dry_run: bool = False,
+    log_path: Path | str | None = None,
+    paths: list[str] | tuple[str, ...] | None = None,
+) -> tuple[list[OperationResult], str]:
+    """Create a commit using the GIT-FRX-04 history policy.
+
+    Safety decisions for amend/published history are performed by
+    ``devtool.git_commit_policy`` before this function is entered.  This runner
+    owns only isolated-index staging and the exact Git commit argv.
+    """
+
+    selected = str(mode or "none").strip().lower() or "none"
+    if selected == "none":
+        output = "Commit policy is none; changes remain uncommitted."
+        return [OperationResult("git-commit-skipped", ["git", "commit"], 0, 0.0, output, [], skipped=True,
+                                metadata={"commit_mode": "none"})], output
+    if selected == "new":
+        results, raw = git_commit(
+            repo_root, message, verbose=verbose, dry_run=dry_run, log_path=log_path, paths=paths
+        )
+        for result in results:
+            if result.name == "git-commit":
+                result.metadata.setdefault("commit_mode", "new")
+        return results, raw
+    if selected not in {"amend", "fixup"}:
+        raise ValueError(f"Unsupported commit policy mode: {selected!r}")
+
+    pathspecs = _normalize_git_pathspecs(paths)
+    if pathspecs is not None and not pathspecs:
+        output = "No artifact paths changed; skipped git add and git commit."
+        return [
+            OperationResult("git-add-skipped", ["git", "add", "-A", "--"], 0, 0.0, output, [], skipped=True),
+            OperationResult("git-commit-skipped", ["git", "commit"], 0, 0.0, output, [], skipped=True,
+                            metadata={"commit_mode": selected}),
+        ], output
+
+    with tempfile.TemporaryDirectory(prefix="devtool-artifact-index-") as tmp:
+        isolated_index = Path(tmp) / "index"
+        isolated_env = os.environ.copy()
+        isolated_env["GIT_INDEX_FILE"] = str(isolated_index)
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"], cwd=repo_root,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+        if head.returncode != 0:
+            output = f"Commit mode {selected} requires an existing HEAD commit."
+            return [OperationResult(
+                "git-commit-policy", ["git", "rev-parse", "--verify", "HEAD"], 2, 0.0,
+                output, parse_issues(repo_root, "git-commit-policy", output), failure_kind="git_commit_policy",
+                metadata={"commit_mode": selected},
+            )], output
+
+        protected_paths: set[str] = set()
+        if pathspecs is not None and not dry_run:
+            for artifact_path in pathspecs:
+                was_staged, preflight_error = _artifact_pathspec_was_staged(repo_root, artifact_path, has_head=True)
+                if preflight_error:
+                    result = OperationResult(
+                        "git-index-preflight", ["git", "diff", "--cached", "--", artifact_path], 1, 0.0,
+                        preflight_error, parse_issues(repo_root, "git-index-preflight", preflight_error),
+                        failure_kind="command_failure",
+                    )
+                    return [result], preflight_error
+                if was_staged:
+                    protected_paths.add(artifact_path)
+
+        if not dry_run:
+            started = time.perf_counter()
+            init = subprocess.run(
+                ["git", "read-tree", "HEAD"], cwd=repo_root, env=isolated_env, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+            )
+            if init.returncode != 0:
+                output = init.stdout or "Unable to initialize isolated Git index."
+                result = OperationResult(
+                    "git-index-init", ["git", "read-tree", "HEAD"], init.returncode,
+                    time.perf_counter() - started, output, parse_issues(repo_root, "git-index-init", output),
+                    failure_kind=classify_failure("git-index-init", output, init.returncode),
+                )
+                return [result], output
+
+        add_argv = ["git", "add", "-f", "-A"]
+        if pathspecs is not None:
+            add_argv.extend(["--", *[_literal_git_pathspec(path) for path in pathspecs]])
+        commit_argv = ["git", "commit"]
+        if selected == "amend":
+            commit_argv.append("--amend")
+            if reset_author:
+                commit_argv.append("--reset-author")
+            if str(message or "").strip():
+                commit_argv.extend(["-m", str(message).strip()])
+            else:
+                commit_argv.append("--no-edit")
+        else:
+            commit_argv.append(f"--fixup={str(fixup_target or 'HEAD').strip() or 'HEAD'}")
+
+        specs = [
+            CommandSpec("git-add", add_argv, env={"GIT_INDEX_FILE": str(isolated_index)}),
+            CommandSpec("git-commit", commit_argv, env={"GIT_INDEX_FILE": str(isolated_index)}),
+        ]
+        config = ProjectConfig(repo_root=repo_root, kind="unknown")
+        results, raw = run_specs(config, specs, verbose=verbose, dry_run=dry_run, log_path=log_path)
+        commit_succeeded = any(result.name == "git-commit" and result.returncode == 0 for result in results)
+        for result in results:
+            if result.name == "git-commit":
+                result.metadata.setdefault("commit_mode", selected)
+                if selected == "fixup":
+                    result.metadata.setdefault("fixup_target", str(fixup_target or "HEAD"))
+                if selected == "amend":
+                    result.metadata.setdefault("reset_author", bool(reset_author))
+        if commit_succeeded and pathspecs is not None:
+            reconcile = [path for path in pathspecs if path not in protected_paths]
+            if reconcile:
+                reconcile_specs = [CommandSpec(
+                    "git-index-reconcile",
+                    ["git", "reset", "-q", "HEAD", "--", *[_literal_git_pathspec(path) for path in reconcile]],
+                )]
+                reconcile_results, reconcile_raw = run_specs(
+                    config, reconcile_specs, verbose=verbose, dry_run=dry_run, log_path=log_path
+                )
+                results.extend(reconcile_results)
+                raw = raw + ("\n\n" if raw and reconcile_raw else "") + reconcile_raw
+        return results, raw
+
 def write_template_config(repo_root: Path, *, force: bool = False) -> Path:
     repo_root = repo_root.expanduser().resolve()
     repo_root.mkdir(parents=True, exist_ok=True)

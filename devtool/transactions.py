@@ -633,7 +633,16 @@ def _current_git_head(repo_root: Path) -> str:
     return head if rc == 0 else ""
 
 
-def record_transaction_git_commit(transaction_path: str | Path | None, commit_hash: str) -> None:
+def record_transaction_git_commit(
+    transaction_path: str | Path | None,
+    commit_hash: str,
+    *,
+    commit_mode: str = "",
+    supersedes_commit: str = "",
+    fixup_target: str = "",
+    published_rewrite: bool = False,
+    signing_required: bool = False,
+) -> None:
     """Record the commit created by an active apply transaction.
 
     Direct transactions record the commit as already applied to the primary
@@ -651,6 +660,25 @@ def record_transaction_git_commit(transaction_path: str | Path | None, commit_ha
     if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
         return
     commit = str(commit_hash).strip()
+    mode = str(commit_mode or tx.get("git_recovery", {}).get("commit_mode") or "new").strip().lower() or "new"
+    policy = {
+        "schema_version": 1,
+        "mode": mode,
+        "result_commit": commit,
+        "supersedes_commit": str(supersedes_commit or ""),
+        "fixup_target": str(fixup_target or ""),
+        "published_rewrite": bool(published_rewrite),
+        "signing_required": bool(signing_required),
+        "automatic_push": False,
+        "recorded_at": _utc_now(),
+    }
+    tx["commit_policy"] = policy
+    if policy["supersedes_commit"]:
+        tx["supersedes_commit"] = policy["supersedes_commit"]
+    recovery = dict(tx.get("git_recovery") or {})
+    recovery["commit_mode"] = mode
+    recovery["commit_policy"] = policy
+    tx["git_recovery"] = recovery
     if isolated_transaction(tx):
         isolation = dict(tx.get("isolation") or {})
         isolation["result_commit"] = commit

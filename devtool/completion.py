@@ -627,7 +627,13 @@ _devtool_apply_args() {
     '--failure-action[action after sequential validation failure]:action:(pause rollback keep prompt)' \
     '--session[specific validation session ID]:session:' \
     '--commit[commit after successful apply and validation]:message:' \
+    '--commit-mode[Git result policy]:mode:(new amend fixup none)' \
+    '--amend[safely amend HEAD after apply]' \
     '--no-commit[disable a commit requested by the artifact manifest]' \
+    '--fixup-target[create a fixup commit targeting revision]:revision:' \
+    '--reset-author[reset author identity while amending]' \
+    '--allow-merge-amend[allow amending a merge commit]' \
+    '--allow-published-rewrite[allow local rewrite of published HEAD; never pushes]' \
     '--isolation[apply isolation mode]:mode:(worktree direct)' \
     '--no-artifact-script[skip embedded artifact validation scripts]' \
     '--rebase[rebase a single overlay inventory against the current repository before apply]' \

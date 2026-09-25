@@ -202,6 +202,18 @@ command = ["python", "-m", "devtool.transaction_worktree", "self-refresh-root", 
 inputs = ["devtool/transaction_worktree.py"]
 metadata = { read_only = true, roadmap_id = "GIT-FRX-03" }
 
+[targets.devtool.jobs.commit-policy-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.git_commit_policy", "fixture"]
+inputs = ["devtool/git_commit_policy.py", "devtool/git_state.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-04" }
+
+[targets.devtool.jobs.signing-policy-probe]
+runner = "command"
+command = ["python", "-m", "devtool.git_commit_policy", "probe", "--repo", "."]
+inputs = ["devtool/git_commit_policy.py", ".git/HEAD", ".git/config"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-04" }
+
 [targets.devtool.workflows]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -227,6 +239,14 @@ roadmap-git-frx03 = [
   { id = "git-frx03", ref = "test:roadmap-git-frx03", depends_on = ["git-frx02", "worktree-probe", "self-refresh-probe"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx03"] },
 ]
+roadmap-git-frx04 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "policy-fixture", ref = "job:commit-policy-fixture", depends_on = ["syntax"] },
+  { id = "signing-probe", ref = "job:signing-policy-probe", depends_on = ["syntax"] },
+  { id = "git-frx03", ref = "test:roadmap-git-frx03", depends_on = ["syntax"] },
+  { id = "git-frx04", ref = "test:roadmap-git-frx04", depends_on = ["git-frx03", "policy-fixture", "signing-probe"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx04"] },
+]
 roadmap-current = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "artifact-validation", ref = "test:roadmap-artifact-validation", depends_on = ["syntax"] },
@@ -235,6 +255,7 @@ roadmap-current = [
   { id = "git-frx01", ref = "test:roadmap-git-frx01", depends_on = ["syntax"] },
   { id = "git-frx02", ref = "test:roadmap-git-frx02", depends_on = ["git-frx01"] },
   { id = "git-frx03", ref = "test:roadmap-git-frx03", depends_on = ["git-frx02"] },
+  { id = "git-frx04", ref = "test:roadmap-git-frx04", depends_on = ["git-frx03"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
 ]
 
@@ -291,6 +312,16 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-git-frx03.xml",
   "tests/test_git_frx03_isolated_worktree_transactions.py",
+]
+
+[[test]]
+id = "roadmap-git-frx04"
+name = "GIT-FRX-04 commit policy"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx04.xml",
+  "tests/test_git_frx04_commit_policy.py",
 ]
 
 [[test]]
