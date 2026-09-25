@@ -11,6 +11,7 @@ from .federation_interfaces import build_interface_report
 from .federation_plan import build_federated_plan
 from .git_ownership import GitFederatedOwnershipError, resolve_federated_git_owner
 from .federation_lock import FederationSourceLock, compare_federation_source_locks
+from .federation_git_lineage import finalize_federated_git_lineage, planned_federated_git_lineage
 
 
 def _load(root: Path):
@@ -131,11 +132,47 @@ def source_lock_fixture(*, mutate: bool = False) -> dict[str, object]:
             raise SystemExit("GIT-FRX-08 drift fixture failed to detect source mutation")
         return comparison
 
+
+
+def git_lineage_fixture() -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="devtool-git-frx09-") as td:
+        root = Path(td)
+        parent = root / "parent"
+        child = root / "child"
+        parent.mkdir(); child.mkdir()
+        (child / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="app"\n[targets.app]\nrunner="command"\n'
+            '[targets.app.jobs.check]\nrunner="command"\ncommand=["echo","ok"]\n[targets.app.workflows]\nvalidate=["job:check"]\n',
+            encoding="utf-8",
+        )
+        _init_git(child)
+        (parent / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="root"\n[targets.root]\nrunner="command"\n'
+            '[federation]\nschema=1\n[federation.repositories.child]\npath="../child"\n'
+            '[federation.workflows.release]\nsteps=[{id="child",ref="child::app::workflow:validate"}]\n',
+            encoding="utf-8",
+        )
+        config = _load(parent)
+        plan = build_federated_plan(config, "release")
+        source = next(item for item in plan.source_lock.get("repositories", []) if item.get("repository") == "child")
+        planned = planned_federated_git_lineage(
+            source_lock=plan.source_lock, repository="child", parent_run_id="fixture-parent",
+            parent_node_id="federation:release:child", child_run_id="fixture-child", target="app",
+            contract_type="workflow", contract_name="validate", contract_ref="child::app::validate",
+            federation_workflow="release", federation_step="child",
+        )
+        finalized = finalize_federated_git_lineage(child, planned, terminal_status="succeeded")
+        if finalized.get("start_commit") != source.get("start_commit") or finalized.get("result_commit") != source.get("start_commit"):
+            raise SystemExit("GIT-FRX-09 lineage fixture did not preserve start/result Git identity")
+        if not finalized.get("result_ref") or not finalized.get("rollback_ref"):
+            raise SystemExit("GIT-FRX-09 lineage fixture did not materialize private result/rollback refs")
+        return finalized
+
 def main(argv: list[str] | None=None) -> int:
     p=argparse.ArgumentParser(prog='python -m devtool.federation_roadmap_fixtures')
-    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift'])
+    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage'])
     ns=p.parse_args(argv)
-    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
+    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 

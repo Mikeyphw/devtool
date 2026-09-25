@@ -256,6 +256,12 @@ command = ["python", "-m", "devtool.federation_roadmap_fixtures", "source-drift"
 inputs = ["devtool/federation_lock.py", "devtool/federation_execution.py", "devtool/federation_roadmap_fixtures.py"]
 metadata = { read_only = true, roadmap_id = "GIT-FRX-08+FRX-Y03" }
 
+[targets.devtool.jobs.federation-git-lineage-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "git-lineage"]
+inputs = ["devtool/federation_git_lineage.py", "devtool/federation_execution.py", "devtool/federation_lock.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-09" }
+
 [targets.devtool.workflows]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -337,6 +343,13 @@ roadmap-git-frx08-freeze = [
   { id = "git-frx08-freeze", ref = "test:roadmap-git-frx08-freeze", depends_on = ["git-frx07", "source-lock-fixture", "source-drift-probe"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx08-freeze"] },
 ]
+roadmap-git-frx09 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "lineage-fixture", ref = "job:federation-git-lineage-fixture", depends_on = ["syntax"] },
+  { id = "git-frx08-freeze", ref = "test:roadmap-git-frx08-freeze", depends_on = ["syntax"] },
+  { id = "git-frx09", ref = "test:roadmap-git-frx09", depends_on = ["git-frx08-freeze", "lineage-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx09"] },
+]
 roadmap-gate1 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "rebase-fixture", ref = "job:overlay-rebase-fixture", depends_on = ["syntax"] },
@@ -371,6 +384,17 @@ roadmap-current = [
   { id = "frx-y07", ref = "test:roadmap-frx-y07", depends_on = ["frx-y06"] },
   { id = "git-frx07", ref = "test:roadmap-git-frx07", depends_on = ["frx-y07"] },
   { id = "git-frx08-freeze", ref = "test:roadmap-git-frx08-freeze", depends_on = ["git-frx07"] },
+  { id = "git-frx09", ref = "test:roadmap-git-frx09", depends_on = ["git-frx08-freeze"] },
+]
+
+[[test]]
+id = "roadmap-git-frx09"
+name = "GIT-FRX-09 parent child Git lineage"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx09.xml",
+  "tests/test_git_frx09_parent_child_git_lineage.py",
 ]
 
 [[test]]

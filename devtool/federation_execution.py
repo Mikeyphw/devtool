@@ -23,6 +23,7 @@ from typing import Any, Callable, Iterable
 
 from .core.execution_contract import ExecutionStatus, RunId
 from .core.events import (
+    ArtifactProduced,
     GraphSealed,
     NodeBlocked,
     NodeDiscovered,
@@ -34,6 +35,13 @@ from .core.events import (
     publish_event,
 )
 from .federation_discovery import resolve_federated_repository
+from .federation_git_lineage import (
+    direct_federated_git_lineage,
+    finalize_federated_git_lineage,
+    git_lineage_environment,
+    persist_federated_git_lineage,
+    planned_federated_git_lineage,
+)
 from .federation_capabilities import project_capability_dependencies
 from .federation_plan import FederatedPlanGraph, build_federated_plan, project_with_federation_group
 from .federation_scheduler import FederatedSchedulePlan, build_federated_schedule
@@ -77,6 +85,7 @@ class FederatedChildRun:
     requested_ref: str = ""
     child_contract: str = ""
     contract_ref: str = ""
+    git_lineage: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -95,6 +104,7 @@ class FederatedChildRun:
             "requested_ref": self.requested_ref,
             "child_contract": self.child_contract,
             "contract_ref": self.contract_ref,
+            "git_lineage": dict(self.git_lineage),
         }
 
 
@@ -191,6 +201,76 @@ def _step_identity(plan: FederatedPlanGraph, step: FederatedWorkflowStep) -> dic
         if isinstance(identity, dict):
             return dict(identity)
     return {}
+
+
+def _step_planned_git_lineage(
+    plan: FederatedPlanGraph,
+    step: FederatedWorkflowStep,
+    *,
+    parent_run_id: str,
+    parent_node_id: str,
+    child_run_id: str,
+    target: str,
+) -> dict[str, Any]:
+    return planned_federated_git_lineage(
+        source_lock=plan.source_lock,
+        repository=step.repository,
+        parent_run_id=parent_run_id,
+        parent_node_id=parent_node_id,
+        child_run_id=child_run_id,
+        target=target,
+        contract_type=step.contract_type,
+        contract_name=_step_child_contract(step),
+        contract_ref=_step_contract_ref(plan, step),
+        federation_workflow=plan.workflow,
+        federation_step=step.step_id,
+    )
+
+
+def _publish_child_git_lineage(record: dict[str, Any], *, publish: Callable[[Any], None]) -> dict[str, Any]:
+    path, digest, size = persist_federated_git_lineage(record)
+    publish(ArtifactProduced(
+        run_id=str(record.get("child_run_id") or ""),
+        path=str(path),
+        artifact_id=f"federation-git-lineage:{record.get('child_run_id') or 'child'}",
+        sha256=digest,
+        size=size,
+        artifact_type="federation-git-lineage",
+        producer_task="federation-git-lineage",
+        verification_status="verified",
+        source="federation",
+    ))
+    return record
+
+
+def _finalize_child_git_lineage(
+    resolution: Any,
+    planned: dict[str, Any],
+    *,
+    terminal_status: str,
+    publish: Callable[[Any], None],
+) -> dict[str, Any]:
+    finalized = finalize_federated_git_lineage(
+        resolution.root,
+        planned,
+        terminal_status=terminal_status,
+    )
+    return _publish_child_git_lineage(finalized, publish=publish)
+
+
+def _cancelled_git_lineage_fallback(
+    planned: dict[str, Any],
+    error: Exception,
+    *,
+    publish: Callable[[Any], None],
+) -> dict[str, Any]:
+    fallback = dict(planned)
+    fallback.update({
+        "state": "finalization-error",
+        "terminal_status": ExecutionStatus.CANCELLED.value,
+        "finalization_error": str(error),
+    })
+    return _publish_child_git_lineage(fallback, publish=publish)
 
 
 def _assert_planned_resolution_identity(
@@ -532,6 +612,9 @@ def _run_federated_workflow_sequential(
             active_child_run_id = child_run_id
             parent_node = node_ids[step.step_id]
             invocation_command = f"{name}:{step.step_id}"
+            planned_git_lineage = _step_planned_git_lineage(
+                plan, step, parent_run_id=run_id, parent_node_id=parent_node, child_run_id=child_run_id, target=target
+            )
             lineage = {
                 "kind": "federation",
                 "relationship": "child",
@@ -553,6 +636,7 @@ def _run_federated_workflow_sequential(
                 "execution_environment": "auto",
                 "frozen_source_lock_digest": str(plan.source_lock.get("lock_digest") or ""),
                 "frozen_source_equivalence_digest": str(plan.source_lock.get("equivalence_digest") or ""),
+                "git_lineage": planned_git_lineage,
             }
             if federation_group:
                 lineage["federation_group"] = federation_group
@@ -606,6 +690,7 @@ def _run_federated_workflow_sequential(
                 "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
                 "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
             }
+            env.update(git_lineage_environment(planned_git_lineage))
             if federation_group:
                 env["DEVTOOL_FEDERATION_GROUP"] = federation_group
             from .federation_transport import build_repository_attestation, federation_attestation_environment
@@ -655,6 +740,9 @@ def _run_federated_workflow_sequential(
             if rc == 130 or child_status == ExecutionStatus.CANCELLED.value:
                 child_status = ExecutionStatus.CANCELLED.value
                 rc = 130
+            git_lineage = _finalize_child_git_lineage(
+                resolution, planned_git_lineage, terminal_status=child_status, publish=publish
+            )
             publish(NodeFinished(
                 run_id=run_id,
                 node_id=parent_node,
@@ -675,6 +763,7 @@ def _run_federated_workflow_sequential(
                     "requested_ref": step.ref,
                     "run_lineage": persisted_lineage or lineage,
                     "operational_ownership": operational,
+                    "git_lineage": git_lineage,
                 },
             ))
             child = FederatedChildRun(
@@ -682,6 +771,7 @@ def _run_federated_workflow_sequential(
                 parent_node, child_status, rc, identity, persisted_lineage or lineage, operational,
                 federation_ref=federation_ref, requested_ref=step.ref,
                 child_contract=_step_child_contract(step), contract_ref=_step_contract_ref(plan, step),
+                git_lineage=git_lineage,
             )
             outcomes[step.step_id] = child
             children.append(child)
@@ -700,6 +790,19 @@ def _run_federated_workflow_sequential(
                 pass
             snapshot = snapshot_lookup(active_child_run_id)
             persisted_lineage = dict(getattr(snapshot, "run_lineage", {}) or {}) if snapshot is not None else {}
+            cancelled_git_lineage: dict[str, Any] = {}
+            if active_step is not None:
+                try:
+                    active_resolution = resolve_federated_repository(parent, active_step.repository)
+                    planned = dict(active_lineage.get("git_lineage") or {})
+                    if active_resolution.available and planned:
+                        cancelled_git_lineage = _finalize_child_git_lineage(
+                            active_resolution, planned, terminal_status=ExecutionStatus.CANCELLED.value, publish=publish
+                        )
+                except Exception as exc:
+                    cancelled_git_lineage = _cancelled_git_lineage_fallback(
+                        dict(active_lineage.get("git_lineage") or {}), exc, publish=publish
+                    )
             publish(NodeFinished(
                 run_id=run_id,
                 node_id=active_parent_node,
@@ -711,6 +814,7 @@ def _run_federated_workflow_sequential(
                 metadata={
                     "child_run_id": active_child_run_id,
                     "run_lineage": persisted_lineage or active_lineage,
+                    "git_lineage": cancelled_git_lineage,
                 },
             ))
             if active_step is not None:
@@ -722,6 +826,7 @@ def _run_federated_workflow_sequential(
                     requested_ref=str(active_lineage.get("requested_ref") or active_step.ref),
                     child_contract=str(active_lineage.get("child_contract") or ""),
                     contract_ref=str(active_lineage.get("contract_ref") or ""),
+                    git_lineage=cancelled_git_lineage,
                 )
                 outcomes[active_step.step_id] = cancelled_child
                 children.append(cancelled_child)
@@ -993,6 +1098,9 @@ def _run_federated_workflow_parallel(
         child_run_id = str(RunId.new(prefix=f"fed-{step.repository}"))
         parent_node = node_ids[step.step_id]
         invocation_command = f"{name}:{step.step_id}"
+        planned_git_lineage = _step_planned_git_lineage(
+            plan, step, parent_run_id=run_id, parent_node_id=parent_node, child_run_id=child_run_id, target=target
+        )
         lineage = {
             "kind": "federation",
             "relationship": "child",
@@ -1014,6 +1122,7 @@ def _run_federated_workflow_parallel(
             "execution_environment": "auto",
             "frozen_source_lock_digest": str(plan.source_lock.get("lock_digest") or ""),
             "frozen_source_equivalence_digest": str(plan.source_lock.get("equivalence_digest") or ""),
+            "git_lineage": planned_git_lineage,
         }
         if federation_group:
             lineage["federation_group"] = federation_group
@@ -1055,6 +1164,7 @@ def _run_federated_workflow_parallel(
             "DEVTOOL_NO_AUTO_HUD": "1",
             "DEVTOOL_FEDERATION_CHILD_STATE_DIR": str(child_state_dir),
         }
+        env.update(git_lineage_environment(planned_git_lineage))
         if federation_group:
             env["DEVTOOL_FEDERATION_GROUP"] = federation_group
         from .federation_transport import build_repository_attestation, federation_attestation_environment
@@ -1149,6 +1259,9 @@ def _run_federated_workflow_parallel(
             if rc == 130 or child_status == ExecutionStatus.CANCELLED.value:
                 child_status = ExecutionStatus.CANCELLED.value
                 rc = 130
+            git_lineage = _finalize_child_git_lineage(
+                resolution, planned_git_lineage, terminal_status=child_status, publish=publish
+            )
             publish(NodeFinished(
                 run_id=run_id,
                 node_id=parent_node,
@@ -1172,6 +1285,7 @@ def _run_federated_workflow_parallel(
                     "scheduler_state": child_status,
                     "scheduler_wave": wave_for_step.get(step.step_id, 0),
                     "scheduler": scheduler_node.as_dict(),
+                    "git_lineage": git_lineage,
                 },
             ))
             return FederatedChildRun(
@@ -1190,6 +1304,7 @@ def _run_federated_workflow_parallel(
                 requested_ref=step.ref,
                 child_contract=_step_child_contract(step),
                 contract_ref=_step_contract_ref(plan, step),
+                git_lineage=git_lineage,
             )
         finally:
             with active_lock:
@@ -1466,6 +1581,18 @@ def run_federated_direct_child(
     direct_target = str(target or "").strip()
     direct_contract = str(child_contract or operation or "").strip()
     contract_ref = f"{repo_name}::{direct_target}::{direct_contract}" if direct_target and direct_contract else ""
+    planned_git_lineage = direct_federated_git_lineage(
+        resolution.root,
+        repository=repo_name,
+        parent_run_id=parent_id,
+        parent_node_id=node_id,
+        child_run_id=child_run_id,
+        target=direct_target,
+        contract_type=(direct_contract.split(":", 1)[0] if ":" in direct_contract else "direct"),
+        contract_name=direct_contract,
+        contract_ref=contract_ref,
+        federation_step=operation,
+    )
     lineage = {
         "kind": "federation",
         "relationship": "child",
@@ -1482,6 +1609,7 @@ def run_federated_direct_child(
         "requested_repository": repo_name,
         "effective_repository": effective_fingerprint,
         "execution_environment": "auto",
+        "git_lineage": planned_git_lineage,
     }
     publish(RunStarted(
         run_id=parent_id,
@@ -1549,6 +1677,7 @@ def run_federated_direct_child(
         "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
         "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
     }
+    env.update(git_lineage_environment(planned_git_lineage))
     from .federation_transport import build_repository_attestation, federation_attestation_environment
     env.update(federation_attestation_environment(build_repository_attestation(
         resolution.root,
@@ -1581,6 +1710,9 @@ def run_federated_direct_child(
         if rc == 130 or status == ExecutionStatus.CANCELLED.value:
             status = ExecutionStatus.CANCELLED.value
             rc = 130
+        git_lineage = _finalize_child_git_lineage(
+            resolution, planned_git_lineage, terminal_status=status, publish=publish
+        )
         publish(NodeFinished(
             run_id=parent_id,
             node_id=node_id,
@@ -1593,6 +1725,7 @@ def run_federated_direct_child(
                 "child_run_id": child_run_id,
                 "run_lineage": persisted_lineage or lineage,
                 "operational_ownership": operational,
+                "git_lineage": git_lineage,
             },
         ))
         publish(RunFinished(
@@ -1606,6 +1739,7 @@ def run_federated_direct_child(
             operation, repo_name, operation, direct_target, child_run_id, node_id, status, rc,
             identity, persisted_lineage or lineage, operational,
             child_contract=direct_contract, contract_ref=contract_ref,
+            git_lineage=git_lineage,
         )
     except KeyboardInterrupt:
         try:
@@ -1614,6 +1748,14 @@ def run_federated_direct_child(
             pass
         snapshot = snapshot_lookup(child_run_id)
         persisted_lineage = dict(getattr(snapshot, "run_lineage", {}) or {}) if snapshot is not None else {}
+        try:
+            cancelled_git_lineage = _finalize_child_git_lineage(
+                resolution, planned_git_lineage, terminal_status=ExecutionStatus.CANCELLED.value, publish=publish
+            )
+        except Exception as exc:
+            cancelled_git_lineage = _cancelled_git_lineage_fallback(
+                dict(planned_git_lineage), exc, publish=publish
+            )
         publish(NodeFinished(
             run_id=parent_id,
             node_id=node_id,
@@ -1622,7 +1764,11 @@ def run_federated_direct_child(
             duration_seconds=time.monotonic() - child_started,
             source="federation",
             transition_reason=f"child run {child_run_id} cancelled by interrupt",
-            metadata={"child_run_id": child_run_id, "run_lineage": persisted_lineage or lineage},
+            metadata={
+                "child_run_id": child_run_id,
+                "run_lineage": persisted_lineage or lineage,
+                "git_lineage": cancelled_git_lineage,
+            },
         ))
         publish(RunFinished(
             run_id=parent_id,
