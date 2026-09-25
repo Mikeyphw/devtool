@@ -190,6 +190,18 @@ outputs = [".devtool/cache/roadmap-pyc/**"]
 [targets.devtool.jobs.source-syntax.env]
 PYTHONPYCACHEPREFIX = ".devtool/cache/roadmap-pyc"
 
+[targets.devtool.jobs.transaction-worktree-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.transaction_worktree", "fixture", "--repo", "."]
+inputs = ["devtool/**", ".git/HEAD", ".git/index"]
+metadata = { roadmap_id = "GIT-FRX-03" }
+
+[targets.devtool.jobs.self-refresh-root-probe]
+runner = "command"
+command = ["python", "-m", "devtool.transaction_worktree", "self-refresh-root", "--fallback", "."]
+inputs = ["devtool/transaction_worktree.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-03" }
+
 [targets.devtool.workflows]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -207,6 +219,14 @@ roadmap-git-frx02 = [
   { id = "git-frx02", ref = "test:roadmap-git-frx02", depends_on = ["git-frx01"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx02"] },
 ]
+roadmap-git-frx03 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "worktree-probe", ref = "job:transaction-worktree-fixture", depends_on = ["syntax"] },
+  { id = "self-refresh-probe", ref = "job:self-refresh-root-probe", depends_on = ["syntax"] },
+  { id = "git-frx02", ref = "test:roadmap-git-frx02", depends_on = ["syntax"] },
+  { id = "git-frx03", ref = "test:roadmap-git-frx03", depends_on = ["git-frx02", "worktree-probe", "self-refresh-probe"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx03"] },
+]
 roadmap-current = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "artifact-validation", ref = "test:roadmap-artifact-validation", depends_on = ["syntax"] },
@@ -214,6 +234,7 @@ roadmap-current = [
   { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["frx-baseline"] },
   { id = "git-frx01", ref = "test:roadmap-git-frx01", depends_on = ["syntax"] },
   { id = "git-frx02", ref = "test:roadmap-git-frx02", depends_on = ["git-frx01"] },
+  { id = "git-frx03", ref = "test:roadmap-git-frx03", depends_on = ["git-frx02"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
 ]
 
@@ -260,6 +281,16 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-git-frx02.xml",
   "tests/test_git_frx02_private_transaction_journal.py",
+]
+
+[[test]]
+id = "roadmap-git-frx03"
+name = "GIT-FRX-03 isolated worktree transaction engine"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx03.xml",
+  "tests/test_git_frx03_isolated_worktree_transactions.py",
 ]
 
 [[test]]

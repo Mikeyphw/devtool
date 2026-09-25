@@ -202,6 +202,7 @@ from .termux_diagnostics import (
     termux_integration_doctor_rows,
     termux_report_payload,
 )
+from .transaction_worktree import transaction_execution_root
 from .transactions import (
     abandon_transaction,
     affected_paths_from_preview,
@@ -466,6 +467,12 @@ def _add_apply_policy_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
     cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
     cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
+    cmd.add_argument(
+        "--isolation",
+        choices=("worktree", "direct"),
+        default="worktree",
+        help="Apply in an isolated Devtool-owned Git worktree when supported (default: worktree); use direct for legacy in-place mutation",
+    )
     cmd.add_argument("--no-artifact-script", action="store_true", help="Skip embedded artifact validation scripts while keeping built-in validation")
     cmd.add_argument("--rebase", action="store_true", help="Rebase a single overlay inventory against the current repository before applying")
 
@@ -5782,6 +5789,9 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
         "validate_only": bool(getattr(args, "validate_only", False)),
         "rollback_on_failure": _rollback_on_failure_enabled(args, validation_policy),
         "legacy_rollback_on_failure_explicit": "rollback_on_failure" in raw_validation,
+        "transaction_repo_root": str(getattr(args, "_devtool_transaction_repo_root", "") or ""),
+        "transaction_primary_repo_root": str(getattr(args, "_devtool_transaction_primary_repo_root", "") or ""),
+        "transaction_isolation": str(getattr(args, "isolation", "") or ""),
         "validation_mode": "deferred" if bool(getattr(args, "defer_validate", False)) else "sequential",
         "minimum_phase": "finalize" if exclusive_tasks else str(validation_policy.get("minimum_phase") or "finalize"),
         "resource_profile": str(getattr(args, "validation_resource_profile", "automatic") or "automatic"),
@@ -6127,6 +6137,8 @@ def _finalize_validation_session(
     final_args._devtool_artifact_sha = str(context.get("artifact_sha") or "")
     final_args._devtool_artifact_size = context.get("artifact_size")
     final_args._devtool_artifact_preview = dict(context.get("preview") or {})
+    final_args._devtool_transaction_repo_root = str(context.get("transaction_repo_root") or "")
+    final_args._devtool_transaction_primary_repo_root = str(context.get("transaction_primary_repo_root") or "")
     final_args._devtool_artifact_manifest = dict(context.get("manifest") or {})
 
     historical_results = session_operation_results(session)
@@ -6257,6 +6269,8 @@ def _finalize_validation_session(
                 commit_pending=True,
             )
         return results, raw_output
+    primary_root_text = str(getattr(final_args, "_devtool_transaction_primary_repo_root", "") or "").strip()
+    history_root = Path(primary_root_text).resolve() if primary_root_text else Path(session.repo_root).resolve()
     if session.transaction_path:
         mark_transaction_completed(session.transaction_path)
 
@@ -6282,12 +6296,12 @@ def _finalize_validation_session(
             raw_output += ("\n\n" if raw_output else "") + "$ " + " ".join(cleanup.argv) + "\n" + cleanup.output
 
     commit_requested = bool(str(final_args.commit or "").strip())
-    commit_hash = latest_commit_hash(config.repo_root) if commit_requested else ""
+    commit_hash = latest_commit_hash(history_root) if commit_requested else ""
     commit_status = "committed" if commit_requested else "not-requested"
     mark_validation_completed(session, commit_status=commit_status, commit_hash=commit_hash)
     final_args._devtool_validation_session_id = session.session_id
     final_args._devtool_validation_report_path = str(validation_report_path(
-        config.repo_root, session.session_id, sealed=True,
+        history_root, session.session_id, sealed=True,
     ))
     final_args._devtool_validation_final_verdict = "validated"
     history_warning = ""
@@ -7439,6 +7453,8 @@ def _handle_validation_finalize(
 def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, results: list[OperationResult]) -> None:
     if args.command not in APPLY_COMMANDS or getattr(args, "validate_only", False) or getattr(args, "preview", False):
         return
+    primary_root_text = str(getattr(args, "_devtool_transaction_primary_repo_root", "") or "").strip()
+    history_root = Path(primary_root_text).resolve() if primary_root_text else config.repo_root
     artifact = getattr(args, "artifact", "")
     if not artifact:
         return
@@ -7480,10 +7496,10 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         validation_status = "ok"
     commit_hash = ""
     if getattr(args, "commit", "") and any(r.name == "git-commit" and r.returncode == 0 for r in results):
-        commit_hash = latest_commit_hash(config.repo_root)
+        commit_hash = latest_commit_hash(history_root)
     try:
         entry = make_history_entry(
-            config.repo_root,
+            history_root,
             artifact,
             artifact_type=getattr(args, "_devtool_artifact_type", "snapshot" if "snapshot" in args.command else "overlay"),
             status=status,
@@ -9103,8 +9119,9 @@ def _reload_config_after_artifact_apply(args: argparse.Namespace, fallback: Proj
     solution = str(getattr(args, "solution", "") or artifact_solution(manifest)).strip()
     project = str(getattr(args, "project", "") or manifest.get("run_project") or manifest.get("project") or "").strip()
     try:
+        transaction_repo_root = str(getattr(args, "_devtool_transaction_repo_root", "") or "").strip()
         return load_project_config(
-            args.repo,
+            transaction_repo_root or args.repo,
             args.config,
             target_name=target,
             variant_name=str(getattr(args, "variant", "") or ""),
@@ -9329,9 +9346,11 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             tasker_progress.phase_finished(result)
 
     _previous_transaction_commit_mode = os.environ.get("DEVTOOL_TRANSACTION_COMMIT_MODE")
+    _previous_transaction_isolation = os.environ.get("DEVTOOL_TRANSACTION_ISOLATION")
     os.environ["DEVTOOL_TRANSACTION_COMMIT_MODE"] = (
         "new" if str(getattr(args, "commit", "") or "").strip() else "none"
     )
+    os.environ["DEVTOOL_TRANSACTION_ISOLATION"] = str(getattr(args, "isolation", "worktree") or "worktree")
     try:
         if name in {"apply-overlays", "aos"}:
             result = apply_overlay_bundle(
@@ -9380,6 +9399,20 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             os.environ.pop("DEVTOOL_TRANSACTION_COMMIT_MODE", None)
         else:
             os.environ["DEVTOOL_TRANSACTION_COMMIT_MODE"] = _previous_transaction_commit_mode
+        if _previous_transaction_isolation is None:
+            os.environ.pop("DEVTOOL_TRANSACTION_ISOLATION", None)
+        else:
+            os.environ["DEVTOOL_TRANSACTION_ISOLATION"] = _previous_transaction_isolation
+    if result.metadata:
+        transaction_repo_root = str(result.metadata.get("transaction_repo_root") or "").strip()
+        if transaction_repo_root:
+            args._devtool_transaction_repo_root = transaction_repo_root
+            os.environ["DEVTOOL_TRANSACTION_REPO_ROOT"] = transaction_repo_root
+        transaction_primary_root = str(result.metadata.get("transaction_primary_repo_root") or "").strip()
+        if transaction_primary_root:
+            args._devtool_transaction_primary_repo_root = transaction_primary_root
+            os.environ["DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT"] = transaction_primary_root
+            os.environ["DEVTOOL_VALIDATION_STATE_REPO_ROOT"] = transaction_primary_root
     if _artifact_lifecycle_steps:
         result.metadata.setdefault("lifecycle_steps", []).extend(_artifact_lifecycle_steps)
         result.metadata.setdefault("lifecycle_steps_position", "before")
@@ -14289,6 +14322,22 @@ def _main_after_parse(
         )
         validation_commands = {"validate", "v", "validation-finalize", "vf"}
         if session_matches and args.command in validation_commands:
+            execution_root = transaction_execution_root(transaction_data)
+            primary_root = Path(str(transaction_data.get("repo_root") or config.repo_root)).resolve()
+            if execution_root != primary_root and execution_root.exists():
+                args._devtool_transaction_repo_root = str(execution_root)
+                args._devtool_transaction_primary_repo_root = str(primary_root)
+                os.environ["DEVTOOL_TRANSACTION_REPO_ROOT"] = str(execution_root)
+                os.environ["DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT"] = str(primary_root)
+                os.environ["DEVTOOL_VALIDATION_STATE_REPO_ROOT"] = str(primary_root)
+                config = load_project_config(
+                    str(execution_root),
+                    args.config,
+                    target_name=str(active_validation.target or getattr(args, "target", "") or ""),
+                    variant_name=str(active_validation.variant or getattr(args, "variant", "") or ""),
+                    kind_override=str(getattr(args, "project_type", "auto") or "auto"),
+                )
+                _apply_runner_cli_options(config, args)
             stale_transaction = None
         elif _single_run_lock.allows_transaction(transaction_data):
             if not bool(getattr(args, "quiet", False)):

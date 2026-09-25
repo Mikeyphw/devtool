@@ -626,6 +626,7 @@ _devtool_apply_args() {
     '--session[specific validation session ID]:session:' \
     '--commit[commit after successful apply and validation]:message:' \
     '--no-commit[disable a commit requested by the artifact manifest]' \
+    '--isolation[apply isolation mode]:mode:(worktree direct)' \
     '--no-artifact-script[skip embedded artifact validation scripts]' \
     '--rebase[rebase a single overlay inventory against the current repository before apply]' \
     '*:artifact:_devtool_artifact_path'

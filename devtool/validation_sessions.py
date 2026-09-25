@@ -266,7 +266,9 @@ def _process_is_alive(pid: int, start_token: str = "") -> bool:
 
 
 def session_root(repo_root: Path) -> Path:
-    return repo_root.expanduser().resolve() / ".devtool" / "state" / "android-validation"
+    state_repo = str(os.environ.get("DEVTOOL_VALIDATION_STATE_REPO_ROOT") or "").strip()
+    root = Path(state_repo).expanduser().resolve() if state_repo else repo_root.expanduser().resolve()
+    return root / ".devtool" / "state" / "android-validation"
 
 
 def session_path(repo_root: Path, session_id: str) -> Path:

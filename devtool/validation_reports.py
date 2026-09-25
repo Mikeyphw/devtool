@@ -24,7 +24,9 @@ def _utc_now() -> str:
 
 
 def report_root(repo_root: Path) -> Path:
-    return repo_root.expanduser().resolve() / ".devtool" / "reports" / "validation"
+    state_repo = str(os.environ.get("DEVTOOL_VALIDATION_STATE_REPO_ROOT") or "").strip()
+    root = Path(state_repo).expanduser().resolve() if state_repo else repo_root.expanduser().resolve()
+    return root / ".devtool" / "reports" / "validation"
 
 
 def report_path(repo_root: Path, session_id: str, *, sealed: bool = False) -> Path:

@@ -614,15 +614,22 @@ class ResumableValidationTests(unittest.TestCase):
                     "--keep-artifact", str(artifact),
                 ])
             self.assertEqual(apply_rc, 0)
-            self.assertTrue((repo / "app/src/main/kotlin/Deferred.kt").exists())
+            self.assertFalse((repo / "app/src/main/kotlin/Deferred.kt").exists())
             self.assertEqual(
                 subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, stdout=subprocess.PIPE).stdout.strip(),
                 base_head,
             )
             session = load_active_session(repo, required=True)
+            transaction = read_transaction(session.transaction_path)
+            execution_root = Path(str(transaction["execution_root"]))
+            self.assertNotEqual(execution_root.resolve(), repo.resolve())
+            self.assertTrue((execution_root / "app/src/main/kotlin/Deferred.kt").exists())
             self.assertEqual([phase.name for phase in session.phases], ["static"])
             self.assertEqual(session.options["validation_resource_profile"], "android-low-power")
-            self.assertEqual(read_transaction(session.transaction_path)["status"], "applied-validation-deferred")
+            self.assertEqual(transaction["status"], "applied-validation-deferred")
+            self.assertTrue((repo / ".devtool/state/android-validation/active.json").exists())
+            self.assertFalse((execution_root / ".devtool/state/android-validation/active.json").exists())
+            session_id = session.session_id
 
             with patch.dict(os.environ, env, clear=False), patch("devtool.cli.render_summary"):
                 resume_rc = main([
@@ -633,6 +640,8 @@ class ResumableValidationTests(unittest.TestCase):
             self.assertTrue((repo / "static-ran.txt").exists())
             self.assertIsNone(load_active_session(repo))
             self.assertFalse(Path(session.transaction_path).exists())
+            self.assertFalse(execution_root.exists())
+            self.assertTrue((repo / ".devtool/reports/validation" / f"{session_id}.final.json").exists())
             self.assertTrue(artifact.exists())
             subject = subprocess.run(
                 ["git", "log", "-1", "--pretty=%s"], cwd=repo, check=True, text=True, stdout=subprocess.PIPE

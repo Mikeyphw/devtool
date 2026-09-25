@@ -1,0 +1,328 @@
+from __future__ import annotations
+
+import hashlib
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Any, Iterable
+
+
+class TransactionWorktreeError(RuntimeError):
+    pass
+
+
+def requested_transaction_isolation() -> str:
+    raw = str(os.environ.get("DEVTOOL_TRANSACTION_ISOLATION") or "direct").strip().lower()
+    return raw if raw in {"worktree", "direct"} else "worktree"
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise TransactionWorktreeError(f"Unable to execute Git command {' '.join(args)}: {exc}") from exc
+
+
+def git_status_bytes(root: Path) -> bytes:
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return b""
+    if proc.returncode != 0:
+        return b""
+    # Devtool's durable validation state/report files are operational metadata,
+    # not user checkout drift. Ignore them only while untracked; if a repository
+    # deliberately tracks one of these paths, modifications remain authoritative
+    # and must block isolated integration.
+    operational_prefixes = (
+        ".devtool/state/",
+        ".devtool/reports/validation/",
+    )
+    records = bytes(proc.stdout or b"").split(b"\0")
+    kept: list[bytes] = []
+    for record in records:
+        if not record:
+            continue
+        if record.startswith(b"?? "):
+            path = record[3:].decode("utf-8", "surrogateescape").replace("\\", "/")
+            if any(path.startswith(prefix) for prefix in operational_prefixes):
+                continue
+        kept.append(record)
+    return b"\0".join(kept) + (b"\0" if kept else b"")
+
+
+def git_status_identity(root: Path) -> str:
+    return hashlib.sha256(git_status_bytes(root)).hexdigest()
+
+
+def prepare_transaction_worktree(
+    repo_root: Path,
+    tx_dir: Path,
+    *,
+    transaction_id: str,
+    git_state: dict[str, Any],
+    requested: str | None = None,
+) -> dict[str, Any]:
+    """Create the isolated execution root when the source state supports it.
+
+    Worktree isolation is preferred, but a direct transaction remains truthful
+    for non-Git, unborn, or already-dirty repositories because a detached linked
+    worktree cannot faithfully represent those source states.
+    """
+
+    root = repo_root.resolve()
+    mode = str(requested or requested_transaction_isolation()).strip().lower()
+    if mode not in {"worktree", "direct"}:
+        raise TransactionWorktreeError(f"Unsupported transaction isolation mode: {mode}")
+
+    base = {
+        "schema_version": 1,
+        "requested": mode,
+        "effective": "direct",
+        "primary_root": str(root),
+        "execution_root": str(root),
+        "state": "ready",
+        "fallback_reason": "",
+        "transaction_id": transaction_id,
+    }
+    if mode == "direct":
+        return base
+    if not bool(git_state.get("is_git_repo")):
+        base["fallback_reason"] = "non-git repository"
+        return base
+    start_sha = str(git_state.get("initial_head") or "").strip()
+    if not start_sha:
+        base["fallback_reason"] = "unborn repository"
+        return base
+    if git_status_bytes(root):
+        base["fallback_reason"] = "primary worktree is dirty"
+        return base
+
+    worktree = tx_dir / "worktree"
+    if worktree.exists() or worktree.is_symlink():
+        raise TransactionWorktreeError(f"Transaction worktree path already exists: {worktree}")
+    proc = _git(root, "worktree", "add", "--detach", str(worktree), start_sha)
+    if proc.returncode != 0:
+        raise TransactionWorktreeError(
+            "Unable to create isolated transaction worktree: " + (proc.stdout or "").strip()
+        )
+    verify = _git(worktree, "rev-parse", "--verify", "HEAD")
+    if verify.returncode != 0 or (verify.stdout or "").strip() != start_sha:
+        cleanup_transaction_worktree(root, {"effective": "worktree", "execution_root": str(worktree)})
+        raise TransactionWorktreeError("Isolated transaction worktree did not resolve to the captured start commit")
+
+    base.update({
+        "effective": "worktree",
+        "execution_root": str(worktree.resolve()),
+        "state": "ready",
+        "created_from": start_sha,
+        "created": True,
+    })
+    return base
+
+
+def transaction_execution_root(transaction: dict[str, Any]) -> Path:
+    isolation = transaction.get("isolation")
+    if isinstance(isolation, dict):
+        raw = str(isolation.get("execution_root") or "").strip()
+        if raw:
+            return Path(raw).resolve()
+    return Path(str(transaction.get("repo_root") or ".")).resolve()
+
+
+def isolated_transaction(transaction: dict[str, Any]) -> bool:
+    isolation = transaction.get("isolation")
+    return isinstance(isolation, dict) and str(isolation.get("effective") or "") == "worktree"
+
+
+def cleanup_transaction_worktree(repo_root: Path, isolation: dict[str, Any] | None) -> None:
+    if not isinstance(isolation, dict) or str(isolation.get("effective") or "") != "worktree":
+        return
+    raw = str(isolation.get("execution_root") or "").strip()
+    if not raw:
+        return
+    worktree = Path(raw)
+    root = repo_root.resolve()
+    proc = _git(root, "worktree", "remove", "--force", str(worktree))
+    if proc.returncode != 0:
+        # The linked checkout may already have disappeared after a process death.
+        # Remove the directory and ask Git to prune stale administrative state.
+        if worktree.exists() or worktree.is_symlink():
+            if worktree.is_dir() and not worktree.is_symlink():
+                shutil.rmtree(worktree, ignore_errors=True)
+            else:
+                worktree.unlink(missing_ok=True)
+    _git(root, "worktree", "prune")
+
+
+def worktree_changed_paths(worktree_root: Path) -> list[str]:
+    root = worktree_root.resolve()
+    paths: set[str] = set()
+    commands: tuple[tuple[str, ...], ...] = (
+        ("diff", "--name-only", "-z", "HEAD", "--"),
+        ("diff", "--cached", "--name-only", "-z", "HEAD", "--"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    )
+    for command in commands:
+        try:
+            proc = subprocess.run(
+                ["git", *command], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise TransactionWorktreeError(f"Unable to inspect transaction worktree changes: {exc}") from exc
+        if proc.returncode != 0:
+            raise TransactionWorktreeError(
+                f"Unable to inspect transaction worktree changes with git {' '.join(command)}"
+            )
+        for raw in bytes(proc.stdout or b"").split(b"\0"):
+            if not raw:
+                continue
+            text = raw.decode("utf-8", "surrogateescape")
+            rel = Path(text)
+            if rel.is_absolute() or ".." in rel.parts or (rel.parts and rel.parts[0] == ".git"):
+                raise TransactionWorktreeError(f"Unsafe transaction worktree path: {text}")
+            paths.add(str(rel))
+    return sorted(paths)
+
+
+def sync_paths(source_root: Path, destination_root: Path, paths: Iterable[str]) -> None:
+    src_root = source_root.resolve()
+    dst_root = destination_root.resolve()
+    for raw in paths:
+        rel = Path(str(raw))
+        if rel.is_absolute() or ".." in rel.parts or (rel.parts and rel.parts[0] == ".git"):
+            raise TransactionWorktreeError(f"Unsafe transaction integration path: {raw}")
+        source = src_root / rel
+        destination = dst_root / rel
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination, ignore_errors=True)
+        elif destination.exists() or destination.is_symlink():
+            destination.unlink(missing_ok=True)
+        if not (source.exists() or source.is_symlink()):
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_symlink():
+            destination.symlink_to(os.readlink(source))
+        elif source.is_dir():
+            shutil.copytree(source, destination, symlinks=True)
+        else:
+            shutil.copy2(source, destination, follow_symlinks=False)
+
+
+def self_refresh_repo_root(*, fallback: Path | None = None) -> Path:
+    """Return the authoritative source root for Devtool editable self-refresh.
+
+    Gate artifacts should use this contract rather than hard-coding
+    ``~/Code/devtool`` so a before-commit refresh installs the exact isolated
+    transaction tree being validated and committed.
+    """
+
+    active = str(os.environ.get("DEVTOOL_TRANSACTION_REPO_ROOT") or "").strip()
+    if active:
+        return Path(active).expanduser().resolve()
+    return (fallback or (Path.home() / "Code" / "devtool")).expanduser().resolve()
+
+
+def _probe_worktree(repo_root: Path) -> dict[str, Any]:
+    root = repo_root.resolve()
+    inside = _git(root, "rev-parse", "--is-inside-work-tree")
+    head = _git(root, "rev-parse", "--verify", "HEAD")
+    status = git_status_bytes(root)
+    return {
+        "schema_version": 1,
+        "repository_root": str(root),
+        "git_worktree": inside.returncode == 0 and (inside.stdout or "").strip().lower() == "true",
+        "head": (head.stdout or "").strip() if head.returncode == 0 else "",
+        "clean": not bool(status),
+        "preferred_isolation": "worktree",
+        "self_refresh_root": str(self_refresh_repo_root(fallback=root)),
+    }
+
+
+
+def _fixture_worktree(repo_root: Path) -> dict[str, Any]:
+    """Create and remove a real linked worktree as a capability fixture."""
+
+    root = repo_root.resolve()
+    inside = _git(root, "rev-parse", "--is-inside-work-tree")
+    if inside.returncode != 0 or (inside.stdout or "").strip().lower() != "true":
+        raise TransactionWorktreeError(f"Repository is not a Git worktree: {root}")
+    head = _git(root, "rev-parse", "--verify", "HEAD")
+    if head.returncode != 0 or not (head.stdout or "").strip():
+        raise TransactionWorktreeError("Transaction worktree fixture requires a committed HEAD")
+    start_sha = (head.stdout or "").strip()
+    created = False
+    removed = False
+    worktree_path = ""
+    with tempfile.TemporaryDirectory(prefix="devtool-transaction-worktree-fixture-") as temp_dir:
+        worktree = Path(temp_dir) / "worktree"
+        worktree_path = str(worktree)
+        add = _git(root, "worktree", "add", "--detach", str(worktree), start_sha)
+        if add.returncode != 0:
+            raise TransactionWorktreeError(
+                "Unable to create transaction worktree fixture: " + (add.stdout or "").strip()
+            )
+        created = True
+        try:
+            verify = _git(worktree, "rev-parse", "--verify", "HEAD")
+            if verify.returncode != 0 or (verify.stdout or "").strip() != start_sha:
+                raise TransactionWorktreeError("Transaction worktree fixture HEAD did not match repository HEAD")
+        finally:
+            remove = _git(root, "worktree", "remove", "--force", str(worktree))
+            removed = remove.returncode == 0
+            _git(root, "worktree", "prune")
+            if not removed:
+                raise TransactionWorktreeError(
+                    "Unable to remove transaction worktree fixture: " + (remove.stdout or "").strip()
+                )
+    return {
+        "schema_version": 1,
+        "repository_root": str(root),
+        "head": start_sha,
+        "fixture_worktree": worktree_path,
+        "created": created,
+        "removed": removed,
+        "preferred_isolation": "worktree",
+    }
+
+def _main(argv: list[str] | None = None) -> int:
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(prog="python -m devtool.transaction_worktree")
+    sub = parser.add_subparsers(dest="command", required=True)
+    probe = sub.add_parser("probe")
+    probe.add_argument("--repo", default=".")
+    fixture = sub.add_parser("fixture")
+    fixture.add_argument("--repo", default=".")
+    refresh = sub.add_parser("self-refresh-root")
+    refresh.add_argument("--fallback", default="")
+    args = parser.parse_args(argv)
+    if args.command == "probe":
+        print(json.dumps(_probe_worktree(Path(args.repo)), indent=2, sort_keys=True))
+        return 0
+    if args.command == "fixture":
+        print(json.dumps(_fixture_worktree(Path(args.repo)), indent=2, sort_keys=True))
+        return 0
+    fallback = Path(args.fallback).expanduser() if str(args.fallback).strip() else None
+    print(self_refresh_repo_root(fallback=fallback))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

@@ -61,6 +61,7 @@ from .test_adapters import (
     result_from_stdout as _test_result_from_stdout,
 )
 from .transactions import create_apply_transaction, rollback_transaction, checkpoint_transaction_applied
+from .transaction_worktree import transaction_execution_root
 from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, redact_sensitive_value, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .core.events import NodeDiscovered, NodeFinished, NodeStarted, TaskFinished, TaskStarted, WarningDetected, publish_event
@@ -3534,8 +3535,11 @@ def apply_overlay_bundle(
                 artifact_type="overlay_bundle",
                 preview=preview_data,
             )
+            execution_root = transaction_execution_root(transaction)
+            os.environ["DEVTOOL_TRANSACTION_REPO_ROOT"] = str(execution_root)
+            os.environ["DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT"] = str(repo_root.resolve())
             top_before = _run_required_preflight(
-                repo_root,
+                execution_root,
                 artifact_path,
                 phase="before_extract",
                 manifest=bundle_manifest,
@@ -3556,7 +3560,7 @@ def apply_overlay_bundle(
                 _manifest, entries = materialize_overlay_bundle_entries(artifact_path, tmp)
                 for entry in entries:
                     validation = validate_artifact(
-                        repo_root,
+                        execution_root,
                         entry.path,
                         artifact_type="overlay",
                         check_source_state=True,
@@ -3566,7 +3570,7 @@ def apply_overlay_bundle(
                         label = entry.label or Path(entry.bundle_path).name
                         raise RuntimeError(f"Nested overlay validation failed for {label}: " + "; ".join(validation.messages))
                     nested_before = _run_required_preflight(
-                        repo_root,
+                        execution_root,
                         entry.path,
                         phase="before_extract",
                         manifest=validation.manifest,
@@ -3580,13 +3584,13 @@ def apply_overlay_bundle(
                     )
                     if nested_before is not None:
                         preflight_results.append(nested_before)
-                    skipped_metadata += _extract_archive(entry.path, repo_root)
-                    deleted_paths.extend(_apply_delete_manifest(repo_root, entry.path))
-                    registration = _register_artifact_config(repo_root, validation.manifest, target_override=entry.target)
+                    skipped_metadata += _extract_archive(entry.path, execution_root)
+                    deleted_paths.extend(_apply_delete_manifest(execution_root, entry.path))
+                    registration = _register_artifact_config(execution_root, validation.manifest, target_override=entry.target)
                     if registration:
                         registrations.append(registration)
                     nested_after = _run_required_preflight(
-                        repo_root,
+                        execution_root,
                         entry.path,
                         phase="after_extract",
                         manifest=validation.manifest,
@@ -3604,7 +3608,7 @@ def apply_overlay_bundle(
                     target_note = f" target={entry.target}" if entry.target else ""
                     applied.append(f"[{entry.index}/{len(entries)}] {label}{target_note}")
             top_after = _run_required_preflight(
-                repo_root,
+                execution_root,
                 artifact_path,
                 phase="after_extract",
                 manifest=bundle_manifest,
@@ -3671,6 +3675,9 @@ def apply_overlay_bundle(
                 "delete_artifact_on_success": True,
                 "artifact_type": "overlay_bundle",
                 "config_paths": sorted({item.get("path", "") for item in registrations if item.get("path")}),
+                "transaction_repo_root": str(transaction_execution_root(transaction)),
+                "transaction_primary_repo_root": str(repo_root.resolve()),
+                "transaction_isolation": str((transaction.get("isolation") or {}).get("effective") or "direct"),
             }
             if rollback_result is not None:
                 metadata["rollback_returncode"] = rollback_result.returncode
@@ -3732,9 +3739,12 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
             artifact_type="snapshot" if snapshot else "overlay",
             preview=preview_data,
         )
+        execution_root = transaction_execution_root(transaction)
+        os.environ["DEVTOOL_TRANSACTION_REPO_ROOT"] = str(execution_root)
+        os.environ["DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT"] = str(repo_root.resolve())
         if not snapshot:
             before = _run_required_preflight(
-                repo_root,
+                execution_root,
                 artifact_path,
                 phase="before_extract",
                 manifest=manifest,
@@ -3753,15 +3763,15 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
             tmpdir = Path(tempfile.mkdtemp(prefix="devtool-snapshot-"))
             try:
                 skipped_metadata += _extract_archive(artifact_path, tmpdir)
-                _sync_snapshot(tmpdir, repo_root)
+                _sync_snapshot(tmpdir, execution_root)
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
         else:
-            skipped_metadata += _extract_archive(artifact_path, repo_root)
-            deleted_paths = _apply_delete_manifest(repo_root, artifact_path)
-            registration = _register_artifact_config(repo_root, manifest)
+            skipped_metadata += _extract_archive(artifact_path, execution_root)
+            deleted_paths = _apply_delete_manifest(execution_root, artifact_path)
+            registration = _register_artifact_config(execution_root, manifest)
             after = _run_required_preflight(
-                repo_root,
+                execution_root,
                 artifact_path,
                 phase="after_extract",
                 manifest=manifest,
@@ -3826,6 +3836,9 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
             "artifact_path": str(artifact_path),
             "delete_artifact_on_success": bool(delete_artifact),
             "config_paths": [registration.get("path", "")] if registration.get("path") else [],
+            "transaction_repo_root": str(transaction_execution_root(transaction)),
+            "transaction_primary_repo_root": str(repo_root.resolve()),
+            "transaction_isolation": str((transaction.get("isolation") or {}).get("effective") or "direct"),
         }
         if rollback_result is not None:
             metadata["rollback_returncode"] = rollback_result.returncode

@@ -17,30 +17,39 @@ EXPECTED_TESTS = {
     "roadmap-frx-y01",
     "roadmap-git-frx01",
     "roadmap-git-frx02",
+    "roadmap-git-frx03",
     "roadmap-workflow-exo-baseline",
 }
-EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-git-frx02", "roadmap-current"}
+EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-current"}
 
 
 def _config():
     return load_project_config(str(ROOT), None, target_name="devtool")
 
 
-def test_roadmap00_declares_one_truthful_target_local_non_test_job() -> None:
+def test_roadmap00_declares_truthful_target_local_non_test_jobs() -> None:
     cfg = _config()
     target = cfg.targets["devtool"]
 
-    assert set(target.jobs) == {"source-syntax"}
-    job = target.jobs["source-syntax"]
-    assert job.name == "devtool.source-syntax"
-    assert job.runner == "command"
-    assert job.command == ("python", "-m", "compileall", "-q", "devtool", "tests")
-    assert job.inputs == ("devtool/**", "tests/**")
-    assert job.outputs == (".devtool/cache/roadmap-pyc/**",)
-    assert job.env["PYTHONPYCACHEPREFIX"] == ".devtool/cache/roadmap-pyc"
-    assert job.metadata["target_local"] is True
-    assert job.metadata["target"] == "devtool"
-    assert job.metadata["local_name"] == "source-syntax"
+    assert set(target.jobs) == {"source-syntax", "transaction-worktree-fixture", "self-refresh-root-probe"}
+    syntax = target.jobs["source-syntax"]
+    assert syntax.name == "devtool.source-syntax"
+    assert syntax.runner == "command"
+    assert syntax.command == ("python", "-m", "compileall", "-q", "devtool", "tests")
+    assert syntax.inputs == ("devtool/**", "tests/**")
+    assert syntax.outputs == (".devtool/cache/roadmap-pyc/**",)
+    assert syntax.env["PYTHONPYCACHEPREFIX"] == ".devtool/cache/roadmap-pyc"
+    assert syntax.metadata["target_local"] is True
+
+    fixture = target.jobs["transaction-worktree-fixture"]
+    assert fixture.command == ("python", "-m", "devtool.transaction_worktree", "fixture", "--repo", ".")
+    assert "read_only" not in fixture.metadata
+    assert fixture.metadata["roadmap_id"] == "GIT-FRX-03"
+
+    refresh = target.jobs["self-refresh-root-probe"]
+    assert refresh.command == ("python", "-m", "devtool.transaction_worktree", "self-refresh-root", "--fallback", ".")
+    assert refresh.metadata["read_only"] is True
+    assert refresh.metadata["roadmap_id"] == "GIT-FRX-03"
 
 
 def test_roadmap00_declared_tests_use_unique_structured_junit_evidence() -> None:
@@ -90,12 +99,22 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
         "test:roadmap-workflow-exo-baseline",
     ]
 
+    git_frx03 = plan_selected_workflow(cfg, "roadmap-git-frx03")
+    assert {node.ref.raw for node in git_frx03.nodes} == {
+        "job:source-syntax",
+        "job:transaction-worktree-fixture",
+        "job:self-refresh-root-probe",
+        "test:roadmap-git-frx02",
+        "test:roadmap-git-frx03",
+        "test:roadmap-workflow-exo-baseline",
+    }
+
     current = plan_selected_workflow(cfg, "roadmap-current")
     assert {node.ref.raw for node in current.nodes} == {
         "job:source-syntax",
         *(f"test:{test_id}" for test_id in EXPECTED_TESTS),
     }
-    assert len(current.nodes) == 7
+    assert len(current.nodes) == 8
 
 
 def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons() -> None:
@@ -105,8 +124,12 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     with redirect_stdout(jobs_out):
         _jobs(cfg, as_json=True, selected_target="devtool")
     jobs = json.loads(jobs_out.getvalue())
-    assert jobs["summary"]["target_local_jobs"] == 1
-    assert jobs["completion"]["target_job_keys"] == ["devtool.source-syntax"]
+    assert jobs["summary"]["target_local_jobs"] == 3
+    assert jobs["completion"]["target_job_keys"] == [
+        "devtool.self-refresh-root-probe",
+        "devtool.source-syntax",
+        "devtool.transaction-worktree-fixture",
+    ]
 
     workflows_out = io.StringIO()
     with redirect_stdout(workflows_out):
@@ -123,7 +146,7 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
 
     assert payload["action"] == "roadmap-current"
     assert payload["targets"] == ["devtool"]
-    assert payload["summary"]["node_count"] == 7
+    assert payload["summary"]["node_count"] == 8
     assert payload["summary"]["target_local_job_count"] == 1
     assert payload["summary"]["target_local_jobs"][0]["key"] == "devtool.source-syntax"
     assert payload["schedule"]["nodes"]
@@ -131,6 +154,7 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     assert by_ref["job:source-syntax"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx01"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx02"]["target"] == "devtool"
+    assert by_ref["test:roadmap-git-frx03"]["target"] == "devtool"
     assert by_ref["test:roadmap-frx-y01"]["target"] == "devtool"
     source_node = next(node for node in payload["schedule"]["nodes"] if node["job_key"] == "devtool.source-syntax")
     assert source_node["writes_known"] is True

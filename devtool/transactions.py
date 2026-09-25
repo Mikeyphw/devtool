@@ -23,6 +23,16 @@ from .git_transaction_journal import (
     establish_git_transaction_recovery,
     update_git_transaction_journal,
 )
+from .transaction_worktree import (
+    cleanup_transaction_worktree,
+    git_status_identity,
+    isolated_transaction,
+    prepare_transaction_worktree,
+    requested_transaction_isolation,
+    sync_paths,
+    transaction_execution_root,
+    worktree_changed_paths,
+)
 
 
 def devtool_xdg_dir() -> Path:
@@ -611,6 +621,7 @@ def _capture_git_state(repo_root: Path, tx_dir: Path) -> dict[str, Any]:
         "index_backup": str(backup_path),
         "index_backup_sha256": hashlib.sha256(backup_path.read_bytes()).hexdigest() if index_existed else "",
         "initial_index_identity": initial_index_identity,
+        "initial_worktree_status_identity": git_status_identity(repo_root),
         "post_apply_index_identity": None,
         "applied_commit": "",
         "restored": False,
@@ -625,8 +636,9 @@ def _current_git_head(repo_root: Path) -> str:
 def record_transaction_git_commit(transaction_path: str | Path | None, commit_hash: str) -> None:
     """Record the commit created by an active apply transaction.
 
-    This lets rollback safely rewind only the commit that devtool itself created;
-    an unexpected later user commit is never reset automatically.
+    Direct transactions record the commit as already applied to the primary
+    checkout.  Isolated transactions record it as the transaction-worktree
+    result first; primary HEAD is advanced only by the integration checkpoint.
     """
 
     if not transaction_path or not str(commit_hash).strip():
@@ -638,18 +650,187 @@ def record_transaction_git_commit(transaction_path: str | Path | None, commit_ha
     git_state = tx.get("git_state")
     if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
         return
-    git_state["applied_commit"] = str(commit_hash).strip()
-    index_path = Path(str(git_state.get("index_path") or ""))
-    if not str(index_path):
-        raise RuntimeError("Apply transaction is missing its Git index path")
-    git_state["post_apply_index_identity"] = _git_index_identity(index_path)
-    git_state["recorded_at"] = _utc_now()
-    tx["git_state"] = git_state
-    update_git_transaction_journal(tx, recovery_state="commit-recorded", result_commit=str(commit_hash).strip())
+    commit = str(commit_hash).strip()
+    if isolated_transaction(tx):
+        isolation = dict(tx.get("isolation") or {})
+        isolation["result_commit"] = commit
+        isolation["commit_recorded_at"] = _utc_now()
+        tx["isolation"] = isolation
+        update_git_transaction_journal(tx, recovery_state="worktree-commit-recorded", result_commit=commit)
+    else:
+        git_state["applied_commit"] = commit
+        index_path = Path(str(git_state.get("index_path") or ""))
+        if not str(index_path):
+            raise RuntimeError("Apply transaction is missing its Git index path")
+        git_state["post_apply_index_identity"] = _git_index_identity(index_path)
+        git_state["recorded_at"] = _utc_now()
+        tx["git_state"] = git_state
+        update_git_transaction_journal(tx, recovery_state="commit-recorded", result_commit=commit)
     tx["updated_at"] = _utc_now()
     _atomic_write_json(path, tx)
     _write_transaction_active_marker(path, tx)
 
+
+def _git_name_only(repo_root: Path, *args: str) -> list[str]:
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"Unable to inspect transaction Git delta: {exc}") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or b"").decode("utf-8", "replace").strip()
+        raise RuntimeError(f"Unable to inspect transaction Git delta: {detail or 'git command failed'}")
+    values: list[str] = []
+    for raw in bytes(proc.stdout or b"").split(b"\0"):
+        if raw:
+            values.append(raw.decode("utf-8", "surrogateescape"))
+    return values
+
+
+def _verify_primary_checkout_unchanged_for_integration(repo_root: Path, tx: dict[str, Any]) -> None:
+    git_state = tx.get("git_state")
+    if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
+        raise RuntimeError("Isolated transaction integration requires an authoritative Git repository")
+    expected_head = str(git_state.get("initial_head") or "")
+    current_head = _current_git_head(repo_root)
+    if current_head != expected_head:
+        raise RuntimeError(
+            "Primary checkout HEAD changed while the isolated transaction was running; refusing integration"
+        )
+    expected_index = git_state.get("initial_index_identity")
+    index_path = Path(str(git_state.get("index_path") or ""))
+    if isinstance(expected_index, dict) and _git_index_identity(index_path) != expected_index:
+        raise RuntimeError(
+            "Primary checkout index changed while the isolated transaction was running; refusing integration"
+        )
+    expected_status = str(git_state.get("initial_worktree_status_identity") or "")
+    if expected_status and git_status_identity(repo_root) != expected_status:
+        raise RuntimeError(
+            "Primary checkout worktree changed while the isolated transaction was running; refusing integration"
+        )
+
+
+def integrate_transaction_worktree(transaction_path: str | Path | None) -> dict[str, Any]:
+    """Integrate a successful isolated transaction into the primary checkout.
+
+    The primary checkout must still match the exact source state captured before
+    the worktree was created.  Newly discovered hook/commit paths are registered
+    with the durable transaction before any primary mutation so rollback remains
+    complete even when lifecycle hooks expand the write set.
+    """
+
+    if not transaction_path:
+        return {"state": "not-applicable", "effective": "direct"}
+    path = Path(transaction_path)
+    if not path.exists():
+        return {"state": "closed", "effective": "direct"}
+    tx = _read_json(path)
+    if not isolated_transaction(tx):
+        return {"state": "not-applicable", "effective": "direct"}
+
+    isolation = dict(tx.get("isolation") or {})
+    if str(isolation.get("state") or "") == "integrated":
+        return isolation
+    repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
+    execution_root = transaction_execution_root(tx)
+    if not execution_root.exists():
+        raise RuntimeError(f"Isolated transaction worktree is missing: {execution_root}")
+    _verify_primary_checkout_unchanged_for_integration(repo_root, tx)
+
+    git_state = dict(tx.get("git_state") or {})
+    start_commit = str(git_state.get("initial_head") or "").strip()
+    result_commit = _current_git_head(execution_root)
+    if not result_commit:
+        raise RuntimeError("Isolated transaction worktree has no result commit")
+
+    changed_paths = set(worktree_changed_paths(execution_root))
+    if start_commit and result_commit != start_commit:
+        changed_paths.update(_git_name_only(execution_root, "diff", "--name-only", "-z", start_commit, result_commit, "--"))
+    if changed_paths:
+        register_transaction_paths(path, sorted(changed_paths))
+        tx = _read_json(path)
+        isolation = dict(tx.get("isolation") or {})
+        git_state = dict(tx.get("git_state") or {})
+
+    isolation.update({
+        "state": "integrating",
+        "integration_started_at": _utc_now(),
+        "result_commit": result_commit,
+        "integration_paths": sorted(changed_paths),
+    })
+    tx["isolation"] = isolation
+    tx["updated_at"] = _utc_now()
+    _atomic_write_json(path, tx)
+    _write_transaction_active_marker(path, tx)
+
+    if result_commit != start_commit:
+        head_ref = str(git_state.get("head_ref") or "").strip()
+        if head_ref:
+            proc = subprocess.run(
+                ["git", "update-ref", head_ref, result_commit, start_commit],
+                cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError("Unable to advance primary branch to isolated transaction result: " + (proc.stdout or "").strip())
+        proc = subprocess.run(
+            ["git", "reset", "--hard", result_commit],
+            cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError("Unable to materialize isolated transaction commit in primary checkout: " + (proc.stdout or "").strip())
+        git_state["applied_commit"] = result_commit
+        git_state["post_apply_index_identity"] = _git_index_identity(Path(str(git_state.get("index_path") or "")))
+        git_state["recorded_at"] = _utc_now()
+        tx["git_state"] = git_state
+        update_git_transaction_journal(tx, recovery_state="primary-commit-integrated", result_commit=result_commit)
+        tx["updated_at"] = _utc_now()
+        _atomic_write_json(path, tx)
+        _write_transaction_active_marker(path, tx)
+
+    # Preserve any uncommitted result (including after-commit hook writes) with
+    # the same semantics as a direct apply: working tree changes, index unchanged.
+    remaining = worktree_changed_paths(execution_root)
+    try:
+        if remaining:
+            sync_paths(execution_root, repo_root, remaining)
+    except BaseException:
+        # Integration is the only writer after the exact primary-state preflight.
+        # Checkpoint the current live identities so the durable rollback can
+        # safely resume even if a filesystem failure interrupted materialization.
+        tx = _read_json(path)
+        for entry in tx.get("affected_paths", []) or []:
+            if isinstance(entry, dict):
+                rel = _safe_rel(str(entry.get("path") or ""))
+                entry["applied_identity"] = _path_identity(repo_root / rel)
+        isolation = dict(tx.get("isolation") or isolation)
+        isolation["state"] = "integration-failed"
+        isolation["integration_failed_at"] = _utc_now()
+        tx["isolation"] = isolation
+        tx["updated_at"] = _utc_now()
+        _atomic_write_json(path, tx)
+        _write_transaction_active_marker(path, tx)
+        raise
+
+    tx = _read_json(path)
+    for entry in tx.get("affected_paths", []) or []:
+        if isinstance(entry, dict):
+            rel = _safe_rel(str(entry.get("path") or ""))
+            entry["applied_identity"] = _path_identity(repo_root / rel)
+
+    isolation = dict(tx.get("isolation") or isolation)
+    isolation.update({
+        "state": "integrated",
+        "integrated_at": _utc_now(),
+        "result_commit": result_commit,
+        "integration_paths": sorted(changed_paths),
+    })
+    tx["isolation"] = isolation
+    tx["updated_at"] = _utc_now()
+    update_git_transaction_journal(tx, recovery_state="integrated", result_commit=result_commit)
+    _atomic_write_json(path, tx)
+    _write_transaction_active_marker(path, tx)
+    return isolation
 
 def _restore_git_state(repo_root: Path, tx: dict[str, Any]) -> str:
     git_state = tx.get("git_state")
@@ -789,7 +970,18 @@ def create_apply_transaction(
         "snapshot": "apply-snapshot",
     }.get(artifact_type, f"apply-{artifact_type}")
     git_state = _capture_git_state(repo_root, tx_dir)
+    requested_isolation = requested_transaction_isolation()
     created_recovery_refs: tuple[dict[str, str], ...] = ()
+    isolation: dict[str, Any] = {
+        "schema_version": 1,
+        "requested": requested_isolation,
+        "effective": "direct",
+        "primary_root": str(repo_root),
+        "execution_root": str(repo_root),
+        "state": "initializing",
+        "fallback_reason": "",
+        "transaction_id": transaction_id,
+    }
 
     try:
         git_recovery, created_recovery_refs = establish_git_transaction_recovery(
@@ -824,10 +1016,25 @@ def create_apply_transaction(
             "preview_counts": preview.get("counts", {}),
             "git_state": {**git_state, "rollback_scope": "paths-v1"},
             "git_recovery": git_recovery,
+            "isolation": isolation,
         }
         federation_owner = federation_operational_owner_from_environment(repo_root, run_id=str(tx.get("run_id") or ""))
         if federation_owner:
             tx["federation_owner"] = federation_owner
+        _atomic_write_json(_transaction_file(tx_dir), tx)
+
+        isolation = prepare_transaction_worktree(
+            repo_root,
+            tx_dir,
+            transaction_id=transaction_id,
+            git_state=git_state,
+            requested=requested_isolation,
+        )
+        tx["isolation"] = isolation
+        if isinstance(tx.get("git_recovery"), dict):
+            tx["git_recovery"]["worktree_path"] = str(isolation.get("execution_root") or repo_root)
+            tx["git_recovery"]["isolation"] = str(isolation.get("effective") or "direct")
+        tx["execution_root"] = str(isolation.get("execution_root") or repo_root)
         _atomic_write_json(_transaction_file(tx_dir), tx)
 
         tx["backup_method"] = "none"
@@ -848,6 +1055,7 @@ def create_apply_transaction(
         # No artifact worktree mutation has happened yet.  Undo only private
         # refs created by this setup attempt and remove the incomplete XDG
         # journal so a failed recovery bootstrap never looks resumable.
+        cleanup_transaction_worktree(repo_root, isolation)
         cleanup_created_recovery_refs(repo_root, created_recovery_refs)
         shutil.rmtree(tx_dir, ignore_errors=True)
         raise
@@ -869,7 +1077,7 @@ def register_transaction_paths(
     repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
     backup_dir = Path(str(tx.get("backup_dir") or path.parent / "backup")).resolve()
     status = str(tx.get("status") or "")
-    if status not in {"backup-ready", "pending-validation", "validation-running", "validation-blocked", "validated"}:
+    if status not in {"backup-ready", "applied", "pending-validation", "validation-running", "validation-blocked", "validated", "validated-uncommitted"}:
         raise RuntimeError(f"Cannot extend apply transaction in state {status!r}.")
 
     entries = [item for item in tx.get("affected_paths", []) or [] if isinstance(item, dict)]
@@ -1047,6 +1255,14 @@ def resolve_active_transaction(
 def _cleanup_transaction_dir(path: Path) -> None:
     tx_dir = path.parent
     try:
+        tx = _read_json(path) if path.exists() else {}
+        repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
+        cleanup_transaction_worktree(repo_root, tx.get("isolation") if isinstance(tx, dict) else None)
+    except Exception:
+        # Preserve the existing cleanup guarantee even if linked-worktree metadata
+        # is already stale; git worktree prune on the next operation can repair it.
+        pass
+    try:
         shutil.rmtree(tx_dir, ignore_errors=True)
     except Exception:
         pass
@@ -1059,6 +1275,9 @@ def mark_transaction_completed(transaction_path: str | Path | None) -> None:
     if not path.exists():
         return
     tx = _read_json(path)
+    if isolated_transaction(tx):
+        integrate_transaction_worktree(path)
+        tx = _read_json(path)
     tx["status"] = "completed"
     update_git_transaction_journal(tx, recovery_state="completed", finalization_state="completed")
     tx["completed_at"] = _utc_now()
@@ -1084,6 +1303,9 @@ def abandon_transaction(
     if not path.exists():
         return
     tx = _read_json(path)
+    if isolated_transaction(tx):
+        integrate_transaction_worktree(path)
+        tx = _read_json(path)
     tx.update({
         "status": "abandoned-kept-changes",
         "abandon_reason": reason,
