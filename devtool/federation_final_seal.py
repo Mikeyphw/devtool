@@ -17,13 +17,25 @@ from .completion_state import build_completion_state
 from .federation_discovery import FederationDiscoveryError, resolve_federated_repository
 from .federation_gate import build_federation_gate1_report
 from .federation_gate2 import build_federation_gate2_report
-from .federation_plan import FederationPlanError, build_federated_plan
+from .federation_plan import FederationPlanError, build_federated_group_plan, build_federated_plan
 from .repository_identity import same_repository_identity
 
 if TYPE_CHECKING:
     from .models import ProjectConfig
 
 FEDERATION_FINAL_SEAL_SCHEMA_VERSION = 1
+
+FEDERATION_FINAL_SEAL_EXTENSION_GATE = "FRX-X04"
+FEDERATION_FINAL_SEAL_EXTENSIONS = ("FRX-X01", "FRX-X02", "FRX-X03", "FRX-X04")
+FEDERATION_FINAL_SEAL_EXTENSION_CASES = (
+    "target-qualified-workflow-identity",
+    "target-identity-convergence",
+    "executable-federation-groups",
+    "snapshot-adoption-validate-ready-28",
+    "snapshot-adoption-build-ready-5",
+    "snapshot-adoption-test-ready-3",
+    "snapshot-hidden-target-surfaces",
+)
 FEDERATION_FINAL_SEAL_SAFETY_CASES = (
     "parent-child-same-directory",
     "symlink-back-to-parent",
@@ -87,6 +99,45 @@ FEDERATION_FINAL_SEAL_SAFETY_EVIDENCE = (
     FederationSafetyEvidence("duplicate-identity-ownership", "Duplicate canonical ownership fails closed.", ("tests/test_frx_full_roadmap_reseal.py::test_owner_resolver_duplicate_canonical_ownership_fails_closed",)),
 )
 
+
+FEDERATION_FINAL_SEAL_EXTENSION_EVIDENCE = (
+    FederationSafetyEvidence(
+        "target-qualified-workflow-identity",
+        "FRX-X01 resolves repository::target::workflow without changing legacy repository::workflow semantics.",
+        ("tests/test_frx_x01_target_qualified_workflow_identity.py::test_target_qualified_ref_selects_non_default_child_target",),
+    ),
+    FederationSafetyEvidence(
+        "target-identity-convergence",
+        "FRX-X02 preserves canonical repository/target/workflow identity across EXO lineage and transport.",
+        ("tests/test_frx_x02_target_identity_convergence.py::test_workflow_child_persists_canonical_target_identity_across_exo_and_report",),
+    ),
+    FederationSafetyEvidence(
+        "executable-federation-groups",
+        "FRX-X03 executes federation groups through the normal FRX coordinator and lineage runtime.",
+        ("tests/test_frx_x03_executable_federation_groups.py::test_group_execution_uses_existing_frx_coordinator_and_persists_group_lineage",),
+    ),
+    FederationSafetyEvidence(
+        "snapshot-adoption-validate-ready-28",
+        "The snapshot-derived validate-ready contract remains a 28-node parallel federation DAG.",
+        ("tests/test_frx_x04_real_repo_adoption_reseal.py::test_snapshot_validate_ready_preserves_28_node_parallel_dag",),
+    ),
+    FederationSafetyEvidence(
+        "snapshot-adoption-build-ready-5",
+        "The snapshot-derived build-ready contract remains a 5-node parallel federation DAG.",
+        ("tests/test_frx_x04_real_repo_adoption_reseal.py::test_snapshot_build_ready_preserves_5_node_parallel_dag",),
+    ),
+    FederationSafetyEvidence(
+        "snapshot-adoption-test-ready-3",
+        "The snapshot-derived test-ready contract remains a 3-node parallel federation DAG.",
+        ("tests/test_frx_x04_real_repo_adoption_reseal.py::test_snapshot_test_ready_preserves_3_node_parallel_dag",),
+    ),
+    FederationSafetyEvidence(
+        "snapshot-hidden-target-surfaces",
+        "Previously hidden non-default target workflows are addressable without changing child defaults.",
+        ("tests/test_frx_x04_real_repo_adoption_reseal.py::test_snapshot_hidden_target_surfaces_are_now_addressable",),
+    ),
+)
+
 FEDERATION_FINAL_SEAL_AREAS = (
     "config-contract",
     "repository-identity",
@@ -129,6 +180,10 @@ class FederationFinalSealReport:
     checks: tuple[FederationFinalSealCheck, ...]
     safety_evidence: tuple[dict[str, Any], ...] = ()
     safety_evidence_errors: tuple[str, ...] = ()
+    extension_gate: str = FEDERATION_FINAL_SEAL_EXTENSION_GATE
+    extensions: tuple[str, ...] = FEDERATION_FINAL_SEAL_EXTENSIONS
+    extension_evidence: tuple[dict[str, Any], ...] = ()
+    extension_evidence_errors: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -298,20 +353,44 @@ def _repository_checks(config: "ProjectConfig", topology: _TopologyAudit) -> tup
     return identity_ok, discovery_ok, diagnostics
 
 
-def _planning_check(config: "ProjectConfig") -> tuple[bool, list[str], int]:
+def _planning_check(config: "ProjectConfig") -> tuple[bool, list[str], int, int, int, int]:
     errors: list[str] = []
-    node_count = 0
+    workflow_nodes = 0
+    group_nodes = 0
     for name in sorted(config.federation.workflows):
         try:
             graph = build_federated_plan(config, name)
             ordered = graph.topological_order()
         except (FederationPlanError, FederationDiscoveryError, ValueError, SystemExit) as exc:
-            errors.append(f"{name}: {exc}")
+            errors.append(f"workflow:{name}: {exc}")
             continue
-        node_count += len(graph.nodes)
+        workflow_nodes += len(graph.nodes)
         if len(ordered) != len(graph.nodes):
-            errors.append(f"{name}: topological order omitted nodes")
-    return not errors, errors, node_count
+            errors.append(f"workflow:{name}: topological order omitted nodes")
+
+    executable_groups = {
+        name: group for name, group in config.federation.groups.items() if group.executable
+    }
+    for name in sorted(executable_groups):
+        try:
+            graph = build_federated_group_plan(config, name)
+            ordered = graph.topological_order()
+        except (FederationPlanError, FederationDiscoveryError, ValueError, SystemExit) as exc:
+            errors.append(f"group:{name}: {exc}")
+            continue
+        group_nodes += len(graph.nodes)
+        if graph.group != name:
+            errors.append(f"group:{name}: canonical group identity mismatch ({graph.workflow!r})")
+        if len(ordered) != len(graph.nodes):
+            errors.append(f"group:{name}: topological order omitted nodes")
+    return (
+        not errors,
+        errors,
+        workflow_nodes + group_nodes,
+        workflow_nodes,
+        group_nodes,
+        len(executable_groups),
+    )
 
 
 def _gate_check(report: Any, name: str) -> tuple[bool, str]:
@@ -538,7 +617,16 @@ def _documentation_completion_probe(config: "ProjectConfig") -> tuple[bool, str,
             docs_ok = False
             completion_file_ok = False
         else:
-            required_doc_terms = ("FRX-12", "federation status", "federation run", "federation exec", "final seal")
+            required_doc_terms = (
+                "FRX-12",
+                "FRX-X04",
+                "repository::target::workflow",
+                "federation status",
+                "federation run",
+                "federation run --group",
+                "federation exec",
+                "final seal",
+            )
             docs_ok = all(term.lower() in docs.lower() for term in required_doc_terms)
             completion_file_ok = (
                 "federation" in completion_text
@@ -568,6 +656,55 @@ def validate_federation_safety_evidence(package_root: str | Path | None = None) 
             errors.append("unexpected safety evidence: " + ", ".join(extra))
 
     for case_id in FEDERATION_FINAL_SEAL_SAFETY_CASES:
+        item = declared.get(case_id)
+        resolved: list[str] = []
+        unresolved: list[str] = []
+        if item is None or not item.evidence:
+            unresolved.append("<missing>")
+        else:
+            for ref in item.evidence:
+                path_text, sep, node = ref.partition("::")
+                path = root / path_text
+                if not sep or not node or not path.is_file():
+                    unresolved.append(ref)
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except OSError:
+                    unresolved.append(ref)
+                    continue
+                if f"def {node}(" not in text and f"async def {node}(" not in text:
+                    unresolved.append(ref)
+                    continue
+                resolved.append(ref)
+        if unresolved:
+            errors.append(f"{case_id}: unresolved executable evidence: {', '.join(unresolved)}")
+        rows.append({
+            "case_id": case_id,
+            "promise": item.promise if item is not None else "",
+            "evidence": list(item.evidence) if item is not None else [],
+            "resolved": resolved,
+            "status": "proved" if resolved and not unresolved else "error",
+        })
+    return not errors, tuple(rows), tuple(errors)
+
+
+def validate_federation_extension_evidence(package_root: str | Path | None = None) -> tuple[bool, tuple[dict[str, Any], ...], tuple[str, ...]]:
+    """Resolve every FRX-X01..X04 extension promise to executable source evidence."""
+
+    root = Path(package_root).expanduser().resolve(strict=False) if package_root else Path(__file__).resolve().parents[1]
+    declared = {item.case_id: item for item in FEDERATION_FINAL_SEAL_EXTENSION_EVIDENCE}
+    errors: list[str] = []
+    rows: list[dict[str, Any]] = []
+    if tuple(declared) != FEDERATION_FINAL_SEAL_EXTENSION_CASES:
+        missing = [case for case in FEDERATION_FINAL_SEAL_EXTENSION_CASES if case not in declared]
+        extra = [case for case in declared if case not in FEDERATION_FINAL_SEAL_EXTENSION_CASES]
+        if missing:
+            errors.append("missing extension evidence: " + ", ".join(missing))
+        if extra:
+            errors.append("unexpected extension evidence: " + ", ".join(extra))
+
+    for case_id in FEDERATION_FINAL_SEAL_EXTENSION_CASES:
         item = declared.get(case_id)
         resolved: list[str] = []
         unresolved: list[str] = []
@@ -637,11 +774,16 @@ def build_federation_final_seal_report(config: "ProjectConfig") -> FederationFin
         boundary_ok, boundary_detail = False, f"FRX-04 prerequisite failed: {exc}"
     checks.append(_check("boundary-isolation", "ok" if boundary_ok else "error", boundary_detail))
 
-    planning_ok, planning_errors, node_count = _planning_check(config)
+    planning_ok, planning_errors, node_count, workflow_nodes, group_nodes, executable_group_count = _planning_check(config)
     checks.append(_check(
         "graph-planning", "ok" if planning_ok else "error",
-        "configured federation workflow DAGs are deterministic and topologically complete" if planning_ok else "federation workflow planning failed",
-        workflows=len(config.federation.workflows), nodes=node_count, errors=planning_errors,
+        "configured federation workflow/group DAGs are deterministic and topologically complete" if planning_ok else "federation workflow/group planning failed",
+        workflows=len(config.federation.workflows),
+        executable_groups=executable_group_count,
+        workflow_nodes=workflow_nodes,
+        group_nodes=group_nodes,
+        nodes=node_count,
+        errors=planning_errors,
     ))
 
     cycle_ok = not topology.cycles
@@ -694,6 +836,7 @@ def build_federation_final_seal_report(config: "ProjectConfig") -> FederationFin
     # fails the seal through the top-level status while preserving that public
     # inventory.
     safety_ok, safety_rows, safety_errors = validate_federation_safety_evidence()
+    extension_ok, extension_rows, extension_errors = validate_federation_extension_evidence()
 
     standalone_ok = True
     standalone_detail = "federation is additive and opt-in; standalone gate contracts remain side-effect free"
@@ -721,10 +864,14 @@ def build_federation_final_seal_report(config: "ProjectConfig") -> FederationFin
         gate="FRX-12",
         repository=repository,
         mode=mode,
-        status="error" if not safety_ok else _overall(checks),
+        status="error" if not safety_ok or not extension_ok else _overall(checks),
         checks=tuple(checks),
         safety_evidence=tuple(dict(item) for item in safety_rows),
         safety_evidence_errors=tuple(safety_errors),
+        extension_gate=FEDERATION_FINAL_SEAL_EXTENSION_GATE,
+        extensions=FEDERATION_FINAL_SEAL_EXTENSIONS,
+        extension_evidence=tuple(dict(item) for item in extension_rows),
+        extension_evidence_errors=tuple(extension_errors),
     )
 
 
@@ -739,16 +886,23 @@ def federation_final_seal_as_dict(report: FederationFinalSealReport) -> dict[str
         "summary": {
             "areas": len(FEDERATION_FINAL_SEAL_AREAS),
             "checks": len(report.checks),
-            "errors": sum(item.status == "error" for item in report.checks) + len(report.safety_evidence_errors),
+            "errors": sum(item.status == "error" for item in report.checks) + len(report.safety_evidence_errors) + len(report.extension_evidence_errors),
             "warnings": sum(item.status == "warning" for item in report.checks),
             "qualified": sum(item.status == "ok" for item in report.checks),
             "safety_evidence_errors": len(report.safety_evidence_errors),
+            "extension_evidence_errors": len(report.extension_evidence_errors),
         },
         "required_areas": list(FEDERATION_FINAL_SEAL_AREAS),
         "required_safety_cases": list(FEDERATION_FINAL_SEAL_SAFETY_CASES),
+        "extension_gate": report.extension_gate,
+        "sealed_extensions": list(report.extensions),
+        "required_extension_cases": list(FEDERATION_FINAL_SEAL_EXTENSION_CASES),
+        "extension_evidence_contract": [item.as_dict() for item in FEDERATION_FINAL_SEAL_EXTENSION_EVIDENCE],
         "safety_evidence_contract": [item.as_dict() for item in FEDERATION_FINAL_SEAL_SAFETY_EVIDENCE],
         "safety_evidence": [dict(item) for item in report.safety_evidence],
         "safety_evidence_errors": list(report.safety_evidence_errors),
+        "extension_evidence": [dict(item) for item in report.extension_evidence],
+        "extension_evidence_errors": list(report.extension_evidence_errors),
         "checks": [item.as_dict() for item in report.checks],
     }
 
@@ -759,6 +913,7 @@ def render_federation_final_seal(report: FederationFinalSealReport) -> str:
         f"Repository: {report.repository}",
         f"Mode: {report.mode}",
         f"Status: {report.status}",
+        f"Extensions: {report.extension_gate} ({', '.join(report.extensions)})",
         "",
     ]
     for item in report.checks:
@@ -768,6 +923,11 @@ def render_federation_final_seal(report: FederationFinalSealReport) -> str:
         lines.append("Safety evidence failures:")
         for error in report.safety_evidence_errors:
             lines.append(f"ERROR    {error}")
+    if report.extension_evidence_errors:
+        lines.append("")
+        lines.append("Extension evidence failures:")
+        for error in report.extension_evidence_errors:
+            lines.append(f"ERROR    {error}")
     return "\n".join(lines) + "\n"
 
 
@@ -776,6 +936,10 @@ __all__ = [
     "FEDERATION_FINAL_SEAL_SCHEMA_VERSION",
     "FEDERATION_FINAL_SEAL_SAFETY_CASES",
     "FEDERATION_FINAL_SEAL_SAFETY_EVIDENCE",
+    "FEDERATION_FINAL_SEAL_EXTENSION_GATE",
+    "FEDERATION_FINAL_SEAL_EXTENSIONS",
+    "FEDERATION_FINAL_SEAL_EXTENSION_CASES",
+    "FEDERATION_FINAL_SEAL_EXTENSION_EVIDENCE",
     "FederationSafetyEvidence",
     "FederationFinalSealCheck",
     "FederationFinalSealReport",
@@ -783,4 +947,5 @@ __all__ = [
     "federation_final_seal_as_dict",
     "render_federation_final_seal",
     "validate_federation_safety_evidence",
+    "validate_federation_extension_evidence",
 ]

@@ -503,3 +503,79 @@ runs persist `federation_group` in coordinator and child lineage, forward it
 through whole-run/provider environments, retain it in transport/return-artifact
 provenance, and expose executable-vs-metadata group details in federation
 observability. Completion only offers executable groups for `--group`.
+
+## FRX-X04: real-repository adoption and detour re-seal
+
+FRX-X04 closes the target-selection/group-execution detour by replaying the
+cross-repository contracts observed in the 2026-09-24 repository snapshot audit.
+The acceptance fixture is snapshot-contract-derived: it preserves the audited
+repository aliases, default targets, workflow surfaces, hidden non-default
+workflow targets, and observed graph cardinalities without claiming that an
+extracted fixture is a live checkout.
+
+The audited coordinator surfaces are:
+
+```toml
+[federation.workflows.validate-ready]
+depends_on = [
+  "mike-svmods::validate",
+  "telegram-speed-hook::validate",
+  "chroot-ctl::validate",
+  "mike-cli-suite::validate",
+]
+
+[federation.workflows.build-ready]
+depends_on = [
+  "telegram-speed-hook::build",
+  "mike-cli-suite::build",
+]
+
+[federation.workflows.test-ready]
+depends_on = [
+  "telegram-speed-hook::test",
+  "mike-cli-suite::test",
+]
+
+[federation.groups]
+validate-ready = ["workflow:validate-ready"]
+build-ready = ["workflow:build-ready"]
+test-ready = ["workflow:test-ready"]
+```
+
+The sealed planning contracts are:
+
+- `validate-ready`: 28 FRX graph nodes including the synthetic aggregate;
+- `build-ready`: 5 graph nodes;
+- `test-ready`: 3 graph nodes.
+
+These are parallel cross-repository aggregates. FRX-X04 asserts that no
+repository's child workflow introduces a dependency edge into another
+repository merely because the repositories appear together in a federation
+workflow or group.
+
+FRX-X01 target qualification is also exercised against the non-default workflow
+surfaces that were hidden by the old two-component grammar, including
+`chroot-ctl::chrootctl_root_module::package`, Mike SVMods validation subtargets,
+`mike-cli-suite::xbs::build`, `mike-cli-suite::mike_servers::test`,
+`scriptexts::smoke-python::validate`, and `xdm::xdm_modern::package`. Resolving
+these references must not rewrite the child's configured default target.
+
+FRX-08 Gate 2 and FRX-12 now qualify executable federation groups through the
+same planner used by `federation run --group`; group planning is no longer only
+an observability/completion feature. FRX-12 intentionally retains its original
+14 public qualification areas. The FRX-X01..X04 detour is represented as a
+separate machine-readable extension-evidence contract so adding the detour does
+not silently create a fifteenth FRX-12 qualification area.
+
+A final X04 seal therefore requires all of the following to remain true:
+
+1. legacy `repository::workflow` and explicit `repository::target::workflow`
+   references resolve to canonical child identity;
+2. canonical target/workflow identity survives execution, remote/provider, and
+   observability surfaces;
+3. executable federation groups plan and execute through the normal FRX DAG;
+4. the snapshot-derived 28/5/3 adoption contracts remain reproducible;
+5. every FRX-X01..X04 extension-evidence test reference resolves; and
+6. the complete FRX audit loop plus WRAP/TLJ/EXO/provider/UI/doctor/completion
+   regression surface passes before the detour is sealed.
+

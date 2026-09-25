@@ -17,7 +17,7 @@ from .core.events import EventBus, RunFinished, RunStarted
 from .core.execution_store import ExecutionTransitionError
 from .federation_discovery import FederationDiscoveryError, resolve_federated_repository
 from .federation_gate import build_federation_gate1_report
-from .federation_plan import FederationPlanError, build_federated_plan
+from .federation_plan import FederationPlanError, build_federated_group_plan, build_federated_plan
 from .repository_identity import RepositoryIdentity, same_repository_identity
 
 if TYPE_CHECKING:
@@ -187,18 +187,17 @@ def build_federation_gate2_report(config: "ProjectConfig") -> FederationGate2Rep
     else:
         checks.append(_check("execution", "exo-lineage-authority", "ok" if ok else "error", detail))
 
-    if not config.federation.workflows:
+    executable_groups = {
+        name: group for name, group in config.federation.groups.items() if group.executable
+    }
+    if not config.federation.workflows and not executable_groups:
         checks.append(_check(
-            "planning", "configured-workflows", "optional",
-            "no federation workflows configured; planner remains opt-in",
+            "planning", "configured-subjects", "optional",
+            "no federation workflows or executable groups configured; planner remains opt-in",
         ))
-    for workflow_name in sorted(config.federation.workflows):
-        try:
-            graph = build_federated_plan(config, workflow_name)
-            ordered = graph.topological_order()
-        except (FederationPlanError, FederationDiscoveryError, ValueError) as exc:
-            checks.append(_check("planning", f"workflow:{workflow_name}", "error", str(exc)))
-            continue
+
+    def qualify_graph(subject_kind: str, subject_name: str, graph) -> None:
+        ordered = graph.topological_order()
         bad_identity: list[str] = []
         bad_edges: list[str] = []
         keys = {node.key for node in graph.nodes}
@@ -216,11 +215,28 @@ def build_federation_gate2_report(config: "ProjectConfig") -> FederationGate2Rep
             if not isinstance(identity, dict) or not _identity_matches_resolution(identity, resolution):
                 bad_identity.append(node.key)
         ok = not bad_identity and not bad_edges and len(ordered) == len(graph.nodes)
+        if subject_kind == "group" and graph.group != subject_name:
+            ok = False
+            bad_edges.append(f"@group-identity:{graph.workflow}")
         checks.append(_check(
-            "planning", f"workflow:{workflow_name}", "ok" if ok else "error",
-            "cross-repository DAG and repository identities are deterministic" if ok else "federated DAG contains invalid edges or repository identities",
+            "planning", f"{subject_kind}:{subject_name}", "ok" if ok else "error",
+            "cross-repository DAG and repository identities are deterministic" if ok else "federated DAG contains invalid edges, subject identity, or repository identities",
             repositories=list(graph.repositories), node_count=len(graph.nodes), bad_identity=bad_identity, bad_edges=bad_edges,
         ))
+
+    for workflow_name in sorted(config.federation.workflows):
+        try:
+            graph = build_federated_plan(config, workflow_name)
+            qualify_graph("workflow", workflow_name, graph)
+        except (FederationPlanError, FederationDiscoveryError, ValueError) as exc:
+            checks.append(_check("planning", f"workflow:{workflow_name}", "error", str(exc)))
+
+    for group_name in sorted(executable_groups):
+        try:
+            graph = build_federated_group_plan(config, group_name)
+            qualify_graph("group", group_name, graph)
+        except (FederationPlanError, FederationDiscoveryError, ValueError) as exc:
+            checks.append(_check("planning", f"group:{group_name}", "error", str(exc)))
 
     # Bridge availability is structural here; executable semantics are exercised
     # by the Gate-2 validation suite without running repository-defined commands
