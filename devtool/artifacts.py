@@ -1010,9 +1010,25 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
         pass
     phases = [raw.get(name, True) if isinstance(raw.get(name, True), bool) else False for name in ("restore", "build", "test")]
     required = mode == "required" if mode else (raw.get("required", False) if isinstance(raw.get("required", False), bool) else False)
-    if required and not any(phases) and not script and not (tasks_declared and declared_tasks):
+    raw_tests = raw.get("tests")
+    has_declared_validation_tests = isinstance(raw_tests, list) and bool(raw_tests)
+    if required and not any(phases) and not script and not (tasks_declared and declared_tasks) and not has_declared_validation_tests:
         ok = False
-        messages.append("Required validation must enable restore, build, test, explicit validation tasks, or an artifact script.")
+        messages.append(
+            "Required validation must enable restore, build, test, explicit validation tasks, "
+            "validation.tests, or an artifact script."
+        )
+
+    pytest_selection_declared = any(
+        bool(raw.get(key))
+        for key in ("pytest_tests", "pytest_markers", "pytest_k", "pytest_args", "test_profile")
+    ) or raw.get("pytest_include_defaults") is True
+    if raw.get("test") is False and pytest_selection_declared and not (tasks_declared and declared_tasks):
+        ok = False
+        messages.append(
+            "Pytest/test-profile selection cannot be declared when validation.test=false unless "
+            "a non-empty validation.tasks plan owns test execution."
+        )
     expected = raw.get("expected")
     if expected is not None and not isinstance(expected, dict):
         ok = False

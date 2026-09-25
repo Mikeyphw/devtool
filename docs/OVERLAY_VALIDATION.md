@@ -55,7 +55,16 @@ The bundle creator and CLI preserve this distinction too: omitting task options
 leaves `validation.tasks` absent, while an explicitly empty task option serializes
 `validation.tasks: []`. A required validation contract may use a non-empty
 explicit task list as its executable validation path even when restore/build/test
-are all disabled.
+are all disabled. In that case the task plan is authoritative: manifest phase
+disable flags do not become CLI skip flags that can cancel the explicit task plan.
+Explicit user-supplied skip flags still conflict with an exclusive task plan and
+are rejected rather than silently ignored.
+
+Schema-v2 `validation.tests` declarations are a separate artifact-level validation
+surface. They may be the only executable path for a required artifact when the
+built-in restore/build/test phases are disabled. Devtool records successful
+tests-only validation as real execution evidence and a required validating apply
+fails closed if the resolved lifecycle reaches zero executed validation checks.
 
 Devtool resolves a single runner-aware validation plan before execution. Its final
 durable plan record includes the declaration source, whether tasks were explicitly
@@ -107,11 +116,12 @@ A validating apply follows this sequence:
 5. restore, build, test, lint, package, and verify according to the validation
    profile and runner capabilities;
 6. execute the artifact validator, when present;
-7. block and retain the applied tree when a required validation check fails;
-8. evaluate declared expected outcomes and maximum-warning limits against the executed plan;
-9. commit only after all required checks pass;
-10. record the final commit/rollback/child outcomes in durable history;
-11. roll back only when the user or artifact explicitly selects the rollback failure action.
+7. fail closed if required validation resolved to zero executed checks;
+8. block and retain the applied tree when a required validation check fails;
+9. evaluate declared expected outcomes and maximum-warning limits against the executed plan;
+10. commit only after all required checks pass;
+11. record the final commit/rollback/child outcomes in durable history;
+12. roll back only when the user or artifact explicitly selects the rollback failure action.
 
 Generated caches and build outputs are not used as rollback source material.
 Runner cleanup happens on success, failure, and interruption according to the

@@ -2732,7 +2732,30 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             f"({test_total} total)"
         )
     else:
-        success_lines.append("Tests: completed successfully")
+        test_execution_evidence = False
+        for result in payload.get("results", []) if isinstance(payload.get("results"), list) else []:
+            if not isinstance(result, dict):
+                continue
+            name = str(result.get("name") or "").strip().lower()
+            metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+            components = metadata.get("validation_components")
+            component_names = {str(item).strip().lower() for item in components} if isinstance(components, list) else set()
+            if (
+                bool(metadata.get("contains_tests"))
+                or str(metadata.get("validation_component") or "").strip().lower() in {"test", "tests", "unit-test"}
+                or component_names.intersection({"test", "tests", "unit-test"})
+                or name in {"test", "tests", "wine-test", "pytest"}
+                or name.startswith("test:")
+                or name.startswith("pytest")
+            ):
+                test_execution_evidence = True
+                break
+        if not test_execution_evidence:
+            test_execution_evidence = any(name in {"test", "wine-test"} for name, *_ in action_records)
+        if test_execution_evidence:
+            success_lines.append("Tests: completed successfully (counts unavailable)")
+        else:
+            success_lines.append("Tests: not run")
 
     if go_package_totals is not None:
         package_passed, package_failed, package_skipped, package_no_tests, package_total = go_package_totals
@@ -3658,6 +3681,15 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
             if not bool(validation.get("test", True)):
                 args.skip_test = True
         _apply_declared_validation_tasks(args, manifest, active=_validation_is_requested_by_args(args))
+        # A manifest validation.tasks declaration is a complete exclusive plan.
+        # Phase booleans describe the built-in restore/build/test pipeline and
+        # must not disable an explicit task plan.  Bundle apply already follows
+        # this rule; keep single-overlay apply consistent. Explicit CLI skip
+        # flags still win by reaching the normal task/skip conflict validator.
+        if not cli_requested_validation and _exclusive_validation_task_values(args):
+            args.skip_restore = False
+            args.skip_build = False
+            args.skip_test = False
         _apply_declared_pytest_selection(args, manifest, active=_validation_is_requested_by_args(args))
     if getattr(args, "no_validate", False) or getattr(args, "defer_validate", False):
         args.validate = False
@@ -4052,6 +4084,54 @@ def _validation_skip_values(args: argparse.Namespace) -> tuple[bool, bool, bool]
         bool(getattr(args, "skip_restore", False)),
         bool(getattr(args, "skip_build", False)),
         bool(getattr(args, "skip_test", False)),
+    )
+
+
+def _required_artifact_validation_execution_guard(
+    manifest: dict,
+    *,
+    validation_requested: bool,
+    validation_results: list[OperationResult],
+    artifact_validation_result: OperationResult | None,
+) -> OperationResult | None:
+    """Fail closed when required artifact validation executed no checks.
+
+    Manifest/schema validation should prevent this state, but the runtime guard
+    is intentionally independent: compatibility paths, resumed sessions, or
+    future argument-default changes must never turn ``required=true`` into a
+    successful zero-check apply.
+    """
+
+    policy = artifact_validation_policy(manifest or {})
+    if not validation_requested or not bool(policy.get("required", False)):
+        return None
+
+    repository_check_ran = any(
+        (not result.skipped) or bool(result.metadata.get("shared_validation"))
+        for result in validation_results
+    )
+    artifact_check_ran = artifact_validation_result is not None and not artifact_validation_result.skipped
+    if repository_check_ran or artifact_check_ran:
+        return None
+
+    message = (
+        "Required artifact validation resolved to zero executed checks. "
+        "The artifact will not be committed. Enable at least one executable "
+        "validation phase/task/test/script or correct the manifest validation policy."
+    )
+    return OperationResult(
+        "artifact-validation-required",
+        ["artifact-validation-required"],
+        2,
+        0.0,
+        message,
+        [Issue("error", "artifact-validation-required", "validation", "VALIDATION_NOT_EXECUTED", message)],
+        failure_kind="required_validation_not_executed",
+        metadata={
+            "validation_required": True,
+            "validation_executed_checks": 0,
+            "validation_phase_name": "Required artifact validation",
+        },
     )
 
 
@@ -9868,17 +9948,36 @@ def _artifact_script_result(
             executed.append(validator)
             raw_sections.append(_raw(validator))
 
+    validation_test_results: list[OperationResult] = []
     if validation_tests and (validator is None or validator.returncode == 0):
         from .artifact_tests import run_artifact_tests
-        test_results, test_raw = run_artifact_tests(config.repo_root, manifest, verbose=bool(getattr(args,"verbose",False)), dry_run=bool(getattr(args,"dry_run",False)), log_path=log_path, tasker_progress=tasker_progress)
+        test_results, test_raw = run_artifact_tests(
+            config.repo_root,
+            manifest,
+            verbose=bool(getattr(args, "verbose", False)),
+            dry_run=bool(getattr(args, "dry_run", False)),
+            log_path=log_path,
+            tasker_progress=tasker_progress,
+        )
+        validation_test_results.extend(test_results)
         executed.extend(test_results)
-        if test_raw: raw_sections.append(test_raw)
-        failed_tests=[r for r in test_results if r.returncode != 0 and bool(r.metadata.get("required",True))]
+        if test_raw:
+            raw_sections.append(test_raw)
+        failed_tests = [
+            r for r in test_results
+            if r.returncode != 0 and bool(r.metadata.get("required", True))
+        ]
         if failed_tests:
-            validator=failed_tests[0]
-            validator.failure_kind=validator.failure_kind or "artifact_test_failure"
+            validator = failed_tests[0]
+            validator.failure_kind = validator.failure_kind or "artifact_test_failure"
 
-    validation_status = "not-run" if validator is None else ("passed" if validator.returncode == 0 else "failed")
+    validation_checks_ran = bool(validation_script or validation_test_results)
+    if validator is not None and validator.returncode != 0:
+        validation_status = "failed"
+    elif validation_checks_ran:
+        validation_status = "passed"
+    else:
+        validation_status = "not-run"
     after = _finalize("after_validation", validation_status)
     if after is not None:
         executed.append(after)
@@ -9898,6 +9997,11 @@ def _artifact_script_result(
         primary = validator
     elif after is not None:
         primary = after
+    elif validation_test_results:
+        # validation.tests may be the only declared validation surface.  A
+        # successful tests-only artifact still needs a concrete primary result
+        # instead of falling through to an assertion.
+        primary = validation_test_results[-1]
     else:
         primary = before
     assert primary is not None
@@ -10184,6 +10288,7 @@ def _run_sequential_overlays(
                     entry_args.skip_test = bool(getattr(args, "skip_test", False) or not test_enabled)
 
                 group_results: list[OperationResult] = []
+                artifact_validation_result: OperationResult | None = None
                 if not (entry_args.skip_restore and entry_args.skip_build and entry_args.skip_test):
                     specs = _validation_specs(entry_config, entry_args, parser)
                     validation_key = (
@@ -10264,8 +10369,19 @@ def _run_sequential_overlays(
                             tasker_progress=tasker_progress,
                         )
                         if script_result is not None:
+                            artifact_validation_result = script_result
                             group_results.append(script_result)
                             raw_sections.append(f"=== Artifact validator {label} ===\n{script_raw}")
+
+                required_guard = _required_artifact_validation_execution_guard(
+                    entry_manifest,
+                    validation_requested=True,
+                    validation_results=group_results,
+                    artifact_validation_result=artifact_validation_result,
+                )
+                if required_guard is not None:
+                    group_results.append(required_guard)
+                    raw_sections.append(f"=== Required validation guard {label} ===\n{required_guard.output}")
 
                 if any(result.returncode != 0 for result in group_results):
                     group_results, repair_raw, _repair_result = _attempt_auto_repair(
@@ -14332,10 +14448,12 @@ def _main_after_parse(
                 if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
                     skip_restore, skip_build, skip_test = _validation_skip_values(args)
                     validation_results: list[OperationResult] = []
+                    artifact_validation_result: OperationResult | None = None
                     if not (skip_restore and skip_build and skip_test):
+                        validation_specs = _validation_specs_for_args(config, args, parser)
                         more_results, more_raw = _run_specs_for_args(
                             config,
-                            _validation_specs_for_args(config, args, parser),
+                            validation_specs,
                             args,
                             continue_on_error=continue_on_error,
                             log_path=log_path,
@@ -14376,8 +14494,20 @@ def _main_after_parse(
                             tasker_progress=tasker_progress,
                         )
                         if script_result is not None:
+                            artifact_validation_result = script_result
                             results.append(script_result)
                             raw_output += "\n\n" + script_raw
+
+                    required_guard = _required_artifact_validation_execution_guard(
+                        read_artifact_manifest(args.artifact),
+                        validation_requested=True,
+                        validation_results=validation_results,
+                        artifact_validation_result=artifact_validation_result,
+                    )
+                    if required_guard is not None:
+                        results.append(required_guard)
+                        raw_output += "\n\n=== Required validation guard ===\n" + required_guard.output
+
                     expectation = _validation_expectation_result(read_artifact_manifest(args.artifact), results)
                     if expectation is not None:
                         results.append(expectation)
