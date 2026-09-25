@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+import subprocess
 from pathlib import Path
 
 from .config import load_project_config
 from .federation_interfaces import build_interface_report
 from .federation_plan import build_federated_plan
+from .git_ownership import GitFederatedOwnershipError, resolve_federated_git_owner
 
 
 def _load(root: Path):
@@ -38,11 +40,65 @@ def public_contract_fixture() -> dict[str, object]:
         return {'schema_version':1,'workflow':'release','nodes':[n.as_dict() for n in direct]}
 
 
+
+def _init_git(root: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "Devtool Fixture"], check=True)
+    (root / "README.md").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"], check=True)
+
+
+def repository_ownership_fixture() -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="devtool-git-frx07-") as td:
+        root = Path(td)
+        parent = root / "parent"
+        child = root / "child"
+        nested = child / "nested-unenrolled"
+        outside = root / "outside"
+        parent.mkdir()
+        child.mkdir()
+        outside.mkdir()
+        (child / ".devtool.toml").write_text('[project]\nrunner="command"\n', encoding="utf-8")
+        _init_git(child)
+        nested.mkdir()
+        _init_git(nested)
+        (parent / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[federation]\nschema=1\n'
+            '[federation.repositories.child]\npath="../child"\n',
+            encoding="utf-8",
+        )
+        config = _load(parent)
+        evidence = resolve_federated_git_owner(config, child / "README.md")
+        if evidence is None or evidence.repository != "child":
+            raise SystemExit("GIT-FRX-07 fixture did not resolve enrolled child ownership")
+        nested_rejected = False
+        try:
+            resolve_federated_git_owner(config, nested / "README.md")
+        except GitFederatedOwnershipError:
+            nested_rejected = True
+        if not nested_rejected:
+            raise SystemExit("GIT-FRX-07 fixture inherited an unenrolled nested Git checkout")
+        outside_rejected = False
+        try:
+            resolve_federated_git_owner(config, outside / "file.txt")
+        except GitFederatedOwnershipError:
+            outside_rejected = True
+        if not outside_rejected:
+            raise SystemExit("GIT-FRX-07 fixture accepted an outside path")
+        return {
+            "schema_version": 1,
+            "owner": evidence.as_dict(),
+            "nested_unenrolled_rejected": nested_rejected,
+            "outside_rejected": outside_rejected,
+        }
+
 def main(argv: list[str] | None=None) -> int:
     p=argparse.ArgumentParser(prog='python -m devtool.federation_roadmap_fixtures')
-    p.add_argument('fixture', choices=['interface','public-contract'])
+    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership'])
     ns=p.parse_args(argv)
-    payload=interface_fixture() if ns.fixture=='interface' else public_contract_fixture()
+    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture())
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 

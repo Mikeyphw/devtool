@@ -238,6 +238,12 @@ command = ["python", "-m", "devtool.federation_roadmap_fixtures", "public-contra
 inputs = ["devtool/federation_bridge.py", "devtool/federation_plan.py", "devtool/federation_roadmap_fixtures.py"]
 metadata = { read_only = true, roadmap_id = "FRX-Y07" }
 
+[targets.devtool.jobs.repository-ownership-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "repository-ownership"]
+inputs = ["devtool/git_ownership.py", "devtool/federation_discovery.py", "devtool/git_state.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-07" }
+
 [targets.devtool.workflows]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -304,6 +310,13 @@ roadmap-frx-y07 = [
   { id = "frx-y07", ref = "test:roadmap-frx-y07", depends_on = ["frx-y06", "contract-fixture"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y07"] },
 ]
+roadmap-git-frx07 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "ownership-fixture", ref = "job:repository-ownership-fixture", depends_on = ["syntax"] },
+  { id = "frx-y07", ref = "test:roadmap-frx-y07", depends_on = ["syntax"] },
+  { id = "git-frx07", ref = "test:roadmap-git-frx07", depends_on = ["frx-y07", "ownership-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx07"] },
+]
 roadmap-gate1 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "rebase-fixture", ref = "job:overlay-rebase-fixture", depends_on = ["syntax"] },
@@ -336,6 +349,17 @@ roadmap-current = [
   { id = "frx-y05", ref = "test:roadmap-frx-y05", depends_on = ["frx-y04"] },
   { id = "frx-y06", ref = "test:roadmap-frx-y06", depends_on = ["frx-y05"] },
   { id = "frx-y07", ref = "test:roadmap-frx-y07", depends_on = ["frx-y06"] },
+  { id = "git-frx07", ref = "test:roadmap-git-frx07", depends_on = ["frx-y07"] },
+]
+
+[[test]]
+id = "roadmap-git-frx07"
+name = "GIT-FRX-07 federated path repository ownership"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx07.xml",
+  "tests/test_git_frx07_federated_repository_ownership.py",
 ]
 
 [[test]]

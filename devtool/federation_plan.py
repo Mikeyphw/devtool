@@ -68,6 +68,7 @@ class FederatedPlanGraph:
     nodes: tuple[FederatedPlanNode, ...]
     repositories: tuple[str, ...]
     capability_graph: dict[str, Any] = field(default_factory=dict)
+    repository_ownership: dict[str, Any] = field(default_factory=dict)
 
     @property
     def by_key(self) -> dict[str, FederatedPlanNode]:
@@ -132,7 +133,30 @@ class FederatedPlanGraph:
             "order": [node.key for node in ordered],
             "nodes": [node.as_dict() for node in self.nodes],
             "capability_graph": dict(self.capability_graph),
+            "repository_ownership": {
+                str(name): dict(value) if isinstance(value, dict) else value
+                for name, value in sorted(self.repository_ownership.items())
+            },
         }
+
+
+def _git_ownership_evidence(parent: "ProjectConfig", repository: str, child: "ProjectConfig") -> dict[str, Any]:
+    from .git_ownership import GitFederatedOwnershipError, resolve_federated_git_owner
+
+    try:
+        evidence = resolve_federated_git_owner(parent, child.repo_root)
+    except GitFederatedOwnershipError as exc:
+        raise FederationPlanError(
+            f"Federation Git ownership failed for repository {repository!r}: {exc}"
+        ) from exc
+    if evidence is None:
+        raise FederationPlanError(f"Federation Git ownership is missing for repository {repository!r}")
+    if evidence.repository != repository:
+        raise FederationPlanError(
+            f"Federation Git ownership mapped repository {repository!r} root {child.repo_root} "
+            f"to {evidence.repository!r}"
+        )
+    return evidence.as_dict()
 
 
 def _load_child(parent: "ProjectConfig", repository: str) -> "ProjectConfig":
@@ -423,6 +447,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
         raise FederationPlanError(f"Unknown federation workflow {name!r}. Available workflows: {available}")
 
     nodes: list[FederatedPlanNode] = []
+    repository_ownership: dict[str, dict[str, Any]] = {}
     invocation_bounds: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
     seen_keys: set[str] = set()
     repositories: list[str] = []
@@ -450,6 +475,10 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                 raise FederationPlanError(str(exc)) from exc
             if step.repository not in repositories:
                 repositories.append(step.repository)
+            ownership = repository_ownership.get(step.repository)
+            if ownership is None:
+                ownership = _git_ownership_evidence(parent, step.repository, child)
+                repository_ownership[step.repository] = ownership
             key = f"{step.repository}::{step.target}::{step.contract_type}:{step.contract_name}"
             if key in seen_keys:
                 raise FederationPlanError(
@@ -475,6 +504,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     "child_contract": bridge.child_contract,
                     "contract_ref": bridge.contract_ref,
                     "repository_identity": identity,
+                    "git_ownership": dict(ownership),
                     "bridge_plan": bridge.as_dict(),
                     "child_schedule": schedule,
                 },
@@ -489,6 +519,10 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
         )
         if step.repository not in repositories:
             repositories.append(step.repository)
+        ownership = repository_ownership.get(step.repository)
+        if ownership is None:
+            ownership = _git_ownership_evidence(parent, step.repository, child)
+            repository_ownership[step.repository] = ownership
         local_roots = {node.key for node in local_graph.roots}
         local_leaves = {node.key for node in local_graph.leaves}
         prefixed_roots: list[str] = []
@@ -527,6 +561,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     "child_contract": f"workflow:{step.workflow}",
                     "contract_ref": f"{step.repository}::{target}::workflow:{step.workflow}",
                     "repository_identity": identity,
+                    "git_ownership": dict(ownership),
                     "child_metadata": dict(local.metadata),
                     "child_schedule": schedule_scope.as_dict(),
                 },
@@ -608,7 +643,11 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
     ))
 
     graph = FederatedPlanGraph(
-        name, tuple(nodes), tuple(repositories), capability_graph=capability_graph.as_dict()
+        name,
+        tuple(nodes),
+        tuple(repositories),
+        capability_graph=capability_graph.as_dict(),
+        repository_ownership={name: dict(value) for name, value in sorted(repository_ownership.items())},
     )
     graph.topological_order()
     return graph
