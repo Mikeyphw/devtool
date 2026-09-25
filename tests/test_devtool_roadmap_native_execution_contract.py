@@ -31,10 +31,12 @@ EXPECTED_TESTS = {
     "roadmap-ssh01",
     "roadmap-ssh02",
     "roadmap-ssh02-regressions",
+    "roadmap-ssh03",
+    "roadmap-ssh03-regressions",
     "roadmap-gate1-regressions",
     "roadmap-workflow-exo-baseline",
 }
-EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-frx-y04", "roadmap-frx-y05", "roadmap-frx-y06", "roadmap-frx-y07", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-git-frx04", "roadmap-git-frx05", "roadmap-git-frx07", "roadmap-git-frx08-freeze", "roadmap-git-frx09", "roadmap-ssh01", "roadmap-ssh02", "roadmap-gate1", "roadmap-current"}
+EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-frx-y04", "roadmap-frx-y05", "roadmap-frx-y06", "roadmap-frx-y07", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-git-frx04", "roadmap-git-frx05", "roadmap-git-frx07", "roadmap-git-frx08-freeze", "roadmap-git-frx09", "roadmap-ssh01", "roadmap-ssh02", "roadmap-ssh03", "roadmap-gate1", "roadmap-current"}
 
 
 def _config():
@@ -45,7 +47,7 @@ def test_roadmap00_declares_truthful_target_local_non_test_jobs() -> None:
     cfg = _config()
     target = cfg.targets["devtool"]
 
-    assert set(target.jobs) == {"source-syntax", "transaction-worktree-fixture", "self-refresh-root-probe", "commit-policy-fixture", "signing-policy-probe", "overlay-base-fixture", "overlay-rebase-fixture", "interface-conformance-fixture", "public-contract-dag-fixture", "repository-ownership-fixture", "federation-source-lock-fixture", "federation-source-drift-probe", "federation-git-lineage-fixture", "ssh01-contract-fixture", "ssh02-execution-fixture", "ssh02-gate-editable-install"}
+    assert set(target.jobs) == {"source-syntax", "transaction-worktree-fixture", "self-refresh-root-probe", "commit-policy-fixture", "signing-policy-probe", "overlay-base-fixture", "overlay-rebase-fixture", "interface-conformance-fixture", "public-contract-dag-fixture", "repository-ownership-fixture", "federation-source-lock-fixture", "federation-source-drift-probe", "federation-git-lineage-fixture", "ssh01-contract-fixture", "ssh02-execution-fixture", "ssh02-gate-editable-install", "ssh03-final-fixture", "ssh03-gate-editable-install"}
     syntax = target.jobs["source-syntax"]
     assert syntax.name == "devtool.source-syntax"
     assert syntax.runner == "command"
@@ -139,6 +141,16 @@ def test_roadmap00_declares_truthful_target_local_non_test_jobs() -> None:
     assert ssh02_install.command == ("python", "-m", "devtool.ssh_roadmap_fixtures", "gate-install", "--json")
     assert ssh02_install.metadata["read_only"] is False
     assert ssh02_install.metadata["transaction_root_aware"] is True
+
+    ssh03_fixture = target.jobs["ssh03-final-fixture"]
+    assert ssh03_fixture.command == ("python", "-m", "devtool.ssh_roadmap_fixtures", "final", "--json")
+    assert ssh03_fixture.metadata["read_only"] is True
+    assert ssh03_fixture.metadata["roadmap_id"] == "SSH-03"
+
+    ssh03_install = target.jobs["ssh03-gate-editable-install"]
+    assert ssh03_install.command == ("python", "-m", "devtool.ssh_roadmap_fixtures", "gate-install-final", "--json")
+    assert ssh03_install.metadata["read_only"] is False
+    assert ssh03_install.metadata["transaction_root_aware"] is True
 
 
 def test_roadmap00_declared_tests_use_unique_structured_junit_evidence() -> None:
@@ -300,6 +312,19 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
         "test:roadmap-workflow-exo-baseline",
     }
 
+    ssh03 = plan_selected_workflow(cfg, "roadmap-ssh03")
+    assert {node.ref.raw for node in ssh03.nodes} == {
+        "job:source-syntax",
+        "job:ssh03-gate-editable-install",
+        "job:ssh03-final-fixture",
+        "test:roadmap-git-frx09",
+        "test:roadmap-ssh01",
+        "test:roadmap-ssh02",
+        "test:roadmap-ssh03",
+        "test:roadmap-ssh03-regressions",
+        "test:roadmap-workflow-exo-baseline",
+    }
+
     gate1 = plan_selected_workflow(cfg, "roadmap-gate1")
     assert {node.ref.raw for node in gate1.nodes} == {
         "job:source-syntax",
@@ -318,14 +343,15 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
     }
 
     current = plan_selected_workflow(cfg, "roadmap-current")
-    current_test_ids = EXPECTED_TESTS - {"roadmap-ssh02-regressions"}
+    current_test_ids = EXPECTED_TESTS - {"roadmap-ssh02-regressions", "roadmap-ssh03-regressions"}
     assert {node.ref.raw for node in current.nodes} == {
         "job:source-syntax",
         "job:ssh01-contract-fixture",
         "job:ssh02-execution-fixture",
+        "job:ssh03-final-fixture",
         *(f"test:{test_id}" for test_id in current_test_ids),
     }
-    assert len(current.nodes) == len(current_test_ids) + 3
+    assert len(current.nodes) == len(current_test_ids) + 4
 
 
 def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons() -> None:
@@ -335,7 +361,7 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     with redirect_stdout(jobs_out):
         _jobs(cfg, as_json=True, selected_target="devtool")
     jobs = json.loads(jobs_out.getvalue())
-    assert jobs["summary"]["target_local_jobs"] == 16
+    assert jobs["summary"]["target_local_jobs"] == 18
     assert jobs["completion"]["target_job_keys"] == [
         "devtool.commit-policy-fixture",
         "devtool.federation-git-lineage-fixture",
@@ -352,6 +378,8 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
         "devtool.ssh01-contract-fixture",
         "devtool.ssh02-execution-fixture",
         "devtool.ssh02-gate-editable-install",
+        "devtool.ssh03-final-fixture",
+        "devtool.ssh03-gate-editable-install",
         "devtool.transaction-worktree-fixture",
     ]
 
@@ -370,17 +398,18 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
 
     assert payload["action"] == "roadmap-current"
     assert payload["targets"] == ["devtool"]
-    current_test_ids = EXPECTED_TESTS - {"roadmap-ssh02-regressions"}
-    assert payload["summary"]["node_count"] == len(current_test_ids) + 3
-    assert payload["summary"]["target_local_job_count"] == 3
+    current_test_ids = EXPECTED_TESTS - {"roadmap-ssh02-regressions", "roadmap-ssh03-regressions"}
+    assert payload["summary"]["node_count"] == len(current_test_ids) + 4
+    assert payload["summary"]["target_local_job_count"] == 4
     assert {item["key"] for item in payload["summary"]["target_local_jobs"]} == {
-        "devtool.source-syntax", "devtool.ssh01-contract-fixture", "devtool.ssh02-execution-fixture"
+        "devtool.source-syntax", "devtool.ssh01-contract-fixture", "devtool.ssh02-execution-fixture", "devtool.ssh03-final-fixture"
     }
     assert payload["schedule"]["nodes"]
     by_ref = {node["ref"]: node for node in payload["graph"]["nodes"]}
     assert by_ref["job:source-syntax"]["target"] == "devtool"
     assert by_ref["job:ssh01-contract-fixture"]["target"] == "devtool"
     assert by_ref["job:ssh02-execution-fixture"]["target"] == "devtool"
+    assert by_ref["job:ssh03-final-fixture"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx01"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx02"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx03"]["target"] == "devtool"
@@ -392,6 +421,7 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     assert by_ref["test:roadmap-git-frx09"]["target"] == "devtool"
     assert by_ref["test:roadmap-ssh01"]["target"] == "devtool"
     assert by_ref["test:roadmap-ssh02"]["target"] == "devtool"
+    assert by_ref["test:roadmap-ssh03"]["target"] == "devtool"
     assert by_ref["test:roadmap-gate1-regressions"]["target"] == "devtool"
     assert by_ref["test:roadmap-frx-y01"]["target"] == "devtool"
     assert by_ref["test:roadmap-frx-y04"]["target"] == "devtool"

@@ -972,7 +972,7 @@ _devtool() {
           ;;
         ssh)
           if (( ${#line} < 2 )); then
-            _values 'ssh worker action' profiles list add remove rm default qualify seal doctor env prepare bootstrap sessions ls workspace ws sync retrieve return runs output exec resume cancel recover
+            _values 'ssh worker action' profiles list add remove rm default qualify seal doctor env prepare bootstrap sessions ls workspace ws sync retrieve return runs output exec resume cancel recover gc
           else
             case ${line[2]} in
               profiles|list)

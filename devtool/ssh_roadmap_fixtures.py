@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""SSH roadmap fixtures and the SSH-02 transaction-root gate install hook."""
+"""SSH roadmap fixtures and transaction-root gate install hooks."""
 
 import argparse
 import json
@@ -52,19 +52,45 @@ def execution_payload() -> dict[str, Any]:
     }
 
 
-def gate_install_payload() -> dict[str, Any]:
+def final_payload() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "kind": "ssh03-lifecycle-hardening-final-fixture",
+        "roadmap_id": "SSH-03",
+        "read_only": True,
+        "gc": {
+            "dry_run_default": True,
+            "policies": ["age", "count", "lru", "size"],
+            "protects": ["active", "stale", "interrupted", "unsafe-id", "symlink-escape"],
+        },
+        "host_identity": {
+            "authority": "openssh-known-hosts",
+            "parallel_database": False,
+            "evidence": ["algorithm", "sha256-fingerprint", "worker-platform", "worker-architecture"],
+        },
+        "recovery": ["stale-phase", "owned-lease", "orphan-lease"],
+        "capacity": ["repository-size-estimate", "configured-floor", "pre-sync-enospc-block"],
+        "doctor": ["target-aware", "provider-evidence", "toolchain-evidence", "remediation-command"],
+        "performance": {"records_metrics": True, "fragile_wall_clock_thresholds": False},
+        "security": ["repository-path-isolation", "safe-run-id", "root-bounded-delete", "no-key-material-output"],
+        "documentation": ["docs/SSH_REMOTE_EXECUTION.md", "docs/DEVTOOL_AI_AGENT_GUIDE.md"],
+        "final_gate": True,
+    }
+
+
+def gate_install_payload(roadmap_id: str = "SSH-02") -> dict[str, Any]:
     root = Path(os.environ.get("DEVTOOL_TRANSACTION_REPO_ROOT") or os.getcwd()).expanduser().resolve()
     if not (root / "pyproject.toml").is_file():
-        raise ValueError(f"SSH-02 editable install root is not a Devtool checkout: {root}")
+        raise ValueError(f"{roadmap_id} editable install root is not a Devtool checkout: {root}")
     command = [sys.executable, "-m", "pip", "install", "--no-build-isolation", "-e", str(root)]
     completed = subprocess.run(command, cwd=str(root), capture_output=True, text=True, check=False)
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
-        raise ValueError(f"SSH-02 transaction-root editable install failed: {detail or completed.returncode}")
+        raise ValueError(f"{roadmap_id} transaction-root editable install failed: {detail or completed.returncode}")
     return {
         "schema_version": 1,
-        "kind": "ssh02-gate-editable-install",
-        "roadmap_id": "SSH-02",
+        "kind": f"{roadmap_id.lower().replace('-', '')}-gate-editable-install",
+        "roadmap_id": roadmap_id,
         "ok": True,
         "transaction_repo_root": str(root),
         "command": command,
@@ -74,11 +100,20 @@ def gate_install_payload() -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m devtool.ssh_roadmap_fixtures")
-    parser.add_argument("command", choices=("contract", "execution", "gate-install"))
+    parser.add_argument("command", choices=("contract", "execution", "final", "gate-install", "gate-install-final"))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
-        payload = contract_payload() if args.command == "contract" else execution_payload() if args.command == "execution" else gate_install_payload()
+        if args.command == "contract":
+            payload = contract_payload()
+        elif args.command == "execution":
+            payload = execution_payload()
+        elif args.command == "final":
+            payload = final_payload()
+        elif args.command == "gate-install-final":
+            payload = gate_install_payload("SSH-03")
+        else:
+            payload = gate_install_payload("SSH-02")
     except ValueError as exc:
         print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, sort_keys=True))
         return 1

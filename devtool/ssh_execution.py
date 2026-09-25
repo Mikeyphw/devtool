@@ -32,6 +32,7 @@ from .ssh_workspace import (
     workspace_status,
 )
 from .ssh_resilience import SSHWorkspaceLease, ensure_remote_capacity, release_workspace_lease
+from .ssh_lifecycle import ensure_execution_capacity
 
 
 @dataclass(slots=True)
@@ -343,7 +344,7 @@ def prepare_ssh_command_execution(
         if not dry_run:
             worker = probe_worker(config)
 
-    capacity = ensure_remote_capacity(config, free_storage_kib=worker.free_storage_kib)
+    capacity = ensure_execution_capacity(config, repo_root=repo_root, free_storage_kib=worker.free_storage_kib)
     workspace: SSHWorkspaceSpec | None = None
     sync: dict[str, Any] = {}
     status_payload: dict[str, Any] = {}

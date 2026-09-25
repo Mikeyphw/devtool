@@ -288,7 +288,9 @@ def probe_worker(config: SSHRunnerConfig) -> SSHWorkerProbe:
     )
 
 
-def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
+def worker_doctor_payload(
+    config: SSHRunnerConfig, *, target: str = "", repo_root: str | Path | None = None
+) -> dict[str, Any]:
     started = time.monotonic()
     probe = probe_worker(config)
     probe_latency = max(0.0, time.monotonic() - started)
@@ -316,6 +318,66 @@ def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
             sessions = list_tmux_sessions(config)
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             sessions_error = str(exc)
+
+    from .ssh_lifecycle import host_identity_payload, orphan_lease_payload, estimate_execution_capacity
+    host_identity = host_identity_payload(config, probe=probe.as_dict())
+    try:
+        lifecycle = orphan_lease_payload(config, repair=False)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        lifecycle = {
+            "schema_version": 1, "kind": "ssh-orphan-lease-audit", "ok": False,
+            "records": [], "orphan_count": 0, "repaired_count": 0,
+            "detail": str(exc),
+        }
+    capacity = {
+        "configured_floor_mib": int(config.min_free_mb or 0),
+        "free_mib": int(probe.free_storage_kib or 0) // 1024,
+        "verified": bool(probe.free_storage_kib),
+    }
+    if repo_root:
+        try:
+            capacity = estimate_execution_capacity(
+                config, repo_root=repo_root, free_storage_kib=probe.free_storage_kib
+            )
+        except (OSError, ValueError) as exc:
+            capacity = {**capacity, "ok": False, "detail": str(exc)}
+
+    target_evidence: dict[str, Any] = {}
+    remediation: list[dict[str, str]] = []
+    if probe.missing_required:
+        remediation.append({
+            "id": "worker-runtime",
+            "status": "action-required",
+            "command": f"devtool ssh prepare {config.profile or config.host} --dry-run".strip(),
+            "detail": "missing required worker tools: " + ", ".join(probe.missing_required),
+        })
+    if target and repo_root:
+        try:
+            from .ssh_environment import environment_payload
+            target_evidence = environment_payload(config, repo_root=repo_root, target=target)
+            remediation.append({
+                "id": "target-toolchain",
+                "status": "inspect",
+                "command": f"devtool ssh prepare {config.profile or config.host} --target {target} --dry-run",
+                "detail": "target-aware preparation uses the same worker/toolchain provider contract as execution",
+            })
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            target_evidence = {"ok": False, "target": target, "error": str(exc)}
+    if lifecycle.get("orphan_count"):
+        remediation.append({
+            "id": "orphan-leases",
+            "status": "recoverable",
+            "command": f"devtool ssh recover {config.profile or config.host}".strip(),
+            "detail": f"{lifecycle.get('orphan_count')} stale orphan lease(s) can be safely reconciled",
+        })
+    if host_identity.get("state") in {"unrecorded", "lookup-error"}:
+        remediation.append({
+            "id": "host-identity",
+            "status": "inspect",
+            "command": f"devtool ssh doctor {config.profile or config.host} --format json".strip(),
+            "detail": "inspect OpenSSH known_hosts evidence before changing host-key policy",
+        })
+
     return {
         "schema_version": 1,
         "kind": "ssh-worker-doctor",
@@ -352,6 +414,12 @@ def worker_doctor_payload(config: SSHRunnerConfig) -> dict[str, Any]:
             "lease_timeout_seconds": config.lease_timeout_seconds,
             "min_free_mb": config.min_free_mb,
         },
+        "host_identity": host_identity,
+        "lifecycle": lifecycle,
+        "capacity": capacity,
+        "target": target,
+        "target_evidence": target_evidence,
+        "remediation": remediation,
         "probe": probe.as_dict(),
         "deep_probe": {
             "latency_seconds": round(probe_latency, 4),

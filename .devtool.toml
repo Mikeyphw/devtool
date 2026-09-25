@@ -281,6 +281,18 @@ command = ["python", "-m", "devtool.ssh_roadmap_fixtures", "gate-install", "--js
 inputs = ["pyproject.toml", "devtool/ssh_roadmap_fixtures.py"]
 metadata = { read_only = false, roadmap_id = "SSH-02", transaction_root_aware = true }
 
+[targets.devtool.jobs.ssh03-final-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.ssh_roadmap_fixtures", "final", "--json"]
+inputs = ["devtool/ssh_roadmap_fixtures.py", "devtool/ssh_lifecycle.py", "devtool/ssh_worker.py", "devtool/ssh_resilience.py", "devtool/ssh_execution.py", "docs/SSH_REMOTE_EXECUTION.md"]
+metadata = { read_only = true, roadmap_id = "SSH-03" }
+
+[targets.devtool.jobs.ssh03-gate-editable-install]
+runner = "command"
+command = ["python", "-m", "devtool.ssh_roadmap_fixtures", "gate-install-final", "--json"]
+inputs = ["pyproject.toml", "devtool/ssh_roadmap_fixtures.py"]
+metadata = { read_only = false, roadmap_id = "SSH-03", transaction_root_aware = true }
+
 [targets.devtool.workflows]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -386,6 +398,17 @@ roadmap-ssh02 = [
   { id = "ssh-regressions", ref = "test:roadmap-ssh02-regressions", depends_on = ["ssh02"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["ssh-regressions"] },
 ]
+roadmap-ssh03 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "editable-install", ref = "job:ssh03-gate-editable-install", depends_on = ["syntax"] },
+  { id = "ssh03-fixture", ref = "job:ssh03-final-fixture", depends_on = ["editable-install"] },
+  { id = "git-frx09", ref = "test:roadmap-git-frx09", depends_on = ["syntax"] },
+  { id = "ssh01", ref = "test:roadmap-ssh01", depends_on = ["git-frx09"] },
+  { id = "ssh02", ref = "test:roadmap-ssh02", depends_on = ["ssh01"] },
+  { id = "ssh03", ref = "test:roadmap-ssh03", depends_on = ["ssh02", "ssh03-fixture"] },
+  { id = "ssh-regressions", ref = "test:roadmap-ssh03-regressions", depends_on = ["ssh03"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["ssh-regressions"] },
+]
 roadmap-gate1 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "rebase-fixture", ref = "job:overlay-rebase-fixture", depends_on = ["syntax"] },
@@ -425,6 +448,8 @@ roadmap-current = [
   { id = "ssh01", ref = "test:roadmap-ssh01", depends_on = ["git-frx09", "ssh01-fixture"] },
   { id = "ssh02-fixture", ref = "job:ssh02-execution-fixture", depends_on = ["ssh01"] },
   { id = "ssh02", ref = "test:roadmap-ssh02", depends_on = ["ssh02-fixture"] },
+  { id = "ssh03-fixture", ref = "job:ssh03-final-fixture", depends_on = ["ssh02"] },
+  { id = "ssh03", ref = "test:roadmap-ssh03", depends_on = ["ssh03-fixture"] },
 ]
 
 
@@ -666,4 +691,38 @@ command = [
   "tests/test_exo_target_local_jobs_plan_export.py",
   "tests/test_test_workflow_convergence.py",
   "tests/test_devtool_roadmap_native_execution_contract.py",
+]
+
+
+[[test]]
+id = "roadmap-ssh03"
+name = "SSH-03 lifecycle hardening and final qualification"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-ssh03.xml",
+  "tests/test_ssh03_lifecycle_hardening_final_qualification.py",
+]
+
+[[test]]
+id = "roadmap-ssh03-regressions"
+name = "SSH-03 final full SSH regression gate"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-ssh03-regressions.xml",
+  "tests/test_ssh01_transport_environment_worker_preparation.py",
+  "tests/test_ssh02_execution_history_recovery_convergence.py",
+  "tests/test_ssh03_lifecycle_hardening_final_qualification.py",
+  "tests/test_ssh_android_runtime_companion_hotfix.py",
+  "tests/test_ssh_single_probe_sync_hotfix.py",
+  "tests/test_ssh_tmux_runner.py",
+  "tests/test_ssh_worker_probe_timeout_hotfix.py",
+  "tests/test_sshw01_remote_worker_foundation.py",
+  "tests/test_sshw02_managed_workspace_sync.py",
+  "tests/test_sshw03_remote_execution_toolchains.py",
+  "tests/test_sshw04_remote_returns_provenance.py",
+  "tests/test_sshw05_resilience_hardening.py",
+  "tests/test_sshw06_final_worker_seal.py",
+  "tests/test_sshw_roadmap_gap_hotfix.py",
 ]

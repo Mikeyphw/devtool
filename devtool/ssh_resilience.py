@@ -565,18 +565,36 @@ printf 'interrupted\n' > "$state_dir/state.tmp"; mv -f -- "$state_dir/state.tmp"
         completed = _run_remote(config, script)
         if completed.returncode == 0:
             recovered.append({"run_id": rid, "session": sess, "state": "interrupted", "status": 255})
+    # SSH-03 extends recovery to Devtool-owned workspace leases whose owner run
+    # has disappeared.  The lifecycle helper is path-constrained and only
+    # removes old, inactive orphans; active/young/corrupt leases remain
+    # protected and visible in the response.
+    from .ssh_lifecycle import orphan_lease_payload
+    try:
+        orphan_repair = orphan_lease_payload(config, repair=True)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        orphan_repair = {
+            "schema_version": 1, "kind": "ssh-orphan-lease-audit", "ok": False,
+            "records": [], "orphan_count": 0, "repaired_count": 0, "detail": str(exc),
+        }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "ssh-run-recover",
         "ok": True,
         "profile": config.profile,
         "destination": config.destination,
         "recovered": recovered,
+        "orphan_leases": orphan_repair,
         "recovery": {
-            "intent": "mark-interrupted-and-release-owned-lease",
+            "intent": "mark-interrupted-release-owned-lease-and-repair-safe-orphans",
             "rerun_required": bool(recovered),
             "resumable": False,
             "successful_phases_rerun": False,
+            "orphan_leases_repaired": int(orphan_repair.get("repaired_count") or 0),
         },
-        "detail": "stale remote run records reconciled" if recovered else "no stale remote run records found",
+        "detail": (
+            f"reconciled {len(recovered)} stale phase(s) and {int(orphan_repair.get('repaired_count') or 0)} orphan lease(s)"
+            if recovered or orphan_repair.get("repaired_count")
+            else "no stale remote run records or safely-repairable orphan leases found"
+        ),
     }

@@ -1236,8 +1236,9 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_qualify.add_argument("--task", dest="ssh_qualify_tasks", action="append", default=[], help="Validation task used by --project-validation; repeatable")
     ssh_qualify.add_argument("--single-validation", dest="ssh_qualify_validation_twice", action="store_false", help="Run one project validation instead of first + warm/incremental validation")
     ssh_qualify.set_defaults(ssh_qualify_bootstrap=True, ssh_qualify_sync=True, ssh_qualify_validation_twice=True)
-    ssh_doctor = ssh_sub.add_parser("doctor", help="Read-only capability discovery for a named SSH worker")
+    ssh_doctor = ssh_sub.add_parser("doctor", help="Read-only capability, host identity, lifecycle, and target remediation discovery for a named SSH worker")
     ssh_doctor.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_doctor.add_argument("--target", default="", dest="ssh_doctor_target", help="Optional repository target for target-aware toolchain remediation evidence")
     ssh_doctor.add_argument("--format", choices=["text", "json"], default="text")
     ssh_env = ssh_sub.add_parser("env", help="Inspect the remote-owned worker environment and toolchain provenance")
     ssh_env.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
@@ -1307,6 +1308,15 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_recover.add_argument("--run-id", default="", help="Restrict stale-run recovery to one run")
     ssh_recover.add_argument("--node-id", default="", help="Restrict stale-run recovery to one canonical provider node")
     ssh_recover.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_gc = ssh_sub.add_parser("gc", help="Safely prune terminal Devtool-owned SSH run history using age/count/size policies")
+    ssh_gc.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_gc_mode = ssh_gc.add_mutually_exclusive_group()
+    ssh_gc_mode.add_argument("--dry-run", dest="ssh_gc_dry_run", action="store_true", help="Plan cleanup without deleting anything (default)")
+    ssh_gc_mode.add_argument("--apply", dest="ssh_gc_apply", action="store_true", help="Apply the safe GC plan; active/recovery-sensitive runs remain protected")
+    ssh_gc.add_argument("--max-age-days", type=int, default=30, dest="ssh_gc_max_age_days", help="Prune eligible terminal runs at least this old; 0 allows age selection immediately")
+    ssh_gc.add_argument("--keep-last", type=int, default=20, dest="ssh_gc_keep_last", help="Always protect this many newest runs")
+    ssh_gc.add_argument("--max-mib", type=int, default=512, dest="ssh_gc_max_mib", help="Target maximum SSH run-state size after safe cleanup")
+    ssh_gc.add_argument("--format", choices=["text", "json"], default="text")
 
     oci_cmd = subparsers.add_parser("oci", help="Manage PRoot-Distro OCI runtime state on named SSH workers")
     oci_sub = oci_cmd.add_subparsers(dest="oci_command", required=True)
@@ -13393,6 +13403,7 @@ def _main_after_parse(
         from .ssh_workspace import sync_payload, workspace_payload
         from .ssh_returns import recover_return_bundles
         from .ssh_resilience import resume_remote_run, cancel_remote_run, recover_stale_runs
+        from .ssh_lifecycle import gc_remote_runs
         from .ssh_history import sessions_payload as ssh_sessions_payload, grouped_runs_payload, output_payload, follow_output
         from .ssh_exec import execute_managed
         from .ssh_profiles import add_profile, list_profiles, remove_profile, set_default_profile
@@ -13442,7 +13453,9 @@ def _main_after_parse(
             else:
                 worker = resolve_worker_profile(profile, repo=repo_arg, config_path=config_arg)
                 if action == "doctor":
-                    payload = worker_doctor_payload(worker)
+                    payload = worker_doctor_payload(
+                        worker, target=str(getattr(args, "ssh_doctor_target", "") or ""), repo_root=repo_root
+                    )
                 elif action == "env":
                     payload = environment_payload(
                         worker, repo_root=repo_root, target=str(getattr(args, "ssh_env_target", "") or "")
@@ -13552,6 +13565,14 @@ def _main_after_parse(
                         worker,
                         run_id=str(getattr(args, "run_id", "") or ""),
                         node_id=str(getattr(args, "node_id", "") or ""),
+                    )
+                elif action == "gc":
+                    payload = gc_remote_runs(
+                        worker,
+                        dry_run=not bool(getattr(args, "ssh_gc_apply", False)),
+                        max_age_days=int(getattr(args, "ssh_gc_max_age_days", 30) or 0),
+                        keep_last=int(getattr(args, "ssh_gc_keep_last", 20) or 0),
+                        max_mib=int(getattr(args, "ssh_gc_max_mib", 512) or 0),
                     )
                 else:
                     parser.error(f"Unknown ssh command: {action}")
@@ -13666,10 +13687,44 @@ def _main_after_parse(
                 ("lease_timeout_seconds", str(resilience_cfg.get("lease_timeout_seconds") or 0)),
                 ("min_free_mb", str(resilience_cfg.get("min_free_mb") or 0)),
             ]
+            host_identity = payload.get("host_identity", {})
+            lifecycle = payload.get("lifecycle", {})
+            capacity = payload.get("capacity", {})
+            rows.extend([
+                ("host_identity_state", host_identity.get("state") or "unknown"),
+                ("host_algorithms", ",".join(host_identity.get("algorithms", [])) or "-"),
+                ("host_fingerprints", ",".join(host_identity.get("fingerprints", [])) or "-"),
+                ("capacity_required_mib", str(capacity.get("required_free_mib", capacity.get("configured_floor_mib", 0)) or 0)),
+                ("capacity_verified", "yes" if capacity.get("verified") else "no"),
+                ("orphan_leases", str(lifecycle.get("orphan_count", 0))),
+                ("target", payload.get("target") or "-"),
+            ])
             rows.extend((f"tool.{name}", path or "MISSING") for name, path in tools.items())
             rows.append(("sessions", ", ".join(payload.get("sessions", [])) or "none"))
             rows.append(("overall", "READY" if payload.get("healthy") else ("BOOTSTRAPPABLE" if probe.get("bootstrap_supported") else "BLOCKED")))
             render_status_table(rows)
+            for item in payload.get("remediation", []):
+                print(f"remediation  {item.get('id','-')}  {item.get('status','-')}  {item.get('command','-')}")
+        elif action == "gc":
+            policy = payload.get("policy", {})
+            rows = [
+                ("profile", payload.get("profile") or "-"),
+                ("destination", payload.get("destination") or "-"),
+                ("mode", "DRY-RUN" if payload.get("dry_run") else "APPLIED"),
+                ("candidates", str(payload.get("candidate_count", 0))),
+                ("deleted", str(payload.get("deleted_count", 0))),
+                ("total_mib", f"{float(payload.get('total_kib', 0))/1024:.1f}"),
+                ("projected_mib", f"{float(payload.get('projected_kib', 0))/1024:.1f}"),
+                ("max_age_days", str(policy.get("max_age_days", 0))),
+                ("keep_last", str(policy.get("keep_last", 0))),
+                ("max_mib", str(policy.get("max_mib", 0))),
+                ("detail", payload.get("detail") or "-"),
+            ]
+            render_status_table(rows)
+            for item in payload.get("candidates", []):
+                print(f"candidate  {item.get('run_id','-')}  {item.get('reason','-')}  {int(item.get('size_kib',0))/1024:.1f} MiB")
+            for item in payload.get("protected", []):
+                print(f"protected  {item.get('run_id','-')}  {item.get('reason','-')}")
         elif action == "env":
             worker_env = payload.get("worker", {})
             rows = [

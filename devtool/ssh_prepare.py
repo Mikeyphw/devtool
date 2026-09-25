@@ -17,7 +17,7 @@ from .runners import build_specs
 from .ssh_environment import environment_payload
 from .ssh_execution import ensure_remote_toolchain
 from .ssh_multiplex import evidence as multiplex_evidence
-from .ssh_resilience import ensure_remote_capacity
+from .ssh_lifecycle import ensure_execution_capacity
 from .ssh_tmux_runner import SSHRunnerConfig
 from .ssh_worker import bootstrap_worker, probe_worker
 from .ssh_workspace import resolve_workspace_spec, workspace_status
@@ -66,7 +66,7 @@ def prepare_worker_target(
 ) -> dict[str, Any]:
     repo = Path(repo_root).expanduser().resolve()
     before = probe_worker(config)
-    capacity = ensure_remote_capacity(config, free_storage_kib=before.free_storage_kib)
+    capacity = ensure_execution_capacity(config, repo_root=repo, free_storage_kib=before.free_storage_kib)
     worker_plan = _classify_worker(before)
 
     missing = list(before.missing_required)

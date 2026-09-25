@@ -3204,3 +3204,7 @@ Run or start the local Control Center IPC broker
 | `--state-dir STATE_DIR` | Load initial run snapshots from this state directory |
 | `--foreground` | Run the broker in the foreground |
 
+
+## SSH remote execution (SSH-01 → SSH-03)
+
+For named remote workers, follow the authoritative operating guide in `docs/SSH_REMOTE_EXECUTION.md`. In particular: inspect `ssh doctor --target` and `ssh prepare --dry-run` before changing worker state; use persisted `ssh runs`/`ssh output` rather than tmux as history; recover interrupted work before rerunning it; and always review `ssh gc --dry-run` before applying cleanup. Do not use SSH workspace preparation as a substitute for federation lock-driven source synchronization.
