@@ -39,6 +39,10 @@ class FederatedPlanNode:
 
     @property
     def federation_ref(self) -> str:
+        contract_ref = str(self.metadata.get("contract_ref") or "").strip()
+        contract_type = str(self.metadata.get("contract_type") or "workflow").strip()
+        if contract_ref and contract_type != "workflow":
+            return contract_ref
         if self.synthetic or not self.target:
             return ""
         return f"{self.repository}::{self.target}::{self.workflow}"
@@ -267,6 +271,8 @@ def materialize_federation_group(parent: "ProjectConfig", group_name: str):
             repository=repository,
             target=target,
             workflow=workflow,
+            contract_type=(workflow.split(":", 1)[0] if ":" in workflow else "workflow"),
+            contract_name=(workflow.split(":", 1)[1] if ":" in workflow else workflow),
             depends_on=(),
             depends_on_declared=True,
         ))
@@ -292,6 +298,8 @@ def materialize_federation_group(parent: "ProjectConfig", group_name: str):
                 repository=step.repository,
                 target=step.target,
                 workflow=step.workflow,
+                contract_type=step.contract_type,
+                contract_name=step.contract_name,
                 depends_on=tuple(id_map[dep] for dep in step.depends_on),
                 depends_on_declared=step.depends_on_declared,
             ))
@@ -339,6 +347,7 @@ def project_with_federation_group(parent: "ProjectConfig", group_name: str):
     federation = FederationConfig(
         schema=parent.federation.schema,
         repositories=dict(parent.federation.repositories),
+        interfaces=dict(parent.federation.interfaces),
         groups=dict(parent.federation.groups),
         workflows={**parent.federation.workflows, workflow.name: workflow},
     )
@@ -348,6 +357,62 @@ def project_with_federation_group(parent: "ProjectConfig", group_name: str):
 def build_federated_group_plan(parent: "ProjectConfig", group_name: str) -> FederatedPlanGraph:
     scoped, workflow = project_with_federation_group(parent, group_name)
     return build_federated_plan(scoped, workflow.name)
+
+
+def _direct_contract_plan(parent: "ProjectConfig", step):
+    """Resolve one FRX-Y07 public job/wrapper contract through the sealed bridge."""
+    from .federation_bridge import plan_federated_job, plan_federated_wrapper
+
+    if step.contract_type == "job":
+        bridge, child, specs = plan_federated_job(
+            parent,
+            step.repository,
+            f"{step.target}:job:{step.contract_name}",
+        )
+        if bridge.target != step.target:
+            raise FederationPlanError(
+                f"Federation job contract {step.ref!r} resolved target {bridge.target!r}, expected {step.target!r}"
+            )
+        target_config = child.targets.get(bridge.target)
+        job = target_config.jobs.get(step.contract_name) if target_config is not None else None
+        metadata = dict(job.metadata) if job is not None else {}
+        read_only = bool(metadata.get("read_only", False))
+        resource_class = str(metadata.get("resource_class") or "cpu-heavy")
+        reservations = metadata.get("global_reservations") or []
+        if not isinstance(reservations, (list, tuple, set)):
+            reservations = [reservations]
+        schedule = {
+            "reads": ["."],
+            "writes": [] if read_only else ["."],
+            "writes_known": True,
+            "read_only": read_only,
+            "resource_class": resource_class,
+            "global_reservations": [
+                *[str(value) for value in reservations if str(value)],
+                "federation:direct-contract-env",
+            ],
+            "scope_reason": (
+                "direct target-local job explicitly declares read_only=true"
+                if read_only else "direct target-local job reserves its enrolled repository"
+            ),
+        }
+        return bridge, child, schedule
+    if step.contract_type == "wrapper":
+        bridge, child, _resolution = plan_federated_wrapper(parent, step.repository, [step.contract_name])
+        if bridge.target != step.target:
+            raise FederationPlanError(
+                f"Federation wrapper contract {step.ref!r} resolved target {bridge.target!r}, expected {step.target!r}"
+            )
+        return bridge, child, {
+            "reads": ["."],
+            "writes": ["."],
+            "writes_known": True,
+            "read_only": False,
+            "resource_class": "cpu-heavy",
+            "global_reservations": ["federation:direct-contract-env"],
+            "scope_reason": "direct wrapper command conservatively reserves its enrolled repository",
+        }
+    raise FederationPlanError(f"Unsupported federation contract type {step.contract_type!r}")
 
 
 def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> FederatedPlanGraph:
@@ -365,13 +430,6 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
 
     ordered_steps = _ordered_steps(workflow)
     for step in ordered_steps:
-        child, target, local_graph = _child_graph(
-            parent, step.repository, step.workflow, step.target
-        )
-        if step.repository not in repositories:
-            repositories.append(step.repository)
-        local_roots = {node.key for node in local_graph.roots}
-        local_leaves = {node.key for node in local_graph.leaves}
         external_dependencies: list[str] = []
         for dependency_id in step.depends_on:
             bounds = invocation_bounds.get(dependency_id)
@@ -380,6 +438,59 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     f"Federation workflow {name!r} has unresolved dependency {dependency_id!r} for step {step.step_id!r}"
                 )
             external_dependencies.extend(bounds[1])
+
+        if step.contract_type != "workflow":
+            if not step.target:
+                raise FederationPlanError(
+                    f"Federation public contract step {step.step_id!r} must be target-qualified"
+                )
+            try:
+                bridge, child, schedule = _direct_contract_plan(parent, step)
+            except Exception as exc:
+                raise FederationPlanError(str(exc)) from exc
+            if step.repository not in repositories:
+                repositories.append(step.repository)
+            key = f"{step.repository}::{step.target}::{step.contract_type}:{step.contract_name}"
+            if key in seen_keys:
+                raise FederationPlanError(
+                    f"Federation workflow {name!r} invokes duplicate public contract node {key!r}"
+                )
+            seen_keys.add(key)
+            identity = child.repository_identity.as_dict() if child.repository_identity else {}
+            node = FederatedPlanNode(
+                key=key,
+                repository=step.repository,
+                target=bridge.target,
+                workflow="",
+                local_key=f"{step.contract_type}:{step.contract_name}",
+                depends_on=tuple(dict.fromkeys(external_dependencies)),
+                index=next_index,
+                metadata={
+                    "federation_step": step.step_id,
+                    "federation_ref": step.canonical_ref(bridge.target),
+                    "requested_ref": step.ref,
+                    "target_explicit": True,
+                    "contract_type": step.contract_type,
+                    "contract_name": step.contract_name,
+                    "child_contract": bridge.child_contract,
+                    "contract_ref": bridge.contract_ref,
+                    "repository_identity": identity,
+                    "bridge_plan": bridge.as_dict(),
+                    "child_schedule": schedule,
+                },
+            )
+            nodes.append(node)
+            next_index += 1
+            invocation_bounds[step.step_id] = ((key,), (key,))
+            continue
+
+        child, target, local_graph = _child_graph(
+            parent, step.repository, step.workflow, step.target
+        )
+        if step.repository not in repositories:
+            repositories.append(step.repository)
+        local_roots = {node.key for node in local_graph.roots}
+        local_leaves = {node.key for node in local_graph.leaves}
         prefixed_roots: list[str] = []
         prefixed_leaves: list[str] = []
         identity = child.repository_identity.as_dict() if child.repository_identity else {}
@@ -411,6 +522,10 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     "federation_ref": step.canonical_ref(target),
                     "requested_ref": step.ref,
                     "target_explicit": step.target_qualified,
+                    "contract_type": "workflow",
+                    "contract_name": step.workflow,
+                    "child_contract": f"workflow:{step.workflow}",
+                    "contract_ref": f"{step.repository}::{target}::workflow:{step.workflow}",
                     "repository_identity": identity,
                     "child_metadata": dict(local.metadata),
                     "child_schedule": schedule_scope.as_dict(),

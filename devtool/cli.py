@@ -114,6 +114,9 @@ from .federation_impact import (
     FederationImpactError, analyze_federation_impact, explain_federation_impact,
     project_affected_workflow,
 )
+from .federation_interfaces import (
+    FederationInterfaceError, build_interface_report, interface_catalog,
+)
 from .federation_observability import build_federation_observability
 from .federation_execution import FederationExecutionError, run_federated_workflow, run_federated_group
 from .federation_bridge import (
@@ -1110,6 +1113,12 @@ def build_parser() -> argparse.ArgumentParser:
     federation_status.add_argument("--json", action="store_true", help="Emit the machine-readable federation observability snapshot")
     federation_capabilities = federation_sub.add_parser("capabilities", aliases=["graph"], help="Show the declared repository capability/dependency graph")
     federation_capabilities.add_argument("--json", action="store_true", help="Emit the machine-readable capability graph")
+    federation_interfaces = federation_sub.add_parser("interfaces", help="Show declared federation interface/conformance contracts")
+    federation_interfaces.add_argument("--json", action="store_true", help="Emit the machine-readable interface catalog")
+    federation_conformance = federation_sub.add_parser("conformance", aliases=["interface-check"], help="Check child repositories against a federation interface contract")
+    federation_conformance.add_argument("--interface", default="", help="Check all groups bound to this interface")
+    federation_conformance.add_argument("--group", default="", help="Check the interface bound to one federation group")
+    federation_conformance.add_argument("--json", action="store_true", help="Emit machine-readable conformance evidence")
     federation_affected = federation_sub.add_parser("affected", help="Compute dependency-aware affected federation repositories/workflows/groups")
     federation_affected.add_argument("--since", default="", help="Detect direct repository changes since this Git revision")
     federation_affected.add_argument("--repository", action="append", default=[], help="Seed one directly changed federation repository; repeatable")
@@ -11587,6 +11596,46 @@ def _federation_command(args: argparse.Namespace) -> int:
                         rows.append((f"run.{str(item.get('run_id') or '')[:12]}", f"{item.get('relationship')}; {item.get('status')}; {subject}"))
                 render_status_table(rows)
             return 0 if bool((payload.get("summary") or {}).get("healthy", True)) else 1
+        if action == "interfaces":
+            payload = interface_catalog(config)
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [("interfaces", str(len(payload.get("interfaces") or {})))]
+                for name, detail in sorted((payload.get("interfaces") or {}).items()):
+                    rows.append((
+                        name,
+                        f"workflows={','.join(detail.get('required_workflows') or []) or '-'}; "
+                        f"wrappers={','.join(detail.get('required_wrapper_commands') or []) or '-'}; "
+                        f"artifacts={','.join(detail.get('required_artifacts') or []) or '-'}; "
+                        f"groups={','.join(detail.get('groups') or []) or '-'}",
+                    ))
+                render_status_table(rows)
+            return 0
+        if action in {"conformance", "interface-check"}:
+            report = build_interface_report(
+                config,
+                interface_name=str(getattr(args, "interface", "") or ""),
+                group_name=str(getattr(args, "group", "") or ""),
+            )
+            payload = report.as_dict()
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("interface", report.interface),
+                    ("groups", ", ".join(report.groups) or "-"),
+                    ("status", report.status),
+                ]
+                for member in report.members:
+                    missing = [
+                        *[f"workflow:{value}" for value in member.missing_workflows],
+                        *[f"wrapper:{value}" for value in member.missing_wrapper_commands],
+                        *[f"artifact:{value}" for value in member.missing_artifacts],
+                    ]
+                    rows.append((f"repo.{member.repository}", "ok" if member.ok else f"missing {', '.join(missing)}"))
+                render_status_table(rows)
+            return 0 if report.ok else 1
         if action in {"capabilities", "graph"}:
             graph = build_capability_graph(config, strict=True)
             payload = graph.as_dict()
@@ -11619,6 +11668,7 @@ def _federation_command(args: argparse.Namespace) -> int:
                     ("capabilities", ", ".join(report.direct_capabilities) or "-"),
                     ("workflows", ", ".join(report.workflows) or "-"),
                     ("groups", ", ".join(report.groups) or "-"),
+                    ("interfaces", ", ".join(report.interfaces) or "-"),
                 ]
                 for repository in report.affected_repositories:
                     reason_text = "; ".join(str(item.get("reason") or item.get("kind") or "") for item in report.reasons.get(repository, ()))
@@ -11811,7 +11861,7 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append(("job", str(payload.get("job_reference"))))
                 render_status_table(rows)
             return code
-    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError) as exc:
+    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 

@@ -241,6 +241,32 @@ def build_federation_gate1_report(config: "ProjectConfig") -> FederationGateRepo
             requirement_count=len(capability_graph.resolutions),
         ))
 
+    # FRX-Y06: interface conformance is read-only and parent-owned. A bound
+    # interface is a preflight contract, never permission to mutate child
+    # configuration into conformance.
+    try:
+        from .federation_interfaces import all_interface_reports
+        interface_reports = all_interface_reports(config)
+    except Exception as exc:
+        checks.append(_check(
+            "interfaces",
+            "conformance",
+            "error",
+            f"federation interface conformance failed: {exc}",
+        ))
+    else:
+        for report in interface_reports:
+            checks.append(_check(
+                "interfaces",
+                f"interface:{report.interface}:{','.join(report.groups) or '-'}",
+                "ok" if report.ok else "error",
+                "all bound repositories conform to the parent-owned public interface"
+                if report.ok else "one or more bound repositories do not conform to the public interface",
+                interface=report.interface,
+                groups=list(report.groups),
+                members=[member.as_dict() for member in report.members],
+            ))
+
     seen_fingerprints: dict[str, str] = {}
     if owner_identity is not None and owner_identity.fingerprint:
         seen_fingerprints[owner_identity.fingerprint] = "owner"

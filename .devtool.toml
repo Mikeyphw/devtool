@@ -226,6 +226,18 @@ command = ["python", "-m", "devtool.overlay_gate_fixture"]
 inputs = ["devtool/overlay/**", "devtool/overlay_gate_fixture.py", "devtool/artifact_base_contract.py"]
 metadata = { read_only = true, roadmap_id = "GIT-FRX-06" }
 
+[targets.devtool.jobs.interface-conformance-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "interface"]
+inputs = ["devtool/federation_interfaces.py", "devtool/federation_config.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "FRX-Y06" }
+
+[targets.devtool.jobs.public-contract-dag-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "public-contract"]
+inputs = ["devtool/federation_bridge.py", "devtool/federation_plan.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "FRX-Y07" }
+
 [targets.devtool.workflows]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -278,6 +290,20 @@ roadmap-frx-y05 = [
   { id = "frx-y05", ref = "test:roadmap-frx-y05", depends_on = ["frx-y04"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y05"] },
 ]
+roadmap-frx-y06 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "interface-fixture", ref = "job:interface-conformance-fixture", depends_on = ["syntax"] },
+  { id = "frx-y05", ref = "test:roadmap-frx-y05", depends_on = ["syntax"] },
+  { id = "frx-y06", ref = "test:roadmap-frx-y06", depends_on = ["frx-y05", "interface-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y06"] },
+]
+roadmap-frx-y07 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "contract-fixture", ref = "job:public-contract-dag-fixture", depends_on = ["syntax"] },
+  { id = "frx-y06", ref = "test:roadmap-frx-y06", depends_on = ["syntax"] },
+  { id = "frx-y07", ref = "test:roadmap-frx-y07", depends_on = ["frx-y06", "contract-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y07"] },
+]
 roadmap-gate1 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "rebase-fixture", ref = "job:overlay-rebase-fixture", depends_on = ["syntax"] },
@@ -308,6 +334,28 @@ roadmap-current = [
   { id = "gate-regressions", ref = "test:roadmap-gate1-regressions", depends_on = ["git-frx06", "frx-y01", "artifact-validation", "workflow-exo"] },
   { id = "frx-y04", ref = "test:roadmap-frx-y04", depends_on = ["gate-regressions"] },
   { id = "frx-y05", ref = "test:roadmap-frx-y05", depends_on = ["frx-y04"] },
+  { id = "frx-y06", ref = "test:roadmap-frx-y06", depends_on = ["frx-y05"] },
+  { id = "frx-y07", ref = "test:roadmap-frx-y07", depends_on = ["frx-y06"] },
+]
+
+[[test]]
+id = "roadmap-frx-y06"
+name = "FRX-Y06 federation interface conformance contracts"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-frx-y06.xml",
+  "tests/test_frx_y06_interface_conformance.py",
+]
+
+[[test]]
+id = "roadmap-frx-y07"
+name = "FRX-Y07 public WRAP and TLJ federation DAG nodes"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-frx-y07.xml",
+  "tests/test_frx_y07_public_contract_dag_nodes.py",
 ]
 
 [[test]]

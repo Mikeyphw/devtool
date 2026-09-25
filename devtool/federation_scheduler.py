@@ -195,7 +195,7 @@ def _step_schedule_node(
         step_id=step.step_id,
         repository=step.repository,
         target=target,
-        workflow=step.workflow,
+        workflow=step.workflow or step.child_contract,
         depends_on=tuple(step.depends_on),
         reads=_dedupe(reads),
         writes=_dedupe(writes),

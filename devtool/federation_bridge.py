@@ -155,6 +155,118 @@ def execute_federated_wrapper(
     )
 
 
+def execute_planned_federated_wrapper_child(
+    child: ProjectConfig,
+    resolution: WrapperResolution,
+    *,
+    child_run_id: str,
+    lineage: dict[str, Any],
+    reenter: Callable[[list[str]], int],
+    publish: Callable[[Any], None] = publish_event,
+) -> int:
+    """Execute a bridge-resolved wrapper inside the planned child EXO run."""
+    if resolution.mode != "execute":
+        raise FederationBridgeError(
+            f"Wrapper request resolved to {resolution.mode!r}; a federation DAG node requires executable mode"
+        )
+    identity = child.repository_identity.as_dict() if child.repository_identity else {}
+    command = f"wrapper {resolution.command}"
+    publish(RunStarted(
+        run_id=child_run_id,
+        command=command,
+        project=str(child.repo_root),
+        source="federation-wrapper",
+        metadata={
+            "invocation_source": "federation-wrapper",
+            "invocation_command": str(resolution.command),
+            "repository_identity": identity,
+            "run_lineage": lineage,
+        },
+    ))
+    try:
+        rc = int(execute_wrapper_resolution(resolution, reenter=reenter))
+        status = "succeeded" if rc == 0 else ("cancelled" if rc == 130 else "failed")
+        publish(GraphSealed(run_id=child_run_id, reason="direct wrapper execution complete", source="federation-wrapper"))
+        publish(RunFinished(run_id=child_run_id, status=status, exit_code=rc, source="federation-wrapper"))
+        return rc
+    except KeyboardInterrupt:
+        publish(GraphSealed(run_id=child_run_id, reason="direct wrapper execution cancelled", source="federation-wrapper"))
+        publish(RunFinished(run_id=child_run_id, status="cancelled", exit_code=130, source="federation-wrapper"))
+        raise
+    except BaseException:
+        publish(GraphSealed(run_id=child_run_id, reason="direct wrapper execution aborted", source="federation-wrapper"))
+        publish(RunFinished(run_id=child_run_id, status="failed", exit_code=1, source="federation-wrapper"))
+        raise
+
+
+def execute_planned_federated_job_child(
+    child: ProjectConfig,
+    specs: Sequence[Any],
+    *,
+    child_run_id: str,
+    lineage: dict[str, Any],
+    job_reference: str,
+    verbose: bool = False,
+    dry_run: bool = False,
+    continue_on_error: bool = False,
+    publish: Callable[[Any], None] = publish_event,
+    run_specs_fn: Callable[..., tuple[list[Any], str]] = run_specs,
+) -> int:
+    """Execute a bridge-resolved target-local job in an existing child EXO run.
+
+    Both direct ``federation exec`` and FRX-Y07 DAG nodes use this exact child
+    execution service so contract type does not fork the runtime semantics.
+    """
+    identity = child.repository_identity.as_dict() if child.repository_identity else {}
+    publish(RunStarted(
+        run_id=child_run_id,
+        command=f"job {job_reference}",
+        project=str(child.repo_root),
+        source="federation-job",
+        metadata={
+            "invocation_source": "federation-job",
+            "invocation_command": str(job_reference),
+            "repository_identity": identity,
+            "run_lineage": lineage,
+        },
+    ))
+    try:
+        results, _ = run_specs_fn(
+            child,
+            list(specs),
+            verbose=verbose,
+            dry_run=dry_run,
+            continue_on_error=continue_on_error,
+            event_run_id=child_run_id,
+            publish_workflow_plan=False,
+        )
+        rc = next((int(result.returncode) for result in results if int(result.returncode or 0) != 0), 0)
+        status = "succeeded" if rc == 0 else ("cancelled" if rc == 130 else "failed")
+        publish(GraphSealed(
+            run_id=child_run_id,
+            reason="direct target-local job execution complete",
+            source="federation-job",
+        ))
+        publish(RunFinished(run_id=child_run_id, status=status, exit_code=rc, source="federation-job"))
+        return rc
+    except KeyboardInterrupt:
+        publish(GraphSealed(
+            run_id=child_run_id,
+            reason="direct target-local job execution cancelled",
+            source="federation-job",
+        ))
+        publish(RunFinished(run_id=child_run_id, status="cancelled", exit_code=130, source="federation-job"))
+        raise
+    except BaseException:
+        publish(GraphSealed(
+            run_id=child_run_id,
+            reason="direct target-local job execution aborted",
+            source="federation-job",
+        ))
+        publish(RunFinished(run_id=child_run_id, status="failed", exit_code=1, source="federation-job"))
+        raise
+
+
 def plan_federated_job(
     parent: ProjectConfig,
     repository: str,
@@ -208,45 +320,21 @@ def execute_federated_job(
     run_specs_fn: Callable[..., tuple[list[Any], str]] = run_specs,
 ) -> FederatedChildRun:
     plan, child, specs = plan_federated_job(parent, repository, job_reference)
-    identity = child.repository_identity.as_dict() if child.repository_identity else {}
     snapshot_lookup = snapshot_lookup or get_execution_store().snapshot
 
     def execute(child_run_id: str, lineage: dict[str, Any]) -> int:
-        publish(RunStarted(
-            run_id=child_run_id,
-            command=f"job {job_reference}",
-            project=str(child.repo_root),
-            source="federation-job",
-            metadata={
-                "invocation_source": "federation-job",
-                "invocation_command": str(job_reference),
-                "repository_identity": identity,
-                "run_lineage": lineage,
-            },
-        ))
-        try:
-            results, _ = run_specs_fn(
-                child,
-                specs,
-                verbose=verbose,
-                dry_run=dry_run,
-                continue_on_error=continue_on_error,
-                event_run_id=child_run_id,
-                publish_workflow_plan=False,
-            )
-            rc = next((int(result.returncode) for result in results if int(result.returncode or 0) != 0), 0)
-            status = "succeeded" if rc == 0 else ("cancelled" if rc == 130 else "failed")
-            publish(GraphSealed(run_id=child_run_id, reason="direct target-local job execution complete", source="federation-job"))
-            publish(RunFinished(run_id=child_run_id, status=status, exit_code=rc, source="federation-job"))
-            return rc
-        except KeyboardInterrupt:
-            publish(GraphSealed(run_id=child_run_id, reason="direct target-local job execution cancelled", source="federation-job"))
-            publish(RunFinished(run_id=child_run_id, status="cancelled", exit_code=130, source="federation-job"))
-            raise
-        except BaseException:
-            publish(GraphSealed(run_id=child_run_id, reason="direct target-local job execution aborted", source="federation-job"))
-            publish(RunFinished(run_id=child_run_id, status="failed", exit_code=1, source="federation-job"))
-            raise
+        return execute_planned_federated_job_child(
+            child,
+            specs,
+            child_run_id=child_run_id,
+            lineage=lineage,
+            job_reference=job_reference,
+            verbose=verbose,
+            dry_run=dry_run,
+            continue_on_error=continue_on_error,
+            publish=publish,
+            run_specs_fn=run_specs_fn,
+        )
 
     return run_federated_direct_child(
         parent,
@@ -266,6 +354,8 @@ __all__ = [
     "FederatedBridgePlan",
     "plan_federated_wrapper",
     "execute_federated_wrapper",
+    "execute_planned_federated_wrapper_child",
     "plan_federated_job",
     "execute_federated_job",
+    "execute_planned_federated_job_child",
 ]

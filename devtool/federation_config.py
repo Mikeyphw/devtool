@@ -14,20 +14,22 @@ import tomllib
 from typing import Any, Mapping
 
 from .models import (
-    FederationCapabilityRequirement, FederationConfig, FederationGroup, FederatedRepositoryConfig,
+    FederationCapabilityRequirement, FederationConfig, FederationGroup, FederationInterface, FederatedRepositoryConfig,
     FederatedWorkflowConfig, FederatedWorkflowStep,
 )
 
 FEDERATION_SCHEMA_VERSION = 1
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_FEDERATION_KEYS = frozenset({"schema", "repositories", "groups", "workflows"})
+_FEDERATION_KEYS = frozenset({"schema", "repositories", "interfaces", "groups", "workflows"})
 _REPOSITORY_KEYS = frozenset({"path", "required", "exports", "requires"})
-_GROUP_KEYS = frozenset({"repositories", "members"})
+_GROUP_KEYS = frozenset({"repositories", "members", "interface"})
 _WORKFLOW_KEYS = frozenset({"depends_on", "steps"})
 _WORKFLOW_STEP_KEYS = frozenset({"id", "ref", "depends_on"})
+_INTERFACE_KEYS = frozenset({"required_workflows", "required_wrapper_commands", "required_artifacts"})
 _CAPABILITY_TABLE_KEYS = frozenset({"capabilities"})
 _CAPABILITY_REQUIREMENT_KEYS = frozenset({"name", "optional", "compatible", "policy"})
 _CAPABILITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*/v[0-9]+$")
+_INTERFACE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:/v[0-9]+)?$")
 
 
 class FederationConfigError(ValueError):
@@ -118,6 +120,31 @@ def _bool(value: object, *, path: str, default: bool) -> bool:
     if not isinstance(value, bool):
         raise _fail(f"{path} must be true or false")
     return value
+
+
+def _interface_name(value: object, *, path: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise _fail(f"{path} must be a non-empty interface identifier")
+    name = value.strip()
+    if not _INTERFACE_RE.fullmatch(name):
+        raise _fail(f"{path} must be an interface identifier such as 'android-app' or 'android-app/v1'")
+    return name
+
+
+def _string_list(value: object, *, path: str) -> tuple[str, ...]:
+    if value in (None, ""):
+        return ()
+    if not isinstance(value, list):
+        raise _fail(f"{path} must be an array of non-empty strings")
+    result: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise _fail(f"{path}[{index}] must be a non-empty string")
+        text = item.strip()
+        if text in result:
+            raise _fail(f"{path} contains duplicate value {text!r}")
+        result.append(text)
+    return tuple(result)
 
 
 
@@ -254,7 +281,7 @@ def _normalize_group_members(
             member = str(raw_member or "").strip()
             resolved = ""
             if "::" in member:
-                ref, _repository, _target, _workflow = _workflow_ref(
+                ref, _repository, _target, _workflow, _contract_type, _contract_name = _workflow_ref(
                     member, path=path, repositories=repositories
                 )
                 resolved = ref
@@ -304,7 +331,10 @@ def _normalize_group_members(
             seen.add(resolved)
             members.append(resolved)
         normalized[group_name] = FederationGroup(
-            name=group.name, repositories=group.repositories, members=tuple(members)
+            name=group.name,
+            repositories=group.repositories,
+            members=tuple(members),
+            interface=group.interface,
         )
 
     # Validate nested-group cycles at configuration time. Metadata-only groups
@@ -343,51 +373,59 @@ def _workflow_ref(
     *,
     path: str,
     repositories: Mapping[str, FederatedRepositoryConfig],
-) -> tuple[str, str, str, str]:
-    """Parse a federation child-workflow reference.
+) -> tuple[str, str, str, str, str, str]:
+    """Parse one federation child public-contract reference.
 
-    Backward-compatible references use ``repository::workflow`` and defer
-    target resolution to the child repository's selected/default target.
-    Target-qualified references use ``repository::target::workflow`` and
-    select that target explicitly.  Parsing remains repository-local: target
-    existence is verified by the FRX planner when the child config is loaded.
+    Workflow compatibility remains ``repository::workflow`` or
+    ``repository::target::workflow``. FRX-Y07 additionally admits explicit
+    target-qualified public contract nodes:
+    ``repository::target::job:<name>`` and
+    ``repository::target::wrapper:<name>``.
     """
 
     if not isinstance(value, str) or not value.strip():
         raise _fail(
-            f"{path} must be a non-empty repository::workflow or "
-            "repository::target::workflow reference"
+            f"{path} must be a non-empty repository::workflow, "
+            "repository::target::workflow, repository::target::job:<name>, or "
+            "repository::target::wrapper:<name> reference"
         )
     raw = value.strip()
     parts = [part.strip() for part in raw.split("::")]
     if len(parts) not in {2, 3}:
-        raise _fail(
-            f"{path} must use repository::workflow or repository::target::workflow syntax, "
-            f"got {raw!r}"
-        )
+        raise _fail(f"{path} must use repository::workflow, repository::target::workflow, or a target-qualified job/wrapper contract; got {raw!r}")
     if any(not part for part in parts):
-        raise _fail(
-            f"{path} must use non-empty repository, target (when present), and workflow names, "
-            f"got {raw!r}"
-        )
+        raise _fail(f"{path} must use non-empty repository, target (when present), and contract names in repository::workflow syntax; got {raw!r}")
 
     repository = _name(parts[0], path=f"{path} repository")
-    if len(parts) == 2:
-        target = ""
-        workflow = _name(parts[1], path=f"{path} workflow")
-        normalized = f"{repository}::{workflow}"
-    else:
-        target = _name(parts[1], path=f"{path} target")
-        workflow = _name(parts[2], path=f"{path} workflow")
-        normalized = f"{repository}::{target}::{workflow}"
-
     if repository not in repositories:
         available = ", ".join(sorted(repositories)) or "<none>"
         raise _fail(
             f"{path} references unknown federation repository {repository!r}. "
             f"Available repositories: {available}"
         )
-    return normalized, repository, target, workflow
+
+    if len(parts) == 2:
+        workflow = _name(parts[1], path=f"{path} workflow")
+        return f"{repository}::{workflow}", repository, "", workflow, "workflow", workflow
+
+    target = _name(parts[1], path=f"{path} target")
+    subject = parts[2]
+    if ":" in subject:
+        kind, name = subject.split(":", 1)
+        kind = kind.strip().lower()
+        if kind not in {"workflow", "job", "wrapper"}:
+            raise _fail(
+                f"{path} uses unsupported public contract type {kind!r}; expected workflow, job, or wrapper"
+            )
+        contract_name = _name(name, path=f"{path} {kind}")
+        normalized = f"{repository}::{target}::{kind}:{contract_name}"
+        if kind == "workflow":
+            return normalized, repository, target, contract_name, "workflow", contract_name
+        return normalized, repository, target, "", kind, contract_name
+
+    workflow = _name(subject, path=f"{path} workflow")
+    normalized = f"{repository}::{target}::{workflow}"
+    return normalized, repository, target, workflow, "workflow", workflow
 
 
 def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str, FederatedRepositoryConfig]) -> tuple[FederatedWorkflowStep, ...]:
@@ -401,7 +439,7 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
         if not isinstance(shorthand, list) or not shorthand:
             raise _fail(f"federation.workflows.{name}.depends_on must be a non-empty array")
         for index, value in enumerate(shorthand, 1):
-            ref, repository, target, workflow = _workflow_ref(
+            ref, repository, target, workflow, contract_type, contract_name = _workflow_ref(
                 value,
                 path=f"federation.workflows.{name}.depends_on[{index - 1}]",
                 repositories=repositories,
@@ -415,6 +453,8 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
                 depends_on=(),
                 depends_on_declared=True,
                 target=target,
+                contract_type=contract_type,
+                contract_name=contract_name,
             ))
     elif structured is not None:
         if not isinstance(structured, list) or not structured:
@@ -429,7 +469,7 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
             if step_id in seen_ids:
                 raise _fail(f"federation workflow {name!r} declares duplicate step id {step_id!r}")
             seen_ids.add(step_id)
-            ref, repository, target, workflow = _workflow_ref(
+            ref, repository, target, workflow, contract_type, contract_name = _workflow_ref(
                 item.get("ref"),
                 path=f"federation.workflows.{name}.steps[{index}].ref",
                 repositories=repositories,
@@ -451,6 +491,8 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
                 depends_on=tuple(deps),
                 depends_on_declared="depends_on" in item,
                 target=target,
+                contract_type=contract_type,
+                contract_name=contract_name,
             ))
         known = {step.step_id for step in steps}
         for step in steps:
@@ -537,6 +579,31 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
             requires=_capability_requires(item.get("requires"), path=f"[federation.repositories.{name}.requires]"),
         )
 
+    interfaces_raw = _table(raw.get("interfaces"), path="[federation.interfaces]")
+    interfaces: dict[str, FederationInterface] = {}
+    for raw_name, raw_interface in interfaces_raw.items():
+        name = _interface_name(raw_name, path="federation interface name")
+        if name in interfaces:
+            raise _fail(f"Duplicate federation interface name after normalization: {name!r}")
+        item = _table(raw_interface, path=f"[federation.interfaces.{name}]")
+        _reject_unknown(item, _INTERFACE_KEYS, path=f"[federation.interfaces.{name}]")
+        interface = FederationInterface(
+            name=name,
+            required_workflows=_string_list(
+                item.get("required_workflows"), path=f"federation.interfaces.{name}.required_workflows"
+            ),
+            required_wrapper_commands=_string_list(
+                item.get("required_wrapper_commands"),
+                path=f"federation.interfaces.{name}.required_wrapper_commands",
+            ),
+            required_artifacts=_string_list(
+                item.get("required_artifacts"), path=f"federation.interfaces.{name}.required_artifacts"
+            ),
+        )
+        if not (interface.required_workflows or interface.required_wrapper_commands or interface.required_artifacts):
+            raise _fail(f"federation interface {name!r} must require at least one public surface")
+        interfaces[name] = interface
+
     groups_raw = _table(raw.get("groups"), path="[federation.groups]")
     groups: dict[str, FederationGroup] = {}
     for raw_name, raw_group in groups_raw.items():
@@ -555,11 +622,13 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
         if isinstance(raw_group, list):
             repository_members: tuple[str, ...] = ()
             executable_members = _group_members(raw_group, path=f"federation.groups.{name}")
+            interface_name = ""
         else:
             group = _table(raw_group, path=f"[federation.groups.{name}]")
             _reject_unknown(group, _GROUP_KEYS, path=f"[federation.groups.{name}]")
             has_repositories = "repositories" in group
             has_members = "members" in group
+            has_interface = "interface" in group
             if not has_repositories and not has_members:
                 raise _fail(
                     f"federation group {name!r} must declare repositories and/or executable members"
@@ -572,6 +641,16 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
                 _group_members(group.get("members"), path=f"federation.groups.{name}.members")
                 if has_members else ()
             )
+            interface_name = (
+                _interface_name(group.get("interface"), path=f"federation.groups.{name}.interface")
+                if has_interface else ""
+            )
+            if interface_name and interface_name not in interfaces:
+                available = ", ".join(sorted(interfaces)) or "<none>"
+                raise _fail(
+                    f"federation group {name!r} references unknown interface {interface_name!r}. "
+                    f"Available interfaces: {available}"
+                )
         unknown = [member for member in repository_members if member not in repositories]
         if unknown:
             available = ", ".join(sorted(repositories)) or "<none>"
@@ -580,7 +659,7 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
                 f"Available repositories: {available}"
             )
         groups[name] = FederationGroup(
-            name=name, repositories=repository_members, members=executable_members
+            name=name, repositories=repository_members, members=executable_members, interface=interface_name
         )
 
     workflows_raw = _table(raw.get("workflows"), path="[federation.workflows]")
@@ -593,7 +672,13 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
         workflows[name] = FederatedWorkflowConfig(name=name, steps=_workflow_steps(name, item, repositories))
 
     groups = _normalize_group_members(groups, workflows, repositories)
-    return FederationConfig(schema=schema, repositories=repositories, groups=groups, workflows=workflows)
+    return FederationConfig(
+        schema=schema,
+        repositories=repositories,
+        interfaces=interfaces,
+        groups=groups,
+        workflows=workflows,
+    )
 
 
 def federation_as_dict(config: FederationConfig) -> dict[str, Any]:
@@ -628,10 +713,21 @@ def federation_as_dict(config: FederationConfig) -> dict[str, Any]:
                 "repositories": list(group.repositories),
                 "members": list(group.members),
                 "executable": group.executable,
+                "interface": group.interface,
             }
             for name, group in sorted(config.groups.items())
         },
     }
+    if config.interfaces:
+        payload["interfaces"] = {
+            name: {
+                "name": interface.name,
+                "required_workflows": list(interface.required_workflows),
+                "required_wrapper_commands": list(interface.required_wrapper_commands),
+                "required_artifacts": list(interface.required_artifacts),
+            }
+            for name, interface in sorted(config.interfaces.items())
+        }
     if config.workflows:
         payload["workflows"] = {
             name: {
@@ -644,6 +740,9 @@ def federation_as_dict(config: FederationConfig) -> dict[str, Any]:
                         "target": step.target,
                         "target_qualified": step.target_qualified,
                         "workflow": step.workflow,
+                        "contract_type": step.contract_type,
+                        "contract_name": step.contract_name,
+                        "child_contract": step.child_contract,
                         "depends_on": list(step.depends_on),
                     }
                     for step in workflow.steps

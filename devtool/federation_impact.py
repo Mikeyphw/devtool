@@ -58,6 +58,8 @@ class FederationImpactReport:
     interfaces: tuple[str, ...] = ()
     workflow_repositories: dict[str, tuple[str, ...]] = field(default_factory=dict)
     group_repositories: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    interface_groups: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    interface_repositories: dict[str, tuple[str, ...]] = field(default_factory=dict)
     reasons: dict[str, tuple[dict[str, Any], ...]] = field(default_factory=dict)
     discovery: dict[str, str] = field(default_factory=dict)
     capability_graph: dict[str, Any] = field(default_factory=dict)
@@ -74,6 +76,8 @@ class FederationImpactReport:
             "interfaces": list(self.interfaces),
             "workflow_repositories": {name: list(values) for name, values in sorted(self.workflow_repositories.items())},
             "group_repositories": {name: list(values) for name, values in sorted(self.group_repositories.items())},
+            "interface_groups": {name: list(values) for name, values in sorted(self.interface_groups.items())},
+            "interface_repositories": {name: list(values) for name, values in sorted(self.interface_repositories.items())},
             "reasons": {name: [dict(item) for item in rows] for name, rows in sorted(self.reasons.items())},
             "discovery": dict(sorted(self.discovery.items())),
             "capability_graph": dict(self.capability_graph),
@@ -203,15 +207,21 @@ def analyze_federation_impact(
                 members.update(step.repository for step in expanded.steps if step.repository in affected)
         group_repositories[group_name] = tuple(sorted(members))
 
-    # Y06 adds concrete interface contracts. Keeping this projection generic
-    # lets interface ownership plug in without changing Y05's reasoning engine.
-    interfaces: list[str] = []
-    configured_interfaces = getattr(config.federation, "interfaces", {})
-    if isinstance(configured_interfaces, dict):
-        for name, interface in sorted(configured_interfaces.items()):
-            members = set(getattr(interface, "repositories", ()) or ())
-            if members.intersection(affected):
-                interfaces.append(str(name))
+    # Interfaces are bound to explicit federation groups. An interface is
+    # affected only when one of its bound groups contains an affected member;
+    # interface contracts never infer ownership from repository proximity/text.
+    interface_groups: dict[str, list[str]] = {}
+    interface_repositories: dict[str, set[str]] = {}
+    for group_name in groups:
+        group = config.federation.groups[group_name]
+        interface_name = str(getattr(group, "interface", "") or "")
+        if not interface_name:
+            continue
+        interface_groups.setdefault(interface_name, []).append(group_name)
+        interface_repositories.setdefault(interface_name, set()).update(
+            group_repositories.get(group_name, ())
+        )
+    interfaces = tuple(sorted(interface_groups))
 
     return FederationImpactReport(
         direct_repositories=tuple(direct),
@@ -220,9 +230,11 @@ def analyze_federation_impact(
         affected_capabilities=tuple(affected_capabilities),
         workflows=workflows,
         groups=groups,
-        interfaces=tuple(interfaces),
+        interfaces=interfaces,
         workflow_repositories=workflow_repositories,
         group_repositories=group_repositories,
+        interface_groups={name: tuple(sorted(values)) for name, values in interface_groups.items()},
+        interface_repositories={name: tuple(sorted(values)) for name, values in interface_repositories.items()},
         reasons={name: tuple(rows) for name, rows in reasons.items()},
         discovery=discovery,
         capability_graph=capability_graph.as_dict(),
@@ -276,6 +288,26 @@ def explain_federation_impact(report: FederationImpactReport, subject: str) -> d
                 for repository in repositories
             ],
         }
+    if value in report.interfaces:
+        repositories = report.interface_repositories.get(value, ())
+        groups = report.interface_groups.get(value, ())
+        return {
+            "subject": value,
+            "kind": "interface",
+            "affected": True,
+            "groups": list(groups),
+            "repositories": list(repositories),
+            "reasons": [
+                {
+                    "kind": "interface",
+                    "interface": value,
+                    "group": group,
+                    "reason": "bound group contains an affected repository/workflow",
+                    "repositories": list(report.group_repositories.get(group, ())),
+                }
+                for group in groups
+            ],
+        }
     return {"subject": value, "kind": "unknown", "affected": False, "reasons": []}
 
 
@@ -315,6 +347,7 @@ def project_affected_workflow(
     federation = FederationConfig(
         schema=config.federation.schema,
         repositories=dict(config.federation.repositories),
+        interfaces=dict(config.federation.interfaces),
         groups=dict(config.federation.groups),
         workflows={**config.federation.workflows, name: scoped_workflow},
     )

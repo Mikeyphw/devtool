@@ -799,7 +799,7 @@ _devtool() {
           ;;
         federation|fed)
           if (( ${#line} < 2 )); then
-            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec capabilities graph affected why
+            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec capabilities graph interfaces conformance interface-check affected why
           else
             case $line[2] in
               list|preflight|gate1|gate2|execution-preflight|final-seal|seal)
@@ -811,11 +811,17 @@ _devtool() {
               capabilities|graph)
                 _arguments '--json[emit machine-readable capability dependency graph]'
                 ;;
+              interfaces)
+                _arguments '--json[emit machine-readable federation interface catalog]'
+                ;;
+              conformance|interface-check)
+                _arguments '--interface[check all groups bound to interface]:interface:' '--group[check one group interface contract]:group:_devtool_federation_groups' '--json[emit machine-readable conformance evidence]'
+                ;;
               affected)
                 _arguments '--since[detect direct changes since revision]:revision:' '*--repository[seed directly changed federation repository]:repository:_devtool_federation_repositories' '--json[emit machine-readable impact evidence]'
                 ;;
               why)
-                _arguments '1:repository node workflow or group:' '--since[detect direct changes since revision]:revision:' '*--repository[seed directly changed federation repository]:repository:_devtool_federation_repositories' '--json[emit machine-readable reason evidence]'
+                _arguments '1:repository node workflow group or interface:' '--since[detect direct changes since revision]:revision:' '*--repository[seed directly changed federation repository]:repository:_devtool_federation_repositories' '--json[emit machine-readable reason evidence]'
                 ;;
               inspect)
                 _arguments '1:federated repository:_devtool_federation_repositories' '--json[emit machine-readable repository boundary state]'

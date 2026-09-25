@@ -307,10 +307,19 @@ class FederationGroup:
     name: str
     repositories: tuple[str, ...] = ()
     members: tuple[str, ...] = ()
+    interface: str = ""
 
     @property
     def executable(self) -> bool:
         return bool(self.members)
+
+
+@dataclass(slots=True, frozen=True)
+class FederationInterface:
+    name: str
+    required_workflows: tuple[str, ...] = ()
+    required_wrapper_commands: tuple[str, ...] = ()
+    required_artifacts: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -322,16 +331,26 @@ class FederatedWorkflowStep:
     depends_on: tuple[str, ...] = ()
     depends_on_declared: bool = False
     target: str = ""
+    contract_type: str = "workflow"
+    contract_name: str = ""
 
     @property
     def target_qualified(self) -> bool:
         return bool(self.target)
 
+    @property
+    def child_contract(self) -> str:
+        if self.contract_type == "workflow":
+            return f"workflow:{self.workflow}"
+        return f"{self.contract_type}:{self.contract_name}"
+
     def canonical_ref(self, resolved_target: str = "") -> str:
         target = str(resolved_target or self.target or "").strip()
-        if not target:
+        if self.contract_type == "workflow" and not target:
             return f"{self.repository}::{self.workflow}"
-        return f"{self.repository}::{target}::{self.workflow}"
+        if self.contract_type == "workflow":
+            return f"{self.repository}::{target}::{self.workflow}"
+        return f"{self.repository}::{target}::{self.contract_type}:{self.contract_name}"
 
 
 @dataclass(slots=True, frozen=True)
@@ -344,12 +363,13 @@ class FederatedWorkflowConfig:
 class FederationConfig:
     schema: int = 1
     repositories: dict[str, FederatedRepositoryConfig] = field(default_factory=dict)
+    interfaces: dict[str, FederationInterface] = field(default_factory=dict)
     groups: dict[str, FederationGroup] = field(default_factory=dict)
     workflows: dict[str, FederatedWorkflowConfig] = field(default_factory=dict)
 
     @property
     def enabled(self) -> bool:
-        return bool(self.repositories or self.groups or self.workflows)
+        return bool(self.repositories or self.interfaces or self.groups or self.workflows)
 
 
 @dataclass(slots=True)

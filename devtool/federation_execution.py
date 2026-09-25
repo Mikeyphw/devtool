@@ -229,6 +229,8 @@ def _assert_child_snapshot_authority(
     expected_child_workflow: str = "",
     expected_federation_ref: str = "",
     expected_requested_ref: str = "",
+    expected_child_contract: str = "",
+    expected_contract_ref: str = "",
     expected_federation_group: str = "",
     snapshot: Any,
 ) -> dict[str, Any]:
@@ -249,6 +251,8 @@ def _assert_child_snapshot_authority(
         "child_workflow": expected_child_workflow,
         "federation_ref": expected_federation_ref,
         "requested_ref": expected_requested_ref,
+        "child_contract": expected_child_contract,
+        "contract_ref": expected_contract_ref,
         "federation_group": expected_federation_group,
     }
     for field_name, expected_value in expected_fields.items():
@@ -304,6 +308,79 @@ def _child_argv(
         "invoke", workflow,
         "--target", target,
     ]
+
+
+def _step_child_contract(step: FederatedWorkflowStep) -> str:
+    return step.child_contract
+
+
+def _step_contract_ref(plan: FederatedPlanGraph, step: FederatedWorkflowStep) -> str:
+    target = _step_target(plan, step)
+    return f"{step.repository}::{target}::{step.child_contract}" if target else ""
+
+
+def _step_display_workflow(step: FederatedWorkflowStep) -> str:
+    return step.workflow or step.child_contract
+
+
+def _execute_existing_child_contract(
+    parent: ProjectConfig,
+    step: FederatedWorkflowStep,
+    *,
+    child_run_id: str,
+    lineage: dict[str, Any],
+    reenter: Callable[[list[str]], int],
+    publish: Callable[[Any], None],
+) -> int:
+    """Execute a workflow/job/wrapper through its existing authoritative service."""
+    if step.contract_type == "workflow":
+        resolution = resolve_federated_repository(parent, step.repository)
+        return int(reenter(_child_argv(
+            root=resolution.root,
+            target=str(lineage.get("target") or step.target),
+            workflow=step.workflow,
+            invocation_command=f"{lineage.get('federation_workflow')}:{step.step_id}",
+        )))
+
+    from .federation_bridge import (
+        execute_planned_federated_job_child,
+        execute_planned_federated_wrapper_child,
+        plan_federated_job,
+        plan_federated_wrapper,
+    )
+
+    target = str(lineage.get("target") or step.target)
+    if step.contract_type == "job":
+        plan, child, specs = plan_federated_job(
+            parent, step.repository, f"{target}:job:{step.contract_name}"
+        )
+        if plan.target != target or plan.contract_ref != str(lineage.get("contract_ref") or ""):
+            raise FederationExecutionError(
+                f"Federation job contract {step.ref!r} changed between planning and execution"
+            )
+        return execute_planned_federated_job_child(
+            child,
+            specs,
+            child_run_id=child_run_id,
+            lineage=lineage,
+            job_reference=f"{target}:job:{step.contract_name}",
+            publish=publish,
+        )
+    if step.contract_type == "wrapper":
+        plan, child, resolution = plan_federated_wrapper(parent, step.repository, [step.contract_name])
+        if plan.target != target or plan.contract_ref != str(lineage.get("contract_ref") or ""):
+            raise FederationExecutionError(
+                f"Federation wrapper contract {step.ref!r} changed between planning and execution"
+            )
+        return execute_planned_federated_wrapper_child(
+            child,
+            resolution,
+            child_run_id=child_run_id,
+            lineage=lineage,
+            reenter=reenter,
+            publish=publish,
+        )
+    raise FederationExecutionError(f"Unsupported federation contract type {step.contract_type!r}")
 
 
 def _run_federated_workflow_sequential(
@@ -379,7 +456,10 @@ def _run_federated_workflow_sequential(
                 "federation_step": step.step_id,
                 "repository": step.repository,
                 "target": _step_target(plan, step),
-                "workflow": step.workflow,
+                "workflow": _step_display_workflow(step),
+                "contract_type": step.contract_type,
+                "child_contract": _step_child_contract(step),
+                "contract_ref": _step_contract_ref(plan, step),
                 "federation_ref": _step_federation_ref(plan, step),
                 "requested_ref": step.ref,
                 "repository_identity": _step_identity(plan, step),
@@ -405,10 +485,11 @@ def _run_federated_workflow_sequential(
                     source="federation",
                 ))
                 blocked = FederatedChildRun(
-                    step.step_id, step.repository, step.workflow, _step_target(plan, step), "",
+                    step.step_id, step.repository, _step_display_workflow(step), _step_target(plan, step), "",
                     node_ids[step.step_id], ExecutionStatus.BLOCKED.value, 1,
                     _step_identity(plan, step), {}, {},
                     federation_ref=_step_federation_ref(plan, step), requested_ref=step.ref,
+                    child_contract=_step_child_contract(step), contract_ref=_step_contract_ref(plan, step),
                 )
                 outcomes[step.step_id] = blocked
                 children.append(blocked)
@@ -444,7 +525,9 @@ def _run_federated_workflow_sequential(
                 "federation_step": step.step_id,
                 "repository": step.repository,
                 "target": target,
-                "child_workflow": step.workflow,
+                "child_workflow": _step_display_workflow(step),
+                "child_contract": _step_child_contract(step),
+                "contract_ref": _step_contract_ref(plan, step),
                 "federation_ref": federation_ref,
                 "requested_ref": step.ref,
                 "source_repository": owner_fingerprint,
@@ -463,13 +546,19 @@ def _run_federated_workflow_sequential(
                 node_id=parent_node,
                 label=federation_ref,
                 kind="federation-child",
-                argv=tuple(_child_argv(root=resolution.root, target=target, workflow=step.workflow, invocation_command=invocation_command)),
+                argv=tuple(
+                    _child_argv(root=resolution.root, target=target, workflow=step.workflow, invocation_command=invocation_command)
+                    if step.contract_type == "workflow" else (step.ref,)
+                ),
                 source="federation",
                 metadata={
                     "child_run_id": child_run_id,
                     "repository": step.repository,
                     "target": target,
-                    "workflow": step.workflow,
+                    "workflow": _step_display_workflow(step),
+                    "contract_type": step.contract_type,
+                    "child_contract": _step_child_contract(step),
+                    "contract_ref": _step_contract_ref(plan, step),
                     "federation_ref": federation_ref,
                     "requested_ref": step.ref,
                     "run_lineage": lineage,
@@ -486,9 +575,11 @@ def _run_federated_workflow_sequential(
                 "DEVTOOL_FEDERATION_STEP": step.step_id,
                 "DEVTOOL_FEDERATION_REPOSITORY": step.repository,
                 "DEVTOOL_FEDERATION_TARGET": target,
-                "DEVTOOL_FEDERATION_CHILD_WORKFLOW": step.workflow,
+                "DEVTOOL_FEDERATION_CHILD_WORKFLOW": _step_display_workflow(step),
                 "DEVTOOL_FEDERATION_REF": federation_ref,
                 "DEVTOOL_FEDERATION_REQUESTED_REF": step.ref,
+                "DEVTOOL_FEDERATION_CHILD_CONTRACT": _step_child_contract(step),
+                "DEVTOOL_FEDERATION_CONTRACT_REF": _step_contract_ref(plan, step),
                 "DEVTOOL_FEDERATION_SOURCE_REPOSITORY": owner_fingerprint,
                 "DEVTOOL_FEDERATION_REQUESTED_REPOSITORY": step.repository,
                 "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
@@ -505,12 +596,14 @@ def _run_federated_workflow_sequential(
             child_started = time.monotonic()
             active_child_started = child_started
             with _federation_child_environment(env):
-                rc = int(reenter(_child_argv(
-                    root=resolution.root,
-                    target=target,
-                    workflow=step.workflow,
-                    invocation_command=invocation_command,
-                )))
+                rc = _execute_existing_child_contract(
+                    parent,
+                    step,
+                    child_run_id=child_run_id,
+                    lineage=lineage,
+                    reenter=reenter,
+                    publish=publish,
+                )
             child_snapshot = snapshot_lookup(child_run_id)
             persisted_lineage = _assert_child_snapshot_authority(
                 repository=step.repository,
@@ -518,9 +611,11 @@ def _run_federated_workflow_sequential(
                 expected_identity=identity,
                 expected_parent_run_id=run_id,
                 expected_target=target,
-                expected_child_workflow=step.workflow,
+                expected_child_workflow=_step_display_workflow(step),
                 expected_federation_ref=federation_ref,
                 expected_requested_ref=step.ref,
+                expected_child_contract=(_step_child_contract(step) if step.contract_type != "workflow" else ""),
+                expected_contract_ref=(_step_contract_ref(plan, step) if step.contract_type != "workflow" else ""),
                 expected_federation_group=federation_group,
                 snapshot=child_snapshot,
             ) if child_snapshot is not None else {}
@@ -551,7 +646,10 @@ def _run_federated_workflow_sequential(
                     "child_run_id": child_run_id,
                     "repository": step.repository,
                     "target": target,
-                    "workflow": step.workflow,
+                    "workflow": _step_display_workflow(step),
+                    "contract_type": step.contract_type,
+                    "child_contract": _step_child_contract(step),
+                    "contract_ref": _step_contract_ref(plan, step),
                     "federation_ref": federation_ref,
                     "requested_ref": step.ref,
                     "run_lineage": persisted_lineage or lineage,
@@ -559,9 +657,10 @@ def _run_federated_workflow_sequential(
                 },
             ))
             child = FederatedChildRun(
-                step.step_id, step.repository, step.workflow, target, child_run_id,
+                step.step_id, step.repository, _step_display_workflow(step), target, child_run_id,
                 parent_node, child_status, rc, identity, persisted_lineage or lineage, operational,
                 federation_ref=federation_ref, requested_ref=step.ref,
+                child_contract=_step_child_contract(step), contract_ref=_step_contract_ref(plan, step),
             )
             outcomes[step.step_id] = child
             children.append(child)
@@ -595,11 +694,13 @@ def _run_federated_workflow_sequential(
             ))
             if active_step is not None:
                 cancelled_child = FederatedChildRun(
-                    active_step.step_id, active_step.repository, active_step.workflow, active_target,
+                    active_step.step_id, active_step.repository, _step_display_workflow(active_step), active_target,
                     active_child_run_id, active_parent_node, ExecutionStatus.CANCELLED.value, 130,
                     dict(active_identity), persisted_lineage or dict(active_lineage), {},
                     federation_ref=str(active_lineage.get("federation_ref") or ""),
                     requested_ref=str(active_lineage.get("requested_ref") or active_step.ref),
+                    child_contract=str(active_lineage.get("child_contract") or ""),
+                    contract_ref=str(active_lineage.get("contract_ref") or ""),
                 )
                 outcomes[active_step.step_id] = cancelled_child
                 children.append(cancelled_child)
@@ -630,10 +731,11 @@ def _run_federated_workflow_sequential(
                 source="federation",
             ))
             blocked = FederatedChildRun(
-                pending.step_id, pending.repository, pending.workflow, _step_target(plan, pending), "",
+                pending.step_id, pending.repository, _step_display_workflow(pending), _step_target(plan, pending), "",
                 node_ids[pending.step_id], ExecutionStatus.BLOCKED.value, 130,
                 _step_identity(plan, pending), {}, {},
                 federation_ref=_step_federation_ref(plan, pending), requested_ref=pending.ref,
+                child_contract=_step_child_contract(pending), contract_ref=_step_contract_ref(plan, pending),
             )
             outcomes[pending.step_id] = blocked
             children.append(blocked)
@@ -812,7 +914,10 @@ def _run_federated_workflow_parallel(
                 "federation_step": step.step_id,
                 "repository": step.repository,
                 "target": _step_target(plan, step),
-                "workflow": step.workflow,
+                "workflow": _step_display_workflow(step),
+                "contract_type": step.contract_type,
+                "child_contract": _step_child_contract(step),
+                "contract_ref": _step_contract_ref(plan, step),
                 "federation_ref": _step_federation_ref(plan, step),
                 "requested_ref": step.ref,
                 "repository_identity": _step_identity(plan, step),
@@ -873,7 +978,9 @@ def _run_federated_workflow_parallel(
             "federation_step": step.step_id,
             "repository": step.repository,
             "target": target,
-            "child_workflow": step.workflow,
+            "child_workflow": _step_display_workflow(step),
+            "child_contract": _step_child_contract(step),
+            "contract_ref": _step_contract_ref(plan, step),
             "federation_ref": federation_ref,
             "requested_ref": step.ref,
             "source_repository": owner_fingerprint,
@@ -885,11 +992,15 @@ def _run_federated_workflow_parallel(
             lineage["federation_group"] = federation_group
 
         child_state_dir = _parallel_child_state_directory(run_id, child_run_id)
-        argv = _child_argv(
-            root=resolution.root,
-            target=target,
-            workflow=step.workflow,
-            invocation_command=invocation_command,
+        argv = (
+            _child_argv(
+                root=resolution.root,
+                target=target,
+                workflow=step.workflow,
+                invocation_command=invocation_command,
+            )
+            if step.contract_type == "workflow"
+            else [step.ref]
         )
         env = {
             "DEVTOOL_RUN_ID": child_run_id,
@@ -900,7 +1011,9 @@ def _run_federated_workflow_parallel(
             "DEVTOOL_FEDERATION_STEP": step.step_id,
             "DEVTOOL_FEDERATION_REPOSITORY": step.repository,
             "DEVTOOL_FEDERATION_TARGET": target,
-            "DEVTOOL_FEDERATION_CHILD_WORKFLOW": step.workflow,
+            "DEVTOOL_FEDERATION_CHILD_WORKFLOW": _step_display_workflow(step),
+            "DEVTOOL_FEDERATION_CHILD_CONTRACT": _step_child_contract(step),
+            "DEVTOOL_FEDERATION_CONTRACT_REF": _step_contract_ref(plan, step),
             "DEVTOOL_FEDERATION_REF": federation_ref,
             "DEVTOOL_FEDERATION_REQUESTED_REF": step.ref,
             "DEVTOOL_FEDERATION_SOURCE_REPOSITORY": owner_fingerprint,
@@ -937,7 +1050,10 @@ def _run_federated_workflow_parallel(
                 "child_run_id": child_run_id,
                 "repository": step.repository,
                 "target": target,
-                "workflow": step.workflow,
+                "workflow": _step_display_workflow(step),
+                "contract_type": step.contract_type,
+                "child_contract": _step_child_contract(step),
+                "contract_ref": _step_contract_ref(plan, step),
                 "federation_ref": federation_ref,
                 "requested_ref": step.ref,
                 "run_lineage": lineage,
@@ -949,7 +1065,17 @@ def _run_federated_workflow_parallel(
         ))
         try:
             try:
-                rc = int(executor_fn(argv, env))
+                if step.contract_type == "workflow":
+                    rc = int(executor_fn(argv, env))
+                else:
+                    rc = int(_execute_existing_child_contract(
+                        parent,
+                        step,
+                        child_run_id=child_run_id,
+                        lineage=lineage,
+                        reenter=lambda child_argv: executor_fn(child_argv, env),
+                        publish=publish,
+                    ))
             except KeyboardInterrupt:
                 try:
                     request_child_cancel(child_run_id)
@@ -966,9 +1092,11 @@ def _run_federated_workflow_parallel(
                 expected_identity=identity,
                 expected_parent_run_id=run_id,
                 expected_target=target,
-                expected_child_workflow=step.workflow,
+                expected_child_workflow=_step_display_workflow(step),
                 expected_federation_ref=federation_ref,
                 expected_requested_ref=step.ref,
+                expected_child_contract=(_step_child_contract(step) if step.contract_type != "workflow" else ""),
+                expected_contract_ref=(_step_contract_ref(plan, step) if step.contract_type != "workflow" else ""),
                 expected_federation_group=federation_group,
                 snapshot=child_snapshot,
             ) if child_snapshot is not None else {}
@@ -1004,7 +1132,10 @@ def _run_federated_workflow_parallel(
                     "child_run_id": child_run_id,
                     "repository": step.repository,
                     "target": target,
-                    "workflow": step.workflow,
+                    "workflow": _step_display_workflow(step),
+                    "contract_type": step.contract_type,
+                    "child_contract": _step_child_contract(step),
+                    "contract_ref": _step_contract_ref(plan, step),
                     "federation_ref": federation_ref,
                     "requested_ref": step.ref,
                     "run_lineage": persisted_lineage or lineage,
@@ -1017,7 +1148,7 @@ def _run_federated_workflow_parallel(
             return FederatedChildRun(
                 step.step_id,
                 step.repository,
-                step.workflow,
+                _step_display_workflow(step),
                 target,
                 child_run_id,
                 parent_node,
@@ -1028,6 +1159,8 @@ def _run_federated_workflow_parallel(
                 operational,
                 federation_ref=federation_ref,
                 requested_ref=step.ref,
+                child_contract=_step_child_contract(step),
+                contract_ref=_step_contract_ref(plan, step),
             )
         finally:
             with active_lock:
@@ -1056,7 +1189,7 @@ def _run_federated_workflow_parallel(
                     outcomes[step.step_id] = FederatedChildRun(
                         step.step_id,
                         step.repository,
-                        step.workflow,
+                        _step_display_workflow(step),
                         _step_target(plan, step),
                         "",
                         node_ids[step.step_id],
@@ -1067,6 +1200,8 @@ def _run_federated_workflow_parallel(
                         {},
                         federation_ref=_step_federation_ref(plan, step),
                         requested_ref=step.ref,
+                        child_contract=_step_child_contract(step),
+                        contract_ref=_step_contract_ref(plan, step),
                     )
                     failed = True
                 else:
@@ -1133,7 +1268,7 @@ def _run_federated_workflow_parallel(
             outcomes[step.step_id] = FederatedChildRun(
                 step.step_id,
                 step.repository,
-                step.workflow,
+                _step_display_workflow(step),
                 _step_target(plan, step),
                 "",
                 node_ids[step.step_id],
@@ -1144,6 +1279,8 @@ def _run_federated_workflow_parallel(
                 {},
                 federation_ref=_step_federation_ref(plan, step),
                 requested_ref=step.ref,
+                child_contract=_step_child_contract(step),
+                contract_ref=_step_contract_ref(plan, step),
             )
 
     parent_status = (
