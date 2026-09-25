@@ -336,6 +336,7 @@ def materialize_federation_group(parent: "ProjectConfig", group_name: str):
                     )
                     for artifact_input in step.artifact_inputs
                 ),
+                stage=step.stage,
             ))
 
     def visit(current: str, *, prefix: str) -> None:
@@ -518,6 +519,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     "bridge_plan": bridge.as_dict(),
                     "child_schedule": schedule,
                     "artifact_inputs": [item.as_dict() for item in step.artifact_inputs],
+                    "federation_stage": step.stage,
                 },
             )
             nodes.append(node)
@@ -576,6 +578,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     "child_metadata": dict(local.metadata),
                     "child_schedule": schedule_scope.as_dict(),
                     "artifact_inputs": [item.as_dict() for item in step.artifact_inputs],
+                    "federation_stage": step.stage,
                 },
             ))
             next_index += 1
@@ -651,7 +654,11 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
         depends_on=tuple(dict.fromkeys(aggregate_deps)),
         index=next_index,
         synthetic=True,
-        metadata={"planning_only": True},
+        metadata={
+            "planning_only": True,
+            "integration_policy": workflow.integration_policy,
+            "publish_barrier": workflow.publish_barrier,
+        },
     ))
 
     graph = FederatedPlanGraph(

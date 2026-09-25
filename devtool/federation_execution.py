@@ -590,6 +590,7 @@ def _run_federated_workflow_sequential(
                 "requested_ref": step.ref,
                 "repository_identity": _step_identity(plan, step),
                 "artifact_inputs": [item.as_dict() for item in step.artifact_inputs],
+                "federation_stage": step.stage,
             },
         ))
     publish(GraphSealed(run_id=run_id, reason="federation child workflow set resolved", source="federation"))
@@ -1603,6 +1604,11 @@ def run_federated_workflow(
             for key in ("reused", "retried", "rerun_due_to_drift", "blocked", "failed", "cancelled")
         },
     }
+    workflow = parent.federation.workflows.get(workflow_name)
+    if workflow is not None:
+        from .git_federation_integration import publish_barrier_evidence
+        lifecycle["publish_barrier"] = publish_barrier_evidence(workflow, report.children)
+        lifecycle["integration_policy"] = workflow.integration_policy
     report = replace(report, lifecycle=lifecycle)
     checkpoint_report(parent, report, resumed_from=resumed_from, mode=resume_mode)
     return report

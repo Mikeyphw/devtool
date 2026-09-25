@@ -354,6 +354,7 @@ class FederatedWorkflowStep:
     contract_type: str = "workflow"
     contract_name: str = ""
     artifact_inputs: tuple[FederatedArtifactInput, ...] = ()
+    stage: str = "run"
 
     @property
     def target_qualified(self) -> bool:
@@ -378,6 +379,8 @@ class FederatedWorkflowStep:
 class FederatedWorkflowConfig:
     name: str
     steps: tuple[FederatedWorkflowStep, ...] = ()
+    integration_policy: str = "per-repo"
+    publish_barrier: bool = False
 
 
 @dataclass(slots=True)

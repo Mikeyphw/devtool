@@ -23,8 +23,8 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _FEDERATION_KEYS = frozenset({"schema", "repositories", "interfaces", "groups", "workflows"})
 _REPOSITORY_KEYS = frozenset({"path", "required", "exports", "requires"})
 _GROUP_KEYS = frozenset({"repositories", "members", "interface"})
-_WORKFLOW_KEYS = frozenset({"depends_on", "steps"})
-_WORKFLOW_STEP_KEYS = frozenset({"id", "ref", "depends_on", "inputs"})
+_WORKFLOW_KEYS = frozenset({"depends_on", "steps", "integration_policy", "publish_barrier"})
+_WORKFLOW_STEP_KEYS = frozenset({"id", "ref", "depends_on", "inputs", "stage"})
 _INTERFACE_KEYS = frozenset({"required_workflows", "required_wrapper_commands", "required_artifacts"})
 _CAPABILITY_TABLE_KEYS = frozenset({"capabilities"})
 _CAPABILITY_REQUIREMENT_KEYS = frozenset({"name", "optional", "compatible", "policy"})
@@ -530,6 +530,11 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
                 if dep_name in deps:
                     raise _fail(f"federation workflow {name!r} step {step_id!r} repeats dependency {dep_name!r}")
                 deps.append(dep_name)
+            stage = str(item.get("stage") or "run").strip().lower()
+            if stage not in {"run", "prepare", "publish"}:
+                raise _fail(
+                    f"federation.workflows.{name}.steps[{index}].stage must be 'run', 'prepare', or 'publish'"
+                )
             steps.append(FederatedWorkflowStep(
                 step_id=step_id,
                 ref=ref,
@@ -543,6 +548,7 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
                 artifact_inputs=_artifact_inputs(
                     item.get("inputs"), path=f"federation.workflows.{name}.steps[{index}].inputs"
                 ),
+                stage=stage,
             ))
         known = {step.step_id for step in steps}
         for step in steps:
@@ -750,7 +756,55 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
         if name in workflows:
             raise _fail(f"Duplicate federation workflow name after normalization: {name!r}")
         item = _table(raw_workflow, path=f"[federation.workflows.{name}]")
-        workflows[name] = FederatedWorkflowConfig(name=name, steps=_workflow_steps(name, item, repositories))
+        _reject_unknown(item, _WORKFLOW_KEYS, path=f"[federation.workflows.{name}]")
+        policy = str(item.get("integration_policy") or "per-repo").strip().lower()
+        if policy not in {"per-repo", "dependency-group", "all-or-nothing-pointer-update"}:
+            raise _fail(
+                f"federation.workflows.{name}.integration_policy must be 'per-repo', 'dependency-group', "
+                "or 'all-or-nothing-pointer-update'"
+            )
+        publish_barrier = _bool(
+            item.get("publish_barrier"), path=f"federation.workflows.{name}.publish_barrier", default=False
+        )
+        steps = list(_workflow_steps(name, item, repositories))
+        if publish_barrier:
+            prepare_ids = tuple(step.step_id for step in steps if step.stage == "prepare")
+            publish_ids = tuple(step.step_id for step in steps if step.stage == "publish")
+            if not prepare_ids or not publish_ids:
+                raise _fail(
+                    f"federation workflow {name!r} publish_barrier requires at least one prepare and one publish step"
+                )
+            # The barrier adds every prepare node as a predecessor of every
+            # publish node.  Refuse a config where a prepare node already
+            # depends (directly or transitively) on a publish node, because
+            # injecting the barrier would manufacture a dependency cycle.
+            by_id = {step.step_id: step for step in steps}
+            for prepare_id in prepare_ids:
+                seen: set[str] = set()
+                stack = list(by_id[prepare_id].depends_on)
+                while stack:
+                    dep = stack.pop()
+                    if dep in seen:
+                        continue
+                    seen.add(dep)
+                    candidate = by_id.get(dep)
+                    if candidate is not None:
+                        stack.extend(candidate.depends_on)
+                cycle_publish = next((publish_id for publish_id in publish_ids if publish_id in seen), "")
+                if cycle_publish:
+                    raise _fail(
+                        f"federation workflow {name!r} publish_barrier would create a dependency cycle: "
+                        f"prepare step {prepare_id!r} already depends on publish step {cycle_publish!r}"
+                    )
+            from dataclasses import replace
+            steps = [
+                replace(step, depends_on=tuple(dict.fromkeys((*step.depends_on, *prepare_ids))))
+                if step.stage == "publish" else step
+                for step in steps
+            ]
+        workflows[name] = FederatedWorkflowConfig(
+            name=name, steps=tuple(steps), integration_policy=policy, publish_barrier=publish_barrier
+        )
 
     groups = _normalize_group_members(groups, workflows, repositories)
     return FederationConfig(

@@ -1158,6 +1158,11 @@ def build_parser() -> argparse.ArgumentParser:
     federation_retry.add_argument("--failed", action="store_true", help="Retry failed/cancelled/blocked children only; fail closed if a successful child is invalidated")
     federation_retry.add_argument("--drift-policy", choices=("fail", "replan", "allow-if-equivalent"), default="fail", help="Frozen source drift policy for re-executed children")
     federation_retry.add_argument("--json", action="store_true", help="Emit machine-readable reuse/invalidation decisions and run result")
+    federation_integrate = federation_sub.add_parser("integrate", help="Integrate validated federation result commits into user branch pointers")
+    federation_integrate.add_argument("run_id", help="Completed federation parent run ID")
+    federation_integrate.add_argument("--policy", choices=("per-repo", "dependency-group", "all-or-nothing-pointer-update"), default="", help="Override the workflow integration policy")
+    federation_integrate.add_argument("--apply", action="store_true", help="Apply branch pointer integration; without this flag the command is a dry-run")
+    federation_integrate.add_argument("--json", action="store_true", help="Emit machine-readable integration plan/evidence")
     federation_exec = federation_sub.add_parser("exec", help="Execute one enrolled child wrapper or target-local-job public contract")
     federation_exec.add_argument("repository", help="Federation repository name")
     federation_exec.add_argument("--plan", action="store_true", help="Resolve the child public contract without executing it")
@@ -11955,6 +11960,38 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append((child.step_id, f"{subject}; {child.lifecycle or child.status}; run={child.run_id or '-'}"))
                 render_status_table(rows)
             return int(report.exit_code)
+        if action == "integrate":
+            from .git_federation_integration import integrate_federation_checkpoint
+            apply_changes = bool(getattr(args, "apply", False))
+            if apply_changes and not (bool(getattr(args, "yes", False)) or bool(getattr(args, "force", False))):
+                if console.is_interactive and sys.stdin.isatty():
+                    if not Confirm.ask(
+                        "Integrate validated federation result commits into child user branches?",
+                        default=False, console=console,
+                    ):
+                        raise SystemExit(1)
+                else:
+                    raise SystemExit("federation integrate --apply requires --yes in non-interactive mode")
+            report = integrate_federation_checkpoint(
+                config,
+                str(getattr(args, "run_id", "") or ""),
+                policy=str(getattr(args, "policy", "") or ""),
+                dry_run=not apply_changes,
+            )
+            payload = report.as_dict()
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("run_id", report.parent_run_id),
+                    ("policy", report.policy),
+                    ("mode", "apply" if apply_changes else "dry-run"),
+                    ("status", report.status),
+                ]
+                for pointer in report.pointers:
+                    rows.append((pointer.repository, f"{pointer.status}; {pointer.ref or '-'}; {pointer.reason or 'ok'}"))
+                render_status_table(rows)
+            return 0 if report.ok else 1
         if action == "exec":
             raw_contract = [str(value) for value in (getattr(args, "contract_argv", []) or [])]
             plan_only = bool(getattr(args, "plan", False))

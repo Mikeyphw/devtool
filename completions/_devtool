@@ -799,7 +799,7 @@ _devtool() {
           ;;
         federation|fed)
           if (( ${#line} < 2 )); then
-            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry lock capabilities graph interfaces conformance interface-check affected why
+            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry lock integrate capabilities graph interfaces conformance interface-check affected why
           else
             case $line[2] in
               list|preflight|gate1|gate2|execution-preflight|final-seal|seal)
@@ -840,6 +840,9 @@ _devtool() {
                 ;;
               retry)
                 _arguments '1:prior federation parent run ID:run-id:' '--failed[retry only failed children; fail closed if a successful child drifted]' '--drift-policy[frozen source drift policy]:policy:(fail replan allow-if-equivalent)' '--json[emit machine-readable retry plan/result]'
+                ;;
+              integrate)
+                _arguments '1:completed federation parent run ID:run-id:' '--policy[integration policy]:policy:(per-repo dependency-group all-or-nothing-pointer-update)' '--apply[apply validated branch pointer integration]' '--json[emit machine-readable integration plan/evidence]'
                 ;;
               exec)
                 _arguments '1:federated repository:_devtool_federation_repositories' '--plan[resolve without execution]' '--json[emit machine-readable bridge state]' '*:child contract arguments:'

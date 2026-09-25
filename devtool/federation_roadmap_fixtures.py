@@ -17,7 +17,8 @@ from .federation_lock import FederationSourceLock, compare_federation_source_loc
 from .federation_git_lineage import finalize_federated_git_lineage, planned_federated_git_lineage
 from .artifact_registry import register_paths
 from .federation_execution import run_federated_workflow
-from .federation_resume import build_resume_plan, load_checkpoint
+from .federation_resume import build_resume_plan, load_checkpoint, checkpoint_path
+from .git_federation_integration import integrate_federation_checkpoint
 
 
 def _load(root: Path):
@@ -370,11 +371,107 @@ def artifact_edge_fixture() -> dict[str, object]:
         }
 
 
+
+def git_frx10_integration_fixture() -> dict[str, object]:
+    """Exercise GIT-FRX-10 integration policies and prepare/publish barrier."""
+    with tempfile.TemporaryDirectory(prefix="devtool-git-frx10-") as td:
+        root = Path(td)
+        parent = root / "parent"
+        a = root / "a"
+        b = root / "b"
+        publisher = root / "publisher"
+        state = root / "state"
+        for path in (parent, a, b, publisher):
+            path.mkdir()
+        child_toml = (
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="app"\n'
+            '[targets.app]\nrunner="command"\n[targets.app.jobs.check]\nrunner="command"\n'
+            'command=["echo","ok"]\n[targets.app.workflows]\nvalidate=["job:check"]\npublish=["job:check"]\n'
+        )
+        for child in (a, b, publisher):
+            (child / ".devtool.toml").write_text(child_toml, encoding="utf-8")
+            _init_git(child)
+        (parent / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="root"\n[targets.root]\nrunner="command"\n'
+            '[federation]\nschema=1\n'
+            '[federation.repositories.a]\npath="../a"\n'
+            '[federation.repositories.b]\npath="../b"\n'
+            '[federation.repositories.publisher]\npath="../publisher"\n'
+            '[federation.workflows.release]\nintegration_policy="dependency-group"\npublish_barrier=true\n'
+            'steps=[{id="library",ref="a::app::workflow:validate",stage="prepare"},'
+            '{id="consumer",ref="b::app::workflow:validate",stage="prepare",depends_on=["library"]},'
+            '{id="publish",ref="publisher::app::workflow:publish",stage="publish"}]\n'
+            '[federation.workflows.integrate]\nintegration_policy="all-or-nothing-pointer-update"\n'
+            'steps=[{id="a",ref="a::app::workflow:validate"},'
+            '{id="b",ref="b::app::workflow:validate",depends_on=["a"]}]\n',
+            encoding="utf-8",
+        )
+        config = _load(parent)
+        calls: list[str] = []
+        def reenter(argv: list[str]) -> int:
+            calls.append(" ".join(argv))
+            return 1 if len(calls) == 2 else 0
+        with patch("devtool.federation_resume.state_dir", lambda: state), patch(
+            "devtool.federation_git_lineage.state_dir", lambda: state
+        ), patch("devtool.git_federation_integration.state_dir", lambda: state):
+            release = run_federated_workflow(config, "release", reenter=reenter, snapshot_lookup=lambda _run_id: None)
+            barrier = dict(release.lifecycle.get("publish_barrier") or {})
+            if barrier.get("state") != "closed" or len(calls) != 2:
+                raise SystemExit("GIT-FRX-10 fixture did not close publish barrier after failed prepare consumer")
+            children = {child.step_id: child for child in release.children}
+            if children.get("publish") is None or children["publish"].status != "blocked":
+                raise SystemExit("GIT-FRX-10 fixture scheduled child-owned publish while barrier was closed")
+
+            result_rows: list[dict[str, object]] = []
+            starts: dict[str, str] = {}
+            results: dict[str, str] = {}
+            for step_id, repo_name, repo_root in (("a", "a", a), ("b", "b", b)):
+                start = subprocess.check_output(["git", "-C", str(repo_root), "rev-parse", "HEAD"], text=True).strip()
+                ref = subprocess.check_output(["git", "-C", str(repo_root), "symbolic-ref", "HEAD"], text=True).strip()
+                (repo_root / "README.md").write_text(f"{repo_name}-result\n", encoding="utf-8")
+                subprocess.run(["git", "-C", str(repo_root), "add", "README.md"], check=True, timeout=10)
+                subprocess.run(["git", "-C", str(repo_root), "commit", "-qm", f"{repo_name} result"], check=True, timeout=10)
+                result = subprocess.check_output(["git", "-C", str(repo_root), "rev-parse", "HEAD"], text=True).strip()
+                subprocess.run(["git", "-C", str(repo_root), "reset", "--hard", "-q", start], check=True, timeout=10)
+                starts[repo_name] = start; results[repo_name] = result
+                result_rows.append({
+                    "step_id": step_id, "repository": repo_name, "workflow": "validate", "target": "app",
+                    "run_id": f"fixture-{step_id}", "status": "succeeded", "exit_code": 0,
+                    "git_lineage": {"start_commit": start, "result_commit": result, "planned_head_ref": ref},
+                })
+            cp = checkpoint_path(config, "fixture-integration")
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text(json.dumps({
+                "schema_version": 1, "kind": "devtool.federation.resume-checkpoint",
+                "parent_run_id": "fixture-integration", "workflow": "integrate", "group": "",
+                "status": "succeeded", "exit_code": 0, "children": result_rows,
+            }), encoding="utf-8")
+            planned = integrate_federation_checkpoint(config, "fixture-integration", dry_run=True)
+            if planned.status != "planned" or any(row.status != "planned" for row in planned.pointers):
+                raise SystemExit("GIT-FRX-10 fixture did not produce all-or-nothing integration plan")
+            applied = integrate_federation_checkpoint(config, "fixture-integration", dry_run=False)
+            if applied.status != "succeeded" or any(row.status != "integrated" for row in applied.pointers):
+                raise SystemExit("GIT-FRX-10 fixture did not integrate validated result pointers")
+            for repo_name, repo_root in (("a", a), ("b", b)):
+                head = subprocess.check_output(["git", "-C", str(repo_root), "rev-parse", "HEAD"], text=True).strip()
+                if head != results[repo_name]:
+                    raise SystemExit(f"GIT-FRX-10 fixture pointer integration mismatch for {repo_name}")
+        return {
+            "schema_version": 1,
+            "roadmap_id": "GIT-FRX-10",
+            "publish_barrier": barrier,
+            "integration_policy": applied.policy,
+            "integration_status": applied.status,
+            "integrated_repositories": [row.repository for row in applied.pointers if row.status == "integrated"],
+            "automatic_push": applied.automatic_push,
+            "published_release_rollback_owned": applied.published_release_rollback_owned,
+        }
+
 def main(argv: list[str] | None=None) -> int:
     p=argparse.ArgumentParser(prog='python -m devtool.federation_roadmap_fixtures')
-    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage','resume-invalidation','artifact-edge'])
+    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage','resume-invalidation','artifact-edge','git-frx10-integration'])
     ns=p.parse_args(argv)
-    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else resume_invalidation_fixture() if ns.fixture=='resume-invalidation' else artifact_edge_fixture() if ns.fixture=='artifact-edge' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
+    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else resume_invalidation_fixture() if ns.fixture=='resume-invalidation' else artifact_edge_fixture() if ns.fixture=='artifact-edge' else git_frx10_integration_fixture() if ns.fixture=='git-frx10-integration' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 

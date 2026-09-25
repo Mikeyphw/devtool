@@ -276,6 +276,12 @@ command = ["python", "-m", "devtool.federation_roadmap_fixtures", "artifact-edge
 inputs = ["devtool/federation_artifacts.py", "devtool/federation_config.py", "devtool/federation_execution.py", "devtool/federation_operations.py", "devtool/federation_plan.py", "devtool/federation_resume.py", "devtool/ssh_returns.py", "devtool/federation_roadmap_fixtures.py"]
 metadata = { read_only = true, roadmap_id = "FRX-Y08" }
 
+[targets.devtool.jobs.git-frx10-integration-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "git-frx10-integration"]
+inputs = ["devtool/git_federation_integration.py", "devtool/federation_config.py", "devtool/federation_execution.py", "devtool/federation_resume.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-10" }
+
 [targets.devtool.jobs.ssh01-contract-fixture]
 runner = "command"
 command = ["python", "-m", "devtool.ssh_roadmap_fixtures", "contract", "--json"]
@@ -411,6 +417,15 @@ roadmap-git-frx09 = [
   { id = "git-frx09", ref = "test:roadmap-git-frx09", depends_on = ["git-frx08-freeze", "lineage-fixture"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx09"] },
 ]
+roadmap-git-frx10 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx09", ref = "test:roadmap-git-frx09", depends_on = ["syntax"] },
+  { id = "frx-y02", ref = "test:roadmap-frx-y02", depends_on = ["syntax"] },
+  { id = "frx-y08", ref = "test:roadmap-frx-y08", depends_on = ["frx-y02"] },
+  { id = "integration-fixture", ref = "job:git-frx10-integration-fixture", depends_on = ["git-frx09", "frx-y08"] },
+  { id = "git-frx10", ref = "test:roadmap-git-frx10", depends_on = ["integration-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx10"] },
+]
 roadmap-ssh01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "ssh01-fixture", ref = "job:ssh01-contract-fixture", depends_on = ["syntax"] },
@@ -484,6 +499,8 @@ roadmap-current = [
   { id = "frx-y02-fixture", ref = "job:federation-resume-invalidation-fixture", depends_on = ["frx-y02"] },
   { id = "frx-y08", ref = "test:roadmap-frx-y08", depends_on = ["frx-y02-fixture", "ssh02"] },
   { id = "frx-y08-fixture", ref = "job:federation-artifact-edge-fixture", depends_on = ["frx-y08"] },
+  { id = "git-frx10-fixture", ref = "job:git-frx10-integration-fixture", depends_on = ["frx-y08-fixture", "git-frx09"] },
+  { id = "git-frx10", ref = "test:roadmap-git-frx10", depends_on = ["git-frx10-fixture"] },
 ]
 
 
@@ -547,6 +564,16 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-ssh01.xml",
   "tests/test_ssh01_transport_environment_worker_preparation.py",
+]
+
+[[test]]
+id = "roadmap-git-frx10"
+name = "GIT-FRX-10 dependency-aware integration and prepare publish barrier"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx10.xml",
+  "tests/test_git_frx10_dependency_integration_publish_barrier.py",
 ]
 
 [[test]]

@@ -77,7 +77,8 @@ def _plan_identity_payload(plan: FederatedPlanGraph) -> dict[str, Any]:
             "contract": {
                 key: meta.get(key) for key in (
                     "federation_step", "federation_ref", "requested_ref", "contract_type",
-                    "contract_name", "child_contract", "contract_ref",
+                    "contract_name", "child_contract", "contract_ref", "federation_stage",
+                    "integration_policy", "publish_barrier",
                 )
             },
         })
@@ -159,6 +160,7 @@ def contract_identity(plan: FederatedPlanGraph, step: "FederatedWorkflowStep") -
         "contract_type": step.contract_type,
         "contract_name": step.contract_name,
         "requested_ref": step.ref,
+        "stage": step.stage,
         "nodes": _step_nodes(plan, step.step_id),
     })
 
