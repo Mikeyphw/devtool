@@ -51,13 +51,15 @@ def _run_remote(
     input_text: str | None = None,
     tty: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        build_ssh_remote_sh_argv(config, script, tty=tty),
-        check=False,
-        capture_output=capture_output,
-        text=True,
-        input=input_text,
-        timeout=timeout,
+    # Keep management/history traffic on the same SSH-01 operation-scoped
+    # multiplex contract as execution. Mux-specific failures transparently
+    # retry without ControlMaster while ordinary transport failures remain
+    # visible to the caller for reconnect/recovery policy.
+    from .ssh_multiplex import run_with_multiplex_fallback
+    return run_with_multiplex_fallback(
+        config, build_ssh_remote_sh_argv(config, script, tty=tty),
+        check=False, capture_output=capture_output, text=True,
+        input=input_text, timeout=timeout,
     )
 
 
@@ -84,6 +86,9 @@ def remote_phase_state_paths(config: SSHRunnerConfig, run_id: str, session: str)
         "metadata": root + "/metadata",
         "state": root + "/state",
         "status": root + "/status",
+        "stdout": root + "/stdout.log",
+        "stderr": root + "/stderr.log",
+        "events": root + "/events.jsonl",
     }
 
 
@@ -225,6 +230,31 @@ def ensure_remote_capacity(config: SSHRunnerConfig, *, free_storage_kib: int) ->
 
 def _records_script(config: SSHRunnerConfig) -> str:
     root = _remote_expr(config.run_state_root or "~/.cache/devtool/ssh-runs")
+    # Keep one stable tabular transport from the remote worker. Values persisted
+    # by phase_metadata_lines are newline-free/redacted, while numeric/output
+    # state is computed from the durable run directory at inspection time.
+    metadata_keys = (
+        "workspace_id", "workspace_path", "started_unix", "finished_unix", "lease_dir",
+        "execution_mode", "execution_provider", "oci_phase_node_id", "ssh_source_sync_id",
+        "oci_container", "oci_image_reference", "oci_image_digest", "oci_definition_digest",
+        "oci_build_context_sha256", "remote_log_path", "stdout_path", "stderr_path",
+        "ssh_repository_fingerprint", "ssh_repository_root", "ssh_target", "ssh_phase",
+        "ssh_contract_type", "ssh_contract_name", "ssh_contract_ref", "ssh_frozen_source_lock_digest",
+        "ssh_confirmation_mode", "tmux_window", "tmux_pane", "federation_parent_run_id", "federation_parent_node_id",
+        "federation_child_run_id", "federation_child_repository", "federation_child_target",
+        "federation_child_workflow", "federation_child_contract", "federation_contract_ref",
+    )
+    extracts = "\n".join(
+        "  {key}=\"$(sed -n 's/^{key}=//p' \"$meta\" 2>/dev/null | head -n1)\"".format(key=key)
+        for key in metadata_keys
+    )
+    values = [
+        '"$run_id"', '"$session"', '"$state"', '"$status"', '"$active"',
+        *(f'"${key}"' for key in metadata_keys),
+        '"$stdout_exists"', '"$stdout_size"', '"$stderr_exists"', '"$stderr_size"',
+    ]
+    fmt = "%s" + "\\t%s" * (len(values) - 1) + "\\n"
+    joined = " ".join(values)
     return f'''set +e
 root={root}
 [ -d "$root" ] || exit 0
@@ -236,26 +266,28 @@ for meta in "$root"/*/*/metadata; do
   run_id=${{run_dir##*/}}
   state="$(cat "$dir/state" 2>/dev/null | head -n1)"
   status="$(cat "$dir/status" 2>/dev/null | head -n1)"
-  workspace_id="$(sed -n 's/^workspace_id=//p' "$meta" 2>/dev/null | head -n1)"
-  workspace_path="$(sed -n 's/^workspace_path=//p' "$meta" 2>/dev/null | head -n1)"
-  started="$(sed -n 's/^started_unix=//p' "$meta" 2>/dev/null | head -n1)"
-  lease_dir="$(sed -n 's/^lease_dir=//p' "$meta" 2>/dev/null | head -n1)"
-  execution_mode="$(sed -n 's/^execution_mode=//p' "$meta" 2>/dev/null | head -n1)"
-  execution_provider="$(sed -n 's/^execution_provider=//p' "$meta" 2>/dev/null | head -n1)"
-  phase_node_id="$(sed -n 's/^oci_phase_node_id=//p' "$meta" 2>/dev/null | head -n1)"
-  source_sync_id="$(sed -n 's/^ssh_source_sync_id=//p' "$meta" 2>/dev/null | head -n1)"
-  oci_container="$(sed -n 's/^oci_container=//p' "$meta" 2>/dev/null | head -n1)"
-  oci_image_reference="$(sed -n 's/^oci_image_reference=//p' "$meta" 2>/dev/null | head -n1)"
-  oci_image_digest="$(sed -n 's/^oci_image_digest=//p' "$meta" 2>/dev/null | head -n1)"
-  oci_definition_digest="$(sed -n 's/^oci_definition_digest=//p' "$meta" 2>/dev/null | head -n1)"
-  oci_build_context_sha256="$(sed -n 's/^oci_build_context_sha256=//p' "$meta" 2>/dev/null | head -n1)"
+{extracts}
+  stdout_exists=0; stdout_size=0; stderr_exists=0; stderr_size=0
+  [ -f "$dir/stdout.log" ] && stdout_exists=1 && stdout_size="$(wc -c < "$dir/stdout.log" 2>/dev/null || printf 0)"
+  [ -f "$dir/stderr.log" ] && stderr_exists=1 && stderr_size="$(wc -c < "$dir/stderr.log" 2>/dev/null || printf 0)"
   active=0
   tmux has-session -t "$session" >/dev/null 2>&1 && active=1
   [ -n "$state" ] || state="$([ "$active" -eq 1 ] && printf running || printf unknown)"
   if [ "$active" -eq 0 ] && [ "$state" = running ] && [ -z "$status" ]; then state=stale; fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$run_id" "$session" "$state" "$status" "$active" "$workspace_id" "$workspace_path" "$started" "$lease_dir" "$execution_mode" "$execution_provider" "$phase_node_id" "$source_sync_id" "$oci_container" "$oci_image_reference" "$oci_image_digest" "$oci_definition_digest" "$oci_build_context_sha256"
+  printf '{fmt}' {joined}
 done
 '''
+
+
+def _output_availability(*, state: str, active: bool, stdout_exists: bool, stderr_exists: bool) -> str:
+    exists = stdout_exists or stderr_exists
+    if active or state == "running":
+        return "still-writing" if exists else "pending"
+    if state in {"stale", "interrupted", "cancelled"}:
+        return "interrupted" if exists else "unavailable"
+    if state == "completed":
+        return "complete" if exists else "unavailable"
+    return "partial" if exists else "unavailable"
 
 
 def runs_payload(config: SSHRunnerConfig) -> dict[str, Any]:
@@ -263,50 +295,90 @@ def runs_payload(config: SSHRunnerConfig) -> dict[str, Any]:
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise ValueError(f"SSH run discovery failed with exit {completed.returncode}: {detail or 'no diagnostic output'}")
+    metadata_keys = (
+        "workspace_id", "workspace_path", "started_unix", "finished_unix", "lease_dir",
+        "execution_mode", "execution_provider", "phase_node_id", "source_sync_id",
+        "oci_container", "oci_image_reference", "oci_image_digest", "oci_definition_digest",
+        "oci_build_context_sha256", "remote_log_path", "stdout_path", "stderr_path",
+        "repository_fingerprint", "repository_root", "target", "phase",
+        "contract_type", "contract_name", "contract_ref", "frozen_source_lock_digest",
+        "confirmation_mode", "tmux_window", "tmux_pane", "federation_parent_run_id", "federation_parent_node_id",
+        "federation_child_run_id", "federation_child_repository", "federation_child_target",
+        "federation_child_workflow", "federation_child_contract", "federation_contract_ref",
+    )
     records: list[dict[str, Any]] = []
     for line in completed.stdout.splitlines():
         fields = line.split("\t")
-        if len(fields) < 9:
+        if len(fields) < 5:
             continue
-        fields.extend([""] * (18 - len(fields)))
-        (
-            run_id, session, state, status, active, workspace_id, workspace_path,
-            started, lease_dir, execution_mode, execution_provider, phase_node_id,
-            source_sync_id, oci_container, oci_image_reference, oci_image_digest,
-            oci_definition_digest, oci_build_context_sha256,
-        ) = fields[:18]
-        records.append({
+        run_id, session, state, status, active = fields[:5]
+        # SSHW-05 emitted a compact 9-column record. Preserve compatibility
+        # while SSH-02 extends the transport with canonical identity/output
+        # fields. Old history must remain readable after the upgrade.
+        if len(fields) <= 9:
+            legacy = fields + [""] * (9 - len(fields))
+            record = {key: "" for key in metadata_keys}
+            record.update({
+                "workspace_id": legacy[5],
+                "workspace_path": legacy[6],
+                "started_unix": legacy[7],
+                "lease_dir": legacy[8],
+            })
+            stdout_exists = stdout_size = stderr_exists = stderr_size = "0"
+        else:
+            minimum = 5 + len(metadata_keys) + 4
+            fields.extend([""] * (minimum - len(fields)))
+            meta_values = fields[5:5 + len(metadata_keys)]
+            tail = fields[5 + len(metadata_keys):5 + len(metadata_keys) + 4]
+            record = dict(zip(metadata_keys, meta_values))
+            stdout_exists, stdout_size, stderr_exists, stderr_size = tail
+        record.update({
             "run_id": run_id,
             "session": session,
             "state": state,
             "status": int(status) if status.lstrip("-").isdigit() else None,
             "active": active == "1",
-            "workspace_id": workspace_id,
-            "workspace_path": workspace_path,
-            "started_unix": int(started) if started.isdigit() else 0,
-            "lease_dir": lease_dir,
-            "execution_mode": execution_mode,
-            "execution_provider": execution_provider,
-            "phase_node_id": phase_node_id,
-            "source_sync_id": source_sync_id,
-            "oci_container": oci_container,
-            "oci_image_reference": oci_image_reference,
-            "oci_image_digest": oci_image_digest,
-            "oci_definition_digest": oci_definition_digest,
-            "oci_build_context_sha256": oci_build_context_sha256,
+            "started_unix": int(record.get("started_unix") or 0) if str(record.get("started_unix") or "").isdigit() else 0,
+            "finished_unix": int(record.get("finished_unix") or 0) if str(record.get("finished_unix") or "").isdigit() else 0,
+            "stdout_exists": stdout_exists == "1",
+            "stdout_size": int(stdout_size) if stdout_size.isdigit() else 0,
+            "stderr_exists": stderr_exists == "1",
+            "stderr_size": int(stderr_size) if stderr_size.isdigit() else 0,
         })
+        record["output_state"] = _output_availability(
+            state=state, active=record["active"], stdout_exists=record["stdout_exists"], stderr_exists=record["stderr_exists"]
+        )
+        record["duration_seconds"] = max(
+            0,
+            int(record.get("finished_unix") or 0) - int(record.get("started_unix") or 0),
+        ) if record.get("finished_unix") and record.get("started_unix") else 0
+        record["typed_contract"] = {
+            "repository": str(record.get("federation_child_repository") or ""),
+            "target": str(record.get("federation_child_target") or record.get("target") or ""),
+            "type": str(record.get("contract_type") or ""),
+            "name": str(record.get("contract_name") or ""),
+            "ref": str(record.get("federation_contract_ref") or record.get("contract_ref") or ""),
+        }
+        record["lineage"] = {
+            "parent_run_id": str(record.get("federation_parent_run_id") or ""),
+            "parent_node_id": str(record.get("federation_parent_node_id") or ""),
+            "child_run_id": str(record.get("federation_child_run_id") or ""),
+        }
+        records.append(record)
     records.sort(key=lambda item: (int(item.get("started_unix") or 0), str(item.get("session") or "")), reverse=True)
+    run_ids = {str(item.get("run_id") or "") for item in records if str(item.get("run_id") or "")}
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "ssh-runs",
         "ok": True,
         "profile": config.profile,
         "destination": config.destination,
         "records": records,
+        "run_count": len(run_ids),
         "active_count": sum(1 for item in records if item["active"]),
         "stale_count": sum(1 for item in records if item["state"] == "stale"),
+        "output_available_count": sum(1 for item in records if item["output_state"] not in {"unavailable", "pending"}),
     }
-
 
 def _select_records(payload: Mapping[str, Any], *, run_id: str = "", session: str = "", node_id: str = "") -> list[dict[str, Any]]:
     records = [dict(item) for item in payload.get("records", []) if isinstance(item, dict)]
@@ -377,6 +449,13 @@ def resume_remote_run(
         "profile": config.profile,
         "destination": config.destination,
         "record": record,
+        "recovery": {
+            "intent": "reattach" if record.get("active") and attach else "inspect" if record.get("active") else "reconcile-completed",
+            "rerun_required": False,
+            "output_state": str(record.get("output_state") or "unavailable"),
+            "lease_state": "held" if record.get("active") and record.get("lease_dir") else "reconciled" if record.get("lease_dir") else "none",
+            "resumable": bool(record.get("active")),
+        },
         "detail": (
             "reattached to active tmux phase" if record.get("active") and attach
             else "active tmux phase available for reattach" if record.get("active")
@@ -426,7 +505,8 @@ def cancel_remote_run(config: SSHRunnerConfig, *, run_id: str = "", session: str
         return {
             "schema_version": 1, "kind": "ssh-run-cancel", "ok": True,
             "profile": config.profile, "destination": config.destination,
-            "cancelled": [], "detail": "no active Devtool SSH phase matched the cancel request",
+            "cancelled": [], "recovery": {"intent": "cancel", "rerun_required": False, "resumable": False},
+            "detail": "no active Devtool SSH phase matched the cancel request",
         }
     cancelled: list[dict[str, Any]] = []
     for item in matches:
@@ -458,6 +538,7 @@ printf 'cancelled\n' > "$state_dir/state.tmp"; mv -f -- "$state_dir/state.tmp" "
         "profile": config.profile,
         "destination": config.destination,
         "cancelled": cancelled,
+        "recovery": {"intent": "cancel", "rerun_required": False, "resumable": False},
     }
 
 
@@ -491,5 +572,11 @@ printf 'interrupted\n' > "$state_dir/state.tmp"; mv -f -- "$state_dir/state.tmp"
         "profile": config.profile,
         "destination": config.destination,
         "recovered": recovered,
+        "recovery": {
+            "intent": "mark-interrupted-and-release-owned-lease",
+            "rerun_required": bool(recovered),
+            "resumable": False,
+            "successful_phases_rerun": False,
+        },
         "detail": "stale remote run records reconciled" if recovered else "no stale remote run records found",
     }

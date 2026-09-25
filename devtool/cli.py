@@ -1268,9 +1268,28 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_retrieve.add_argument("--format", choices=["text", "json"], default="text")
     ssh_retrieve.add_argument("--run-id", default="", help="Restrict recovery to one local Devtool run id")
     ssh_retrieve.add_argument("--session", default="", help="Restrict recovery to one SSH tmux phase session")
-    ssh_runs = ssh_sub.add_parser("runs", help="List persisted Devtool SSH worker runs and tmux phase state")
+    ssh_runs = ssh_sub.add_parser("runs", help="List canonical persisted SSH runs grouped across remote phases")
     ssh_runs.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_runs.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_output = ssh_sub.add_parser("output", help="Read or follow persisted stdout/stderr for a canonical SSH run")
+    ssh_output.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_output.add_argument("--run-id", default="", help="Select a canonical Devtool RunId")
+    ssh_output.add_argument("--session", default="", help="Select one persisted SSH phase session")
+    ssh_output.add_argument("--latest", action="store_true", dest="ssh_output_latest", help="Select the newest persisted phase")
+    ssh_output.add_argument("--follow", action="store_true", dest="ssh_output_follow", help="Follow persisted output without attaching to tmux")
+    ssh_output.add_argument("--stream", choices=["both", "stdout", "stderr"], default="both", dest="ssh_output_stream")
+    ssh_output.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_exec = ssh_sub.add_parser("exec", help="Run an arbitrary command through managed SSH execution/history/recovery")
+    ssh_exec.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
+    ssh_exec.add_argument("--target", default="", dest="ssh_exec_target", help="Repository target context")
+    ssh_exec.add_argument("--cwd", default="", dest="ssh_exec_cwd", help="Repository-relative working directory")
+    ssh_exec_mode = ssh_exec.add_mutually_exclusive_group()
+    ssh_exec_mode.add_argument("--detached", action="store_true", dest="ssh_exec_detached", help="Launch and return while the remote tmux phase continues")
+    ssh_exec_mode.add_argument("--follow", action="store_true", dest="ssh_exec_follow", help="Launch detached, then follow persisted output to completion")
+    ssh_exec_mode.add_argument("--attach", action="store_true", dest="ssh_exec_attach", help="Foreground attach mode (default)")
+    ssh_exec.add_argument("--shell", default="", dest="ssh_exec_shell", help="Explicit shell-text command; argv mode is used otherwise")
+    ssh_exec.add_argument("--format", choices=["text", "json"], default="text")
+    ssh_exec.add_argument("ssh_exec_argv", nargs="*", help="Command argv after --; argument boundaries are preserved")
     ssh_resume = ssh_sub.add_parser("resume", help="Reattach to an active remote tmux phase or report its persisted status")
     ssh_resume.add_argument("profile", nargs="?", default="", help="Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile")
     ssh_resume.add_argument("--run-id", default="", help="Resume a specific Devtool SSH run; defaults to the newest run")
@@ -13370,10 +13389,12 @@ def _main_after_parse(
         return 2
 
     if args.command == "ssh":
-        from .ssh_worker import bootstrap_worker, resolve_worker_profile, session_payload, worker_doctor_payload
+        from .ssh_worker import bootstrap_worker, resolve_worker_profile, worker_doctor_payload
         from .ssh_workspace import sync_payload, workspace_payload
         from .ssh_returns import recover_return_bundles
-        from .ssh_resilience import runs_payload, resume_remote_run, cancel_remote_run, recover_stale_runs
+        from .ssh_resilience import resume_remote_run, cancel_remote_run, recover_stale_runs
+        from .ssh_history import sessions_payload as ssh_sessions_payload, grouped_runs_payload, output_payload, follow_output
+        from .ssh_exec import execute_managed
         from .ssh_profiles import add_profile, list_profiles, remove_profile, set_default_profile
         from .ssh_qualification import qualify_worker
         from .ssh_environment import environment_payload
@@ -13450,7 +13471,7 @@ def _main_after_parse(
                         force=bool(getattr(args, "ssh_bootstrap_force", False)),
                     )
                 elif action in {"sessions", "ls"}:
-                    payload = session_payload(worker)
+                    payload = ssh_sessions_payload(worker, repo_root=repo_root)
                 elif action in {"workspace", "ws"}:
                     payload = workspace_payload(worker, repo_root)
                 elif action == "sync":
@@ -13466,7 +13487,53 @@ def _main_after_parse(
                     from .test_runstore import reconcile_ssh_return_recovery
                     payload["runstore"] = reconcile_ssh_return_recovery(payload.get("results", []))
                 elif action == "runs":
-                    payload = runs_payload(worker)
+                    payload = grouped_runs_payload(worker, repo_root=repo_root)
+                elif action == "output":
+                    stream = str(getattr(args, "ssh_output_stream", "both") or "both")
+                    follow_requested = bool(getattr(args, "ssh_output_follow", False))
+                    selector = {
+                        "run_id": str(getattr(args, "run_id", "") or ""),
+                        "session": str(getattr(args, "session", "") or ""),
+                        "latest": bool(getattr(args, "ssh_output_latest", False)),
+                    }
+                    if follow_requested:
+                        stdout_sink = sys.stdout if output_format == "text" and stream in {"both", "stdout"} else io.StringIO()
+                        stderr_sink = sys.stderr if output_format == "text" and stream in {"both", "stderr"} else io.StringIO()
+                        payload = follow_output(worker, stdout_writer=stdout_sink, stderr_writer=stderr_sink, **selector)
+                        if isinstance(stdout_sink, io.StringIO):
+                            payload["stdout"] = stdout_sink.getvalue()
+                        if isinstance(stderr_sink, io.StringIO):
+                            payload["stderr"] = stderr_sink.getvalue()
+                        if stream == "stdout":
+                            payload.pop("stderr", None)
+                            payload["stderr_bytes"] = 0
+                        elif stream == "stderr":
+                            payload.pop("stdout", None)
+                            payload["stdout_bytes"] = 0
+                        payload["stream"] = stream
+                        payload["rendered_live"] = output_format == "text"
+                    else:
+                        payload = output_payload(worker, **selector)
+                        if stream == "stdout":
+                            payload["stderr"] = ""
+                            payload["stderr_bytes"] = 0
+                        elif stream == "stderr":
+                            payload["stdout"] = ""
+                            payload["stdout_bytes"] = 0
+                        payload["stream"] = stream
+                elif action == "exec":
+                    payload = execute_managed(
+                        worker, repo_root,
+                        argv=tuple(str(item) for item in (getattr(args, "ssh_exec_argv", []) or [])),
+                        shell_text=str(getattr(args, "ssh_exec_shell", "") or ""),
+                        target=str(getattr(args, "ssh_exec_target", "") or ""),
+                        cwd=str(getattr(args, "ssh_exec_cwd", "") or ""),
+                        detached=bool(getattr(args, "ssh_exec_detached", False)),
+                        follow=bool(getattr(args, "ssh_exec_follow", False)),
+                        assume_yes=bool(getattr(args, "yes", False)),
+                        capture_launcher=output_format == "json",
+                        follow_live=output_format == "text",
+                    )
                 elif action == "resume":
                     payload = resume_remote_run(
                         worker, run_id=str(getattr(args, "run_id", "") or ""),
@@ -13653,12 +13720,23 @@ def _main_after_parse(
                 rows.append(("command", payload["command"]))
             render_status_table(rows)
         elif action in {"sessions", "ls"}:
-            rows = [("profile", payload.get("profile") or "-"), ("destination", payload.get("destination") or "-")]
             sessions = payload.get("sessions", [])
-            rows.extend((f"session.{item['name']}", item.get("status", "unknown")) for item in sessions)
-            if not sessions:
-                rows.append(("sessions", payload.get("detail") or "none"))
+            rows = [
+                ("profile", payload.get("profile") or "-"),
+                ("destination", payload.get("destination") or "-"),
+                ("sessions", str(len(sessions))),
+                ("active", str(payload.get("active_count", 0))),
+                ("historical", "yes" if payload.get("historical") else "no"),
+            ]
             render_status_table(rows)
+            for item in sessions:
+                rc = item.get("status")
+                print(
+                    f"{item.get('state','unknown'):>11}  "
+                    f"rc={rc if rc is not None else '-':>3}  "
+                    f"{item.get('run_id','')}  {item.get('name','')}  "
+                    f"target={item.get('target') or '-'} output={item.get('output_state') or 'unavailable'}"
+                )
         elif action in {"workspace", "ws"}:
             workspace = payload.get("workspace", {})
             status = payload.get("status", {})
@@ -13689,17 +13767,55 @@ def _main_after_parse(
             for item in results:
                 print(f"{item.get('state', 'unknown'):>10}  {item.get('run_id', '')}  {item.get('session', '')}")
         elif action == "runs":
-            records = payload.get("records", [])
+            runs = payload.get("runs", [])
             render_status_table([
                 ("profile", payload.get("profile") or "-"),
                 ("destination", payload.get("destination") or "-"),
-                ("runs", str(len({item.get('run_id') for item in records}))),
-                ("active_phases", str(payload.get("active_count", 0))),
+                ("runs", str(payload.get("run_count", len(runs)))),
+                ("active_runs", str(payload.get("active_count", 0))),
                 ("stale_phases", str(payload.get("stale_count", 0))),
             ])
-            for item in records:
+            for item in runs:
                 status = item.get("status")
-                print(f"{item.get('state','unknown'):>11}  rc={status if status is not None else '-':>3}  {item.get('run_id','')}  {item.get('session','')}")
+                print(
+                    f"{item.get('state','unknown'):>11}  rc={status if status is not None else '-':>3}  "
+                    f"{item.get('run_id','')}  phases={item.get('phase_count',0)}  "
+                    f"target={item.get('target') or '-'} output={item.get('output_state') or 'unavailable'}  "
+                    f"session={item.get('latest_session') or '-'}"
+                )
+        elif action == "output":
+            if not payload.get("rendered_live"):
+                stdout_text = str(payload.get("stdout") or "")
+                stderr_text = str(payload.get("stderr") or "")
+                if stdout_text:
+                    print(stdout_text, end="")
+                if stderr_text:
+                    print(stderr_text, end="", file=sys.stderr)
+            if payload.get("kind") == "ssh-output-follow":
+                render_status_table([
+                    ("run_id", payload.get("run_id") or "-"),
+                    ("session", payload.get("session") or "-"),
+                    ("state", payload.get("state") or "unknown"),
+                    ("status", str(payload.get("status")) if payload.get("status") is not None else "-"),
+                    ("output_state", payload.get("output_state") or "unavailable"),
+                    ("stdout_bytes", str(payload.get("stdout_bytes", 0))),
+                    ("stderr_bytes", str(payload.get("stderr_bytes", 0))),
+                ])
+        elif action == "exec":
+            if payload.get("launcher_stdout"):
+                print(str(payload.get("launcher_stdout") or ""), end="")
+            if payload.get("launcher_stderr"):
+                print(str(payload.get("launcher_stderr") or ""), end="", file=sys.stderr)
+            render_status_table([
+                ("run_id", payload.get("run_id") or "-"),
+                ("session", payload.get("session") or "-"),
+                ("profile", payload.get("profile") or "-"),
+                ("target", payload.get("target") or "-"),
+                ("state", payload.get("state") or "unknown"),
+                ("returncode", str(payload.get("returncode")) if payload.get("returncode") is not None else "running"),
+                ("confirmation", payload.get("confirmation_mode") or "interactive"),
+                ("recovery", payload.get("recovery_hint") or "none"),
+            ])
         elif action == "resume":
             record = payload.get("record", {})
             render_status_table([

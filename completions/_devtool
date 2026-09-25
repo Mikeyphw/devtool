@@ -970,7 +970,7 @@ _devtool() {
           ;;
         ssh)
           if (( ${#line} < 2 )); then
-            _values 'ssh worker action' profiles list add remove rm default qualify seal doctor bootstrap sessions ls workspace ws sync retrieve return runs resume cancel recover
+            _values 'ssh worker action' profiles list add remove rm default qualify seal doctor env prepare bootstrap sessions ls workspace ws sync retrieve return runs output exec resume cancel recover
           else
             case ${line[2]} in
               profiles|list)
@@ -1005,6 +1005,12 @@ _devtool() {
               doctor|sessions|ls|workspace|ws|runs)
                 _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)'
                 ;;
+              env)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--target[target context for environment evidence]:target:_devtool_targets' '--format[output format]:format:(text json)'
+                ;;
+              prepare)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--target[target to prepare]:target:_devtool_targets' '--dry-run[classify required preparation without installing anything]' '--format[output format]:format:(text json)'
+                ;;
               bootstrap)
                 _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--dry-run[show package installation plan only]' '--force[override bootstrap.policy=never]'
                 ;;
@@ -1013,6 +1019,12 @@ _devtool() {
                 ;;
               retrieve|return)
                 _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--run-id[select one Devtool run]:run-id:' '--session[select one SSH phase session]:session:'
+                ;;
+              output)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--run-id[select one canonical Devtool RunId]:run-id:' '--session[select one persisted SSH phase session]:session:' '--latest[select the newest persisted phase]' '--follow[follow persisted output without attaching to tmux]' '--stream[select output stream]:stream:(both stdout stderr)' '--format[output format]:format:(text json)'
+                ;;
+              exec)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '--target[repository target context]:target:_devtool_targets' '--cwd[repository-relative working directory]:directory:_files -/' '((--follow --attach))--detached[launch and return while remote tmux phase continues]' '((--detached --attach))--follow[launch detached then follow persisted output to completion]' '((--detached --follow))--attach[foreground attach mode]' '--shell[explicit shell-text command; argv mode otherwise]:command:' '--format[output format]:format:(text json)' '*:command argument:'
                 ;;
               resume|cancel)
                 _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--run-id[select one Devtool run]:run-id:' '--session[select one SSH phase session]:session:' '--node-id[select one canonical provider node]:node-id:'

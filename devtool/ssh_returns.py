@@ -12,6 +12,7 @@ connection without re-running the build.
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -349,6 +350,63 @@ def shell_return_fragment(
         "fi"
     )
 
+def _artifact_lifecycle_records(
+    *, manifest: Mapping[str, Any], repo_root: Path, state: str, returncode: int
+) -> list[dict[str, Any]]:
+    """Project per-artifact transfer truth from the manifest-owned local mirror.
+
+    The return transport can be interrupted mid-bundle, so records describe only
+    bytes proven present locally. Expected selectors remain explicit records when
+    no concrete artifact has arrived yet.
+    """
+    records: list[dict[str, Any]] = []
+    concrete: list[Path] = []
+    if repo_root.is_dir():
+        concrete = sorted(path for path in repo_root.rglob("*") if path.is_file() and not path.is_symlink())
+    for path in concrete:
+        try:
+            rel = path.relative_to(repo_root).as_posix()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            size = path.stat().st_size
+        except (OSError, ValueError):
+            continue
+        complete = state == "complete" and returncode == 0
+        records.append({
+            "artifact": rel,
+            "selector": "",
+            "expected": True,
+            "produced": True,
+            "staged": True,
+            "transferred": True,
+            "verified": True,
+            "restored_locally": True,
+            "failed": False,
+            "recoverable": not complete,
+            "sha256": digest,
+            "size_bytes": int(size),
+        })
+    if not records:
+        for pattern in manifest.get("patterns", []) if isinstance(manifest.get("patterns"), list) else []:
+            selector = str(pattern or "").strip()
+            if not selector:
+                continue
+            records.append({
+                "artifact": "",
+                "selector": selector,
+                "expected": True,
+                "produced": False,
+                "staged": False,
+                "transferred": False,
+                "verified": False,
+                "restored_locally": False,
+                "failed": state == "partial" and returncode not in {0, -1},
+                "recoverable": state in {"partial", "pending", "deferred"},
+                "sha256": "",
+                "size_bytes": 0,
+            })
+    return records
+
+
 def load_return_state(metadata: dict[str, Any]) -> dict[str, Any]:
     status_path = Path(str(metadata.get("ssh_return_status_file") or "")).expanduser()
     manifest_path = Path(str(metadata.get("ssh_return_manifest") or "")).expanduser()
@@ -373,10 +431,24 @@ def load_return_state(metadata: dict[str, Any]) -> dict[str, Any]:
     source_files = int(values.get("source_files", "0") or 0) if str(values.get("source_files", "0")).isdigit() else 0
     transferred_bytes = int(values.get("transferred_bytes", "0") or 0) if str(values.get("transferred_bytes", "0")).isdigit() else 0
     ratio = (float(transferred_bytes) / float(source_bytes)) if source_bytes > 0 and transferred_bytes >= 0 else None
+    repo_root = Path(str(metadata.get("ssh_return_repo_root") or manifest.get("local_return_repo_root") or "")).expanduser()
+    artifacts = _artifact_lifecycle_records(manifest=manifest, repo_root=repo_root, state=state, returncode=returncode)
     return {
         "state": state,
         "returncode": returncode,
         "recoverable": state in {"partial", "pending", "deferred"},
+        "execution_failed": False,
+        "return_failed": state == "partial" and returncode not in {0, -1},
+        "artifacts": artifacts,
+        "artifact_summary": {
+            "expected": sum(1 for item in artifacts if item["expected"]),
+            "produced": sum(1 for item in artifacts if item["produced"]),
+            "transferred": sum(1 for item in artifacts if item["transferred"]),
+            "verified": sum(1 for item in artifacts if item["verified"]),
+            "restored_locally": sum(1 for item in artifacts if item["restored_locally"]),
+            "failed": sum(1 for item in artifacts if item["failed"]),
+            "recoverable": sum(1 for item in artifacts if item["recoverable"]),
+        },
         "manifest": str(manifest_path) if manifest_path else "",
         "local_root": str(metadata.get("ssh_return_root") or manifest.get("local_return_root") or ""),
         "repo_root": str(metadata.get("ssh_return_repo_root") or manifest.get("local_return_repo_root") or ""),
@@ -535,12 +607,26 @@ def recover_return_bundles(
         tmp = status_path.with_suffix(".status.tmp")
         tmp.write_text(f"returncode={completed.returncode}\nstate={state}\n", encoding="utf-8")
         os.replace(tmp, status_path)
+        lifecycle = _artifact_lifecycle_records(manifest=manifest, repo_root=local_repo, state=state, returncode=int(completed.returncode))
         results.append({
             "manifest": str(manifest_path),
             "session": str(manifest.get("session") or ""),
             "run_id": str(manifest.get("run_id") or ""),
             "returncode": int(completed.returncode),
             "state": state,
+            "execution_failed": False,
+            "return_failed": int(completed.returncode) != 0,
+            "recoverable": int(completed.returncode) != 0,
+            "artifacts": lifecycle,
+            "artifact_summary": {
+                "expected": sum(1 for item in lifecycle if item["expected"]),
+                "produced": sum(1 for item in lifecycle if item["produced"]),
+                "transferred": sum(1 for item in lifecycle if item["transferred"]),
+                "verified": sum(1 for item in lifecycle if item["verified"]),
+                "restored_locally": sum(1 for item in lifecycle if item["restored_locally"]),
+                "failed": sum(1 for item in lifecycle if item["failed"]),
+                "recoverable": sum(1 for item in lifecycle if item["recoverable"]),
+            },
             "detail": (completed.stderr or completed.stdout or "").strip(),
         })
 

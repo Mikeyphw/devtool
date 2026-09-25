@@ -1380,7 +1380,17 @@ def _build_remote_phase_script(
     workspace_path: str = "",
     lease_dir: str = "",
     phase_metadata: Mapping[str, Any] | None = None,
+    attach: bool = True,
+    release_lease_on_completion: bool = False,
 ) -> str:
+    """Build the durable tmux phase launcher used by SSH command execution.
+
+    SSH-02 makes the remote run directory the persistence boundary rather than
+    tmux itself.  stdout/stderr therefore live beneath the run directory from
+    process start and are mirrored back to the tmux pane with FIFOs/tee.  A
+    dead tmux server can no longer erase historical output, and reconnecting
+    clients can follow the persisted streams without attaching to tmux.
+    """
     from .ssh_resilience import remote_phase_state_paths
 
     run_identity = str(run_id or config.operation_id or os.environ.get("DEVTOOL_RUN_ID") or session).strip()
@@ -1389,25 +1399,47 @@ def _build_remote_phase_script(
     status_path = paths["status"]
     state_path = paths["state"]
     metadata_path = paths["metadata"]
+    stdout_path = paths["stdout"]
+    stderr_path = paths["stderr"]
     runtime_log = _remote_join(
         str(workspace_path or config.cwd or "~").rstrip("/"),
         ".devtool", "ssh-runtime-logs", _sanitize_session(run_identity), _sanitize_session(session) + ".log",
     )
     runtime_log_dir = runtime_log.rsplit("/", 1)[0]
     command_status = _remote_join(state_dir, "command-status")
+    stdout_fifo = _remote_join(state_dir, ".stdout.pipe")
+    stderr_fifo = _remote_join(state_dir, ".stderr.pipe")
+    release_fragment = ""
+    if release_lease_on_completion and lease_dir:
+        # A standalone ssh exec is one phase, so it may safely release its own
+        # lease remotely even when the launcher is detached. Multi-phase normal
+        # Devtool runs keep their existing local run-level lease lifecycle.
+        release_fragment = (
+            f"; lease={_remote_shell_path(lease_dir)}; "
+            f"if [ -d \"$lease\" ]; then owner=$(sed -n 's/^run_id=//p' \"$lease/owner\" 2>/dev/null | head -n1); "
+            f"[ \"$owner\" = {shlex.quote(_sanitize_session(run_identity))} ] && rm -rf -- \"$lease\" || true; fi"
+        )
     payload = (
-        f"rm -f -- {_remote_shell_path(command_status)} {_remote_shell_path(command_status + '.tmp')}; "
-        + "( " + command
-        + f'; printf \'%s\\n\' "$?" > {_remote_shell_path(command_status + ".tmp")}'
-        + f"; mv -f -- {_remote_shell_path(command_status + '.tmp')} {_remote_shell_path(command_status)} ) 2>&1"
-        + f" | tee -a {_remote_shell_path(runtime_log)}"
-        + f"; rc=$(cat {_remote_shell_path(command_status)} 2>/dev/null || printf 1)"
-        + f'; printf \'%s\\n\' "$rc" > {_remote_shell_path(status_path + ".tmp")}'
-        + f"; mv -f -- {_remote_shell_path(status_path + '.tmp')} {_remote_shell_path(status_path)}"
-        + f"; printf 'completed\n' > {_remote_shell_path(state_path + '.tmp')}"
-        + f"; mv -f -- {_remote_shell_path(state_path + '.tmp')} {_remote_shell_path(state_path)}"
-        + f'; printf \'finished_unix=%s\\n\' "$(date +%s 2>/dev/null || printf 0)" >> {_remote_shell_path(metadata_path)}'
-        + '; exit "$rc"'
+        "set +e; "
+        f"rm -f -- {_remote_shell_path(command_status)} {_remote_shell_path(command_status + '.tmp')} "
+        f"{_remote_shell_path(stdout_fifo)} {_remote_shell_path(stderr_fifo)}; "
+        f": > {_remote_shell_path(stdout_path)}; : > {_remote_shell_path(stderr_path)}; "
+        f"mkfifo {_remote_shell_path(stdout_fifo)} {_remote_shell_path(stderr_fifo)}; "
+        f"tee -a {_remote_shell_path(stdout_path)} {_remote_shell_path(runtime_log)} < {_remote_shell_path(stdout_fifo)} & out_pid=$!; "
+        f"tee -a {_remote_shell_path(stderr_path)} {_remote_shell_path(runtime_log)} < {_remote_shell_path(stderr_fifo)} >&2 & err_pid=$!; "
+        "( " + command + " ) "
+        f"> {_remote_shell_path(stdout_fifo)} 2> {_remote_shell_path(stderr_fifo)}; rc=$?; "
+        "wait \"$out_pid\" 2>/dev/null || true; wait \"$err_pid\" 2>/dev/null || true; "
+        f"rm -f -- {_remote_shell_path(stdout_fifo)} {_remote_shell_path(stderr_fifo)}; "
+        f"printf '%s\\n' \"$rc\" > {_remote_shell_path(command_status + '.tmp')}; "
+        f"mv -f -- {_remote_shell_path(command_status + '.tmp')} {_remote_shell_path(command_status)}; "
+        f"printf '%s\\n' \"$rc\" > {_remote_shell_path(status_path + '.tmp')}; "
+        f"mv -f -- {_remote_shell_path(status_path + '.tmp')} {_remote_shell_path(status_path)}; "
+        f"printf 'completed\\n' > {_remote_shell_path(state_path + '.tmp')}; "
+        f"mv -f -- {_remote_shell_path(state_path + '.tmp')} {_remote_shell_path(state_path)}; "
+        f"printf 'finished_unix=%s\\n' \"$(date +%s 2>/dev/null || printf 0)\" >> {_remote_shell_path(metadata_path)}"
+        + release_fragment
+        + "; exit \"$rc\""
     )
     metadata_lines = [
         "run_id=" + run_identity,
@@ -1416,6 +1448,11 @@ def _build_remote_phase_script(
         "workspace_path=" + str(workspace_path or ""),
         "lease_dir=" + str(lease_dir or ""),
         "remote_log_path=" + runtime_log,
+        "stdout_path=" + stdout_path,
+        "stderr_path=" + stderr_path,
+        "output_schema=split-v1",
+        "tmux_window=0",
+        "tmux_pane=0",
     ]
     if phase_metadata:
         metadata_lines.extend(phase_metadata_lines(phase_metadata, run_id=run_identity, session=session))
@@ -1439,12 +1476,20 @@ def _build_remote_phase_script(
         '  printf \'running\\n\' > "$state.tmp"; mv -f -- "$state.tmp" "$state"',
         "  tmux new-session -d -s \"$session\" " + shlex.quote("sh -lc " + shlex.quote(payload)),
         "fi",
-        'echo "Devtool SSH command session: $session (detach: Ctrl-b d)"',
-        'tmux attach-session -t "$session" || true',
-        'if [ -f "$status" ]; then rc=$(cat "$status" 2>/dev/null || printf 1); tmux kill-session -t "$session" >/dev/null 2>&1 || true; exit "$rc"; fi',
-        'echo "Detached; remote command continues in tmux session: $session" >&2',
-        "exit 125",
     ]
+    if attach:
+        lines.extend([
+            'echo "Devtool SSH command session: $session (detach: Ctrl-b d)"',
+            'tmux attach-session -t "$session" || true',
+            'if [ -f "$status" ]; then rc=$(cat "$status" 2>/dev/null || printf 1); tmux kill-session -t "$session" >/dev/null 2>&1 || true; exit "$rc"; fi',
+            'echo "Detached; remote command continues in tmux session: $session" >&2',
+            "exit 125",
+        ])
+    else:
+        lines.extend([
+            'echo "Devtool SSH command started in tmux session: $session"',
+            "exit 125",
+        ])
     return "\n".join(lines) + "\n"
 
 def _configured_local_artifact_dir(config_obj: Any, local_root: Path) -> Path:
@@ -2012,11 +2057,28 @@ def wrap_specs_for_ssh_commands(
             phase_meta["execution_mode"] = ("ssh-proot-oci" if config.execution_provider == SSH_PROOT_OCI else "ssh-command")
             phase_meta["execution_provider"] = config.execution_provider
             phase_meta["ssh_session"] = session
+            phase_meta["ssh_phase"] = str(getattr(spec, "name", "phase") or "phase")
+            phase_meta["ssh_target"] = str(metadata.get("target") or getattr(project_config, "selected_target", "") or "")
+            phase_meta["ssh_repository_root"] = str(remote_root)
+            repository_identity = getattr(project_config, "repository_identity", None)
+            phase_meta["ssh_repository_fingerprint"] = str(getattr(repository_identity, "fingerprint", "") or "")
+            phase_meta["ssh_frozen_source_lock_digest"] = str(metadata.get("frozen_source_lock_digest") or metadata.get("ssh_frozen_source_lock_digest") or "")
+            phase_meta["ssh_contract_ref"] = str(metadata.get("federation_contract_ref") or metadata.get("contract_ref") or "")
+            child_contract = str(metadata.get("federation_child_contract") or metadata.get("child_contract") or "")
+            if child_contract and ":" in child_contract:
+                phase_meta["ssh_contract_type"], phase_meta["ssh_contract_name"] = child_contract.split(":", 1)
+            else:
+                phase_meta["ssh_contract_type"] = str(metadata.get("contract_type") or "")
+                phase_meta["ssh_contract_name"] = str(metadata.get("contract_name") or "")
+            phase_meta["ssh_output_schema"] = "split-v1"
+            phase_meta["ssh_confirmation_mode"] = str(metadata.get("ssh_confirmation_mode") or "interactive")
             phase_meta["oci_phase_node_id"] = phase_node_id(run_identity, session, provider=str(phase_meta.get("execution_provider") or "ssh-command"))
             remote_script = _build_remote_phase_script(
                 config, session=session, command=command, run_id=run_identity,
                 workspace_id=workspace_id, workspace_path=remote_root, lease_dir=lease_dir,
                 phase_metadata=phase_meta,
+                attach=not bool(metadata.get("ssh_exec_detached")),
+                release_lease_on_completion=bool(metadata.get("ssh_exec_release_lease")),
             )
             ssh_command = _build_ssh_remote_sh_argv(config, remote_script, tty=True)
 
