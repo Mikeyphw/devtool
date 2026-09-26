@@ -1097,6 +1097,11 @@ def build_parser() -> argparse.ArgumentParser:
     git_sub = git_cmd.add_subparsers(dest="git_command", required=True)
     git_state = git_sub.add_parser("state", help="Show the authoritative repository Git-state snapshot")
     git_state.add_argument("--json", action="store_true", help="Emit machine-readable Git state")
+    git_bisect = git_sub.add_parser("bisect", help="Find the first bad revision using Devtool-managed detached worktrees")
+    git_bisect.add_argument("--good", required=True, help="Known-good Git revision")
+    git_bisect.add_argument("--bad", required=True, help="Known-bad Git revision")
+    git_bisect.add_argument("--task", required=True, help="Devtool workflow/test/action to evaluate for each candidate")
+    git_bisect.add_argument("--json", action="store_true", help="Emit machine-readable managed-bisect evidence")
     git_notes = git_sub.add_parser("notes", help="Inspect Devtool execution evidence stored in Git notes")
     git_notes_sub = git_notes.add_subparsers(dest="git_notes_command", required=True)
     git_notes_show = git_notes_sub.add_parser("show", help="Show refs/notes/devtool execution evidence for a commit")
@@ -1168,6 +1173,11 @@ def build_parser() -> argparse.ArgumentParser:
     federation_lock = federation_sub.add_parser("lock", help="Inspect or explicitly update the persisted frozen federation source lock")
     federation_lock.add_argument("--update", default="", metavar="REPOSITORY", help="Refresh exactly one participating repository in the persisted lock")
     federation_lock.add_argument("--json", action="store_true", help="Emit the machine-readable lock and verification state")
+    federation_bisect = federation_sub.add_parser("bisect", help="Bisect one federation repository while every other participant remains pinned")
+    federation_bisect.add_argument("--repo", dest="bisect_repositories", action="append", required=True, metavar="NAME=GOOD..BAD", help="Vary exactly one repository over GOOD..BAD")
+    federation_bisect.add_argument("--pin", dest="bisect_pins", action="append", default=[], metavar="NAME=SHA", help="Override one non-varying repository pin; repeatable")
+    federation_bisect.add_argument("--task", required=True, help="Federated workflow name, workflow:NAME, or group:NAME")
+    federation_bisect.add_argument("--json", action="store_true", help="Emit machine-readable candidate combinations and results")
     federation_run = federation_sub.add_parser("run", help="Execute a federated workflow or group with distinct parent/child EXO runs")
     federation_run.add_argument("workflow", nargs="?", default="", help="Federation workflow name")
     federation_run.add_argument("--group", default="", help="Executable federation group from [federation.groups]")
@@ -11583,6 +11593,32 @@ def _federation_command(args: argparse.Namespace) -> int:
     action = str(getattr(args, "federation_command", "") or "")
     as_json = bool(getattr(args, "json", False))
     try:
+        if action == "bisect":
+            from .git_bisect import GitBisectError, run_federated_bisect
+            try:
+                report = run_federated_bisect(
+                    config,
+                    repository_ranges=getattr(args, "bisect_repositories", []) or [],
+                    pins=getattr(args, "bisect_pins", []) or [],
+                    task=str(getattr(args, "task", "") or ""),
+                    reenter=main,
+                )
+            except GitBisectError as exc:
+                raise SystemExit(str(exc)) from exc
+            payload = report.as_dict()
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([
+                    ("task", report.task),
+                    ("repository", report.variable_repository),
+                    ("good", report.initial_good),
+                    ("bad", report.initial_bad),
+                    ("first_bad", report.first_bad_commit),
+                    ("candidates", str(len(report.candidates))),
+                    ("state", report.state_path),
+                ])
+            return 0 if report.ok else 1
         if action in {"list", "ls"}:
             payload = federation_boundary_payload(config)
             if as_json:
@@ -13485,6 +13521,34 @@ def _main_after_parse(
             else:
                 render_status_table(render_git_state_text(state))
             return 0
+        if action == "bisect":
+            from .git_bisect import GitBisectError, run_git_bisect
+            try:
+                report = run_git_bisect(
+                    Path(str(getattr(args, "repo", "") or Path.cwd())),
+                    good=str(getattr(args, "good", "") or ""),
+                    bad=str(getattr(args, "bad", "") or ""),
+                    task=str(getattr(args, "task", "") or ""),
+                    target=str(getattr(args, "target", "") or ""),
+                )
+            except GitBisectError as exc:
+                if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                    print(json.dumps({"schema_version": 1, "kind": "devtool.git-bisect", "status": "failed", "error": str(exc)}, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Error: {exc}", file=sys.stderr)
+                return 1
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(report.as_dict(), indent=2, ensure_ascii=False))
+            else:
+                render_status_table([
+                    ("task", report.task),
+                    ("good", report.initial_good),
+                    ("bad", report.initial_bad),
+                    ("first_bad", report.first_bad_commit),
+                    ("candidates", str(len(report.candidates))),
+                    ("state", report.state_path),
+                ])
+            return 0 if report.ok else 1
         if action == "notes":
             from .git_execution_notes import GitExecutionNoteError, read_execution_note
             try:

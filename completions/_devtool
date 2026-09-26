@@ -377,9 +377,9 @@ _devtool_commands() {
     'ap:alias for ai-prompt'
     'completion:print shell completion'
     'completion-state:emit config-aware completion values for shells and editors'
-    'git:inspect Git state, execution notes, and multi-repository campaigns'
+    'git:inspect Git state, execution notes, campaigns, and managed bisect'
     'wrapper:resolve, inspect, and execute repository wrapper commands'
-    'federation:inspect, plan, run, and observe explicitly enrolled repositories'
+    'federation:inspect, plan, run, bisect, and observe explicitly enrolled repositories'
     'fed:alias for federation'
     'pytest:profile Devtool pytest runtime and slow-test budget behavior'
     'compatibility:audit retained legacy interfaces and migration paths'
@@ -750,11 +750,14 @@ _devtool() {
       case $line[1] in
         git)
           if (( ${#line} < 2 )); then
-            _values 'git action' state notes campaign
+            _values 'git action' state notes campaign bisect
           else
             case $line[2] in
               state)
                 _arguments '--json[emit machine-readable Git state]'
+                ;;
+              bisect)
+                _arguments '--good[known-good Git revision]:revision:' '--bad[known-bad Git revision]:revision:' '--task[Devtool workflow test or action]:task:' '--json[emit machine-readable managed-bisect evidence]'
                 ;;
               notes)
                 if (( ${#line} < 3 )); then
@@ -833,7 +836,7 @@ _devtool() {
           ;;
         federation|fed)
           if (( ${#line} < 2 )); then
-            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry lock integrate capabilities graph interfaces conformance interface-check affected why bootstrap sync
+            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry lock integrate capabilities graph interfaces conformance interface-check affected why bootstrap sync bisect
           else
             case $line[2] in
               list|preflight|gate1|gate2|execution-preflight|final-seal|seal)
@@ -865,6 +868,9 @@ _devtool() {
                 ;;
               lock)
                 _arguments '--update[refresh exactly one repository in persisted lock]:repository:_devtool_federation_repositories' '--json[emit machine-readable lock and verification state]'
+                ;;
+              bisect)
+                _arguments '*--repo[vary exactly one repository over GOOD..BAD]:repository-range:' '*--pin[pin non-varying repository to SHA]:repository-pin:' '--task[federation workflow or group task]:task:' '--json[emit machine-readable bisect candidates and results]'
                 ;;
               run)
                 _arguments '1:federation workflow:_devtool_federation_workflows' '--group[execute/plan a federation group]:group:_devtool_federation_groups' '--parallel[run dependency-ready federation children concurrently when safe]' '--max-parallel[maximum concurrent federation children; implies --parallel]:count:' '--affected[run only dependency-aware affected workflow repositories]' '--since[with --affected detect direct changes since revision]:revision:' '*--repository[with --affected seed changed repository]:repository:_devtool_federation_repositories' '--drift-policy[frozen source drift policy]:policy:(fail replan allow-if-equivalent)' '--json[emit machine-readable federation state]'

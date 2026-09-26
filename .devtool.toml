@@ -306,6 +306,13 @@ command = ["python", "-m", "devtool.federation_roadmap_fixtures", "git-frx14-can
 inputs = ["devtool/federation_recovery.py", "devtool/federation_execution.py", "devtool/federation_resume.py", "devtool/federation_roadmap_fixtures.py"]
 metadata = { read_only = true, roadmap_id = "GIT-FRX-14" }
 
+
+[targets.devtool.jobs.git-frx15-bisect-history-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.git_bisect", "fixture", "--json"]
+inputs = ["devtool/git_bisect.py", "devtool/git_state.py", "devtool/federation_lock.py", "devtool/federation_plan.py", "devtool/federation_capabilities.py", "devtool/federation_artifacts.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-15" }
+
 [targets.devtool.jobs.frx-y09-provider-budget-fixture]
 runner = "command"
 command = ["python", "-m", "devtool.federation_roadmap_fixtures", "provider-budget"]
@@ -508,6 +515,16 @@ roadmap-git-frx14 = [
   { id = "git-frx14", ref = "test:roadmap-git-frx14", depends_on = ["cancellation-fixture"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx14"] },
 ]
+
+roadmap-git-frx15 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx14", ref = "test:roadmap-git-frx14", depends_on = ["syntax"] },
+  { id = "frx-y11", ref = "test:roadmap-frx-y11", depends_on = ["syntax"] },
+  { id = "bisect-fixture", ref = "job:git-frx15-bisect-history-fixture", depends_on = ["git-frx14", "frx-y11"] },
+  { id = "git-frx15", ref = "test:roadmap-git-frx15", depends_on = ["bisect-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx15"] },
+]
+
 roadmap-frx-y09 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["syntax"] },
@@ -644,6 +661,8 @@ roadmap-current = [
   { id = "frx-y10", ref = "test:roadmap-frx-y10", depends_on = ["frx-y10-fixture"] },
   { id = "frx-y11-fixture", ref = "job:frx-y11-bootstrap-sync-fixture", depends_on = ["frx-y10", "git-frx08-freeze"] },
   { id = "frx-y11", ref = "test:roadmap-frx-y11", depends_on = ["frx-y11-fixture"] },
+  { id = "git-frx15-fixture", ref = "job:git-frx15-bisect-history-fixture", depends_on = ["git-frx14", "frx-y11"] },
+  { id = "git-frx15", ref = "test:roadmap-git-frx15", depends_on = ["git-frx15-fixture"] },
 ]
 
 
@@ -737,6 +756,17 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-git-frx14.xml",
   "tests/test_git_frx14_federated_cancellation_recovery.py",
+]
+
+
+[[test]]
+id = "roadmap-git-frx15"
+name = "GIT-FRX-15 managed Git and federated bisect"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx15.xml",
+  "tests/test_git_frx15_git_federated_bisect.py",
 ]
 
 [[test]]

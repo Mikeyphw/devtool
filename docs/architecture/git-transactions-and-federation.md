@@ -80,3 +80,55 @@ GIT-FRX-01 does not:
 - synchronize state to remote workers.
 
 Those responsibilities begin in GIT-FRX-02 and later roadmap overlays.
+
+## GIT-FRX-15: managed Git and federated bisect
+
+GIT-FRX-15 adds bisect as a Devtool-owned execution operation rather than
+entering Git's process-global `git bisect` state. Candidate revisions run in
+disposable detached worktrees, leaving the user's branch, index, dirty files,
+and existing worktree untouched.
+
+Single-repository search uses:
+
+```text
+devtool git bisect --good <sha> --bad <sha> --task <task>
+```
+
+`<task>` is a Devtool execution identity: `workflow:<name>`, `test:<id>`, a
+standard Devtool action such as `validate`, or a bare workflow name. Raw shell
+commands are not accepted as a bisect contract. Every evaluated candidate is
+persisted under Devtool's state directory with its exact commit combination,
+normalized result, duration, output digest, and candidate-identity digest.
+Failed searches retain a failed session record and append-only history rather
+than leaving implicit Git state behind.
+
+Federated search uses:
+
+```text
+devtool federation bisect \
+  --repo app=<good>..<bad> \
+  --pin lib=<sha> \
+  --task <federated-workflow>
+```
+
+The GIT-FRX-15 default deliberately varies exactly one participating repository.
+Every other participating repository is pinned to the persisted frozen
+federation source lock unless an explicit `--pin` overrides its revision. A
+second varying `--repo` is rejected: coordinated or Cartesian multi-repository
+search remains outside this milestone.
+
+Federated candidate identity includes the complete repository combination, the
+frozen lock/equivalence/graph identities, the candidate capability-graph
+generation, and the candidate artifact-input contract identity. Normal
+federation execution remains authoritative for actual child runs and resolved
+artifact inputs; successful execution metadata augments the candidate result
+without rewriting the pre-execution candidate identity.
+
+The implementation reuses the existing Git-state, source-lock, capability,
+artifact-edge, federation-plan, and federation-execution authorities. It does
+not introduce a parallel Git transaction or source-lock implementation and does
+not mutate the user's persisted frozen lock while testing candidate revisions.
+
+Remote object/bundle transport and remote repository attestation remain owned by
+GIT-FRX-16 Gate 2. Federation audit-delta, rerere, and doctor behavior remain
+owned by GIT-FRX-17.
