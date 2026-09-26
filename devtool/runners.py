@@ -4108,13 +4108,14 @@ def git_commit(
     dry_run: bool = False,
     log_path: Path | str | None = None,
     paths: list[str] | tuple[str, ...] | None = None,
+    sign: bool = False,
 ) -> tuple[list[OperationResult], str]:
     pathspecs = _normalize_git_pathspecs(paths)
 
     if pathspecs is None:
         specs = [
             CommandSpec("git-add", ["git", "add", "-A"]),
-            CommandSpec("git-commit", ["git", "commit", "-m", message]),
+            CommandSpec("git-commit", ["git", "commit", *(["-S"] if sign else []), "-m", message]),
         ]
         config = ProjectConfig(repo_root=repo_root, kind="unknown")
         return run_specs(config, specs, verbose=verbose, dry_run=dry_run, log_path=log_path)
@@ -4122,7 +4123,7 @@ def git_commit(
         output = "No artifact paths changed; skipped git add and git commit."
         results = [
             OperationResult("git-add-skipped", ["git", "add", "-A", "--"], 0, 0.0, output, [], skipped=True),
-            OperationResult("git-commit-skipped", ["git", "commit", "-m", message], 0, 0.0, output, [], skipped=True),
+            OperationResult("git-commit-skipped", ["git", "commit", *(["-S"] if sign else []), "-m", message], 0, 0.0, output, [], skipped=True),
         ]
         return results, output
 
@@ -4174,7 +4175,7 @@ def git_commit(
         literal_pathspecs = [_literal_git_pathspec(path) for path in pathspecs]
         specs = [
             CommandSpec("git-add", ["git", "add", "-f", "-A", "--", *literal_pathspecs], env={"GIT_INDEX_FILE": str(isolated_index)}),
-            CommandSpec("git-commit", ["git", "commit", "-m", message], env={"GIT_INDEX_FILE": str(isolated_index)}),
+            CommandSpec("git-commit", ["git", "commit", *(["-S"] if sign else []), "-m", message], env={"GIT_INDEX_FILE": str(isolated_index)}),
         ]
         config = ProjectConfig(repo_root=repo_root, kind="unknown")
         results, raw = run_specs(config, specs, verbose=verbose, dry_run=dry_run, log_path=log_path)
@@ -4207,6 +4208,7 @@ def git_commit_with_policy(
     dry_run: bool = False,
     log_path: Path | str | None = None,
     paths: list[str] | tuple[str, ...] | None = None,
+    sign: bool = False,
 ) -> tuple[list[OperationResult], str]:
     """Create a commit using the GIT-FRX-04 history policy.
 
@@ -4222,7 +4224,7 @@ def git_commit_with_policy(
                                 metadata={"commit_mode": "none"})], output
     if selected == "new":
         results, raw = git_commit(
-            repo_root, message, verbose=verbose, dry_run=dry_run, log_path=log_path, paths=paths
+            repo_root, message, verbose=verbose, dry_run=dry_run, log_path=log_path, paths=paths, sign=sign
         )
         for result in results:
             if result.name == "git-commit":
@@ -4289,6 +4291,8 @@ def git_commit_with_policy(
         if pathspecs is not None:
             add_argv.extend(["--", *[_literal_git_pathspec(path) for path in pathspecs]])
         commit_argv = ["git", "commit"]
+        if sign:
+            commit_argv.append("-S")
         if selected == "amend":
             commit_argv.append("--amend")
             if reset_author:

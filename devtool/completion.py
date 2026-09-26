@@ -380,7 +380,7 @@ _devtool_commands() {
     'completion:print shell completion'
     'completion-state:emit config-aware completion values for shells and editors'
     'audit:record and compare federation-aware source audit passes'
-    'git:inspect Git state, doctor, rerere, execution notes, campaigns, and managed bisect'
+    'git:inspect Git state, doctor, rerere, execution notes, campaigns, signing seals, and managed bisect'
     'wrapper:resolve, inspect, and execute repository wrapper commands'
     'federation:inspect, plan, run, bisect, and observe explicitly enrolled repositories'
     'fed:alias for federation'
@@ -635,6 +635,7 @@ _devtool_apply_args() {
     '--reset-author[reset author identity while amending]' \
     '--allow-merge-amend[allow amending a merge commit]' \
     '--allow-published-rewrite[allow local rewrite of published HEAD; never pushes]' \
+    '--signing[Git SSH signing policy]:policy:(off if-configured required)' \
     '--isolation[apply isolation mode]:mode:(worktree direct)' \
     '--no-artifact-script[skip embedded artifact validation scripts]' \
     '--rebase[rebase a single overlay inventory against the current repository before apply]' \
@@ -787,7 +788,7 @@ _devtool() {
                 ;;
               campaign)
                 if (( ${#line} < 3 )); then
-                  _values 'campaign action' start checkpoint range-diff status restore-dirty
+                  _values 'campaign action' start checkpoint range-diff status restore-dirty seal
                 else
                   case $line[3] in
                     start)
@@ -804,6 +805,9 @@ _devtool() {
                       ;;
                     restore-dirty)
                       _arguments '1:campaign id' '--repository[restore one enrolled repository]:repository' '--json[emit machine-readable dirty restore evidence]'
+                      ;;
+                    seal)
+                      _arguments '1:campaign id' '--signing[Git SSH signing policy]:policy:(off if-configured required)' '--tag[create optional annotated final campaign tag]' '--verify[verify an existing final seal]' '--json[emit machine-readable GIT-FRX-18 final seal]'
                       ;;
                   esac
                 fi

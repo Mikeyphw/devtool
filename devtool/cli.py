@@ -490,6 +490,7 @@ def _add_apply_policy_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--reset-author", action="store_true", help="With amend mode, reset commit author to the current Git identity")
     cmd.add_argument("--allow-merge-amend", action="store_true", help="Allow amending a merge commit (refused by default)")
     cmd.add_argument("--allow-published-rewrite", action="store_true", help="Allow amending HEAD when reachable from a protected upstream/remote ref; never pushes")
+    cmd.add_argument("--signing", choices=("off", "if-configured", "required"), default="", help="Git SSH signing policy for the result commit; default comes from [git].signing")
     cmd.add_argument(
         "--isolation",
         choices=("worktree", "direct"),
@@ -901,6 +902,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     commit = subparsers.add_parser("commit", aliases=["ci"])
     commit.add_argument("message")
+    commit.add_argument("--signing", choices=("off", "if-configured", "required"), default="", help="Git SSH signing policy for this commit; default comes from [git].signing")
 
     for name, aliases in [
         ("apply-overlay", ["ao"]),
@@ -1157,6 +1159,12 @@ def build_parser() -> argparse.ArgumentParser:
     git_campaign_restore.add_argument("campaign_id")
     git_campaign_restore.add_argument("--repository", default="", help="Restore only one enrolled repository")
     git_campaign_restore.add_argument("--json", action="store_true")
+    git_campaign_seal = git_campaign_sub.add_parser("seal", help="Create and verify the GIT-FRX-18 federated provenance seal")
+    git_campaign_seal.add_argument("campaign_id")
+    git_campaign_seal.add_argument("--signing", choices=("off", "if-configured", "required"), default="", help="Override [git].signing for the final campaign tag")
+    git_campaign_seal.add_argument("--tag", action="store_true", help="Create/update the optional devtool/<campaign>/<generation> annotated tag in the control repository")
+    git_campaign_seal.add_argument("--verify", action="store_true", help="Verify an existing final seal without creating a new one")
+    git_campaign_seal.add_argument("--json", action="store_true")
 
     federation_cmd = subparsers.add_parser("federation", aliases=["fed"], help="Inspect explicitly enrolled federated repositories")
     federation_sub = federation_cmd.add_subparsers(dest="federation_command", required=True)
@@ -8052,14 +8060,17 @@ def _git_commit_with_optional_log(
     dry_run: bool,
     log_path: Path | str | None,
     paths: list[str] | None = None,
+    sign: bool = False,
 ) -> tuple[list[OperationResult], str]:
     kwargs = {"verbose": verbose, "dry_run": dry_run}
     if log_path is not None:
         kwargs["log_path"] = log_path
     if paths is not None:
         kwargs["paths"] = paths
+    if sign:
+        kwargs["sign"] = True
 
-    # git_commit grew optional log_path/paths kwargs over time. Some tests and
+    # git_commit grew optional log_path/paths/sign kwargs over time. Some tests and
     # external callers monkeypatch the older signature, so peel unsupported
     # kwargs one by one instead of failing after the first compatibility retry.
     unsupported: set[str] = set()
@@ -8069,7 +8080,7 @@ def _git_commit_with_optional_log(
         except TypeError as exc:
             message_text = str(exc)
             removed = False
-            for key in ("log_path", "paths"):
+            for key in ("log_path", "paths", "sign"):
                 if key in kwargs and key in message_text and key not in unsupported:
                     kwargs.pop(key, None)
                     unsupported.add(key)
@@ -8091,10 +8102,11 @@ def _git_commit_policy_with_optional_log(
     dry_run: bool,
     log_path: Path | str | None,
     paths: list[str] | None = None,
+    sign: bool = False,
 ) -> tuple[list[OperationResult], str]:
     if str(mode or "new").strip().lower() == "new":
         return _git_commit_with_optional_log(
-            repo_root, message, verbose=verbose, dry_run=dry_run, log_path=log_path, paths=paths
+            repo_root, message, verbose=verbose, dry_run=dry_run, log_path=log_path, paths=paths, sign=sign
         )
     kwargs: dict[str, object] = {
         "mode": mode,
@@ -8107,6 +8119,8 @@ def _git_commit_policy_with_optional_log(
         kwargs["log_path"] = log_path
     if paths is not None:
         kwargs["paths"] = paths
+    if sign:
+        kwargs["sign"] = True
     return git_commit_with_policy(repo_root, message, **kwargs)
 
 
@@ -8174,7 +8188,11 @@ def _maybe_commit_after_apply(
             failure_raw = "$ " + " ".join(failure.argv) + "\n" + failure.output
             return results, raw_output + ("\n\n" if raw_output else "") + failure_raw
 
+    from .git_signing import GitSigningError, resolve_signing_decision, signing_mode_from_config
     try:
+        signing_decision = resolve_signing_decision(
+            config.repo_root, signing_mode_from_config(config, str(getattr(args, "signing", "") or ""))
+        )
         policy_evidence = preflight_commit_policy(
             config.repo_root,
             mode=commit_mode,
@@ -8183,7 +8201,9 @@ def _maybe_commit_after_apply(
             allow_merge_amend=bool(getattr(args, "allow_merge_amend", False)),
             allow_published_rewrite=bool(getattr(args, "allow_published_rewrite", False)),
         )
-    except GitCommitPolicyError as exc:
+    except (GitCommitPolicyError, GitSigningError) as exc:
+        # Signing policy is part of the commit safety preflight. Preserve the
+        # existing normalized commit-policy failure surface for callers.
         failure = _commit_policy_failure_result(commit_mode, exc)
         results.append(failure)
         failure_raw = "$ " + " ".join(failure.argv) + "\n" + failure.output
@@ -8251,8 +8271,10 @@ def _maybe_commit_after_apply(
         dry_run=args.dry_run,
         log_path=log_path,
         paths=commit_paths,
+        sign=bool(signing_decision.enabled),
     )
     evidence_payload = policy_evidence.as_dict()
+    evidence_payload["devtool_signing"] = signing_decision.as_dict()
     for commit_result in commit_results:
         if commit_result.name == "git-commit":
             commit_result.metadata.update({
@@ -8261,7 +8283,8 @@ def _maybe_commit_after_apply(
                 "supersedes_commit": policy_evidence.supersedes_commit,
                 "fixup_target": policy_evidence.fixup_target,
                 "published_rewrite": bool(policy_evidence.published_refs and policy_evidence.allow_published_rewrite),
-                "signing_required": policy_evidence.signing_required,
+                "signing_required": bool(signing_decision.enabled),
+                "signing_policy": signing_decision.as_dict(),
             })
     results.extend(commit_results)
     if raw_output:
@@ -8270,6 +8293,22 @@ def _maybe_commit_after_apply(
         raw_output = commit_raw
 
     commit_succeeded = any(result.name == "git-commit" and result.returncode == 0 for result in commit_results)
+    if commit_succeeded and signing_decision.enabled and not bool(getattr(args, "dry_run", False)):
+        from .git_signing import verify_commit_signature
+        signed_commit = latest_commit_hash(config.repo_root)
+        verification = verify_commit_signature(config.repo_root, signed_commit)
+        verify_ok = bool(verification.get("verified"))
+        verification_result = OperationResult(
+            "git-signature-verify", ["git", "verify-commit", signed_commit], 0 if verify_ok else 1, 0.0,
+            str(verification.get("detail") or ("Git SSH signature verified." if verify_ok else "Git SSH signature verification failed.")),
+            [] if verify_ok else [Issue("error", "git-signature-verify", "", "GIT_SIGNING_VERIFY", str(verification.get("detail") or "Git SSH signature verification failed"))],
+            failure_kind="" if verify_ok else "git_signing_verification", metadata=verification,
+        )
+        results.append(verification_result)
+        verify_raw = "$ git verify-commit " + signed_commit + "\n" + verification_result.output
+        raw_output = raw_output + ("\n\n" if raw_output else "") + verify_raw
+        if not verify_ok:
+            return results, raw_output
     if commit_succeeded and commit_mode == "amend" and policy_evidence.supersedes_commit:
         new_commit = latest_commit_hash(config.repo_root)
         try:
@@ -13713,6 +13752,7 @@ def _main_after_parse(
                 GitCampaignError, checkpoint_campaign, load_campaign, range_diff_campaign,
                 restore_campaign_dirty_tree, start_campaign,
             )
+            from .git_final_seal import GitFinalSealError, build_campaign_seal, verify_campaign_seal
             subaction = str(getattr(args, "git_campaign_command", "") or "")
             try:
                 if subaction == "status":
@@ -13737,10 +13777,19 @@ def _main_after_parse(
                         payload = restore_campaign_dirty_tree(
                             str(args.campaign_id), repository=str(getattr(args, "repository", "") or "")
                         )
+                    elif subaction == "seal":
+                        if bool(getattr(args, "verify", False)):
+                            payload = verify_campaign_seal(config, str(args.campaign_id))
+                        else:
+                            payload = build_campaign_seal(
+                                config, str(args.campaign_id),
+                                signing_mode=str(getattr(args, "signing", "") or ""),
+                                create_tag=bool(getattr(args, "tag", False)),
+                            )
                     else:
                         parser.error(f"Unknown git campaign command: {subaction}")
                         return 2
-            except GitCampaignError as exc:
+            except (GitCampaignError, GitFinalSealError) as exc:
                 print(f"Error: {exc}", file=sys.stderr)
                 return 1
             if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
@@ -15360,7 +15409,28 @@ def _main_after_parse(
                 log_path = new_log_path()
                 write_log(_run_log_start_text(args, None), log_path)
                 started_at = datetime.now(timezone.utc)
-                results, raw_output = _git_commit_with_optional_log(repo, args.message, verbose=args.verbose, dry_run=args.dry_run, log_path=log_path)
+                from .git_signing import GitSigningError, resolve_signing_decision, signing_mode_from_config, verify_commit_signature
+                try:
+                    signing_decision = resolve_signing_decision(
+                        repo, signing_mode_from_config(config, str(getattr(args, "signing", "") or ""))
+                    )
+                except GitSigningError as exc:
+                    console.print(f"[red]{exc}[/red]")
+                    return 1
+                results, raw_output = _git_commit_with_optional_log(
+                    repo, args.message, verbose=args.verbose, dry_run=args.dry_run, log_path=log_path, sign=signing_decision.enabled
+                )
+                commit_ok = any(result.name == "git-commit" and result.returncode == 0 for result in results)
+                if commit_ok and signing_decision.enabled and not args.dry_run:
+                    revision = latest_commit_hash(repo)
+                    verification = verify_commit_signature(repo, revision)
+                    ok = bool(verification.get("verified"))
+                    results.append(OperationResult(
+                        "git-signature-verify", ["git", "verify-commit", revision], 0 if ok else 1, 0.0,
+                        str(verification.get("detail") or ("Git SSH signature verified." if ok else "Git SSH signature verification failed.")),
+                        [] if ok else [Issue("error", "git-signature-verify", "", "GIT_SIGNING_VERIFY", str(verification.get("detail") or "Git SSH signature verification failed"))],
+                        failure_kind="" if ok else "git_signing_verification", metadata=verification,
+                    ))
                 finished_at = datetime.now(timezone.utc)
                 totals, summary_text, json_text, _machine_json_text = _emit_summary(
                     results,

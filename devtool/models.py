@@ -446,6 +446,7 @@ class ProjectConfig:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     wrapper: WrapperConfig = field(default_factory=WrapperConfig)
     federation: FederationConfig = field(default_factory=FederationConfig)
+    git_config: dict[str, Any] = field(default_factory=dict)
     ui_config: dict[str, Any] = field(default_factory=dict)
     execution_environment: str = "auto"
     chroot_name: str = "androidos"

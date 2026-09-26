@@ -757,6 +757,12 @@ def load_project_config(
 
     repo_project_raw = _require_table(repo_loaded, "project", source=repo_source_label)
     repo_execution_section = _require_table(repo_loaded, "execution", source=repo_source_label)
+    git_raw = _require_table(loaded, "git", source=source_label)
+    git_config = dict(git_raw)
+    git_signing = str(git_config.get("signing", "off") or "off").strip().lower() or "off"
+    if git_signing not in {"off", "if-configured", "required"}:
+        raise SystemExit("Invalid [git].signing; expected off, if-configured, or required")
+    git_config["signing"] = git_signing
     project_raw = _require_table(loaded, "project", source=source_label)
     workspace_raw = _require_table(loaded, "workspace", source=source_label)
     env_raw = _require_table(loaded, "env", source=source_label)
@@ -1116,6 +1122,7 @@ def load_project_config(
         workspace=workspace,
         wrapper=wrapper,
         federation=federation,
+        git_config=git_config,
         ui_config=ui_config,
         execution_environment=execution_environment,
         chroot_name=chroot_name,
@@ -2571,6 +2578,7 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
         "workspace": workspace_as_dict(config.workspace, config.targets),
         "wrapper": wrapper_as_dict(config.wrapper),
         "federation": federation_as_dict(config.federation),
+        "git": dict(config.git_config),
         "ui": {
             "config": config.ui_config,
             "resolved": {surface: resolve_ui_preferences(config.ui_config, surface=surface).as_dict() for surface in ("machine", "desktop", "tui", "hud", "android")},

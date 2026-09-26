@@ -177,3 +177,82 @@ evidence completeness where remote execution requires it.
 
 GIT-FRX-18 remains the sole owner of signing policy, the federated provenance
 manifest, and the final Git/federation seal.
+
+## GIT-FRX-18: signing, federated provenance, and final Git/federation seal
+
+GIT-FRX-18 consumes the authoritative Git, federation, remote-attestation, notes,
+campaign, and GIT-FRX-17 zero-gap-audit state. It does not create a parallel
+provenance database. The repository policy is configured with:
+
+```toml
+[git]
+signing = "off" # off | if-configured | required
+```
+
+The initial signing backend is Git SSH signing. `if-configured` signs only when
+Git is configured for SSH signing with both a signing key and an allowed-signers
+file so Devtool can verify the result. `required` fails closed if that complete
+verification configuration is absent. Apply/commit operations pass `-S` only
+when the resolved policy enables signing and verify the resulting commit before
+accepting it.
+
+A final campaign seal is created with:
+
+```text
+devtool git campaign seal <campaign> [--signing <mode>] [--tag] [--json]
+devtool git campaign seal <campaign> --verify [--json]
+```
+
+The canonical manifest binds every participating repository's repository ID,
+start/result commits, branch/integration target, overlay digests, commit policy,
+supersession history, validation/run IDs, remote provider and attestation,
+Devtool note evidence, signing verification, rollback ref, and final tree. A
+changed repository must have finalized Devtool Git-lineage evidence; remote
+lineage must retain remote-attestation or source-transport evidence.
+
+Seal creation requires a fresh GIT-FRX-01..18 zero-gap audit, validates the
+campaign/audit/evidence digests, and checks freshness again immediately before
+persistence so a source mutation during packaging fails closed. Seal
+verification recomputes the canonical manifest digest, campaign binding,
+participating repository commits/trees, zero-gap freshness, and any persisted
+final tag binding/signature.
+
+The optional final tag is owned by the federation control repository and uses:
+
+```text
+devtool/<campaign>/<generation>
+```
+
+The annotated/signed tag message contains the canonical manifest SHA-256. The
+tag does not imply that child repositories share the control repository's Git
+history; the root manifest proves their exact states. Devtool never pushes the
+seal or tag automatically.
+
+GIT-FRX-18 is Gate 3. Full historical campaign qualification is construction
+and exact-replay evidence; on-device artifact validation remains a bounded,
+fail-closed acceptance set so Termux does not rerun the entire historical suite
+for every apply.
+
+## FRX-Y12 and the combined Gate-3 final authority
+
+The final Git/federation gate co-delivers GIT-FRX-18 with FRX-Y12. FRX-Y12 is
+not a second seal implementation. It exercises the existing capability,
+interface, scheduler/provider, resume/reuse, artifact-edge, hierarchical
+lineage, and explicit source-bootstrap authorities with a real shared-platform
+provider plus direct and transitive consumers, then projects those authorities
+into the canonical GIT-FRX-18 campaign manifest.
+
+The final manifest therefore binds not only Git commits and trees but also the
+frozen lock/source identities, canonical `repository::target::contract`,
+capability requirements/exports, interface conformance, provider/resource
+placement, resume/reuse state, and artifact input/output digests recovered from
+the participant's authoritative execution-note evidence. Verification rereads
+that evidence; mutating the Devtool notes ref after sealing invalidates the
+seal.
+
+The final native workflow is `roadmap-gate3`. It composes the GIT-FRX-17
+freshness prerequisite, `roadmap-git-frx18-final`,
+`roadmap-frx-y12-adoption`, and the workflow/EXO baseline. Artifact validation
+references those repository-declared test IDs rather than embedding a separate
+Gate-3 validator. Full historical campaign coverage remains construction and
+exact-replay evidence so on-device Termux validation stays bounded.

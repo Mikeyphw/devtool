@@ -556,6 +556,26 @@ roadmap-git-frx17 = [
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx17"] },
 ]
 
+roadmap-git-frx18 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx17", ref = "test:roadmap-git-frx17", depends_on = ["syntax"] },
+  { id = "git-frx18", ref = "test:roadmap-git-frx18-final", depends_on = ["git-frx17"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx18"] },
+]
+
+roadmap-frx-y12 = [
+  { id = "git-frx18-final", ref = "test:roadmap-git-frx18-final", depends_on = [] },
+  { id = "frx-y12-adoption", ref = "test:roadmap-frx-y12-adoption", depends_on = ["git-frx18-final"] },
+]
+
+roadmap-gate3 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx17", ref = "test:roadmap-git-frx17", depends_on = ["syntax"] },
+  { id = "git-frx18-final", ref = "test:roadmap-git-frx18-final", depends_on = ["git-frx17"] },
+  { id = "frx-y12-adoption", ref = "test:roadmap-frx-y12-adoption", depends_on = ["git-frx18-final"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y12-adoption"] },
+]
+
 roadmap-frx-y09 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["syntax"] },
@@ -697,6 +717,8 @@ roadmap-current = [
   { id = "git-frx16-fixture", ref = "job:git-frx16-bundle-attestation-fixture", depends_on = ["git-frx15", "frx-y11", "ssh03"] },
   { id = "git-frx16", ref = "test:roadmap-git-frx16", depends_on = ["git-frx16-fixture"] },
   { id = "git-frx17", ref = "test:roadmap-git-frx17", depends_on = ["git-frx16"] },
+  { id = "git-frx18", ref = "test:roadmap-git-frx18-final", depends_on = ["git-frx17"] },
+  { id = "frx-y12", ref = "test:roadmap-frx-y12-adoption", depends_on = ["git-frx18"] },
 ]
 
 
@@ -823,6 +845,25 @@ command = [
   "tests/test_git_frx17_audit_rerere_doctor.py",
 ]
 
+[[test]]
+id = "roadmap-git-frx18-final"
+name = "GIT-FRX-18 signing, federated provenance manifest, and final seal Gate 3"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx18-final.xml",
+  "tests/test_git_frx18_signing_provenance_final_seal.py",
+]
+
+[[test]]
+id = "roadmap-frx-y12-adoption"
+name = "FRX-Y12 shared-library adoption and final reseal aggregate"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-frx-y12-adoption.xml",
+  "tests/test_frx_y12_shared_library_final_reseal.py",
+]
 
 [[test]]
 id = "roadmap-frx-y09"
