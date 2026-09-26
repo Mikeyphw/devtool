@@ -378,7 +378,7 @@ def worker_doctor_payload(
             "detail": "inspect OpenSSH known_hosts evidence before changing host-key policy",
         })
 
-    return {
+    payload = {
         "schema_version": 1,
         "kind": "ssh-worker-doctor",
         "profile": config.profile,
@@ -438,6 +438,13 @@ def worker_doctor_payload(
             and bool(provider.get("executable", False))
         ),
     }
+    if config.profile:
+        try:
+            from .ssh_provider_evidence import persist_provider_evidence
+            persist_provider_evidence(payload, source="ssh-doctor")
+        except OSError:
+            pass
+    return payload
 
 
 def _bootstrap_script(probe: SSHWorkerProbe, missing: list[str]) -> str:

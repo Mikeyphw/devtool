@@ -1896,6 +1896,15 @@ package_command = ""
 # max_parallel_nodes = 4
 # max_gradle_nodes = 1
 # max_dotnet_nodes = 1
+# max_local_gradle = 1
+# max_ssh_oci_gradle = 2
+# max_tablet_gradle = 1
+# max_android_device = 1
+# [workspace.scheduler.provider_budgets]
+# "ssh:tablet" = 1
+# [workspace.scheduler.resource_budgets]
+# "port:adb" = 1
+# "custom:release-signing" = 1
 
 [workspace.groups]
 # mobile = ["android", "tv"]

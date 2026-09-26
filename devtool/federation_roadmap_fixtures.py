@@ -467,11 +467,131 @@ def git_frx10_integration_fixture() -> dict[str, object]:
             "published_release_rollback_owned": applied.published_release_rollback_owned,
         }
 
+
+def git_frx14_cancellation_fixture() -> dict[str, object]:
+    from types import SimpleNamespace
+    from .federation_recovery import cancellation_recovery_evidence
+
+    def child(step: str, status: str, exit_code: int, run_id: str = ""):
+        return SimpleNamespace(
+            step_id=step,
+            repository=step,
+            status=status,
+            exit_code=exit_code,
+            run_id=run_id,
+            git_lineage={"rollback_ref": f"refs/devtool/rollback/{run_id}" if run_id else ""},
+            operational_ownership={"recovery": "child-owned"},
+        )
+
+    report = SimpleNamespace(
+        parent_run_id="git-frx14-fixture",
+        status="cancelled",
+        children=(
+            child("prepared", "succeeded", 0, "child-prepared"),
+            child("cancelled", "cancelled", 130, "child-cancelled"),
+            child("pending", "cancelled", 130, ""),
+        ),
+    )
+    payload = cancellation_recovery_evidence(report)
+    if payload["reusable_steps"] != ["prepared"]:
+        raise SystemExit("GIT-FRX-14 fixture did not preserve reusable succeeded child")
+    if {row["step_id"] for row in payload["invalidated_steps"]} != {"cancelled", "pending"}:
+        raise SystemExit("GIT-FRX-14 fixture did not invalidate cancelled/pending children")
+    if payload["automatic_git_rollback"] or payload["rollback_ownership"] != "child-repository-owned":
+        raise SystemExit("GIT-FRX-14 fixture violated child-owned rollback boundary")
+    return {"schema_version": 1, "roadmap_id": "GIT-FRX-14", **payload}
+
+
+def provider_budget_fixture() -> dict[str, object]:
+    from .federation_provider import FederationProviderCapability
+    from .federation_scheduler import build_federated_schedule
+
+    with tempfile.TemporaryDirectory(prefix="devtool-frx-y09-") as td:
+        root = Path(td)
+        parent = root / "parent"
+        parent.mkdir()
+        child_config = '''[project]
+runner="command"
+[workspace]
+default_target="app"
+[jobs.one]
+runner="command"
+command=["true"]
+outputs=["out/**"]
+[targets.app]
+runner="command"
+execution_environment="ssh"
+root="."
+[targets.app.metadata]
+federation_preferred_worker="tablet"
+[targets.app.metadata.federation_resources]
+"port:adb"=1
+[targets.app.workflows]
+work=["job:one"]
+'''
+        for name in ("alpha", "beta"):
+            child = root / name
+            child.mkdir()
+            (child / ".devtool.toml").write_text(child_config, encoding="utf-8")
+        (parent / ".devtool.toml").write_text(
+            '''[project]
+runner="command"
+[workspace.scheduler]
+max_parallel_nodes=4
+[workspace.scheduler.provider_budgets]
+"ssh:tablet"=1
+[workspace.scheduler.resource_budgets]
+"port:adb"=1
+[federation]
+schema=1
+[federation.repositories.alpha]
+path="../alpha"
+[federation.repositories.beta]
+path="../beta"
+[federation.workflows.release]
+steps=[{id="alpha",ref="alpha::work"},{id="beta",ref="beta::work"}]
+''',
+            encoding="utf-8",
+        )
+        config = _load(parent)
+        plan = build_federated_plan(config, "release")
+        provider = FederationProviderCapability(
+            provider_id="ssh:tablet",
+            kind="ssh-native",
+            profile="tablet",
+            execution_environments=("ssh",),
+            healthy=True,
+            evidence_source="ssh-doctor",
+            evidence_digest="fixture-doctor",
+            metadata={"qualified_target": "app", "worker": {"platform": "termux"}},
+        )
+        schedule = build_federated_schedule(
+            config.federation.workflows["release"],
+            plan,
+            parallel_requested=True,
+            max_parallel=4,
+            provider_capabilities=(provider,),
+            provider_budgets=config.workspace.scheduler.provider_budgets,
+            resource_budgets=config.workspace.scheduler.resource_budgets,
+        )
+        if [list(wave.nodes) for wave in schedule.waves] != [["alpha"], ["beta"]]:
+            raise SystemExit("FRX-Y09 fixture did not serialize provider/resource budget")
+        if not schedule.by_step["beta"].queue_reasons:
+            raise SystemExit("FRX-Y09 fixture omitted queue reason")
+        return {
+            "schema_version": 1,
+            "roadmap_id": "FRX-Y09",
+            "waves": [wave.as_dict() for wave in schedule.waves],
+            "placements": {node.step_id: node.as_dict()["placement"] for node in schedule.nodes},
+            "queue_reasons": {node.step_id: list(node.queue_reasons) for node in schedule.nodes},
+            "remote_probe_owned_by": "ssh-01/ssh-03",
+        }
+
 def main(argv: list[str] | None=None) -> int:
     p=argparse.ArgumentParser(prog='python -m devtool.federation_roadmap_fixtures')
-    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage','resume-invalidation','artifact-edge','git-frx10-integration'])
+    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage','resume-invalidation','artifact-edge','git-frx10-integration','git-frx14-cancellation','provider-budget'])
     ns=p.parse_args(argv)
-    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else resume_invalidation_fixture() if ns.fixture=='resume-invalidation' else artifact_edge_fixture() if ns.fixture=='artifact-edge' else git_frx10_integration_fixture() if ns.fixture=='git-frx10-integration' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
+    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else resume_invalidation_fixture() if ns.fixture=='resume-invalidation' else artifact_edge_fixture() if ns.fixture=='artifact-edge' else git_frx10_integration_fixture() if ns.fixture=='git-frx10-integration' else git_frx14_cancellation_fixture() if ns.fixture=='git-frx14-cancellation' else provider_budget_fixture() if ns.fixture=='provider-budget' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 

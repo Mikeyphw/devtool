@@ -152,6 +152,14 @@ class WorkflowSchedulerConfig:
     max_parallel_nodes: int = 0
     max_gradle_nodes: int = 1
     max_dotnet_nodes: int = 1
+    # FRX-Y09 provider/resource-aware federation budgets. These extend the
+    # shared scheduler rather than creating a second scheduler authority.
+    max_local_gradle: int = 1
+    max_ssh_oci_gradle: int = 2
+    max_tablet_gradle: int = 1
+    max_android_device: int = 1
+    provider_budgets: dict[str, int] = field(default_factory=dict)
+    resource_budgets: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

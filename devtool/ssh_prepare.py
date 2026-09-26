@@ -113,7 +113,7 @@ def prepare_worker_target(
         toolchain_classification = "blocked"
     elif dry_run and bool(toolchain.get("changed")):
         toolchain_classification = "needs-install"
-    return {
+    payload = {
         "schema_version": 1,
         "kind": "ssh-prepare",
         "ok": bool(toolchain.get("ok", True)) and bool(bootstrap.get("ok", True)),
@@ -136,6 +136,13 @@ def prepare_worker_target(
         "source_operations": {"clone": False, "fetch": False, "checkout": False, "sync": False},
         "detail": "preparation plan ready" if dry_run else "worker runtime and target toolchain prepared without changing repository source",
     }
+    if config.profile:
+        try:
+            from .ssh_provider_evidence import persist_provider_evidence
+            persist_provider_evidence(payload, source="ssh-prepare")
+        except OSError:
+            pass
+    return payload
 
 
 __all__ = ["prepare_worker_target"]

@@ -109,6 +109,7 @@ class FederatedChildRun:
     git_lineage: dict[str, Any] = field(default_factory=dict)
     lifecycle: str = ""
     artifact_inputs: dict[str, Any] = field(default_factory=dict)
+    placement: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -130,6 +131,7 @@ class FederatedChildRun:
             "git_lineage": dict(self.git_lineage),
             "lifecycle": self.lifecycle,
             "artifact_inputs": dict(self.artifact_inputs),
+            "placement": dict(self.placement),
         }
 
 
@@ -417,14 +419,43 @@ def _child_argv(
     target: str,
     workflow: str,
     invocation_command: str,
+    provider_profile: str = "",
+    execution_environment: str = "auto",
 ) -> list[str]:
-    return [
-        "--repo", root,
+    argv = ["--repo", root]
+    profile = str(provider_profile or "").strip()
+    environment = str(execution_environment or "auto").strip()
+    if profile:
+        argv.extend(["--ssh-profile", profile])
+    elif environment not in {"", "auto", "ssh", "proot-distro"}:
+        argv.extend(["--execution-environment", environment])
+    argv.extend([
         "--internal-invocation-source", "federation",
         "--internal-invocation-command", invocation_command,
         "invoke", workflow,
         "--target", target,
-    ]
+    ])
+    return argv
+
+
+def _provider_capabilities_for_workflow(
+    parent: ProjectConfig, workflow: FederatedWorkflowConfig, plan: FederatedPlanGraph
+):
+    """Load cached provider evidence for the child targets without remote probing."""
+    from .federation_provider import load_federation_provider_capabilities
+
+    targets = sorted({_step_target(plan, step) for step in workflow.steps if _step_target(plan, step)})
+    rows = []
+    seen: set[tuple[str, str, str]] = set()
+    for target in targets or [""]:
+        for provider in load_federation_provider_capabilities(parent, target=target):
+            qualified = str(provider.metadata.get("qualified_target") or "")
+            key = (provider.provider_id, qualified, provider.evidence_digest)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(provider)
+    return tuple(rows)
 
 
 def _step_child_contract(step: FederatedWorkflowStep) -> str:
@@ -448,6 +479,8 @@ def _execute_existing_child_contract(
     lineage: dict[str, Any],
     reenter: Callable[[list[str]], int],
     publish: Callable[[Any], None],
+    provider_profile: str = "",
+    execution_environment: str = "auto",
 ) -> int:
     """Execute a workflow/job/wrapper through its existing authoritative service."""
     if step.contract_type == "workflow":
@@ -457,6 +490,8 @@ def _execute_existing_child_contract(
             target=str(lineage.get("target") or step.target),
             workflow=step.workflow,
             invocation_command=f"{lineage.get('federation_workflow')}:{step.step_id}",
+            provider_profile=provider_profile,
+            execution_environment=execution_environment,
         )))
 
     from .federation_bridge import (
@@ -530,6 +565,24 @@ def _run_federated_workflow_sequential(
 
     plan = build_federated_plan(parent, name)
     plan, source_verification = _resolve_frozen_execution_plan(parent, plan, drift_policy=drift_policy)
+    policy = parent.workspace.scheduler
+    providers = _provider_capabilities_for_workflow(parent, workflow, plan)
+    schedule = build_federated_schedule(
+        workflow,
+        plan,
+        parallel_requested=False,
+        max_parallel=1,
+        max_gradle=max(0, int(policy.max_gradle_nodes)),
+        max_dotnet=max(0, int(policy.max_dotnet_nodes)),
+        provider_capabilities=providers,
+        provider_budgets=policy.provider_budgets,
+        resource_budgets=policy.resource_budgets,
+        max_local_gradle=policy.max_local_gradle,
+        max_ssh_oci_gradle=policy.max_ssh_oci_gradle,
+        max_tablet_gradle=policy.max_tablet_gradle,
+        max_android_device=policy.max_android_device,
+    )
+    schedule_nodes = schedule.by_step
     run_id = str(parent_run_id or RunId.new(prefix="federation"))
     owner_identity = parent.repository_identity.as_dict() if parent.repository_identity else {}
     owner_fingerprint = str(owner_identity.get("fingerprint") or owner_identity.get("root") or parent.repo_root)
@@ -562,6 +615,7 @@ def _run_federated_workflow_sequential(
         metadata={
             "repository_identity": owner_identity,
             "run_lineage": parent_lineage,
+            "federation_scheduler": schedule.as_dict(),
             "federation_source_lock": dict(plan.source_lock),
             "federation_source_verification": dict(source_verification),
         },
@@ -591,9 +645,16 @@ def _run_federated_workflow_sequential(
                 "repository_identity": _step_identity(plan, step),
                 "artifact_inputs": [item.as_dict() for item in step.artifact_inputs],
                 "federation_stage": step.stage,
+                "scheduler_state": "queued",
+                "scheduler_wave": 0,
+                "scheduler": schedule_nodes[step.step_id].as_dict(),
             },
         ))
-    publish(GraphSealed(run_id=run_id, reason="federation child workflow set resolved", source="federation"))
+    publish(GraphSealed(
+        run_id=run_id,
+        reason="federation child workflow set resolved with FRX-Y09 provider/resource placement",
+        source="federation",
+    ))
 
     outcomes: dict[str, FederatedChildRun] = {}
     children: list[FederatedChildRun] = []
@@ -605,6 +666,8 @@ def _run_federated_workflow_sequential(
     try:
         for step in ordered_steps:
             active_step = step
+            scheduler_node = schedule_nodes[step.step_id]
+            placement = dict(scheduler_node.as_dict().get("placement") or {})
             blocked_by = [dep for dep in step.depends_on if outcomes.get(dep) and outcomes[dep].status != ExecutionStatus.SUCCEEDED.value]
             if blocked_by:
                 publish(NodeBlocked(
@@ -620,6 +683,7 @@ def _run_federated_workflow_sequential(
                     _step_identity(plan, step), {}, {},
                     federation_ref=_step_federation_ref(plan, step), requested_ref=step.ref,
                     child_contract=_step_child_contract(step), contract_ref=_step_contract_ref(plan, step), lifecycle="blocked",
+                    placement=placement,
                 )
                 outcomes[step.step_id] = blocked
                 children.append(blocked)
@@ -640,6 +704,7 @@ def _run_federated_workflow_sequential(
                         "target": reused.target, "workflow": reused.workflow,
                         "federation_ref": reused.federation_ref, "requested_ref": reused.requested_ref,
                         "reuse_action": "reused", "reused_from_parent_run_id": str(reused.run_lineage.get("parent_run_id") or ""),
+                        "scheduler": scheduler_node.as_dict(),
                     },
                 ))
                 publish(NodeFinished(
@@ -651,6 +716,7 @@ def _run_federated_workflow_sequential(
                         "target": reused.target, "workflow": reused.workflow,
                         "federation_ref": reused.federation_ref, "requested_ref": reused.requested_ref,
                         "reuse_action": "reused", "result_reference": reused.as_dict(),
+                        "scheduler": scheduler_node.as_dict(),
                     },
                 ))
                 outcomes[step.step_id] = reused
@@ -698,7 +764,8 @@ def _run_federated_workflow_sequential(
                 "source_repository": owner_fingerprint,
                 "requested_repository": step.repository,
                 "effective_repository": effective_fingerprint,
-                "execution_environment": "auto",
+                "execution_environment": scheduler_node.execution_environment,
+                "provider_placement": placement,
                 "frozen_source_lock_digest": str(plan.source_lock.get("lock_digest") or ""),
                 "frozen_source_equivalence_digest": str(plan.source_lock.get("equivalence_digest") or ""),
                 "git_lineage": planned_git_lineage,
@@ -716,7 +783,11 @@ def _run_federated_workflow_sequential(
                 label=federation_ref,
                 kind="federation-child",
                 argv=tuple(
-                    _child_argv(root=resolution.root, target=target, workflow=step.workflow, invocation_command=invocation_command)
+                    _child_argv(
+                        root=resolution.root, target=target, workflow=step.workflow,
+                        invocation_command=invocation_command, provider_profile=scheduler_node.provider_profile,
+                        execution_environment=scheduler_node.execution_environment,
+                    )
                     if step.contract_type == "workflow" else (step.ref,)
                 ),
                 source="federation",
@@ -733,6 +804,9 @@ def _run_federated_workflow_sequential(
                     "run_lineage": lineage,
                     "resume_checkpoint": resume_checkpoint,
                     "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
+                    "scheduler_state": "running",
+                    "scheduler_wave": 0,
+                    "scheduler": scheduler_node.as_dict(),
                 },
             ))
 
@@ -753,10 +827,12 @@ def _run_federated_workflow_sequential(
                 "DEVTOOL_FEDERATION_SOURCE_REPOSITORY": owner_fingerprint,
                 "DEVTOOL_FEDERATION_REQUESTED_REPOSITORY": step.repository,
                 "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
-                "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
+                "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": scheduler_node.execution_environment,
                 "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
                 "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
             }
+            if not scheduler_node.provider_profile and scheduler_node.execution_environment not in {"", "auto"}:
+                env["DEVTOOL_PROJECT_EXECUTION_ENVIRONMENT"] = scheduler_node.execution_environment
             env.update(git_lineage_environment(planned_git_lineage))
             env.update(artifact_env)
             if federation_group:
@@ -777,6 +853,8 @@ def _run_federated_workflow_sequential(
                     lineage=lineage,
                     reenter=reenter,
                     publish=publish,
+                    provider_profile=scheduler_node.provider_profile,
+                    execution_environment=scheduler_node.execution_environment,
                 )
             child_snapshot = snapshot_lookup(child_run_id)
             persisted_lineage = _assert_child_snapshot_authority(
@@ -833,6 +911,9 @@ def _run_federated_workflow_sequential(
                     "operational_ownership": operational,
                     "git_lineage": git_lineage,
                     "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
+                    "scheduler_state": child_status,
+                    "scheduler_wave": 0,
+                    "scheduler": scheduler_node.as_dict(),
                 },
             ))
             child = FederatedChildRun(
@@ -847,6 +928,7 @@ def _run_federated_workflow_sequential(
                     str(lifecycle_actions.get(step.step_id) or "executed")
                 ),
                 artifact_inputs=dict(artifact_inputs),
+                placement=placement,
             )
             outcomes[step.step_id] = child
             children.append(child)
@@ -902,6 +984,7 @@ def _run_federated_workflow_sequential(
                     child_contract=str(active_lineage.get("child_contract") or ""),
                     contract_ref=str(active_lineage.get("contract_ref") or ""),
                     git_lineage=cancelled_git_lineage, lifecycle="cancelled",
+                    placement=(dict(schedule_nodes[active_step.step_id].as_dict().get("placement") or {}) if active_step else {}),
                 )
                 outcomes[active_step.step_id] = cancelled_child
                 children.append(cancelled_child)
@@ -937,6 +1020,7 @@ def _run_federated_workflow_sequential(
                 _step_identity(plan, pending), {}, {},
                 federation_ref=_step_federation_ref(plan, pending), requested_ref=pending.ref,
                 child_contract=_step_child_contract(pending), contract_ref=_step_contract_ref(plan, pending), lifecycle="blocked",
+                placement=dict(schedule_nodes[pending.step_id].as_dict().get("placement") or {}),
             )
             outcomes[pending.step_id] = blocked
             children.append(blocked)
@@ -1049,6 +1133,7 @@ def _run_federated_workflow_parallel(
     plan, source_verification = _resolve_frozen_execution_plan(parent, plan, drift_policy=drift_policy)
     policy = parent.workspace.scheduler
     effective_max = max(1, int(max_parallel or policy.max_parallel_nodes or 4))
+    providers = _provider_capabilities_for_workflow(parent, workflow, plan)
     schedule = build_federated_schedule(
         workflow,
         plan,
@@ -1056,6 +1141,13 @@ def _run_federated_workflow_parallel(
         max_parallel=effective_max,
         max_gradle=max(0, int(policy.max_gradle_nodes)),
         max_dotnet=max(0, int(policy.max_dotnet_nodes)),
+        provider_capabilities=providers,
+        provider_budgets=policy.provider_budgets,
+        resource_budgets=policy.resource_budgets,
+        max_local_gradle=policy.max_local_gradle,
+        max_ssh_oci_gradle=policy.max_ssh_oci_gradle,
+        max_tablet_gradle=policy.max_tablet_gradle,
+        max_android_device=policy.max_android_device,
     )
     schedule_nodes = schedule.by_step
     wave_for_step = {
@@ -1169,6 +1261,8 @@ def _run_federated_workflow_parallel(
             resolution=resolution,
         )
         effective_fingerprint = str(identity.get("fingerprint") or identity.get("root") or resolution.root)
+        scheduler_node = schedule_nodes[step.step_id]
+        placement = dict(scheduler_node.as_dict().get("placement") or {})
         artifact_inputs, artifact_env = _resolved_artifact_inputs(
             step, outcomes, consumer_root=resolution.root, parent_run_id=run_id
         )
@@ -1197,7 +1291,8 @@ def _run_federated_workflow_parallel(
             "source_repository": owner_fingerprint,
             "requested_repository": step.repository,
             "effective_repository": effective_fingerprint,
-            "execution_environment": "auto",
+            "execution_environment": scheduler_node.execution_environment,
+            "provider_placement": placement,
             "frozen_source_lock_digest": str(plan.source_lock.get("lock_digest") or ""),
             "frozen_source_equivalence_digest": str(plan.source_lock.get("equivalence_digest") or ""),
             "git_lineage": planned_git_lineage,
@@ -1213,6 +1308,8 @@ def _run_federated_workflow_parallel(
                 target=target,
                 workflow=step.workflow,
                 invocation_command=invocation_command,
+                provider_profile=scheduler_node.provider_profile,
+                execution_environment=scheduler_node.execution_environment,
             )
             if step.contract_type == "workflow"
             else [step.ref]
@@ -1234,7 +1331,7 @@ def _run_federated_workflow_parallel(
             "DEVTOOL_FEDERATION_SOURCE_REPOSITORY": owner_fingerprint,
             "DEVTOOL_FEDERATION_REQUESTED_REPOSITORY": step.repository,
             "DEVTOOL_FEDERATION_EFFECTIVE_REPOSITORY": effective_fingerprint,
-            "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
+            "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": scheduler_node.execution_environment,
             "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
             "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
             # Keep each parallel child's HUD/EXO files isolated while
@@ -1243,6 +1340,8 @@ def _run_federated_workflow_parallel(
             "DEVTOOL_NO_AUTO_HUD": "1",
             "DEVTOOL_FEDERATION_CHILD_STATE_DIR": str(child_state_dir),
         }
+        if not scheduler_node.provider_profile and scheduler_node.execution_environment not in {"", "auto"}:
+            env["DEVTOOL_PROJECT_EXECUTION_ENVIRONMENT"] = scheduler_node.execution_environment
         env.update(git_lineage_environment(planned_git_lineage))
         env.update(artifact_env)
         if federation_group:
@@ -1254,7 +1353,6 @@ def _run_federated_workflow_parallel(
             config_path=resolution.config_path or None,
         )))
 
-        scheduler_node = schedule_nodes[step.step_id]
         child_started = time.monotonic()
         with active_lock:
             active_children[child_run_id] = step.step_id
@@ -1295,6 +1393,8 @@ def _run_federated_workflow_parallel(
                         lineage=lineage,
                         reenter=lambda child_argv: executor_fn(child_argv, env),
                         publish=publish,
+                        provider_profile=scheduler_node.provider_profile,
+                        execution_environment=scheduler_node.execution_environment,
                     ))
             except KeyboardInterrupt:
                 try:
@@ -1387,7 +1487,13 @@ def _run_federated_workflow_parallel(
                 child_contract=_step_child_contract(step),
                 contract_ref=_step_contract_ref(plan, step),
                 git_lineage=git_lineage,
+                lifecycle=(
+                    "cancelled" if child_status == ExecutionStatus.CANCELLED.value else
+                    "failed" if child_status != ExecutionStatus.SUCCEEDED.value or rc != 0 else
+                    "executed"
+                ),
                 artifact_inputs=dict(artifact_inputs),
+                placement=placement,
             )
         finally:
             with active_lock:
@@ -1429,6 +1535,8 @@ def _run_federated_workflow_parallel(
                         requested_ref=step.ref,
                         child_contract=_step_child_contract(step),
                         contract_ref=_step_contract_ref(plan, step),
+                        lifecycle="blocked",
+                        placement=dict(schedule_nodes[step.step_id].as_dict().get("placement") or {}),
                     )
                     failed = True
                 else:
@@ -1508,6 +1616,8 @@ def _run_federated_workflow_parallel(
                 requested_ref=step.ref,
                 child_contract=_step_child_contract(step),
                 contract_ref=_step_contract_ref(plan, step),
+                lifecycle="cancelled",
+                placement=dict(schedule_nodes[step.step_id].as_dict().get("placement") or {}),
             )
 
     parent_status = (
@@ -1599,6 +1709,9 @@ def run_federated_workflow(
     lifecycle = {
         "mode": str(resume_mode or "run"),
         "resumed_from": str(resumed_from or ""),
+        "provider_placements": {
+            child.step_id: dict(child.placement) for child in report.children if child.placement
+        },
         "counts": {
             key: sum(1 for child in report.children if child.lifecycle == key)
             for key in ("reused", "retried", "rerun_due_to_drift", "blocked", "failed", "cancelled")
@@ -1609,6 +1722,9 @@ def run_federated_workflow(
         from .git_federation_integration import publish_barrier_evidence
         lifecycle["publish_barrier"] = publish_barrier_evidence(workflow, report.children)
         lifecycle["integration_policy"] = workflow.integration_policy
+    if report.status == ExecutionStatus.CANCELLED.value:
+        from .federation_recovery import cancellation_recovery_evidence
+        lifecycle["cancellation_recovery"] = cancellation_recovery_evidence(report)
     report = replace(report, lifecycle=lifecycle)
     from .git_execution_notes import GitExecutionNoteError, persist_report_execution_notes
     try:

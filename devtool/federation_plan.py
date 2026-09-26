@@ -11,7 +11,7 @@ stable DAG. It never executes a child command.
 from dataclasses import dataclass, field, replace
 import heapq
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any, Mapping, TYPE_CHECKING
 
 from .federation_discovery import FederationDiscoveryError, resolve_federated_repository
 from .workflow_runtime import WorkflowRuntimeError, plan_workspace_targets
@@ -225,6 +225,74 @@ def _child_graph(
         raise FederationPlanError(str(exc)) from exc
     return child, target, graph
 
+
+
+def _execution_contract(child: "ProjectConfig", target: str) -> dict[str, Any]:
+    """Project one child-owned target execution contract into federation plan evidence.
+
+    The parent may choose only from this set. Metadata is deliberately optional
+    and backwards compatible; an explicit target ``execution_environment`` is
+    always authoritative and cannot be widened by the parent.
+    """
+    from .execution_environments import AUTO, normalize_execution_environment
+
+    target_config = child.targets.get(target)
+    if target_config is None:
+        return {
+            "allowed_execution_environments": [AUTO],
+            "preferred_execution_environment": AUTO,
+            "preferred_worker": "",
+            "resources": {},
+        }
+    metadata = dict(target_config.metadata or {})
+    explicit = normalize_execution_environment(str(target_config.execution_environment or AUTO))
+    raw_allowed = metadata.get("federation_execution_environments", metadata.get("federation_allowed_execution_environments", []))
+    allowed: list[str] = []
+    if isinstance(raw_allowed, (list, tuple)):
+        for raw in raw_allowed:
+            value = normalize_execution_environment(str(raw or AUTO))
+            if value not in allowed:
+                allowed.append(value)
+    elif raw_allowed not in (None, ""):
+        raise FederationPlanError(
+            f"Target {target!r} metadata federation_execution_environments must be an array"
+        )
+    if explicit != AUTO:
+        if allowed and explicit not in allowed:
+            raise FederationPlanError(
+                f"Target {target!r} execution_environment={explicit!r} is not present in its "
+                "federation_execution_environments contract"
+            )
+        allowed = [explicit]
+    if not allowed:
+        allowed = [AUTO]
+    preferred_raw = str(metadata.get("federation_preferred_execution_environment") or explicit or AUTO).strip()
+    preferred = normalize_execution_environment(preferred_raw or AUTO)
+    if preferred != AUTO and AUTO not in allowed and preferred not in allowed:
+        raise FederationPlanError(
+            f"Target {target!r} preferred federation execution environment {preferred!r} is not allowed"
+        )
+    preferred_worker = str(metadata.get("federation_preferred_worker") or "").strip()
+    resources: dict[str, int] = {}
+    raw_resources = metadata.get("federation_resources", {})
+    if isinstance(raw_resources, Mapping):
+        for raw_name, raw_count in raw_resources.items():
+            name = str(raw_name or "").strip()
+            if not name:
+                raise FederationPlanError(f"Target {target!r} declares an empty federation resource name")
+            if isinstance(raw_count, bool) or not isinstance(raw_count, int) or raw_count <= 0:
+                raise FederationPlanError(
+                    f"Target {target!r} federation resource {name!r} must be a positive integer"
+                )
+            resources[name] = int(raw_count)
+    elif raw_resources not in (None, ""):
+        raise FederationPlanError(f"Target {target!r} metadata federation_resources must be a table")
+    return {
+        "allowed_execution_environments": allowed,
+        "preferred_execution_environment": preferred,
+        "preferred_worker": preferred_worker,
+        "resources": resources,
+    }
 
 def _ordered_steps(workflow: "FederatedWorkflowConfig"):
     by_id = {step.step_id: step for step in workflow.steps}
@@ -518,6 +586,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     "git_ownership": dict(ownership),
                     "bridge_plan": bridge.as_dict(),
                     "child_schedule": schedule,
+                    "execution_contract": _execution_contract(child, bridge.target),
                     "artifact_inputs": [item.as_dict() for item in step.artifact_inputs],
                     "federation_stage": step.stage,
                 },
@@ -577,6 +646,7 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     "git_ownership": dict(ownership),
                     "child_metadata": dict(local.metadata),
                     "child_schedule": schedule_scope.as_dict(),
+                    "execution_contract": _execution_contract(child, target),
                     "artifact_inputs": [item.as_dict() for item in step.artifact_inputs],
                     "federation_stage": step.stage,
                 },

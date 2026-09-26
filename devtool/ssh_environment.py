@@ -195,6 +195,12 @@ def environment_payload(config: SSHRunnerConfig, *, repo_root: str | Path = "", 
         "multiplex": multiplex_evidence(config).as_dict(),
         "latency_seconds": round(time.monotonic() - started, 4),
     }
+    if config.profile:
+        try:
+            from .ssh_provider_evidence import persist_provider_evidence
+            persist_provider_evidence(payload, source="ssh-env")
+        except OSError:
+            pass
     return payload
 
 

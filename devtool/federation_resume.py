@@ -165,6 +165,20 @@ def contract_identity(plan: FederatedPlanGraph, step: "FederatedWorkflowStep") -
     })
 
 
+def execution_contract_identity(plan: FederatedPlanGraph, step: "FederatedWorkflowStep") -> str:
+    rows = []
+    for node in plan.nodes:
+        if node.synthetic or str(node.metadata.get("federation_step") or "") != step.step_id:
+            continue
+        contract = node.metadata.get("execution_contract") if isinstance(node.metadata.get("execution_contract"), Mapping) else {}
+        rows.append({
+            "target": str(node.target or ""),
+            "contract_type": str(node.metadata.get("contract_type") or step.contract_type),
+            "execution_contract": dict(contract),
+        })
+    return _digest(rows)
+
+
 def capability_interface_identity(parent: "ProjectConfig", plan: FederatedPlanGraph, step: "FederatedWorkflowStep") -> str:
     graph = plan.capability_graph if isinstance(plan.capability_graph, Mapping) else {}
     repo = step.repository
@@ -301,11 +315,13 @@ def _child_checkpoint(
             "source_identity": source_identity(plan, child.repository),
             "contract_identity": contract_identity(plan, step),
             "capability_interface_identity": capability_interface_identity(parent, plan, step),
+            "execution_contract_identity": execution_contract_identity(plan, step),
             "upstream_result_identities": upstream,
             "artifact_input_identities": upstream_artifacts,
             "consumed_artifact_inputs_identity": artifact_edges_identity(artifact_inputs),
         },
         "artifact_inputs": artifact_inputs,
+        "placement": dict(getattr(child, "placement", {}) or {}),
         "result_identity": result_identity,
         "artifact_identity": artifact_identity,
         "evidence_digest": _digest(evidence_payload),
@@ -351,6 +367,8 @@ def checkpoint_report(parent: "ProjectConfig", report: "FederatedRunReport", *, 
         "plan_identity": plan_identity(report.plan),
         "source_lock": dict(report.plan.source_lock),
         "source_lock_digest": str(report.plan.source_lock.get("lock_digest") or ""),
+        "schedule": dict(getattr(report, "schedule", {}) or {}),
+        "lifecycle": dict(getattr(report, "lifecycle", {}) or {}),
         "children": rows,
     }
     path = checkpoint_path(parent, report.parent_run_id)
@@ -464,6 +482,9 @@ def build_resume_plan(parent: "ProjectConfig", checkpoint: Mapping[str, Any], *,
             reasons.append("target/workflow/contract identity changed")
         if str(predicates.get("capability_interface_identity") or "") != capability_interface_identity(working_parent, current, step):
             reasons.append("capability/interface contract changed")
+        expected_execution_identity = str(predicates.get("execution_contract_identity") or "")
+        if expected_execution_identity and expected_execution_identity != execution_contract_identity(current, step):
+            reasons.append("execution/provider contract changed")
         prior_inputs = prior.get("artifact_inputs") if isinstance(prior.get("artifact_inputs"), Mapping) else {}
         expected_inputs_identity = str(predicates.get("consumed_artifact_inputs_identity") or "")
         if expected_inputs_identity and expected_inputs_identity != artifact_edges_identity(prior_inputs):
@@ -509,10 +530,11 @@ def child_from_checkpoint(row: Mapping[str, Any]):
         requested_ref=str(row.get("requested_ref") or ""), child_contract=str(row.get("child_contract") or ""),
         contract_ref=str(row.get("contract_ref") or ""), git_lineage=dict(row.get("git_lineage") or {}), lifecycle="reused",
         artifact_inputs=dict(row.get("artifact_inputs") or {}),
+        placement=dict(row.get("placement") or {}),
     )
 
 
 __all__ = [
     "FederationResumeError", "ResumeDecision", "ResumePlan", "build_resume_plan", "checkpoint_path", "checkpoint_report",
-    "child_from_checkpoint", "child_result_identity", "load_checkpoint", "plan_identity",
+    "child_from_checkpoint", "child_result_identity", "execution_contract_identity", "load_checkpoint", "plan_identity",
 ]

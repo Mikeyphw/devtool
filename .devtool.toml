@@ -300,6 +300,18 @@ command = ["python", "-m", "devtool.git_dirty_state", "fixture"]
 inputs = ["devtool/git_dirty_state.py", "devtool/transactions.py", "devtool/transaction_worktree.py"]
 metadata = { read_only = true, roadmap_id = "GIT-FRX-13" }
 
+[targets.devtool.jobs.git-frx14-cancellation-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "git-frx14-cancellation"]
+inputs = ["devtool/federation_recovery.py", "devtool/federation_execution.py", "devtool/federation_resume.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-14" }
+
+[targets.devtool.jobs.frx-y09-provider-budget-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "provider-budget"]
+inputs = ["devtool/federation_scheduler.py", "devtool/federation_provider.py", "devtool/federation_plan.py", "devtool/ssh_provider_evidence.py", "devtool/ssh_worker.py", "devtool/ssh_environment.py", "devtool/ssh_prepare.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "FRX-Y09" }
+
 [targets.devtool.jobs.ssh01-contract-fixture]
 runner = "command"
 command = ["python", "-m", "devtool.ssh_roadmap_fixtures", "contract", "--json"]
@@ -476,6 +488,35 @@ roadmap-git-frx11-13 = [
   { id = "git-frx13", ref = "test:roadmap-git-frx13", depends_on = ["dirty-fixture"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx13"] },
 ]
+roadmap-git-frx14 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx13", ref = "test:roadmap-git-frx13", depends_on = ["syntax"] },
+  { id = "frx-y02", ref = "test:roadmap-frx-y02", depends_on = ["syntax"] },
+  { id = "cancellation-fixture", ref = "job:git-frx14-cancellation-fixture", depends_on = ["git-frx13", "frx-y02"] },
+  { id = "git-frx14", ref = "test:roadmap-git-frx14", depends_on = ["cancellation-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx14"] },
+]
+roadmap-frx-y09 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["syntax"] },
+  { id = "frx-y02", ref = "test:roadmap-frx-y02", depends_on = ["frx-y01"] },
+  { id = "ssh03", ref = "test:roadmap-ssh03", depends_on = ["syntax"] },
+  { id = "provider-fixture", ref = "job:frx-y09-provider-budget-fixture", depends_on = ["frx-y02", "ssh03"] },
+  { id = "frx-y09", ref = "test:roadmap-frx-y09", depends_on = ["provider-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y09"] },
+]
+roadmap-git-frx14-frx-y09 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx13", ref = "test:roadmap-git-frx13", depends_on = ["syntax"] },
+  { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["syntax"] },
+  { id = "frx-y02", ref = "test:roadmap-frx-y02", depends_on = ["frx-y01"] },
+  { id = "ssh03", ref = "test:roadmap-ssh03", depends_on = ["syntax"] },
+  { id = "cancellation-fixture", ref = "job:git-frx14-cancellation-fixture", depends_on = ["git-frx13", "frx-y02"] },
+  { id = "git-frx14", ref = "test:roadmap-git-frx14", depends_on = ["cancellation-fixture"] },
+  { id = "provider-fixture", ref = "job:frx-y09-provider-budget-fixture", depends_on = ["git-frx14", "frx-y02", "ssh03"] },
+  { id = "frx-y09", ref = "test:roadmap-frx-y09", depends_on = ["provider-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx14", "frx-y09"] },
+]
 roadmap-ssh01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "ssh01-fixture", ref = "job:ssh01-contract-fixture", depends_on = ["syntax"] },
@@ -557,6 +598,10 @@ roadmap-current = [
   { id = "git-frx12", ref = "test:roadmap-git-frx12", depends_on = ["git-frx12-fixture"] },
   { id = "git-frx13-fixture", ref = "job:git-frx13-dirty-fixture", depends_on = ["git-frx12"] },
   { id = "git-frx13", ref = "test:roadmap-git-frx13", depends_on = ["git-frx13-fixture"] },
+  { id = "git-frx14-fixture", ref = "job:git-frx14-cancellation-fixture", depends_on = ["git-frx13", "frx-y02"] },
+  { id = "git-frx14", ref = "test:roadmap-git-frx14", depends_on = ["git-frx14-fixture"] },
+  { id = "frx-y09-fixture", ref = "job:frx-y09-provider-budget-fixture", depends_on = ["git-frx14", "ssh03"] },
+  { id = "frx-y09", ref = "test:roadmap-frx-y09", depends_on = ["frx-y09-fixture"] },
 ]
 
 
@@ -640,6 +685,26 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-git-frx12.xml",
   "tests/test_git_frx12_campaign_stacks_range_diff.py",
+]
+
+[[test]]
+id = "roadmap-git-frx14"
+name = "GIT-FRX-14 federated cancellation and recovery semantics"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx14.xml",
+  "tests/test_git_frx14_federated_cancellation_recovery.py",
+]
+
+[[test]]
+id = "roadmap-frx-y09"
+name = "FRX-Y09 provider and resource aware federation scheduling"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-frx-y09.xml",
+  "tests/test_frx_y09_provider_resource_scheduler.py",
 ]
 
 [[test]]

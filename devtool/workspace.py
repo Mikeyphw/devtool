@@ -114,11 +114,33 @@ def load_workspace_config(
             raise WorkspaceConfigError(f"workspace.scheduler.{name} must be true or false")
         return raw
 
+    def _budget_table(name: str) -> dict[str, int]:
+        raw = raw_scheduler.get(name, {})
+        if raw is None:
+            return {}
+        if not isinstance(raw, dict):
+            raise WorkspaceConfigError(f"workspace.scheduler.{name} must be a TOML table")
+        result: dict[str, int] = {}
+        for raw_key, raw_value in raw.items():
+            key = str(raw_key or "").strip()
+            if not key:
+                raise WorkspaceConfigError(f"workspace.scheduler.{name} contains an empty budget name")
+            if isinstance(raw_value, bool) or not isinstance(raw_value, int) or raw_value < 0:
+                raise WorkspaceConfigError(f"workspace.scheduler.{name}.{key} must be a non-negative integer")
+            result[key] = int(raw_value)
+        return result
+
     scheduler = WorkflowSchedulerConfig(
         parallel=_bool("parallel", False),
         max_parallel_nodes=_non_negative_int("max_parallel_nodes", 0),
         max_gradle_nodes=_non_negative_int("max_gradle_nodes", 1),
         max_dotnet_nodes=_non_negative_int("max_dotnet_nodes", 1),
+        max_local_gradle=_non_negative_int("max_local_gradle", 1),
+        max_ssh_oci_gradle=_non_negative_int("max_ssh_oci_gradle", 2),
+        max_tablet_gradle=_non_negative_int("max_tablet_gradle", 1),
+        max_android_device=_non_negative_int("max_android_device", 1),
+        provider_budgets=_budget_table("provider_budgets"),
+        resource_budgets=_budget_table("resource_budgets"),
     )
     workspace = WorkspaceConfig(default_target=default_target, groups=groups, scheduler=scheduler)
     # Force complete validation, including nested groups and cycles.
@@ -232,6 +254,12 @@ def workspace_as_dict(workspace: WorkspaceConfig, targets: Mapping[str, TargetCo
             "max_parallel_nodes": workspace.scheduler.max_parallel_nodes,
             "max_gradle_nodes": workspace.scheduler.max_gradle_nodes,
             "max_dotnet_nodes": workspace.scheduler.max_dotnet_nodes,
+            "max_local_gradle": workspace.scheduler.max_local_gradle,
+            "max_ssh_oci_gradle": workspace.scheduler.max_ssh_oci_gradle,
+            "max_tablet_gradle": workspace.scheduler.max_tablet_gradle,
+            "max_android_device": workspace.scheduler.max_android_device,
+            "provider_budgets": dict(workspace.scheduler.provider_budgets),
+            "resource_budgets": dict(workspace.scheduler.resource_budgets),
         },
         "groups": {
             name: {
