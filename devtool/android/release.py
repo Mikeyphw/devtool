@@ -160,6 +160,25 @@ class AndroidReleaseOrchestrator:
         instrumentation["policy"] = options.device_tests
         android["instrumentation"] = instrumentation
         config.runner_options["android"] = android
+
+        # Canonical release qualification must not accidentally reuse a target's
+        # default/debug task bindings. Repositories may provide explicit
+        # release_* task overrides; project runners consume the ordinary task
+        # keys, so project those overrides onto the activated release config.
+        tasks_raw = config.runner_options.get("tasks", {})
+        tasks = dict(tasks_raw) if isinstance(tasks_raw, dict) else {}
+        release_task_overrides = {
+            "test": tasks.get("release_test"),
+            "lint": tasks.get("release_lint"),
+            "build": tasks.get("release_build"),
+            "package": tasks.get("release_build"),
+            "instrumentation": tasks.get("release_instrumentation"),
+        }
+        for key, value in release_task_overrides.items():
+            if value:
+                tasks[key] = value
+        if tasks:
+            config.runner_options["tasks"] = tasks
         return config
 
     def plan(self, *, overrides: Mapping[str, Any] | None = None) -> tuple[ProjectConfig, AndroidReleaseOptions, list[tuple[str, list[CommandSpec]]]]:
@@ -222,13 +241,20 @@ class AndroidReleaseOrchestrator:
                 path = config.repo_root / path
             candidates.append((path.resolve(strict=False), item))
         variant = str(config.variant or "").strip().lower()
-        selected = [entry for entry in candidates if variant and (str(entry[1].get("variant") or "").strip().lower() == variant or variant in entry[0].name.lower())]
-        if selected:
-            return selected
-        # Do not infer release identity from filenames. Artifact metadata is
-        # authoritative when available; otherwise preserve all valid candidates
-        # for the selected execution profile and let signature/type gates decide.
-        return candidates
+        if not variant:
+            return candidates
+        selected = [
+            entry
+            for entry in candidates
+            if (
+                str(entry[1].get("variant") or "").strip().lower() == variant
+                or variant in entry[0].name.lower()
+            )
+        ]
+        # Canonical release evidence must never silently fall back to stale or
+        # reused outputs from another variant (for example debug APKs/JARs).
+        # Absence of a selected-variant artifact is a release-artifact failure.
+        return selected
 
     @classmethod
     def _release_apk(cls, config: ProjectConfig, artifact_payload: Mapping[str, Any]) -> Path | None:
@@ -297,22 +323,32 @@ class AndroidReleaseOrchestrator:
                              metadata={"results": [item.name for item in phase_results]})
             if phase_name == "package":
                 package_artifacts = self._artifact_payload(phase_results)
-                session.add_artifacts(package_artifacts)
-                if status == "passed" and not self._release_artifacts(config, package_artifacts):
-                    session.add_gate("release-artifacts", "failed", required=True, detail="Android package phase produced no valid release APK/AAB/JAR artifacts")
+                selected_release_artifacts = self._release_artifacts(config, package_artifacts)
+                session.add_artifacts({"items": [item for _path, item in selected_release_artifacts]})
+                if status == "passed" and not selected_release_artifacts:
+                    session.add_gate(
+                        "release-artifacts",
+                        "failed",
+                        required=True,
+                        detail="Android package phase produced no valid artifact for the selected release variant",
+                    )
             if failed and not continue_on_error:
                 break
 
+        def required_failure_present() -> bool:
+            return any(g.required and g.status == "failed" for g in session.gates)
+
         package_gate_ok = any(g.name == "package" and g.status == "passed" for g in session.gates)
-        release_artifacts = self._release_artifacts(config, package_artifacts) if package_gate_ok else []
-        apk = self._release_apk(config, package_artifacts) if package_gate_ok else None
+        downstream_ok = package_gate_ok and not required_failure_present()
+        release_artifacts = self._release_artifacts(config, package_artifacts) if downstream_ok else []
+        apk = self._release_apk(config, package_artifacts) if downstream_ok else None
 
         # Signature/certificate verification is an artifact gate, not a device
         # gate. APK and AAB/JAR outputs are all supported and the actual signer
         # fingerprints are promoted into the release evidence. When an expected
         # fingerprint is configured it must match; otherwise identity verification
         # still proves that all produced release artifacts use one signer.
-        if package_gate_ok and options.verify_signature and not dry_run:
+        if downstream_ok and options.verify_signature and not dry_run:
             started = time.monotonic()
             verifications: list[dict[str, Any]] = []
             identities: set[str] = set()
@@ -349,12 +385,16 @@ class AndroidReleaseOrchestrator:
                 metadata={"artifacts": verifications, "certificate_sha256": session.signing.get("certificate_sha256", "")},
             )
 
+        # Signature/certificate verification is itself a required release gate.
+        # Re-evaluate before any operation capable of touching or launching a
+        # device. A failed instrumentation/signature gate therefore stops here.
+        downstream_ok = downstream_ok and not required_failure_present()
         upgrade_ready = options.upgrade_smoke and bool(options.previous_apk)
-        if package_gate_ok and options.upgrade_smoke and not options.previous_apk:
+        if downstream_ok and options.upgrade_smoke and not options.previous_apk:
             session.add_gate("upgrade-smoke", "skipped", required=False, detail="No android.release.previous_apk was configured")
         device_needed = options.install_smoke or upgrade_ready or options.cold_start_smoke or options.restart_smoke or options.restore_restart_smoke or options.process_death_smoke
         operations: AndroidDeviceOperations | None = None
-        if package_gate_ok and device_needed and not dry_run:
+        if downstream_ok and device_needed and not dry_run:
             try:
                 operations = AndroidDeviceOperations.from_config(config, env=self.env)
                 selected = operations.select_device(enrich=True)
@@ -367,7 +407,7 @@ class AndroidReleaseOrchestrator:
             session.add_gate(smoke.gate, smoke.status, required=required, duration_seconds=smoke.duration_ms / 1000.0, detail=smoke.detail, metadata=smoke.evidence)
             all_results.append(OperationResult(smoke.gate, ["devtool", "android", "smoke", smoke.gate], 0 if smoke.ok else 1, smoke.duration_ms / 1000.0, smoke.detail, [], metadata=smoke.as_dict()))
 
-        if package_gate_ok and apk and not dry_run:
+        if downstream_ok and apk and not dry_run:
             if operations is not None:
                 try:
                     if options.install_smoke:
@@ -395,7 +435,7 @@ class AndroidReleaseOrchestrator:
                         session.device["failure_evidence"] = capture_failure_evidence(operations, report_dir=evidence_dir, package=options.package)
                     except Exception:
                         pass
-        elif package_gate_ok and device_needed and not apk and not dry_run:
+        elif downstream_ok and device_needed and not apk and not dry_run:
             session.add_gate("device-smoke", "failed", detail="Configured device smoke gates require an installable APK; release produced only non-APK artifacts")
 
         evidence_path = session.seal(output)

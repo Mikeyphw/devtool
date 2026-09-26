@@ -302,3 +302,97 @@ def test_aab_only_release_reports_device_smoke_specific_failure(tmp_path: Path, 
     gate = next(item for item in outcome.evidence["gates"] if item["name"] == "device-smoke")
     assert gate["status"] == "failed"
     assert "installable APK" in gate["detail"]
+
+
+def test_release_config_projects_release_specific_task_bindings(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config.runner_options["tasks"] = {
+        "build": [":app:assembleDebug"],
+        "test": [":app:testDebugUnitTest"],
+        "lint": [":app:lintDebug"],
+        "instrumentation": [":app:connectedDebugAndroidTest"],
+        "release_build": [":app:assembleRelease"],
+        "release_test": [":app:testReleaseUnitTest"],
+        "release_lint": [":app:lintRelease"],
+    }
+    orchestrator = AndroidReleaseOrchestrator(config)
+    activated = orchestrator._config(release_options(config))
+    tasks = activated.runner_options["tasks"]
+    assert tasks["build"] == [":app:assembleRelease"]
+    assert tasks["package"] == [":app:assembleRelease"]
+    assert tasks["test"] == [":app:testReleaseUnitTest"]
+    assert tasks["lint"] == [":app:lintRelease"]
+    assert tasks["instrumentation"] == [":app:connectedDebugAndroidTest"]
+
+
+def test_failed_instrumentation_blocks_signature_and_install_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(tmp_path, release={
+        "device_tests": "required",
+        "install_smoke": True,
+        "upgrade_smoke": False,
+        "verify_signature": True,
+        "verify_certificate_identity": False,
+    })
+    _patch_release_plumbing(monkeypatch, tmp_path)
+    apk = tmp_path / "build" / "app-release.apk"
+    apk.parent.mkdir(parents=True)
+    apk.write_bytes(b"apk")
+
+    class FakeSigningManager:
+        def __init__(self, *args, **kwargs):
+            pass
+        def verify_artifact(self, artifact, *, expected_sha256=""):
+            raise AssertionError("signature verification must not run after instrumentation failure")
+
+    class FakeOps:
+        @classmethod
+        def from_config(cls, *args, **kwargs):
+            raise AssertionError("device operations must not start after instrumentation failure")
+
+    monkeypatch.setattr("devtool.android.release.AndroidSigningManager", FakeSigningManager)
+    monkeypatch.setattr("devtool.android.release.AndroidDeviceOperations", FakeOps)
+
+    def executor(_config, specs):
+        name = specs[0].name
+        if name == "instrumentation":
+            return [OperationResult(name, specs[0].argv, 1, 0.01, "Instrumentation reported 1 failed test(s).", [])], ""
+        metadata = {}
+        if name == "package":
+            metadata["artifacts"] = {"items": [{
+                "path": str(apk), "type": "apk", "variant": "release",
+                "valid": True, "sha256": "a" * 64,
+            }]}
+        return [OperationResult(name, specs[0].argv, 0, 0.01, "ok", [], metadata=metadata)], ""
+
+    outcome = AndroidReleaseOrchestrator(config, executor=executor).run()
+    assert not outcome.passed
+    gates = {item["name"]: item for item in outcome.evidence["gates"]}
+    assert gates["instrumentation"]["status"] == "failed"
+    assert "signature-verification" not in gates
+    assert "install-smoke" not in gates
+
+
+def test_release_evidence_excludes_wrong_variant_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(tmp_path, release={
+        "device_tests": "disabled",
+        "install_smoke": False,
+        "upgrade_smoke": False,
+        "verify_signature": False,
+        "verify_certificate_identity": False,
+    })
+    _patch_release_plumbing(monkeypatch, tmp_path)
+    debug_apk = tmp_path / "build" / "app-debug.apk"
+    debug_apk.parent.mkdir(parents=True)
+    debug_apk.write_bytes(b"debug")
+
+    outcome = AndroidReleaseOrchestrator(
+        config,
+        executor=_package_executor(tmp_path, [{
+            "path": str(debug_apk), "type": "apk", "variant": "debug",
+            "valid": True, "sha256": "d" * 64,
+        }]),
+    ).run()
+    assert not outcome.passed
+    assert outcome.evidence["artifacts"] == []
+    gate = next(item for item in outcome.evidence["gates"] if item["name"] == "release-artifacts")
+    assert gate["status"] == "failed"

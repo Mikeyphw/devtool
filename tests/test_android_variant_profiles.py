@@ -85,7 +85,7 @@ def test_module_qualified_default_lint_is_not_misclassified_custom(monkeypatch):
     tasks, reason, affected = ai.android_validation_lint_tasks(c)
     assert tasks == [":mobile:lintDebug"] and reason == "full-no-change-data" and affected == []
 
-def test_release_artifact_selection_does_not_guess_from_release_filename(tmp_path):
+def test_release_artifact_selection_fails_closed_when_selected_variant_is_absent(tmp_path):
     from devtool.android.release import AndroidReleaseOrchestrator
     c=cfg("playRelease")
     named_release=tmp_path/"app-release.apk"; named_release.write_bytes(b"x")
@@ -94,8 +94,7 @@ def test_release_artifact_selection_does_not_guess_from_release_filename(tmp_pat
         {"valid":True,"type":"apk","path":str(named_release)},
         {"valid":True,"type":"apk","path":str(neutral)},
     ]}
-    got=AndroidReleaseOrchestrator._release_artifacts(c,payload)
-    assert [x[0] for x in got] == [named_release.resolve(), neutral.resolve()]
+    assert AndroidReleaseOrchestrator._release_artifacts(c,payload) == []
 
 
 def test_resumable_validation_defaults_consume_profile_module():
