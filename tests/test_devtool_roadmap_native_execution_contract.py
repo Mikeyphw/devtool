@@ -40,6 +40,7 @@ EXPECTED_TESTS = {
     "roadmap-git-frx14",
     "roadmap-git-frx15",
     "roadmap-git-frx16",
+    "roadmap-git-frx17",
     "roadmap-ssh01",
     "roadmap-ssh02",
     "roadmap-ssh02-regressions",
@@ -48,7 +49,7 @@ EXPECTED_TESTS = {
     "roadmap-gate1-regressions",
     "roadmap-workflow-exo-baseline",
 }
-EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-frx-y02", "roadmap-frx-y08", "roadmap-frx-y04", "roadmap-frx-y05", "roadmap-frx-y06", "roadmap-frx-y07", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-git-frx04", "roadmap-git-frx05", "roadmap-git-frx07", "roadmap-git-frx08-freeze", "roadmap-git-frx09", "roadmap-git-frx10", "roadmap-git-frx11", "roadmap-git-frx12", "roadmap-git-frx13", "roadmap-git-frx14", "roadmap-git-frx15", "roadmap-git-frx16", "roadmap-git-frx11-13", "roadmap-frx-y09", "roadmap-frx-y10", "roadmap-frx-y11", "roadmap-frx-y10-y11", "roadmap-git-frx14-frx-y09", "roadmap-ssh01", "roadmap-ssh02", "roadmap-ssh03", "roadmap-gate1", "roadmap-current"}
+EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-frx-y02", "roadmap-frx-y08", "roadmap-frx-y04", "roadmap-frx-y05", "roadmap-frx-y06", "roadmap-frx-y07", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-git-frx04", "roadmap-git-frx05", "roadmap-git-frx07", "roadmap-git-frx08-freeze", "roadmap-git-frx09", "roadmap-git-frx10", "roadmap-git-frx11", "roadmap-git-frx12", "roadmap-git-frx13", "roadmap-git-frx14", "roadmap-git-frx15", "roadmap-git-frx16", "roadmap-git-frx17", "roadmap-git-frx11-13", "roadmap-frx-y09", "roadmap-frx-y10", "roadmap-frx-y11", "roadmap-frx-y10-y11", "roadmap-git-frx14-frx-y09", "roadmap-ssh01", "roadmap-ssh02", "roadmap-ssh03", "roadmap-gate1", "roadmap-current"}
 
 
 def _config():
@@ -444,6 +445,12 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
         "test:roadmap-workflow-exo-baseline",
     }
 
+    git_frx17 = plan_selected_workflow(cfg, "roadmap-git-frx17")
+    assert {node.ref.raw for node in git_frx17.nodes} == {
+        "job:source-syntax", "test:roadmap-git-frx16",
+        "test:roadmap-git-frx17", "test:roadmap-workflow-exo-baseline",
+    }
+
     frx_y09 = plan_selected_workflow(cfg, "roadmap-frx-y09")
     assert {node.ref.raw for node in frx_y09.nodes} == {
         "job:source-syntax", "job:frx-y09-provider-budget-fixture",
@@ -662,6 +669,7 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     assert by_ref["test:roadmap-git-frx14"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx15"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx16"]["target"] == "devtool"
+    assert by_ref["test:roadmap-git-frx17"]["target"] == "devtool"
     assert by_ref["test:roadmap-ssh01"]["target"] == "devtool"
     assert by_ref["test:roadmap-ssh02"]["target"] == "devtool"
     assert by_ref["test:roadmap-ssh03"]["target"] == "devtool"

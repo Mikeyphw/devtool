@@ -377,7 +377,8 @@ _devtool_commands() {
     'ap:alias for ai-prompt'
     'completion:print shell completion'
     'completion-state:emit config-aware completion values for shells and editors'
-    'git:inspect Git state, execution notes, campaigns, and managed bisect'
+    'audit:record and compare federation-aware source audit passes'
+    'git:inspect Git state, doctor, rerere, execution notes, campaigns, and managed bisect'
     'wrapper:resolve, inspect, and execute repository wrapper commands'
     'federation:inspect, plan, run, bisect, and observe explicitly enrolled repositories'
     'fed:alias for federation'
@@ -750,11 +751,23 @@ _devtool() {
       case $line[1] in
         git)
           if (( ${#line} < 2 )); then
-            _values 'git action' state notes campaign bisect
+            _values 'git action' state doctor rerere notes campaign bisect
           else
             case $line[2] in
               state)
                 _arguments '--json[emit machine-readable Git state]'
+                ;;
+              doctor)
+                _arguments '--json[emit machine-readable Git doctor evidence]' '--repair-safe[apply conservative non-source-mutating repairs]'
+                ;;
+              rerere)
+                if (( ${#line} < 3 )); then
+                  _values 'rerere action' suggest
+                else
+                  case $line[3] in
+                    suggest) _arguments '--campaign[campaign conflict scope]:campaign:' '--json[emit machine-readable rerere suggestion]' ;;
+                  esac
+                fi
                 ;;
               bisect)
                 _arguments '--good[known-good Git revision]:revision:' '--bad[known-bad Git revision]:revision:' '--task[Devtool workflow test or action]:task:' '--json[emit machine-readable managed-bisect evidence]'
@@ -792,6 +805,23 @@ _devtool() {
                       ;;
                   esac
                 fi
+                ;;
+            esac
+          fi
+          ;;
+        audit)
+          if (( ${#line} < 2 )); then
+            _values 'audit action' record delta status
+          else
+            case $line[2] in
+              record)
+                _arguments '--campaign[campaign identifier]:campaign:' '--roadmap[inspected roadmap range]:range:' '*--evidence[evidence file]:file:_files' '--gaps[material gap count]:count:' '--pass-id[stable audit pass id]:pass:' '--json[emit machine-readable audit pass]'
+                ;;
+              delta)
+                _arguments '1:old audit pass:pass:' '2:new audit pass:pass:' '--campaign[disambiguate campaign]:campaign:' '--json[emit machine-readable audit delta]'
+                ;;
+              status)
+                _arguments '--campaign[campaign identifier]:campaign:' '--json[emit machine-readable audit freshness]'
                 ;;
             esac
           fi
@@ -836,11 +866,14 @@ _devtool() {
           ;;
         federation|fed)
           if (( ${#line} < 2 )); then
-            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry lock integrate capabilities graph interfaces conformance interface-check affected why bootstrap sync bisect
+            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry lock integrate capabilities graph interfaces conformance interface-check affected why bootstrap sync doctor bisect
           else
             case $line[2] in
               list|preflight|gate1|gate2|execution-preflight|final-seal|seal)
                 _arguments '--json[emit machine-readable federation state]'
+                ;;
+              doctor)
+                _arguments '1:optional run or campaign identifier:' '--json[emit machine-readable federation Git doctor evidence]'
                 ;;
               status|summary)
                 _arguments '--run[parent or child EXO run ID]:run-id:' '--json[emit machine-readable federation observability]'
@@ -1619,3 +1652,4 @@ _devtool() {
 }
 
 _devtool "$@"
+

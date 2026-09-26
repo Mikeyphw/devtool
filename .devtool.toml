@@ -549,6 +549,13 @@ roadmap-git-frx16 = [
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["ssh-regressions"] },
 ]
 
+roadmap-git-frx17 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx16", ref = "test:roadmap-git-frx16", depends_on = ["syntax"] },
+  { id = "git-frx17", ref = "test:roadmap-git-frx17", depends_on = ["git-frx16"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx17"] },
+]
+
 roadmap-frx-y09 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "frx-y01", ref = "test:roadmap-frx-y01", depends_on = ["syntax"] },
@@ -689,6 +696,7 @@ roadmap-current = [
   { id = "git-frx15", ref = "test:roadmap-git-frx15", depends_on = ["git-frx15-fixture"] },
   { id = "git-frx16-fixture", ref = "job:git-frx16-bundle-attestation-fixture", depends_on = ["git-frx15", "frx-y11", "ssh03"] },
   { id = "git-frx16", ref = "test:roadmap-git-frx16", depends_on = ["git-frx16-fixture"] },
+  { id = "git-frx17", ref = "test:roadmap-git-frx17", depends_on = ["git-frx16"] },
 ]
 
 
@@ -803,6 +811,16 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-git-frx16.xml",
   "tests/test_git_frx16_git_bundle_remote_attestation.py",
+]
+
+[[test]]
+id = "roadmap-git-frx17"
+name = "GIT-FRX-17 federation-aware audit delta, rerere, and Git doctor"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx17.xml",
+  "tests/test_git_frx17_audit_rerere_doctor.py",
 ]
 
 

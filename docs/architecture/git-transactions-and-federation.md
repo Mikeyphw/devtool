@@ -132,3 +132,48 @@ not mutate the user's persisted frozen lock while testing candidate revisions.
 Remote object/bundle transport and remote repository attestation remain owned by
 GIT-FRX-16 Gate 2. Federation audit-delta, rerere, and doctor behavior remain
 owned by GIT-FRX-17.
+
+
+## GIT-FRX-17: federation-aware audit delta, rerere, and Git doctor
+
+GIT-FRX-17 adds three inspection and recovery-intelligence surfaces without
+changing the transaction, source-lock, or remote-transport authorities established
+by earlier milestones.
+
+Audit passes persist each participating repository's commit/tree, dirty-delta
+identity, Devtool campaign/federation refs, inspected roadmap range, and hashed
+evidence set. Operators can record and compare passes with:
+
+```text
+devtool audit record --campaign <name> --roadmap GIT-FRX-01..17
+devtool audit delta <old-pass> <new-pass> --campaign <name>
+devtool audit status --campaign <name>
+```
+
+A zero-gap audit is fresh only while every participating repository still matches
+its recorded source identity. `verify_zero_gap_audit_freshness()` is the explicit
+consumer boundary reserved for GIT-FRX-18; this milestone does not create signing
+or final provenance manifests.
+
+Devtool-owned rerere memory is keyed by canonical repository identity, campaign
+context, and the exact unmerged-index conflict preimage. `off` never reuses a
+resolution, `suggest` returns exact scoped suggestions only, and `validated-auto`
+may apply an exact remembered resolution only when current validation is rerun and
+passes. Failed validation restores the original conflicted files.
+
+Git and federation doctor surfaces are:
+
+```text
+devtool git doctor [--json] [--repair-safe]
+devtool federation doctor [<run-or-campaign>] [--json]
+```
+
+`git doctor` inspects repository/head/upstream/dirty and operation state, object
+connectivity, worktrees, locks, Devtool refs and transaction recovery state, and
+signing configuration. `--repair-safe` performs only repairs that do not destroy
+recovery evidence. `federation doctor` additionally checks configured repository
+health, persisted parent/child start/result-ref consistency, and remote-attestation
+evidence completeness where remote execution requires it.
+
+GIT-FRX-18 remains the sole owner of signing policy, the federated provenance
+manifest, and the final Git/federation seal.

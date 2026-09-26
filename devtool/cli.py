@@ -1093,10 +1093,37 @@ def build_parser() -> argparse.ArgumentParser:
     pytest_profile.add_argument("--strict", action="store_true", help="Fail when unmarked tests exceed the slow threshold")
     pytest_profile.add_argument("--json", action="store_true", help="Emit a structured pytest-profile report")
 
+    audit_cmd = subparsers.add_parser("audit", help="Record and compare federation-aware source audit passes")
+    audit_sub = audit_cmd.add_subparsers(dest="audit_command", required=True)
+    audit_record = audit_sub.add_parser("record", help="Persist one campaign audit pass")
+    audit_record.add_argument("--campaign", required=True, help="Campaign identifier")
+    audit_record.add_argument("--roadmap", default="", help="Inspected roadmap range, for example GIT-FRX-01..17")
+    audit_record.add_argument("--evidence", action="append", default=[], help="Evidence file to hash into the audit pass; repeatable")
+    audit_record.add_argument("--gaps", type=int, default=0, help="Material gap count for this audit pass")
+    audit_record.add_argument("--pass-id", default="", help="Optional stable audit pass identifier")
+    audit_record.add_argument("--json", action="store_true", help="Emit machine-readable audit pass")
+    audit_delta_cmd = audit_sub.add_parser("delta", help="Compare two persisted audit passes")
+    audit_delta_cmd.add_argument("old_pass")
+    audit_delta_cmd.add_argument("new_pass")
+    audit_delta_cmd.add_argument("--campaign", default="", help="Disambiguate pass identifiers within a campaign")
+    audit_delta_cmd.add_argument("--json", action="store_true", help="Emit machine-readable audit delta")
+    audit_status_cmd = audit_sub.add_parser("status", help="Show audit freshness for a campaign")
+    audit_status_cmd.add_argument("--campaign", required=True, help="Campaign identifier")
+    audit_status_cmd.add_argument("--json", action="store_true", help="Emit machine-readable audit status")
+
     git_cmd = subparsers.add_parser("git", help="Inspect Devtool's authoritative Git repository state")
     git_sub = git_cmd.add_subparsers(dest="git_command", required=True)
     git_state = git_sub.add_parser("state", help="Show the authoritative repository Git-state snapshot")
     git_state.add_argument("--json", action="store_true", help="Emit machine-readable Git state")
+    git_doctor_cmd = git_sub.add_parser("doctor", help="Diagnose Git/Devtool repository state")
+    git_doctor_cmd.add_argument("--json", action="store_true", help="Emit machine-readable Git doctor evidence")
+    git_doctor_cmd.add_argument("--repair-safe", action="store_true", help="Apply only conservative, non-source-mutating repairs")
+    git_rerere = git_sub.add_parser("rerere", help="Inspect Devtool-owned scoped conflict memory")
+    git_rerere_sub = git_rerere.add_subparsers(dest="git_rerere_command", required=True)
+    git_rerere_suggest = git_rerere_sub.add_parser("suggest", help="Suggest an exact repository/campaign conflict resolution")
+    git_rerere_suggest.add_argument("--campaign", default="", help="Campaign context for conflict memory")
+    git_rerere_suggest.add_argument("--json", action="store_true")
+
     git_bisect = git_sub.add_parser("bisect", help="Find the first bad revision using Devtool-managed detached worktrees")
     git_bisect.add_argument("--good", required=True, help="Known-good Git revision")
     git_bisect.add_argument("--bad", required=True, help="Known-bad Git revision")
@@ -1144,6 +1171,9 @@ def build_parser() -> argparse.ArgumentParser:
     federation_gate2.add_argument("--json", action="store_true", help="Emit the machine-readable FRX-08 gate report")
     federation_final_seal = federation_sub.add_parser("final-seal", aliases=["seal"], help="Run the FRX-12 federation final release qualification")
     federation_final_seal.add_argument("--json", action="store_true", help="Emit the machine-readable FRX-12 final seal report")
+    federation_doctor_cmd = federation_sub.add_parser("doctor", help="Diagnose federation Git lineage, refs, and participating repositories")
+    federation_doctor_cmd.add_argument("subject", nargs="?", default="", help="Optional run or campaign identifier")
+    federation_doctor_cmd.add_argument("--json", action="store_true", help="Emit machine-readable federation Git doctor evidence")
     federation_status = federation_sub.add_parser("status", aliases=["summary"], help="Show one coherent federation observability snapshot")
     federation_status.add_argument("--run", default="", help="Limit run observations to one parent or child EXO run ID")
     federation_status.add_argument("--json", action="store_true", help="Emit the machine-readable federation observability snapshot")
@@ -11688,6 +11718,21 @@ def _federation_command(args: argparse.Namespace) -> int:
             else:
                 print(render_federation_final_seal(report), end="")
             return 0 if report.ok else 1
+        if action == "doctor":
+            from .git_doctor import federation_doctor
+            payload = federation_doctor(config, str(getattr(args, "subject", "") or ""))
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [("status", "ok" if payload.get("ok") else "attention"), ("lineage_records", str(payload.get("lineage_records", 0))), ("inconsistencies", str(len(payload.get("inconsistencies") or [])))]
+                for item in payload.get("repositories", []):
+                    if isinstance(item, dict):
+                        rows.append((f"repo.{item.get('repository')}", "ok" if item.get("ok") and bool((item.get("doctor") or {}).get("ok", True)) else "attention"))
+                for item in payload.get("inconsistencies", []):
+                    if isinstance(item, dict):
+                        rows.append((f"lineage.{item.get('repository') or '?'}", str(item.get("kind") or "inconsistent")))
+                render_status_table(rows)
+            return 0 if bool(payload.get("ok")) else 1
         if action in {"status", "summary"}:
             payload = build_federation_observability(config).as_dict()
             wanted_run = str(getattr(args, "run", "") or "").strip()
@@ -13499,8 +13544,100 @@ def _main_after_parse(
                 print(value)
         return 0
 
+    if args.command == "audit":
+        from .git_audit import GitAuditError, audit_delta, audit_status, record_audit_pass
+        action = str(getattr(args, "audit_command", "") or "")
+        try:
+            if action == "record":
+                config = _load_command_config(args)
+                payload = record_audit_pass(
+                    config,
+                    campaign_id=str(getattr(args, "campaign", "") or ""),
+                    roadmap_range=str(getattr(args, "roadmap", "") or ""),
+                    evidence=getattr(args, "evidence", []) or [],
+                    gap_count=int(getattr(args, "gaps", 0) or 0),
+                    pass_id=str(getattr(args, "pass_id", "") or ""),
+                )
+            elif action == "delta":
+                payload = audit_delta(
+                    str(getattr(args, "old_pass", "") or ""),
+                    str(getattr(args, "new_pass", "") or ""),
+                    campaign_id=str(getattr(args, "campaign", "") or ""),
+                )
+            elif action == "status":
+                config = _load_command_config(args)
+                payload = audit_status(config, campaign_id=str(getattr(args, "campaign", "") or ""))
+            else:
+                parser.error(f"Unknown audit command: {action}")
+                return 2
+        except GitAuditError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            if action == "record":
+                render_status_table([
+                    ("campaign", str(payload.get("campaign_id") or "")),
+                    ("pass", str(payload.get("audit_pass_id") or "")),
+                    ("zero_gap", "yes" if payload.get("zero_gap") else "no"),
+                    ("repositories", str(len(payload.get("repositories") or []))),
+                    ("digest", str(payload.get("audit_digest") or "")),
+                ])
+            elif action == "delta":
+                render_status_table([
+                    ("campaign", str(payload.get("campaign_id") or "")),
+                    ("old", str(payload.get("old_pass") or "")),
+                    ("new", str(payload.get("new_pass") or "")),
+                    ("source_changed", "yes" if payload.get("source_changed") else "no"),
+                    ("gap_delta", str(payload.get("gap_delta", 0))),
+                ] + [(f"repo.{row.get('repository')}", ",".join(row.get("changed_fields") or []) or "unchanged") for row in payload.get("repositories", [])])
+            else:
+                render_status_table([
+                    ("campaign", str(payload.get("campaign_id") or "")),
+                    ("passes", str(payload.get("passes", 0))),
+                    ("zero_gap_fresh", "yes" if payload.get("zero_gap_fresh") else "no"),
+                    ("seal_eligible", "yes" if payload.get("seal_eligible") else "no"),
+                    ("source_changes", str(len(payload.get("source_changes_since_zero_gap") or []))),
+                ])
+        return 0 if action != "status" or bool(payload.get("zero_gap_fresh")) else 1
+
     if args.command == "git":
         action = str(getattr(args, "git_command", "") or "")
+        if action == "doctor":
+            from .git_doctor import git_doctor
+            payload = git_doctor(
+                Path(str(getattr(args, "repo", "") or Path.cwd())),
+                repair_safe=bool(getattr(args, "repair_safe", False)),
+            )
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([(str(row.get("name") or "check"), f"{row.get('status')}: {row.get('detail')}") for row in payload.get("checks", [])])
+            return 0 if bool(payload.get("ok")) else 1
+        if action == "rerere":
+            from .git_rerere import GitRerereError, suggest_resolution
+            subaction = str(getattr(args, "git_rerere_command", "") or "")
+            try:
+                if subaction == "suggest":
+                    payload = suggest_resolution(
+                        Path(str(getattr(args, "repo", "") or Path.cwd())),
+                        campaign_id=str(getattr(args, "campaign", "") or ""),
+                    )
+                else:
+                    parser.error(f"Unknown git rerere command: {subaction}")
+                    return 2
+            except GitRerereError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 1
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([
+                    ("matched", "yes" if payload.get("matched") else "no"),
+                    ("preimage", str((payload.get("preimage") or {}).get("preimage_digest") or "")),
+                ])
+            return 0
         if action == "state":
             try:
                 state = collect_git_state(Path(str(getattr(args, "repo", "") or Path.cwd())))
