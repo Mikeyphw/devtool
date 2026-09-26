@@ -104,6 +104,71 @@ INSTRUMENTATION_STATUS_CODE: -2
         )
         self.assertEqual(spec.metadata["report_parser"], "android-instrumentation")
 
+    def test_release_pipeline_preserves_configured_debug_instrumentation_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                variant="release",
+                runner_options={
+                    "android": {
+                        "variant": "release",
+                        "instrumentation": {"policy": "required"},
+                    },
+                    "tasks": {
+                        "instrumentation": [":app:connectedDebugAndroidTest"],
+                    },
+                },
+            )
+            spec = build_specs(config, "instrumentation")[0]
+
+        parser = android_instrumentation.build_parser()
+        parsed = parser.parse_args(spec.argv[3:])
+        self.assertEqual(parsed.variant, "debug")
+        self.assertEqual(
+            spec.metadata["gradle_tasks"],
+            [":app:assembleDebug", ":app:assembleDebugAndroidTest"],
+        )
+        self.assertEqual(
+            spec.metadata["configured_instrumentation_tasks"],
+            [":app:connectedDebugAndroidTest"],
+        )
+        self.assertEqual(spec.metadata["instrumentation_variant"], "debug")
+        self.assertEqual(spec.metadata["release_variant"], "release")
+
+    def test_explicit_instrumentation_variant_overrides_configured_task_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                variant="release",
+                runner_options={
+                    "android": {
+                        "variant": "release",
+                        "instrumentation": {
+                            "policy": "required",
+                            "variant": "benchmark",
+                        },
+                    },
+                    "tasks": {
+                        "instrumentation": [":app:connectedDebugAndroidTest"],
+                    },
+                },
+            )
+            spec = build_specs(config, "instrumentation")[0]
+
+        parser = android_instrumentation.build_parser()
+        parsed = parser.parse_args(spec.argv[3:])
+        self.assertEqual(parsed.variant, "benchmark")
+        self.assertEqual(
+            spec.metadata["gradle_tasks"],
+            [":app:assembleBenchmark", ":app:assembleBenchmarkAndroidTest"],
+        )
+
     def test_instrumentation_build_injects_native_aapt2_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
