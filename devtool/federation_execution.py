@@ -1610,6 +1610,15 @@ def run_federated_workflow(
         lifecycle["publish_barrier"] = publish_barrier_evidence(workflow, report.children)
         lifecycle["integration_policy"] = workflow.integration_policy
     report = replace(report, lifecycle=lifecycle)
+    from .git_execution_notes import GitExecutionNoteError, persist_report_execution_notes
+    try:
+        note_writes = persist_report_execution_notes(parent, report)
+    except GitExecutionNoteError as exc:
+        raise FederationExecutionError(f"Unable to persist GIT-FRX-11 execution note evidence: {exc}") from exc
+    if note_writes:
+        lifecycle = dict(report.lifecycle)
+        lifecycle["git_execution_notes"] = [dict(item) for item in note_writes]
+        report = replace(report, lifecycle=lifecycle)
     checkpoint_report(parent, report, resumed_from=resumed_from, mode=resume_mode)
     return report
 

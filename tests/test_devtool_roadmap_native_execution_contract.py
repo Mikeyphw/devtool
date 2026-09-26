@@ -31,6 +31,9 @@ EXPECTED_TESTS = {
     "roadmap-git-frx08-freeze",
     "roadmap-git-frx09",
     "roadmap-git-frx10",
+    "roadmap-git-frx11",
+    "roadmap-git-frx12",
+    "roadmap-git-frx13",
     "roadmap-ssh01",
     "roadmap-ssh02",
     "roadmap-ssh02-regressions",
@@ -39,7 +42,7 @@ EXPECTED_TESTS = {
     "roadmap-gate1-regressions",
     "roadmap-workflow-exo-baseline",
 }
-EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-frx-y02", "roadmap-frx-y08", "roadmap-frx-y04", "roadmap-frx-y05", "roadmap-frx-y06", "roadmap-frx-y07", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-git-frx04", "roadmap-git-frx05", "roadmap-git-frx07", "roadmap-git-frx08-freeze", "roadmap-git-frx09", "roadmap-git-frx10", "roadmap-ssh01", "roadmap-ssh02", "roadmap-ssh03", "roadmap-gate1", "roadmap-current"}
+EXPECTED_WORKFLOWS = {"roadmap-smoke", "roadmap-frx-y01", "roadmap-frx-y02", "roadmap-frx-y08", "roadmap-frx-y04", "roadmap-frx-y05", "roadmap-frx-y06", "roadmap-frx-y07", "roadmap-git-frx02", "roadmap-git-frx03", "roadmap-git-frx04", "roadmap-git-frx05", "roadmap-git-frx07", "roadmap-git-frx08-freeze", "roadmap-git-frx09", "roadmap-git-frx10", "roadmap-git-frx11", "roadmap-git-frx12", "roadmap-git-frx13", "roadmap-git-frx11-13", "roadmap-ssh01", "roadmap-ssh02", "roadmap-ssh03", "roadmap-gate1", "roadmap-current"}
 
 
 def _config():
@@ -50,7 +53,7 @@ def test_roadmap00_declares_truthful_target_local_non_test_jobs() -> None:
     cfg = _config()
     target = cfg.targets["devtool"]
 
-    assert set(target.jobs) == {"source-syntax", "transaction-worktree-fixture", "self-refresh-root-probe", "commit-policy-fixture", "signing-policy-probe", "overlay-base-fixture", "overlay-rebase-fixture", "interface-conformance-fixture", "public-contract-dag-fixture", "repository-ownership-fixture", "federation-source-lock-fixture", "federation-source-drift-probe", "federation-git-lineage-fixture", "federation-resume-invalidation-fixture", "federation-artifact-edge-fixture", "git-frx10-integration-fixture", "ssh01-contract-fixture", "ssh02-execution-fixture", "ssh02-gate-editable-install", "ssh03-final-fixture", "ssh03-gate-editable-install"}
+    assert set(target.jobs) == {"source-syntax", "transaction-worktree-fixture", "self-refresh-root-probe", "commit-policy-fixture", "signing-policy-probe", "overlay-base-fixture", "overlay-rebase-fixture", "interface-conformance-fixture", "public-contract-dag-fixture", "repository-ownership-fixture", "federation-source-lock-fixture", "federation-source-drift-probe", "federation-git-lineage-fixture", "federation-resume-invalidation-fixture", "federation-artifact-edge-fixture", "git-frx10-integration-fixture", "git-frx11-notes-fixture", "git-frx12-campaign-fixture", "git-frx13-dirty-fixture", "ssh01-contract-fixture", "ssh02-execution-fixture", "ssh02-gate-editable-install", "ssh03-final-fixture", "ssh03-gate-editable-install"}
     syntax = target.jobs["source-syntax"]
     assert syntax.name == "devtool.source-syntax"
     assert syntax.runner == "command"
@@ -144,6 +147,21 @@ def test_roadmap00_declares_truthful_target_local_non_test_jobs() -> None:
     assert integration_fixture.command == ("python", "-m", "devtool.federation_roadmap_fixtures", "git-frx10-integration")
     assert integration_fixture.metadata["read_only"] is True
     assert integration_fixture.metadata["roadmap_id"] == "GIT-FRX-10"
+
+    notes_fixture = target.jobs["git-frx11-notes-fixture"]
+    assert notes_fixture.command == ("python", "-m", "devtool.git_execution_notes", "fixture")
+    assert notes_fixture.metadata["read_only"] is True
+    assert notes_fixture.metadata["roadmap_id"] == "GIT-FRX-11"
+
+    campaign_fixture = target.jobs["git-frx12-campaign-fixture"]
+    assert campaign_fixture.command == ("python", "-m", "devtool.git_campaign", "fixture")
+    assert campaign_fixture.metadata["read_only"] is True
+    assert campaign_fixture.metadata["roadmap_id"] == "GIT-FRX-12"
+
+    dirty_fixture = target.jobs["git-frx13-dirty-fixture"]
+    assert dirty_fixture.command == ("python", "-m", "devtool.git_dirty_state", "fixture")
+    assert dirty_fixture.metadata["read_only"] is True
+    assert dirty_fixture.metadata["roadmap_id"] == "GIT-FRX-13"
 
     ssh_fixture = target.jobs["ssh01-contract-fixture"]
     assert ssh_fixture.command == ("python", "-m", "devtool.ssh_roadmap_fixtures", "contract", "--json")
@@ -341,6 +359,36 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
         "test:roadmap-workflow-exo-baseline",
     }
 
+    git_frx11 = plan_selected_workflow(cfg, "roadmap-git-frx11")
+    assert {node.ref.raw for node in git_frx11.nodes} == {
+        "job:source-syntax", "job:git-frx11-notes-fixture",
+        "test:roadmap-git-frx10", "test:roadmap-git-frx11",
+        "test:roadmap-workflow-exo-baseline",
+    }
+
+    git_frx12 = plan_selected_workflow(cfg, "roadmap-git-frx12")
+    assert {node.ref.raw for node in git_frx12.nodes} == {
+        "job:source-syntax", "job:git-frx12-campaign-fixture",
+        "test:roadmap-git-frx11", "test:roadmap-git-frx12",
+        "test:roadmap-workflow-exo-baseline",
+    }
+
+    git_frx13 = plan_selected_workflow(cfg, "roadmap-git-frx13")
+    assert {node.ref.raw for node in git_frx13.nodes} == {
+        "job:source-syntax", "job:git-frx13-dirty-fixture",
+        "test:roadmap-git-frx12", "test:roadmap-git-frx13",
+        "test:roadmap-workflow-exo-baseline",
+    }
+
+    merged = plan_selected_workflow(cfg, "roadmap-git-frx11-13")
+    assert {node.ref.raw for node in merged.nodes} == {
+        "job:source-syntax", "job:git-frx11-notes-fixture",
+        "job:git-frx12-campaign-fixture", "job:git-frx13-dirty-fixture",
+        "test:roadmap-git-frx10", "test:roadmap-git-frx11",
+        "test:roadmap-git-frx12", "test:roadmap-git-frx13",
+        "test:roadmap-workflow-exo-baseline",
+    }
+
     ssh01 = plan_selected_workflow(cfg, "roadmap-ssh01")
     assert {node.ref.raw for node in ssh01.nodes} == {
         "job:source-syntax",
@@ -402,9 +450,12 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
         "job:federation-resume-invalidation-fixture",
         "job:federation-artifact-edge-fixture",
         "job:git-frx10-integration-fixture",
+        "job:git-frx11-notes-fixture",
+        "job:git-frx12-campaign-fixture",
+        "job:git-frx13-dirty-fixture",
         *(f"test:{test_id}" for test_id in current_test_ids),
     }
-    assert len(current.nodes) == len(current_test_ids) + 7
+    assert len(current.nodes) == len(current_test_ids) + 10
 
 
 def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons() -> None:
@@ -414,7 +465,7 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     with redirect_stdout(jobs_out):
         _jobs(cfg, as_json=True, selected_target="devtool")
     jobs = json.loads(jobs_out.getvalue())
-    assert jobs["summary"]["target_local_jobs"] == 21
+    assert jobs["summary"]["target_local_jobs"] == 24
     assert jobs["completion"]["target_job_keys"] == [
         "devtool.commit-policy-fixture",
         "devtool.federation-artifact-edge-fixture",
@@ -423,6 +474,9 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
         "devtool.federation-source-drift-probe",
         "devtool.federation-source-lock-fixture",
         "devtool.git-frx10-integration-fixture",
+        "devtool.git-frx11-notes-fixture",
+        "devtool.git-frx12-campaign-fixture",
+        "devtool.git-frx13-dirty-fixture",
         "devtool.interface-conformance-fixture",
         "devtool.overlay-base-fixture",
         "devtool.overlay-rebase-fixture",
@@ -455,12 +509,14 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     assert payload["action"] == "roadmap-current"
     assert payload["targets"] == ["devtool"]
     current_test_ids = EXPECTED_TESTS - {"roadmap-ssh02-regressions", "roadmap-ssh03-regressions"}
-    assert payload["summary"]["node_count"] == len(current_test_ids) + 7
-    assert payload["summary"]["target_local_job_count"] == 7
+    assert payload["summary"]["node_count"] == len(current_test_ids) + 10
+    assert payload["summary"]["target_local_job_count"] == 10
     assert {item["key"] for item in payload["summary"]["target_local_jobs"]} == {
         "devtool.source-syntax", "devtool.ssh01-contract-fixture", "devtool.ssh02-execution-fixture",
         "devtool.ssh03-final-fixture", "devtool.federation-resume-invalidation-fixture",
-        "devtool.federation-artifact-edge-fixture", "devtool.git-frx10-integration-fixture"
+        "devtool.federation-artifact-edge-fixture", "devtool.git-frx10-integration-fixture",
+        "devtool.git-frx11-notes-fixture", "devtool.git-frx12-campaign-fixture",
+        "devtool.git-frx13-dirty-fixture"
     }
     assert payload["schedule"]["nodes"]
     by_ref = {node["ref"]: node for node in payload["graph"]["nodes"]}
@@ -471,6 +527,9 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     assert by_ref["job:federation-resume-invalidation-fixture"]["target"] == "devtool"
     assert by_ref["job:federation-artifact-edge-fixture"]["target"] == "devtool"
     assert by_ref["job:git-frx10-integration-fixture"]["target"] == "devtool"
+    assert by_ref["job:git-frx11-notes-fixture"]["target"] == "devtool"
+    assert by_ref["job:git-frx12-campaign-fixture"]["target"] == "devtool"
+    assert by_ref["job:git-frx13-dirty-fixture"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx01"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx02"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx03"]["target"] == "devtool"
@@ -481,6 +540,9 @@ def test_roadmap00_machine_surfaces_export_stable_identity_and_schedule_reasons(
     assert by_ref["test:roadmap-git-frx08-freeze"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx09"]["target"] == "devtool"
     assert by_ref["test:roadmap-git-frx10"]["target"] == "devtool"
+    assert by_ref["test:roadmap-git-frx11"]["target"] == "devtool"
+    assert by_ref["test:roadmap-git-frx12"]["target"] == "devtool"
+    assert by_ref["test:roadmap-git-frx13"]["target"] == "devtool"
     assert by_ref["test:roadmap-ssh01"]["target"] == "devtool"
     assert by_ref["test:roadmap-ssh02"]["target"] == "devtool"
     assert by_ref["test:roadmap-ssh03"]["target"] == "devtool"

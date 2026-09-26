@@ -23,6 +23,7 @@ from .git_transaction_journal import (
     establish_git_transaction_recovery,
     update_git_transaction_journal,
 )
+from .git_dirty_state import capture_dirty_tree, dirty_paths, restore_dirty_tree, validate_dirty_tree_rebase
 from .transaction_worktree import (
     cleanup_transaction_worktree,
     git_status_identity,
@@ -612,6 +613,8 @@ def _capture_git_state(repo_root: Path, tx_dir: Path) -> dict[str, Any]:
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(index_path, backup_path)
 
+    dirty_snapshot_dir = tx_dir / "git-dirty-tree"
+    dirty_snapshot = capture_dirty_tree(repo_root, dirty_snapshot_dir)
     return {
         "is_git_repo": True,
         "initial_head": initial_head if head_rc == 0 else "",
@@ -622,6 +625,11 @@ def _capture_git_state(repo_root: Path, tx_dir: Path) -> dict[str, Any]:
         "index_backup_sha256": hashlib.sha256(backup_path.read_bytes()).hexdigest() if index_existed else "",
         "initial_index_identity": initial_index_identity,
         "initial_worktree_status_identity": git_status_identity(repo_root),
+        "dirty_tree_snapshot": str(dirty_snapshot_dir),
+        "dirty_tree_snapshot_digest": str(dirty_snapshot.get("snapshot_digest") or ""),
+        "dirty_tree_paths": list(dirty_snapshot.get("paths") or []),
+        "dirty_tree_preserved": bool(dirty_snapshot.get("dirty")),
+        "dirty_tree_restored": False,
         "post_apply_index_identity": None,
         "applied_commit": "",
         "restored": False,
@@ -772,9 +780,20 @@ def integrate_transaction_worktree(transaction_path: str | Path | None) -> dict[
     if not result_commit:
         raise RuntimeError("Isolated transaction worktree has no result commit")
 
-    changed_paths = set(worktree_changed_paths(execution_root))
+    remaining = worktree_changed_paths(execution_root)
+    changed_paths = set(remaining)
     if start_commit and result_commit != start_commit:
         changed_paths.update(_git_name_only(execution_root, "diff", "--name-only", "-z", start_commit, result_commit, "--"))
+    dirty_snapshot_path = str(git_state.get("dirty_tree_snapshot") or "").strip()
+    dirty_path_set = set(str(item) for item in (git_state.get("dirty_tree_paths") or []) if str(item))
+    overlap = sorted(dirty_path_set.intersection(remaining))
+    if overlap:
+        raise RuntimeError(
+            "Refusing isolated transaction integration because uncommitted transaction output overlaps preserved user dirty paths: "
+            + ", ".join(overlap[:20])
+        )
+    if dirty_snapshot_path and result_commit != start_commit:
+        validate_dirty_tree_rebase(dirty_snapshot_path, result_commit=result_commit)
     if changed_paths:
         register_transaction_paths(path, sorted(changed_paths))
         tx = _read_json(path)
@@ -807,6 +826,14 @@ def integrate_transaction_worktree(transaction_path: str | Path | None) -> dict[
         )
         if proc.returncode != 0:
             raise RuntimeError("Unable to materialize isolated transaction commit in primary checkout: " + (proc.stdout or "").strip())
+        if dirty_snapshot_path and bool(git_state.get("dirty_tree_preserved")):
+            restored_dirty = restore_dirty_tree(
+                dirty_snapshot_path,
+                allow_head_change=True,
+                expected_current_head=result_commit,
+            )
+            git_state["dirty_tree_restored"] = True
+            git_state["dirty_tree_restore_evidence"] = restored_dirty
         git_state["applied_commit"] = result_commit
         git_state["post_apply_index_identity"] = _git_index_identity(Path(str(git_state.get("index_path") or "")))
         git_state["recorded_at"] = _utc_now()
@@ -818,7 +845,6 @@ def integrate_transaction_worktree(transaction_path: str | Path | None) -> dict[
 
     # Preserve any uncommitted result (including after-commit hook writes) with
     # the same semantics as a direct apply: working tree changes, index unchanged.
-    remaining = worktree_changed_paths(execution_root)
     try:
         if remaining:
             sync_paths(execution_root, repo_root, remaining)

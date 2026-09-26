@@ -1096,6 +1096,34 @@ def build_parser() -> argparse.ArgumentParser:
     git_sub = git_cmd.add_subparsers(dest="git_command", required=True)
     git_state = git_sub.add_parser("state", help="Show the authoritative repository Git-state snapshot")
     git_state.add_argument("--json", action="store_true", help="Emit machine-readable Git state")
+    git_notes = git_sub.add_parser("notes", help="Inspect Devtool execution evidence stored in Git notes")
+    git_notes_sub = git_notes.add_subparsers(dest="git_notes_command", required=True)
+    git_notes_show = git_notes_sub.add_parser("show", help="Show refs/notes/devtool execution evidence for a commit")
+    git_notes_show.add_argument("revision", nargs="?", default="HEAD", help="Commit/revision to inspect (default: HEAD)")
+    git_notes_show.add_argument("--json", action="store_true", help="Emit machine-readable execution-note evidence")
+    git_campaign = git_sub.add_parser("campaign", help="Manage multi-repository Git campaign generations")
+    git_campaign_sub = git_campaign.add_subparsers(dest="git_campaign_command", required=True)
+    git_campaign_start = git_campaign_sub.add_parser("start", help="Start a frozen multi-repository campaign generation")
+    git_campaign_start.add_argument("campaign_id")
+    git_campaign_subject = git_campaign_start.add_mutually_exclusive_group(required=True)
+    git_campaign_subject.add_argument("--workflow", default="", help="Federation workflow to campaign")
+    git_campaign_subject.add_argument("--group", default="", help="Executable federation group to campaign")
+    git_campaign_start.add_argument("--json", action="store_true")
+    git_campaign_checkpoint = git_campaign_sub.add_parser("checkpoint", help="Record the next campaign generation")
+    git_campaign_checkpoint.add_argument("campaign_id")
+    git_campaign_checkpoint.add_argument("--json", action="store_true")
+    git_campaign_range = git_campaign_sub.add_parser("range-diff", help="Compare two campaign generations with git range-diff")
+    git_campaign_range.add_argument("campaign_id")
+    git_campaign_range.add_argument("--old", type=int, required=True, dest="old_generation")
+    git_campaign_range.add_argument("--new", type=int, required=True, dest="new_generation")
+    git_campaign_range.add_argument("--json", action="store_true")
+    git_campaign_status = git_campaign_sub.add_parser("status", help="Show persisted campaign generations and identities")
+    git_campaign_status.add_argument("campaign_id")
+    git_campaign_status.add_argument("--json", action="store_true")
+    git_campaign_restore = git_campaign_sub.add_parser("restore-dirty", help="Restore GIT-FRX-13 dirty-tree state captured at campaign start")
+    git_campaign_restore.add_argument("campaign_id")
+    git_campaign_restore.add_argument("--repository", default="", help="Restore only one enrolled repository")
+    git_campaign_restore.add_argument("--json", action="store_true")
 
     federation_cmd = subparsers.add_parser("federation", aliases=["fed"], help="Inspect explicitly enrolled federated repositories")
     federation_sub = federation_cmd.add_subparsers(dest="federation_command", required=True)
@@ -13379,28 +13407,90 @@ def _main_after_parse(
 
     if args.command == "git":
         action = str(getattr(args, "git_command", "") or "")
-        if action != "state":
-            parser.error(f"Unknown git command: {action}")
-            return 2
-        try:
-            state = collect_git_state(Path(str(getattr(args, "repo", "") or Path.cwd())))
-        except GitStateError as exc:
+        if action == "state":
+            try:
+                state = collect_git_state(Path(str(getattr(args, "repo", "") or Path.cwd())))
+            except GitStateError as exc:
+                if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                    print(json.dumps({
+                        "schema_version": 1,
+                        "kind": "git-state",
+                        "ok": False,
+                        "available": False,
+                        "error": str(exc),
+                    }, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Error: {exc}", file=sys.stderr)
+                return 1
             if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
-                print(json.dumps({
-                    "schema_version": 1,
-                    "kind": "git-state",
-                    "ok": False,
-                    "available": False,
-                    "error": str(exc),
-                }, indent=2, ensure_ascii=False))
+                print(json.dumps(state.as_dict(), indent=2, ensure_ascii=False))
             else:
+                render_status_table(render_git_state_text(state))
+            return 0
+        if action == "notes":
+            from .git_execution_notes import GitExecutionNoteError, read_execution_note
+            try:
+                payload = read_execution_note(
+                    Path(str(getattr(args, "repo", "") or Path.cwd())),
+                    str(getattr(args, "revision", "HEAD") or "HEAD"),
+                )
+            except GitExecutionNoteError as exc:
                 print(f"Error: {exc}", file=sys.stderr)
-            return 1
-        if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
-            print(json.dumps(state.as_dict(), indent=2, ensure_ascii=False))
-        else:
-            render_status_table(render_git_state_text(state))
-        return 0
+                return 1
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(f"Devtool execution note: {payload.get('commit') or '<unknown>'}")
+                for record in payload.get("records", []):
+                    if isinstance(record, dict):
+                        print(
+                            f"- {record.get('repository') or '?'} {record.get('step_id') or '?'} "
+                            f"{record.get('status') or '?'} run={record.get('child_run_id') or '?'} "
+                            f"digest={record.get('evidence_digest') or ''}"
+                        )
+            return 0
+        if action == "campaign":
+            from .git_campaign import (
+                GitCampaignError, checkpoint_campaign, load_campaign, range_diff_campaign,
+                restore_campaign_dirty_tree, start_campaign,
+            )
+            subaction = str(getattr(args, "git_campaign_command", "") or "")
+            try:
+                if subaction == "status":
+                    payload = load_campaign(str(args.campaign_id))
+                else:
+                    config = _load_command_config(args)
+                    if subaction == "start":
+                        payload = start_campaign(
+                            config, str(args.campaign_id),
+                            workflow=str(getattr(args, "workflow", "") or ""),
+                            group=str(getattr(args, "group", "") or ""),
+                        )
+                    elif subaction == "checkpoint":
+                        payload = checkpoint_campaign(config, str(args.campaign_id))
+                    elif subaction == "range-diff":
+                        payload = range_diff_campaign(
+                            str(args.campaign_id),
+                            old_generation=int(args.old_generation),
+                            new_generation=int(args.new_generation),
+                        )
+                    elif subaction == "restore-dirty":
+                        payload = restore_campaign_dirty_tree(
+                            str(args.campaign_id), repository=str(getattr(args, "repository", "") or "")
+                        )
+                    else:
+                        parser.error(f"Unknown git campaign command: {subaction}")
+                        return 2
+            except GitCampaignError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 1
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            return 0
+        parser.error(f"Unknown git command: {action}")
+        return 2
 
     if args.command in {"final-seal", "seal"}:
         repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))

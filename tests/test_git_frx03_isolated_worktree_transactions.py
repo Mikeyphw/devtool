@@ -186,7 +186,7 @@ def test_primary_drift_blocks_integration_without_overwriting_user_change(tmp_pa
     assert (root / "user.txt").read_text(encoding="utf-8") == "user change\n"
 
 
-def test_dirty_repo_truthfully_falls_back_to_direct_isolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dirty_repo_uses_worktree_isolation_with_transactional_preservation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _repo(tmp_path)
     artifact = _artifact(tmp_path)
     _configure(monkeypatch, tmp_path)
@@ -197,8 +197,10 @@ def test_dirty_repo_truthfully_falls_back_to_direct_isolation(tmp_path: Path, mo
         preview={"changes": [{"kind": "modified", "path": "tracked.txt"}], "counts": {}},
     )
     assert tx["isolation"]["requested"] == "worktree"
-    assert tx["isolation"]["effective"] == "direct"
-    assert tx["isolation"]["fallback_reason"] == "primary worktree is dirty"
+    assert tx["isolation"]["effective"] == "worktree"
+    assert tx["isolation"]["dirty_tree_preserved"] is True
+    assert tx["git_state"]["dirty_tree_preserved"] is True
+    assert "dirty.txt" in tx["git_state"]["dirty_tree_paths"]
     rollback_transaction(tx["path"], reason="fixture cleanup")
 
 

@@ -282,6 +282,24 @@ command = ["python", "-m", "devtool.federation_roadmap_fixtures", "git-frx10-int
 inputs = ["devtool/git_federation_integration.py", "devtool/federation_config.py", "devtool/federation_execution.py", "devtool/federation_resume.py", "devtool/federation_roadmap_fixtures.py"]
 metadata = { read_only = true, roadmap_id = "GIT-FRX-10" }
 
+[targets.devtool.jobs.git-frx11-notes-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.git_execution_notes", "fixture"]
+inputs = ["devtool/git_execution_notes.py", "devtool/federation_execution.py", "devtool/federation_lock.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-11" }
+
+[targets.devtool.jobs.git-frx12-campaign-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.git_campaign", "fixture"]
+inputs = ["devtool/git_campaign.py", "devtool/git_dirty_state.py", "devtool/federation_plan.py", "devtool/federation_lock.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-12" }
+
+[targets.devtool.jobs.git-frx13-dirty-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.git_dirty_state", "fixture"]
+inputs = ["devtool/git_dirty_state.py", "devtool/transactions.py", "devtool/transaction_worktree.py"]
+metadata = { read_only = true, roadmap_id = "GIT-FRX-13" }
+
 [targets.devtool.jobs.ssh01-contract-fixture]
 runner = "command"
 command = ["python", "-m", "devtool.ssh_roadmap_fixtures", "contract", "--json"]
@@ -426,6 +444,38 @@ roadmap-git-frx10 = [
   { id = "git-frx10", ref = "test:roadmap-git-frx10", depends_on = ["integration-fixture"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx10"] },
 ]
+roadmap-git-frx11 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx10", ref = "test:roadmap-git-frx10", depends_on = ["syntax"] },
+  { id = "notes-fixture", ref = "job:git-frx11-notes-fixture", depends_on = ["syntax"] },
+  { id = "git-frx11", ref = "test:roadmap-git-frx11", depends_on = ["git-frx10", "notes-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx11"] },
+]
+roadmap-git-frx12 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx11", ref = "test:roadmap-git-frx11", depends_on = ["syntax"] },
+  { id = "campaign-fixture", ref = "job:git-frx12-campaign-fixture", depends_on = ["syntax"] },
+  { id = "git-frx12", ref = "test:roadmap-git-frx12", depends_on = ["git-frx11", "campaign-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx12"] },
+]
+roadmap-git-frx13 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx12", ref = "test:roadmap-git-frx12", depends_on = ["syntax"] },
+  { id = "dirty-fixture", ref = "job:git-frx13-dirty-fixture", depends_on = ["syntax"] },
+  { id = "git-frx13", ref = "test:roadmap-git-frx13", depends_on = ["git-frx12", "dirty-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx13"] },
+]
+roadmap-git-frx11-13 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx10", ref = "test:roadmap-git-frx10", depends_on = ["syntax"] },
+  { id = "notes-fixture", ref = "job:git-frx11-notes-fixture", depends_on = ["syntax"] },
+  { id = "git-frx11", ref = "test:roadmap-git-frx11", depends_on = ["git-frx10", "notes-fixture"] },
+  { id = "campaign-fixture", ref = "job:git-frx12-campaign-fixture", depends_on = ["git-frx11"] },
+  { id = "git-frx12", ref = "test:roadmap-git-frx12", depends_on = ["campaign-fixture"] },
+  { id = "dirty-fixture", ref = "job:git-frx13-dirty-fixture", depends_on = ["git-frx12"] },
+  { id = "git-frx13", ref = "test:roadmap-git-frx13", depends_on = ["dirty-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx13"] },
+]
 roadmap-ssh01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "ssh01-fixture", ref = "job:ssh01-contract-fixture", depends_on = ["syntax"] },
@@ -501,6 +551,12 @@ roadmap-current = [
   { id = "frx-y08-fixture", ref = "job:federation-artifact-edge-fixture", depends_on = ["frx-y08"] },
   { id = "git-frx10-fixture", ref = "job:git-frx10-integration-fixture", depends_on = ["frx-y08-fixture", "git-frx09"] },
   { id = "git-frx10", ref = "test:roadmap-git-frx10", depends_on = ["git-frx10-fixture"] },
+  { id = "git-frx11-fixture", ref = "job:git-frx11-notes-fixture", depends_on = ["git-frx10"] },
+  { id = "git-frx11", ref = "test:roadmap-git-frx11", depends_on = ["git-frx11-fixture"] },
+  { id = "git-frx12-fixture", ref = "job:git-frx12-campaign-fixture", depends_on = ["git-frx11"] },
+  { id = "git-frx12", ref = "test:roadmap-git-frx12", depends_on = ["git-frx12-fixture"] },
+  { id = "git-frx13-fixture", ref = "job:git-frx13-dirty-fixture", depends_on = ["git-frx12"] },
+  { id = "git-frx13", ref = "test:roadmap-git-frx13", depends_on = ["git-frx13-fixture"] },
 ]
 
 
@@ -564,6 +620,37 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-ssh01.xml",
   "tests/test_ssh01_transport_environment_worker_preparation.py",
+]
+
+[[test]]
+id = "roadmap-git-frx11"
+name = "GIT-FRX-11 Git notes execution evidence"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx11.xml",
+  "tests/test_git_frx11_execution_notes.py",
+]
+
+[[test]]
+id = "roadmap-git-frx12"
+name = "GIT-FRX-12 multi repository campaign range diff"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx12.xml",
+  "tests/test_git_frx12_campaign_stacks_range_diff.py",
+]
+
+[[test]]
+id = "roadmap-git-frx13"
+name = "GIT-FRX-13 transactional dirty tree preservation"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx13.xml",
+  "tests/test_git_frx13_transactional_dirty_tree_preservation.py",
+  "tests/test_git_frx03_isolated_worktree_transactions.py",
 ]
 
 [[test]]

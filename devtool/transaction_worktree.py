@@ -80,9 +80,9 @@ def prepare_transaction_worktree(
 ) -> dict[str, Any]:
     """Create the isolated execution root when the source state supports it.
 
-    Worktree isolation is preferred, but a direct transaction remains truthful
-    for non-Git, unborn, or already-dirty repositories because a detached linked
-    worktree cannot faithfully represent those source states.
+    Worktree isolation is preferred. GIT-FRX-13 preserves a dirty primary
+    checkout transactionally, so dirty repositories no longer need to fall back
+    to direct mutation; non-Git and unborn repositories still do.
     """
 
     root = repo_root.resolve()
@@ -109,9 +109,7 @@ def prepare_transaction_worktree(
     if not start_sha:
         base["fallback_reason"] = "unborn repository"
         return base
-    if git_status_bytes(root):
-        base["fallback_reason"] = "primary worktree is dirty"
-        return base
+    dirty = bool(git_status_bytes(root))
 
     worktree = tx_dir / "worktree"
     if worktree.exists() or worktree.is_symlink():
@@ -132,6 +130,7 @@ def prepare_transaction_worktree(
         "state": "ready",
         "created_from": start_sha,
         "created": True,
+        "dirty_tree_preserved": dirty,
     })
     return base
 

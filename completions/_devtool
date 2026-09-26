@@ -377,7 +377,7 @@ _devtool_commands() {
     'ap:alias for ai-prompt'
     'completion:print shell completion'
     'completion-state:emit config-aware completion values for shells and editors'
-    'git:inspect authoritative repository Git state'
+    'git:inspect Git state, execution notes, and multi-repository campaigns'
     'wrapper:resolve, inspect, and execute repository wrapper commands'
     'federation:inspect, plan, run, and observe explicitly enrolled repositories'
     'fed:alias for federation'
@@ -750,11 +750,45 @@ _devtool() {
       case $line[1] in
         git)
           if (( ${#line} < 2 )); then
-            _values 'git action' state
+            _values 'git action' state notes campaign
           else
             case $line[2] in
               state)
                 _arguments '--json[emit machine-readable Git state]'
+                ;;
+              notes)
+                if (( ${#line} < 3 )); then
+                  _values 'notes action' show
+                else
+                  case $line[3] in
+                    show)
+                      _arguments '1:revision' '--json[emit machine-readable execution-note evidence]'
+                      ;;
+                  esac
+                fi
+                ;;
+              campaign)
+                if (( ${#line} < 3 )); then
+                  _values 'campaign action' start checkpoint range-diff status restore-dirty
+                else
+                  case $line[3] in
+                    start)
+                      _arguments '1:campaign id' '--workflow[federation workflow]:workflow' '--group[executable federation group]:group' '--json[emit machine-readable campaign state]'
+                      ;;
+                    checkpoint)
+                      _arguments '1:campaign id' '--json[emit machine-readable generation state]'
+                      ;;
+                    range-diff)
+                      _arguments '1:campaign id' '--old[old campaign generation]:generation' '--new[new campaign generation]:generation' '--json[emit machine-readable range-diff evidence]'
+                      ;;
+                    status)
+                      _arguments '1:campaign id' '--json[emit machine-readable campaign state]'
+                      ;;
+                    restore-dirty)
+                      _arguments '1:campaign id' '--repository[restore one enrolled repository]:repository' '--json[emit machine-readable dirty restore evidence]'
+                      ;;
+                  esac
+                fi
                 ;;
             esac
           fi
@@ -1040,6 +1074,9 @@ _devtool() {
                 ;;
               recover)
                 _arguments '1:worker profile:_devtool_ssh_profiles' '--format[output format]:format:(text json)' '--run-id[restrict stale-run recovery to one Devtool run]:run-id:' '--node-id[restrict recovery to one canonical provider node]:node-id:'
+                ;;
+              gc)
+                _arguments '1:worker profile:_devtool_ssh_profiles' '(--apply)--dry-run[plan cleanup without deleting run history]' '(--dry-run)--apply[apply safe GC plan]' '--max-age-days[eligible terminal-run age threshold]:days:' '--keep-last[protect this many newest runs]:count:' '--max-mib[target maximum SSH run-state size]:mebibytes:' '--format[output format]:format:(text json)'
                 ;;
             esac
           fi
