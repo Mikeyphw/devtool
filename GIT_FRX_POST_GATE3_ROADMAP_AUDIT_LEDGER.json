@@ -1,0 +1,190 @@
+{
+  "audit_date": "2026-09-26",
+  "authoritative_source": "fresh post-Gate-3 snapshot devtool-20260926-130757-391870.tar.gz",
+  "final_verdict": "pass after promise-remediation overlay construction",
+  "findings": [
+    {
+      "id": "POST-G3-01",
+      "roadmap_ids": [
+        "GIT-FRX-12"
+      ],
+      "status": "fixed",
+      "summary": "Campaign lifecycle surface omitted named checkpoint identity plus rollback/supersede compatibility commands and rich delta classification/evidence."
+    },
+    {
+      "id": "POST-G3-02",
+      "roadmap_ids": [
+        "GIT-FRX-13"
+      ],
+      "status": "fixed",
+      "summary": "Transactional dirty preservation existed internally but the promised explicit --preserve-dirty surface and durable request evidence were absent."
+    },
+    {
+      "id": "POST-G3-03",
+      "roadmap_ids": [
+        "GIT-FRX-14"
+      ],
+      "status": "fixed",
+      "summary": "Explicit federation recover/rollback commands were absent. During remediation an intermediate parser-only implementation was caught and repaired with real command dispatch and CLI tests."
+    },
+    {
+      "id": "POST-G3-04",
+      "roadmap_ids": [
+        "GIT-FRX-17"
+      ],
+      "status": "fixed",
+      "summary": "Rerere was library-only: [git].rerere was not parsed and no operational capture/record/validated-auto CLI path existed."
+    },
+    {
+      "id": "POST-G3-05",
+      "roadmap_ids": [
+        "GIT-FRX-17"
+      ],
+      "status": "fixed",
+      "summary": "Federation doctor omitted capability/interface/frozen-lock/resume/artifact/provider/hierarchy/bootstrap state and QoL surfaces diff/artifacts/logs/failures plus graph --group were incomplete."
+    },
+    {
+      "id": "POST-G3-06",
+      "roadmap_ids": [
+        "GIT-FRX-17",
+        "cross-surface"
+      ],
+      "status": "fixed",
+      "summary": "Generated Zsh completion drifted from checked-in completions after remediation; regenerated artifact is byte-synchronized and regression-tested."
+    }
+  ],
+  "initial_verdict": "material gaps found",
+  "kind": "devtool.git-federation-post-gate3-roadmap-audit-ledger",
+  "live_gate3_commit_reported_by_user": "64368e6",
+  "milestones": [
+    {
+      "id": "GIT-FRX-01",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-02",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-03",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-04",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-05",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-06",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-07",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-08",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-09",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-10",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-11",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-12",
+      "status": "delivered-after-remediation"
+    },
+    {
+      "id": "GIT-FRX-13",
+      "status": "delivered-after-remediation"
+    },
+    {
+      "id": "GIT-FRX-14",
+      "status": "delivered-after-remediation"
+    },
+    {
+      "id": "GIT-FRX-15",
+      "status": "delivered"
+    },
+    {
+      "gate": 2,
+      "id": "GIT-FRX-16",
+      "status": "delivered"
+    },
+    {
+      "id": "GIT-FRX-17",
+      "status": "delivered-after-remediation"
+    },
+    {
+      "gate": 3,
+      "id": "GIT-FRX-18",
+      "status": "delivered"
+    },
+    {
+      "co_delivered_with": "GIT-FRX-18",
+      "id": "FRX-Y12",
+      "status": "delivered"
+    }
+  ],
+  "remaining_material_gaps": [],
+  "roadmap": "DEVTOOL_GIT_FEDERATION_ROADMAP_V4 + retained v1 promises",
+  "schema_version": 1,
+  "validation": {
+    "campaign_total": {
+      "passed": 910,
+      "subtests_passed": 7
+    },
+    "chroot_proot_oci": {
+      "passed": 232,
+      "subtests_passed": 7
+    },
+    "completion_runtime_static_byte_sync": true,
+    "frx_01_12_full_reseal": {
+      "passed": 119
+    },
+    "frx_x01_x03": {
+      "passed": 35
+    },
+    "frx_x04": {
+      "passed": 8
+    },
+    "frx_y01_y02_y04_y07": {
+      "passed": 64
+    },
+    "frx_y08_y12": {
+      "passed": 36
+    },
+    "git_frx_01_08": {
+      "passed": 122
+    },
+    "git_frx_09_14": {
+      "passed": 35
+    },
+    "git_frx_15_18": {
+      "passed": 55
+    },
+    "native_roadmap_gate3": {
+      "errors": 0,
+      "stages_passed": 6,
+      "tests_passed": 63,
+      "warnings": 0
+    },
+    "post_gate3_promise_remediation": {
+      "passed": 12
+    },
+    "ssh_sshw": {
+      "passed": 192
+    }
+  }
+}

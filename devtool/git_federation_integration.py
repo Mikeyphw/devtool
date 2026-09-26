@@ -490,3 +490,124 @@ def integrate_federation_checkpoint(
         status=status, pointers=values, groups=tuple(group_evidence),
     )
     return _persist_report(parent, report)
+
+
+def load_federation_integration(parent: "ProjectConfig", run_id: str) -> dict[str, Any] | None:
+    path = _integration_evidence_path(parent, run_id)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FederationIntegrationError(f"Cannot read federation integration evidence for {run_id!r}: {exc}") from exc
+    if not isinstance(payload, dict) or str(payload.get("parent_run_id") or "") != str(run_id):
+        raise FederationIntegrationError(f"Federation integration evidence identity mismatch for {run_id!r}")
+    return payload
+
+
+def recover_federation_checkpoint(parent: "ProjectConfig", run_id: str) -> dict[str, Any]:
+    checkpoint = load_checkpoint(parent, run_id)
+    integration = load_federation_integration(parent, run_id)
+    children = [dict(row) for row in checkpoint.get("children", []) if isinstance(row, Mapping)]
+    repositories: dict[str, dict[str, Any]] = {}
+    for child in children:
+        repository = str(child.get("repository") or "")
+        lineage = child.get("git_lineage") if isinstance(child.get("git_lineage"), Mapping) else {}
+        row = repositories.setdefault(repository, {"repository": repository, "steps": [], "states": set(), "result_refs": set(), "rollback_refs": set()})
+        row["steps"].append(str(child.get("step_id") or ""))
+        status = str(child.get("status") or "")
+        exit_code = int(child.get("exit_code", 0) or 0)
+        if status == "succeeded" and exit_code == 0:
+            row["states"].add("validated-only")
+        elif status == "cancelled" or exit_code == 130:
+            row["states"].add("cancelled")
+        else:
+            row["states"].add(status or "failed")
+        if lineage.get("result_ref"): row["result_refs"].add(str(lineage.get("result_ref")))
+        if lineage.get("rollback_ref"): row["rollback_refs"].add(str(lineage.get("rollback_ref")))
+    integrated = {}
+    if integration:
+        for pointer in integration.get("pointers", []):
+            if not isinstance(pointer, Mapping): continue
+            repository = str(pointer.get("repository") or "")
+            integrated[repository] = dict(pointer)
+            row = repositories.setdefault(repository, {"repository": repository, "steps": [], "states": set(), "result_refs": set(), "rollback_refs": set()})
+            if pointer.get("status") in {"integrated", "already-integrated"} or pointer.get("applied"):
+                row["states"].add("integrated")
+    rows=[]
+    for repository in sorted(repositories):
+        row=repositories[repository]
+        states=set(row.pop("states")); result_refs=set(row.pop("result_refs")); rollback_refs=set(row.pop("rollback_refs"))
+        row.update({
+            "states": sorted(states), "result_refs": sorted(result_refs), "rollback_refs": sorted(rollback_refs),
+            "integration": integrated.get(repository, {}),
+            "rollback_available": bool(rollback_refs or (integrated.get(repository) or {}).get("start_commit")),
+        })
+        rows.append(row)
+    return {
+        "schema_version": SCHEMA_VERSION, "kind": "devtool.federation.recovery", "parent_run_id": str(run_id),
+        "workflow": str(checkpoint.get("workflow") or ""), "group": str(checkpoint.get("group") or ""),
+        "checkpoint_status": str(checkpoint.get("status") or ""), "repositories": rows,
+        "integration": integration or {}, "automatic_git_rollback": False,
+        "recovery_commands": {
+            "resume": f"devtool federation resume {run_id}", "retry": f"devtool federation retry {run_id}",
+            "recover": f"devtool federation recover {run_id}",
+        },
+    }
+
+
+def rollback_federation_checkpoint(
+    parent: "ProjectConfig", run_id: str, *, repository: str = "", integration_group: str = "", dry_run: bool = False
+) -> dict[str, Any]:
+    if bool(repository) == bool(integration_group):
+        raise FederationIntegrationError("federation rollback requires exactly one --repo or --integration-group")
+    report = load_federation_integration(parent, run_id)
+    if report is None:
+        raise FederationIntegrationError(f"No federation integration evidence for run {run_id!r}")
+    pointers = [dict(row) for row in report.get("pointers", []) if isinstance(row, Mapping)]
+    if repository:
+        selected = [row for row in pointers if str(row.get("repository") or "") == str(repository)]
+        subject = f"repo:{repository}"
+    else:
+        group = next((dict(row) for row in report.get("groups", []) if isinstance(row, Mapping) and str(row.get("id") or "") == str(integration_group)), None)
+        if group is None:
+            raise FederationIntegrationError(f"Unknown integration group {integration_group!r} for run {run_id!r}")
+        names = {str(value) for value in group.get("repositories", [])}
+        selected = [row for row in pointers if str(row.get("repository") or "") in names]
+        subject = str(integration_group)
+    if not selected:
+        raise FederationIntegrationError(f"No integrated repository pointers selected by {subject!r}")
+    plans: list[IntegrationPointer] = []
+    for row in selected:
+        root = Path(str(row.get("root") or ""))
+        item = _preflight_pointer(
+            root, repository=str(row.get("repository") or ""), step_ids=tuple(str(x) for x in row.get("step_ids", []) or []),
+            ref=str(row.get("ref") or ""), start=str(row.get("start_commit") or ""), result=str(row.get("result_commit") or ""),
+        )
+        if item.status != "already-integrated":
+            raise FederationIntegrationError(
+                f"Rollback refused for {item.repository}: integration pointer is not exactly at the validated result ({item.status}: {item.reason})"
+            )
+        if item.checked_out_worktree:
+            clean, reason = _worktree_clean(Path(item.checked_out_worktree))
+            if not clean:
+                raise FederationIntegrationError(f"Rollback refused for {item.repository}: {reason}")
+        plans.append(item)
+    applied=[]
+    if not dry_run:
+        for item in reversed(plans):
+            _move_pointer(item, forward=False)
+            applied.append(item.repository)
+    evidence = {
+        "schema_version": SCHEMA_VERSION, "kind": "devtool.federation.rollback", "parent_run_id": str(run_id),
+        "subject": subject, "dry_run": bool(dry_run), "repositories": [item.as_dict() for item in plans],
+        "applied_repositories": applied, "automatic_push": False, "published_release_rollback_owned": False,
+    }
+    path = state_dir() / "federation-rollbacks" / repo_key(Path(parent.repo_root)) / f"{run_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    evidence["evidence_path"] = str(path)
+    return evidence
+
+
+__all__ = ["FederationIntegrationError", "FederationIntegrationReport", "IntegrationPointer", "integrate_federation_checkpoint", "load_federation_integration", "publish_barrier_evidence", "recover_federation_checkpoint", "rollback_federation_checkpoint"]

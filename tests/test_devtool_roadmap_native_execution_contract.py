@@ -42,6 +42,7 @@ EXPECTED_TESTS = {
     "roadmap-git-frx16",
     "roadmap-git-frx17",
     "roadmap-git-frx18-final",
+    "roadmap-git-frx-final-promise-remediation",
     "roadmap-frx-y12-adoption",
     "roadmap-ssh01",
     "roadmap-ssh02",
@@ -463,6 +464,7 @@ def test_roadmap00_workflows_compose_only_existing_native_contracts() -> None:
     assert {node.ref.raw for node in gate3.nodes} == {
         "job:source-syntax", "test:roadmap-git-frx17",
         "test:roadmap-git-frx18-final", "test:roadmap-frx-y12-adoption",
+        "test:roadmap-git-frx-final-promise-remediation",
         "test:roadmap-workflow-exo-baseline",
     }
 

@@ -1068,7 +1068,12 @@ def create_apply_transaction(
             "reserved_paths": [str(item.get("path") or "") for item in entries],
             "affected_paths": entries,
             "preview_counts": preview.get("counts", {}),
-            "git_state": {**git_state, "rollback_scope": "paths-v1"},
+            "git_state": {
+                **git_state,
+                "rollback_scope": "paths-v1",
+                "preserve_dirty_requested": os.environ.get("DEVTOOL_PRESERVE_DIRTY_REQUESTED", "0") == "1",
+                "dirty_preservation_policy": "explicit" if os.environ.get("DEVTOOL_PRESERVE_DIRTY_REQUESTED", "0") == "1" else "automatic",
+            },
             "git_recovery": git_recovery,
             "isolation": isolation,
         }

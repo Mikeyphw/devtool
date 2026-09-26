@@ -763,6 +763,10 @@ def load_project_config(
     if git_signing not in {"off", "if-configured", "required"}:
         raise SystemExit("Invalid [git].signing; expected off, if-configured, or required")
     git_config["signing"] = git_signing
+    git_rerere = str(git_config.get("rerere", "off") or "off").strip().lower() or "off"
+    if git_rerere not in {"off", "suggest", "validated-auto"}:
+        raise SystemExit("Invalid [git].rerere; expected off, suggest, or validated-auto")
+    git_config["rerere"] = git_rerere
     project_raw = _require_table(loaded, "project", source=source_label)
     workspace_raw = _require_table(loaded, "workspace", source=source_label)
     env_raw = _require_table(loaded, "env", source=source_label)

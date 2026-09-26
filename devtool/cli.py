@@ -122,6 +122,7 @@ from .federation_interfaces import (
 from .federation_observability import build_federation_observability
 from .federation_execution import FederationExecutionError, run_federated_workflow, run_federated_group
 from .federation_resume import FederationResumeError
+from .git_federation_integration import FederationIntegrationError
 from .federation_bridge import (
     FederationBridgeError,
     execute_federated_job,
@@ -490,6 +491,7 @@ def _add_apply_policy_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--reset-author", action="store_true", help="With amend mode, reset commit author to the current Git identity")
     cmd.add_argument("--allow-merge-amend", action="store_true", help="Allow amending a merge commit (refused by default)")
     cmd.add_argument("--allow-published-rewrite", action="store_true", help="Allow amending HEAD when reachable from a protected upstream/remote ref; never pushes")
+    cmd.add_argument("--preserve-dirty", action="store_true", help="Explicitly request transactional preservation/restoration of staged, unstaged, untracked, symlink, mode, and index state")
     cmd.add_argument("--signing", choices=("off", "if-configured", "required"), default="", help="Git SSH signing policy for the result commit; default comes from [git].signing")
     cmd.add_argument(
         "--isolation",
@@ -1125,6 +1127,19 @@ def build_parser() -> argparse.ArgumentParser:
     git_rerere_suggest = git_rerere_sub.add_parser("suggest", help="Suggest an exact repository/campaign conflict resolution")
     git_rerere_suggest.add_argument("--campaign", default="", help="Campaign context for conflict memory")
     git_rerere_suggest.add_argument("--json", action="store_true")
+    git_rerere_capture = git_rerere_sub.add_parser("capture", help="Capture the exact unresolved conflict preimage before manual resolution")
+    git_rerere_capture.add_argument("--campaign", default="", help="Campaign context for conflict memory")
+    git_rerere_capture.add_argument("--json", action="store_true")
+    git_rerere_record = git_rerere_sub.add_parser("record", help="Record a validated manual resolution for the captured exact conflict")
+    git_rerere_record.add_argument("--campaign", default="", help="Campaign context for conflict memory")
+    git_rerere_record.add_argument("--path", dest="rerere_paths", action="append", required=True, help="Resolved conflict path; repeatable")
+    git_rerere_record.add_argument("--test", dest="rerere_tests", action="append", required=True, help="Repository-declared Devtool test ID used to validate the resolution; repeatable")
+    git_rerere_record.add_argument("--json", action="store_true")
+    git_rerere_apply = git_rerere_sub.add_parser("apply", help="Apply an exact stored resolution according to the configured rerere policy and rerun validation")
+    git_rerere_apply.add_argument("--campaign", default="", help="Campaign context for conflict memory")
+    git_rerere_apply.add_argument("--mode", choices=("off", "suggest", "validated-auto"), default="", help="Override [git].rerere for this invocation")
+    git_rerere_apply.add_argument("--test", dest="rerere_tests", action="append", default=[], help="Repository-declared Devtool test ID rerun after reuse; required for validated-auto")
+    git_rerere_apply.add_argument("--json", action="store_true")
 
     git_bisect = git_sub.add_parser("bisect", help="Find the first bad revision using Devtool-managed detached worktrees")
     git_bisect.add_argument("--good", required=True, help="Known-good Git revision")
@@ -1146,7 +1161,17 @@ def build_parser() -> argparse.ArgumentParser:
     git_campaign_start.add_argument("--json", action="store_true")
     git_campaign_checkpoint = git_campaign_sub.add_parser("checkpoint", help="Record the next campaign generation")
     git_campaign_checkpoint.add_argument("campaign_id")
+    git_campaign_checkpoint.add_argument("step", nargs="?", default="", help="Roadmap/campaign step name recorded for this generation")
     git_campaign_checkpoint.add_argument("--json", action="store_true")
+    git_campaign_rollback = git_campaign_sub.add_parser("rollback", help="Move only Devtool private campaign tip refs back to a prior generation/step")
+    git_campaign_rollback.add_argument("campaign_id")
+    git_campaign_rollback.add_argument("selector", help="Generation number or checkpoint step name")
+    git_campaign_rollback.add_argument("--json", action="store_true")
+    git_campaign_supersede = git_campaign_sub.add_parser("supersede", help="Mark one campaign generation superseded by another and move private campaign tips")
+    git_campaign_supersede.add_argument("campaign_id")
+    git_campaign_supersede.add_argument("old_generation", type=int)
+    git_campaign_supersede.add_argument("new_generation", type=int)
+    git_campaign_supersede.add_argument("--json", action="store_true")
     git_campaign_range = git_campaign_sub.add_parser("range-diff", help="Compare two campaign generations with git range-diff")
     git_campaign_range.add_argument("campaign_id")
     git_campaign_range.add_argument("--old", type=int, required=True, dest="old_generation")
@@ -1165,6 +1190,30 @@ def build_parser() -> argparse.ArgumentParser:
     git_campaign_seal.add_argument("--tag", action="store_true", help="Create/update the optional devtool/<campaign>/<generation> annotated tag in the control repository")
     git_campaign_seal.add_argument("--verify", action="store_true", help="Verify an existing final seal without creating a new one")
     git_campaign_seal.add_argument("--json", action="store_true")
+
+    campaign_cmd = subparsers.add_parser("campaign", help="Manage multi-repository Git campaign generations (compatibility surface for git campaign)")
+    campaign_sub = campaign_cmd.add_subparsers(dest="campaign_command", required=True)
+    campaign_status = campaign_sub.add_parser("status", help="Show persisted campaign generations and identities")
+    campaign_status.add_argument("campaign_id")
+    campaign_status.add_argument("--json", action="store_true")
+    campaign_checkpoint = campaign_sub.add_parser("checkpoint", help="Record a named campaign checkpoint generation")
+    campaign_checkpoint.add_argument("campaign_id")
+    campaign_checkpoint.add_argument("step")
+    campaign_checkpoint.add_argument("--json", action="store_true")
+    campaign_rollback = campaign_sub.add_parser("rollback", help="Roll Devtool private campaign tips back to a generation/step without mutating user branches")
+    campaign_rollback.add_argument("campaign_id")
+    campaign_rollback.add_argument("selector")
+    campaign_rollback.add_argument("--json", action="store_true")
+    campaign_range = campaign_sub.add_parser("range-diff", help="Compare two campaign generations")
+    campaign_range.add_argument("campaign_id")
+    campaign_range.add_argument("old_generation", type=int)
+    campaign_range.add_argument("new_generation", type=int)
+    campaign_range.add_argument("--json", action="store_true")
+    campaign_supersede = campaign_sub.add_parser("supersede", help="Mark one generation superseded by another")
+    campaign_supersede.add_argument("campaign_id")
+    campaign_supersede.add_argument("old_generation", type=int)
+    campaign_supersede.add_argument("new_generation", type=int)
+    campaign_supersede.add_argument("--json", action="store_true")
 
     federation_cmd = subparsers.add_parser("federation", aliases=["fed"], help="Inspect explicitly enrolled federated repositories")
     federation_sub = federation_cmd.add_subparsers(dest="federation_command", required=True)
@@ -1186,7 +1235,21 @@ def build_parser() -> argparse.ArgumentParser:
     federation_status.add_argument("--run", default="", help="Limit run observations to one parent or child EXO run ID")
     federation_status.add_argument("--json", action="store_true", help="Emit the machine-readable federation observability snapshot")
     federation_capabilities = federation_sub.add_parser("capabilities", aliases=["graph"], help="Show the declared repository capability/dependency graph")
+    federation_capabilities.add_argument("--group", default="", help="Limit graph projection to one federation group")
     federation_capabilities.add_argument("--json", action="store_true", help="Emit the machine-readable capability graph")
+    federation_diff = federation_sub.add_parser("diff", help="Compare two persisted federation parent-run checkpoints")
+    federation_diff.add_argument("old_run")
+    federation_diff.add_argument("new_run")
+    federation_diff.add_argument("--json", action="store_true")
+    federation_artifacts = federation_sub.add_parser("artifacts", help="Show producer/consumer artifact evidence for one federation run")
+    federation_artifacts.add_argument("run_id")
+    federation_artifacts.add_argument("--json", action="store_true")
+    federation_logs = federation_sub.add_parser("logs", help="Show canonical execution/evidence log paths for one federation run")
+    federation_logs.add_argument("run_id")
+    federation_logs.add_argument("--json", action="store_true")
+    federation_failures = federation_sub.add_parser("failures", help="Show failed/cancelled/blocked child evidence for one federation run")
+    federation_failures.add_argument("run_id")
+    federation_failures.add_argument("--json", action="store_true")
     federation_interfaces = federation_sub.add_parser("interfaces", help="Show declared federation interface/conformance contracts")
     federation_interfaces.add_argument("--json", action="store_true", help="Emit the machine-readable interface catalog")
     federation_conformance = federation_sub.add_parser("conformance", aliases=["interface-check"], help="Check child repositories against a federation interface contract")
@@ -1235,6 +1298,16 @@ def build_parser() -> argparse.ArgumentParser:
     federation_retry.add_argument("--failed", action="store_true", help="Retry failed/cancelled/blocked children only; fail closed if a successful child is invalidated")
     federation_retry.add_argument("--drift-policy", choices=("fail", "replan", "allow-if-equivalent"), default="fail", help="Frozen source drift policy for re-executed children")
     federation_retry.add_argument("--json", action="store_true", help="Emit machine-readable reuse/invalidation decisions and run result")
+    federation_recover = federation_sub.add_parser("recover", help="Inspect persisted child/result/rollback recovery state for a federation run")
+    federation_recover.add_argument("run_id")
+    federation_recover.add_argument("--json", action="store_true")
+    federation_rollback = federation_sub.add_parser("rollback", help="Explicitly roll integrated repository pointer(s) back to their validated start commit")
+    federation_rollback.add_argument("run_id")
+    rollback_scope = federation_rollback.add_mutually_exclusive_group(required=True)
+    rollback_scope.add_argument("--repo", dest="rollback_repository", default="")
+    rollback_scope.add_argument("--integration-group", dest="rollback_integration_group", default="")
+    federation_rollback.add_argument("--dry-run", action="store_true", help="Preflight rollback without moving branch pointers")
+    federation_rollback.add_argument("--json", action="store_true")
     federation_integrate = federation_sub.add_parser("integrate", help="Integrate validated federation result commits into user branch pointers")
     federation_integrate.add_argument("run_id", help="Completed federation parent run ID")
     federation_integrate.add_argument("--policy", choices=("per-repo", "dependency-group", "all-or-nothing-pointer-update"), default="", help="Override the workflow integration policy")
@@ -9786,8 +9859,10 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
 
     _previous_transaction_commit_mode = os.environ.get("DEVTOOL_TRANSACTION_COMMIT_MODE")
     _previous_transaction_isolation = os.environ.get("DEVTOOL_TRANSACTION_ISOLATION")
+    _previous_preserve_dirty = os.environ.get("DEVTOOL_PRESERVE_DIRTY_REQUESTED")
     os.environ["DEVTOOL_TRANSACTION_COMMIT_MODE"] = str(getattr(args, "commit_mode", "none") or "none")
     os.environ["DEVTOOL_TRANSACTION_ISOLATION"] = str(getattr(args, "isolation", "worktree") or "worktree")
+    os.environ["DEVTOOL_PRESERVE_DIRTY_REQUESTED"] = "1" if bool(getattr(args, "preserve_dirty", False)) else "0"
     try:
         if name in {"apply-overlays", "aos"}:
             result = apply_overlay_bundle(
@@ -9840,6 +9915,10 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             os.environ.pop("DEVTOOL_TRANSACTION_ISOLATION", None)
         else:
             os.environ["DEVTOOL_TRANSACTION_ISOLATION"] = _previous_transaction_isolation
+        if _previous_preserve_dirty is None:
+            os.environ.pop("DEVTOOL_PRESERVE_DIRTY_REQUESTED", None)
+        else:
+            os.environ["DEVTOOL_PRESERVE_DIRTY_REQUESTED"] = _previous_preserve_dirty
     if result.metadata:
         transaction_repo_root = str(result.metadata.get("transaction_repo_root") or "").strip()
         if transaction_repo_root:
@@ -11860,19 +11939,43 @@ def _federation_command(args: argparse.Namespace) -> int:
                 render_status_table(rows)
             return 0 if report.ok else 1
         if action in {"capabilities", "graph"}:
-            graph = build_capability_graph(config, strict=True)
-            payload = graph.as_dict()
+            from .federation_qol import federation_graph_payload
+            group_name = str(getattr(args, "group", "") or "")
+            payload = federation_graph_payload(config, group=group_name)
             if as_json:
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
             else:
-                rows = [("health", "ok" if graph.healthy else "attention"), ("edges", str(len(graph.edges)))]
-                for repository, capabilities in sorted(graph.exports.items()):
+                rows = [("health", "ok" if payload.get("healthy", True) else "attention"), ("edges", str(len(payload.get("edges") or [])))]
+                if group_name: rows.append(("group", group_name))
+                for repository, capabilities in sorted((payload.get("exports") or {}).items()):
                     rows.append((f"exports.{repository}", ", ".join(capabilities) or "-"))
-                for edge in graph.edges:
-                    rows.append((f"edge.{edge.provider}->{edge.consumer}", edge.reason))
-                for resolution in graph.resolutions:
-                    if resolution.status != "resolved":
-                        rows.append((f"require.{resolution.consumer}.{resolution.requirement}", resolution.status))
+                for edge in payload.get("edges") or []:
+                    rows.append((f"edge.{edge.get('provider')}->{edge.get('consumer')}", str(edge.get("reason") or edge.get("requirement") or "dependency")))
+                render_status_table(rows)
+            return 0
+        if action in {"diff", "artifacts", "logs", "failures"}:
+            from .federation_qol import (
+                federation_artifacts_payload, federation_diff_payload, federation_failures_payload, federation_logs_payload,
+            )
+            if action == "diff":
+                payload = federation_diff_payload(config, str(args.old_run), str(args.new_run))
+            elif action == "artifacts":
+                payload = federation_artifacts_payload(config, str(args.run_id))
+            elif action == "logs":
+                payload = federation_logs_payload(config, str(args.run_id))
+            else:
+                payload = federation_failures_payload(config, str(args.run_id))
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [("kind", str(payload.get("kind") or action))]
+                if action == "diff":
+                    rows.extend([("old_run", str(payload.get("old_run") or "")), ("new_run", str(payload.get("new_run") or "")), ("changed_steps", str(payload.get("changed_steps", 0)))])
+                    rows.extend((f"step.{row.get('step_id')}", str(row.get("change") or "")) for row in payload.get("steps", []) if row.get("change") != "unchanged")
+                else:
+                    key = {"artifacts":"artifacts", "logs":"logs", "failures":"failures"}[action]
+                    rows.append(("run_id", str(payload.get("run_id") or "")))
+                    rows.append((key, str(len(payload.get(key) or []))))
                 render_status_table(rows)
             return 0
         if action == "affected":
@@ -12130,6 +12233,56 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append((child.step_id, f"{subject}; {child.lifecycle or child.status}; run={child.run_id or '-'}"))
                 render_status_table(rows)
             return int(report.exit_code)
+        if action == "recover":
+            from .git_federation_integration import recover_federation_checkpoint
+            payload = recover_federation_checkpoint(config, str(getattr(args, "run_id", "") or ""))
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("run_id", str(payload.get("parent_run_id") or "")),
+                    ("checkpoint", str(payload.get("checkpoint_status") or "unknown")),
+                    ("automatic_git_rollback", "yes" if payload.get("automatic_git_rollback") else "no"),
+                ]
+                for item in payload.get("repositories", []):
+                    if not isinstance(item, dict):
+                        continue
+                    rows.append((
+                        f"repo.{item.get('repository')}",
+                        f"states={','.join(str(x) for x in item.get('states', [])) or '-'}; rollback={'yes' if item.get('rollback_available') else 'no'}",
+                    ))
+                render_status_table(rows)
+            return 0
+        if action == "rollback":
+            from .git_federation_integration import rollback_federation_checkpoint
+            dry_run = bool(getattr(args, "dry_run", False))
+            if not dry_run and not (bool(getattr(args, "yes", False)) or bool(getattr(args, "force", False))):
+                if console.is_interactive and sys.stdin.isatty():
+                    if not Confirm.ask(
+                        "Rollback the selected integrated federation pointer(s) to their validated start commit?",
+                        default=False, console=console,
+                    ):
+                        raise SystemExit(1)
+                else:
+                    raise SystemExit("federation rollback requires --yes in non-interactive mode (or use --dry-run)")
+            payload = rollback_federation_checkpoint(
+                config, str(getattr(args, "run_id", "") or ""),
+                repository=str(getattr(args, "rollback_repository", "") or ""),
+                integration_group=str(getattr(args, "rollback_integration_group", "") or ""),
+                dry_run=dry_run,
+            )
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("run_id", str(payload.get("parent_run_id") or "")),
+                    ("subject", str(payload.get("subject") or "")),
+                    ("mode", "dry-run" if payload.get("dry_run") else "apply"),
+                    ("applied", ", ".join(str(x) for x in payload.get("applied_repositories", [])) or "-"),
+                    ("automatic_push", "yes" if payload.get("automatic_push") else "no"),
+                ]
+                render_status_table(rows)
+            return 0
         if action in {"bootstrap", "sync"}:
             from .federation_sync import federation_source_management
             apply_changes = bool(getattr(args, "apply", False))
@@ -12258,7 +12411,7 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append(("job", str(payload.get("job_reference"))))
                 render_status_table(rows)
             return code
-    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError, FederationResumeError, FederationSyncError) as exc:
+    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError, FederationResumeError, FederationSyncError, FederationIntegrationError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 
@@ -13498,6 +13651,36 @@ def _main_after_parse(
     set_log_dir_override(log_dir_override or None)
 
     args._devtool_cli_repo_explicit = bool(str(getattr(args, "repo", "") or "").strip())
+    if args.command == "campaign":
+        from .git_campaign import (
+            GitCampaignError, checkpoint_campaign, load_campaign, range_diff_campaign, rollback_campaign, supersede_campaign,
+        )
+        action = str(getattr(args, "campaign_command", "") or "")
+        try:
+            if action == "status":
+                payload = load_campaign(str(args.campaign_id))
+            elif action == "rollback":
+                payload = rollback_campaign(str(args.campaign_id), str(args.selector))
+            elif action == "supersede":
+                payload = supersede_campaign(str(args.campaign_id), int(args.old_generation), int(args.new_generation))
+            else:
+                config = _load_command_config(args)
+                if action == "checkpoint":
+                    payload = checkpoint_campaign(config, str(args.campaign_id), step_id=str(args.step))
+                elif action == "range-diff":
+                    payload = range_diff_campaign(str(args.campaign_id), old_generation=int(args.old_generation), new_generation=int(args.new_generation))
+                else:
+                    parser.error(f"Unknown campaign command: {action}")
+                    return 2
+        except GitCampaignError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+
     if args.command == "git":
         # Git state must honor Git's own nearest-repository boundary. In
         # particular, an unenrolled nested Git checkout must not borrow an
@@ -13655,27 +13838,73 @@ def _main_after_parse(
                 render_status_table([(str(row.get("name") or "check"), f"{row.get('status')}: {row.get('detail')}") for row in payload.get("checks", [])])
             return 0 if bool(payload.get("ok")) else 1
         if action == "rerere":
-            from .git_rerere import GitRerereError, suggest_resolution
+            from .git_rerere import (
+                GitRerereError, apply_validated_resolution, capture_pending_preimage,
+                record_pending_resolution, suggest_resolution,
+            )
+            from .test_declarations import command_specs as _declared_test_specs
             subaction = str(getattr(args, "git_rerere_command", "") or "")
+            root = Path(str(getattr(args, "repo", "") or Path.cwd()))
+            campaign_id = str(getattr(args, "campaign", "") or "")
+            validation_evidence: dict[str, Any] = {}
+
+            def _run_current_validation(config: ProjectConfig, test_ids: list[str]) -> bool:
+                nonlocal validation_evidence
+                if not test_ids:
+                    raise GitRerereError("validated rerere reuse requires at least one repository-declared --test ID")
+                specs = _declared_test_specs(config, test_ids)
+                results, _raw = run_specs(
+                    config, specs, verbose=bool(getattr(args, "verbose", False)),
+                    continue_on_error=False, event_run_id=str(os.environ.get("DEVTOOL_RUN_ID") or ""),
+                )
+                validation_evidence = {
+                    "status": "passed" if results and all(item.returncode == 0 for item in results) else "failed",
+                    "test_ids": list(test_ids),
+                    "results": [{"name": item.name, "returncode": item.returncode, "duration_seconds": item.duration_seconds} for item in results],
+                }
+                return bool(results) and all(item.returncode == 0 for item in results)
+
             try:
                 if subaction == "suggest":
-                    payload = suggest_resolution(
-                        Path(str(getattr(args, "repo", "") or Path.cwd())),
-                        campaign_id=str(getattr(args, "campaign", "") or ""),
+                    payload = suggest_resolution(root, campaign_id=campaign_id)
+                elif subaction == "capture":
+                    payload = capture_pending_preimage(root, campaign_id=campaign_id)
+                elif subaction == "record":
+                    config = _load_command_config(args)
+                    test_ids = [str(value) for value in getattr(args, "rerere_tests", []) or []]
+                    if not _run_current_validation(config, test_ids):
+                        raise GitRerereError("Manual rerere resolution failed current validation and was not recorded")
+                    payload = record_pending_resolution(
+                        root, campaign_id=campaign_id, resolved_paths=getattr(args, "rerere_paths", []) or [],
+                        validation=validation_evidence,
                     )
+                elif subaction == "apply":
+                    config = _load_command_config(args)
+                    mode = str(getattr(args, "mode", "") or config.git_config.get("rerere", "off") or "off")
+                    test_ids = [str(value) for value in getattr(args, "rerere_tests", []) or []]
+                    payload = apply_validated_resolution(
+                        root, campaign_id=campaign_id, mode=mode,
+                        validate=lambda: _run_current_validation(config, test_ids),
+                    )
+                    payload["mode"] = mode
+                    if validation_evidence:
+                        payload["current_validation"] = validation_evidence
                 else:
                     parser.error(f"Unknown git rerere command: {subaction}")
                     return 2
-            except GitRerereError as exc:
+            except (GitRerereError, SystemExit) as exc:
                 print(f"Error: {exc}", file=sys.stderr)
                 return 1
             if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
             else:
-                render_status_table([
-                    ("matched", "yes" if payload.get("matched") else "no"),
-                    ("preimage", str((payload.get("preimage") or {}).get("preimage_digest") or "")),
-                ])
+                rows = [("action", subaction)]
+                if "matched" in payload: rows.append(("matched", "yes" if payload.get("matched") else "no"))
+                if "applied" in payload: rows.append(("applied", "yes" if payload.get("applied") else "no"))
+                preimage = payload.get("preimage") if isinstance(payload.get("preimage"), dict) else {}
+                if preimage: rows.append(("preimage", str(preimage.get("preimage_digest") or "")))
+                if payload.get("resolution_digest"): rows.append(("resolution", str(payload.get("resolution_digest"))))
+                render_status_table(rows)
             return 0
         if action == "state":
             try:
@@ -13750,7 +13979,7 @@ def _main_after_parse(
         if action == "campaign":
             from .git_campaign import (
                 GitCampaignError, checkpoint_campaign, load_campaign, range_diff_campaign,
-                restore_campaign_dirty_tree, start_campaign,
+                rollback_campaign, supersede_campaign, restore_campaign_dirty_tree, start_campaign,
             )
             from .git_final_seal import GitFinalSealError, build_campaign_seal, verify_campaign_seal
             subaction = str(getattr(args, "git_campaign_command", "") or "")
@@ -13766,7 +13995,11 @@ def _main_after_parse(
                             group=str(getattr(args, "group", "") or ""),
                         )
                     elif subaction == "checkpoint":
-                        payload = checkpoint_campaign(config, str(args.campaign_id))
+                        payload = checkpoint_campaign(config, str(args.campaign_id), step_id=str(getattr(args, "step", "") or ""))
+                    elif subaction == "rollback":
+                        payload = rollback_campaign(str(args.campaign_id), str(args.selector))
+                    elif subaction == "supersede":
+                        payload = supersede_campaign(str(args.campaign_id), int(args.old_generation), int(args.new_generation))
                     elif subaction == "range-diff":
                         payload = range_diff_campaign(
                             str(args.campaign_id),

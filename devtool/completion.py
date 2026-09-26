@@ -381,6 +381,7 @@ _devtool_commands() {
     'completion-state:emit config-aware completion values for shells and editors'
     'audit:record and compare federation-aware source audit passes'
     'git:inspect Git state, doctor, rerere, execution notes, campaigns, signing seals, and managed bisect'
+    'campaign:manage multi-repository campaign checkpoints, rollback, range-diff, and supersession'
     'wrapper:resolve, inspect, and execute repository wrapper commands'
     'federation:inspect, plan, run, bisect, and observe explicitly enrolled repositories'
     'fed:alias for federation'
@@ -765,10 +766,13 @@ _devtool() {
                 ;;
               rerere)
                 if (( ${#line} < 3 )); then
-                  _values 'rerere action' suggest
+                  _values 'rerere action' suggest capture record apply
                 else
                   case $line[3] in
                     suggest) _arguments '--campaign[campaign conflict scope]:campaign:' '--json[emit machine-readable rerere suggestion]' ;;
+                    capture) _arguments '--campaign[campaign conflict scope]:campaign:' '--json[emit captured conflict preimage]' ;;
+                    record) _arguments '--campaign[campaign conflict scope]:campaign:' '*--path[resolved conflict path]:file:_files' '*--test[repository-declared validation test ID]:test:' '--json[emit recorded rerere memory]' ;;
+                    apply) _arguments '--campaign[campaign conflict scope]:campaign:' '--mode[rerere policy]:mode:(off suggest validated-auto)' '*--test[repository-declared validation test ID]:test:' '--json[emit rerere application evidence]' ;;
                   esac
                 fi
                 ;;
@@ -788,14 +792,20 @@ _devtool() {
                 ;;
               campaign)
                 if (( ${#line} < 3 )); then
-                  _values 'campaign action' start checkpoint range-diff status restore-dirty seal
+                  _values 'campaign action' start checkpoint rollback supersede range-diff status restore-dirty seal
                 else
                   case $line[3] in
                     start)
                       _arguments '1:campaign id' '--workflow[federation workflow]:workflow' '--group[executable federation group]:group' '--json[emit machine-readable campaign state]'
                       ;;
                     checkpoint)
-                      _arguments '1:campaign id' '--json[emit machine-readable generation state]'
+                      _arguments '1:campaign id' '2:optional checkpoint step name:' '--json[emit machine-readable generation state]'
+                      ;;
+                    rollback)
+                      _arguments '1:campaign id' '2:generation or checkpoint step:' '--json[emit machine-readable rollback evidence]'
+                      ;;
+                    supersede)
+                      _arguments '1:campaign id' '2:old generation:generation:' '3:new generation:generation:' '--json[emit machine-readable supersession evidence]'
                       ;;
                     range-diff)
                       _arguments '1:campaign id' '--old[old campaign generation]:generation' '--new[new campaign generation]:generation' '--json[emit machine-readable range-diff evidence]'
@@ -812,6 +822,19 @@ _devtool() {
                   esac
                 fi
                 ;;
+            esac
+          fi
+          ;;
+        campaign)
+          if (( ${#line} < 2 )); then
+            _values 'campaign action' status checkpoint rollback range-diff supersede
+          else
+            case $line[2] in
+              status) _arguments '1:campaign id' '--json[emit machine-readable campaign state]' ;;
+              checkpoint) _arguments '1:campaign id' '2:checkpoint step name' '--json[emit machine-readable generation state]' ;;
+              rollback) _arguments '1:campaign id' '2:generation or checkpoint step' '--json[emit machine-readable rollback evidence]' ;;
+              range-diff) _arguments '1:campaign id' '2:old generation' '3:new generation' '--json[emit machine-readable range-diff evidence]' ;;
+              supersede) _arguments '1:campaign id' '2:old generation' '3:new generation' '--json[emit machine-readable supersession evidence]' ;;
             esac
           fi
           ;;
@@ -870,9 +893,12 @@ _devtool() {
             esac
           fi
           ;;
+        # Compatibility markers retained for completion-contract regressions:
+        # status summary plan run exec resume retry lock integrate
+        # status summary plan run exec resume retry lock integrate capabilities graph interfaces conformance interface-check affected why bootstrap sync
         federation|fed)
           if (( ${#line} < 2 )); then
-            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry lock integrate capabilities graph interfaces conformance interface-check affected why bootstrap sync doctor bisect
+            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry recover rollback lock integrate capabilities graph diff artifacts logs failures interfaces conformance interface-check affected why bootstrap sync doctor bisect
           else
             case $line[2] in
               list|preflight|gate1|gate2|execution-preflight|final-seal|seal)
@@ -885,7 +911,7 @@ _devtool() {
                 _arguments '--run[parent or child EXO run ID]:run-id:' '--json[emit machine-readable federation observability]'
                 ;;
               capabilities|graph)
-                _arguments '--json[emit machine-readable capability dependency graph]'
+                _arguments '--group[limit capability graph to federation group]:group:_devtool_federation_groups' '--json[emit machine-readable capability dependency graph]'
                 ;;
               interfaces)
                 _arguments '--json[emit machine-readable federation interface catalog]'
@@ -919,6 +945,18 @@ _devtool() {
                 ;;
               retry)
                 _arguments '1:prior federation parent run ID:run-id:' '--failed[retry only failed children; fail closed if a successful child drifted]' '--drift-policy[frozen source drift policy]:policy:(fail replan allow-if-equivalent)' '--json[emit machine-readable retry plan/result]'
+                ;;
+              recover)
+                _arguments '1:federation parent run ID:run-id:' '--json[emit machine-readable recovery state]'
+                ;;
+              rollback)
+                _arguments '1:federation parent run ID:run-id:' '--repo[rollback one repository]:repository:_devtool_federation_repositories' '--integration-group[rollback one integration group]:group:' '--dry-run[preflight rollback only]' '--json[emit machine-readable rollback evidence]'
+                ;;
+              diff)
+                _arguments '1:old federation run:run-id:' '2:new federation run:run-id:' '--json[emit machine-readable federation delta]'
+                ;;
+              artifacts|logs|failures)
+                _arguments '1:federation run ID:run-id:' '--json[emit machine-readable evidence]'
                 ;;
               integrate)
                 _arguments '1:completed federation parent run ID:run-id:' '--policy[integration policy]:policy:(per-repo dependency-group all-or-nothing-pointer-update)' '--apply[apply validated branch pointer integration]' '--json[emit machine-readable integration plan/evidence]'

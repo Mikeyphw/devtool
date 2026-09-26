@@ -82,6 +82,45 @@ def _memory_path(repository_id: str, campaign_id: str, preimage_digest: str) -> 
     return state_dir() / "git-rerere" / _safe(repository_id, "repo") / _safe(campaign_id, "no-campaign") / preimage_digest / "resolution.json"
 
 
+def _pending_path(repository_id: str, campaign_id: str) -> Path:
+    return state_dir() / "git-rerere" / _safe(repository_id, "repo") / _safe(campaign_id, "no-campaign") / "pending-preimage.json"
+
+def capture_pending_preimage(repo_root: str | Path, *, campaign_id: str = "") -> dict[str, Any]:
+    preimage = capture_conflict_preimage(repo_root, campaign_id=campaign_id)
+    path = _pending_path(str(preimage["repository_id"]), str(campaign_id or ""))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(preimage, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return {"schema_version": RERERE_SCHEMA_VERSION, "kind": "devtool.git-rerere-preimage", "preimage": preimage, "path": str(path)}
+
+def load_pending_preimage(repo_root: str | Path, *, campaign_id: str = "") -> dict[str, Any]:
+    root = Path(repo_root).expanduser().resolve()
+    repository_id = _repository_id(root)
+    path = _pending_path(repository_id, str(campaign_id or ""))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise GitRerereError("No captured conflict preimage; run 'devtool git rerere capture' before resolving the conflict") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GitRerereError(f"Unable to read captured conflict preimage: {exc}") from exc
+    if not isinstance(payload, dict) or str(payload.get("repository_id") or "") != repository_id or str(payload.get("campaign_id") or "") != str(campaign_id or ""):
+        raise GitRerereError("Captured conflict preimage does not match the current repository/campaign identity")
+    return payload
+
+def record_pending_resolution(
+    repo_root: str | Path, *, campaign_id: str = "", resolved_paths: Iterable[str], validation: Mapping[str, Any]
+) -> dict[str, Any]:
+    root = Path(repo_root).expanduser().resolve()
+    preimage = load_pending_preimage(root, campaign_id=campaign_id)
+    payload = record_resolution(root, preimage, resolved_paths=resolved_paths, campaign_id=campaign_id, validation=validation)
+    try:
+        _pending_path(str(preimage["repository_id"]), str(campaign_id or "")).unlink()
+    except FileNotFoundError:
+        pass
+    return payload
+
+
 def record_resolution(
     repo_root: str | Path,
     preimage: Mapping[str, Any],
@@ -135,7 +174,12 @@ def suggest_resolution(repo_root: str | Path, *, campaign_id: str = "") -> dict[
     preimage = capture_conflict_preimage(repo_root, campaign_id=campaign_id)
     path = _memory_path(str(preimage["repository_id"]), str(campaign_id or ""), str(preimage["preimage_digest"]))
     if not path.is_file():
-        return {"schema_version": RERERE_SCHEMA_VERSION, "kind": "devtool.git-rerere-suggestion", "matched": False, "preimage": preimage}
+        pending = _pending_path(str(preimage["repository_id"]), str(campaign_id or ""))
+        pending.parent.mkdir(parents=True, exist_ok=True)
+        tmp = pending.with_suffix(pending.suffix + ".tmp")
+        tmp.write_text(json.dumps(preimage, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(tmp, pending)
+        return {"schema_version": RERERE_SCHEMA_VERSION, "kind": "devtool.git-rerere-suggestion", "matched": False, "preimage": preimage, "pending_preimage_path": str(pending)}
     try:
         memory = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -201,5 +245,6 @@ def apply_validated_resolution(
 
 __all__ = [
     "GitRerereError", "RERERE_MODES", "apply_validated_resolution", "capture_conflict_preimage",
-    "normalize_rerere_mode", "record_resolution", "suggest_resolution",
+    "capture_pending_preimage", "load_pending_preimage", "normalize_rerere_mode", "record_pending_resolution",
+    "record_resolution", "suggest_resolution",
 ]

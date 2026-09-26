@@ -10,6 +10,12 @@ import subprocess
 from typing import Any, Mapping
 
 from .federation_discovery import resolve_federated_repository
+from .federation_capabilities import build_capability_graph
+from .federation_interfaces import all_interface_reports
+from .federation_lock import FederationSourceLock, compare_federation_source_locks, read_federation_source_lock
+from .federation_plan import build_federated_group_plan, build_federated_plan
+from .federation_resume import checkpoint_root
+from .reservations import repo_key
 from .git_state import GitStateError, collect_git_state
 from .transactions import list_active_transaction_records, transaction_root
 from .xdg import state_dir
@@ -124,6 +130,79 @@ def _load_lineage_records() -> list[dict[str, Any]]:
     return result
 
 
+def _federation_platform_checks(config: Any, subject: str = "") -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    def add(name: str, status: str, detail: str, **data: Any) -> None:
+        checks.append({"name": name, "status": status, "detail": detail, **data})
+
+    try:
+        graph = build_capability_graph(config, strict=True)
+        unresolved = [row.as_dict() for row in graph.resolutions if row.status not in {"resolved", "optional-missing"}]
+        add("capabilities", "ok" if graph.healthy else "error", f"edges={len(graph.edges)} unresolved={len(unresolved)}", unresolved=unresolved)
+    except Exception as exc:
+        add("capabilities", "error", str(exc))
+
+    try:
+        reports = all_interface_reports(config)
+        failed = [report.as_dict() for report in reports if not report.ok]
+        add("interfaces", "ok" if not failed else "error", f"reports={len(reports)} failed={len(failed)}", failed=failed)
+    except Exception as exc:
+        add("interfaces", "error", str(exc))
+
+    try:
+        frozen = read_federation_source_lock(config)
+        if frozen is None:
+            add("frozen-lock", "info", "no persisted federation source lock")
+        else:
+            current_graph = build_federated_group_plan(config, frozen.group) if frozen.subject_kind == "group" else build_federated_plan(config, frozen.workflow)
+            current = FederationSourceLock.from_dict(current_graph.source_lock)
+            verification = compare_federation_source_locks(frozen, current, policy="fail")
+            add("frozen-lock", "ok" if verification.get("matched") else "error", "matched" if verification.get("matched") else "source drift", verification=verification)
+    except Exception as exc:
+        add("frozen-lock", "error", str(exc))
+
+    checkpoint_dir = checkpoint_root(config)
+    checkpoint_rows: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
+    if checkpoint_dir.is_dir():
+        for path in sorted(checkpoint_dir.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                parse_errors.append(f"{path.name}: {exc}"); continue
+            if not isinstance(payload, dict): continue
+            if subject and subject not in {str(payload.get("parent_run_id") or ""), str(payload.get("workflow") or ""), str(payload.get("group") or "")}:
+                continue
+            checkpoint_rows.append(payload)
+    missing_reuse_evidence = 0; missing_artifact_evidence = 0; missing_placement = 0; hierarchy_issues = 0
+    for payload in checkpoint_rows:
+        for child in payload.get("children", []):
+            if not isinstance(child, Mapping): continue
+            succeeded = str(child.get("status") or "") == "succeeded" and int(child.get("exit_code", 0) or 0) == 0
+            if succeeded and not isinstance(child.get("predicates"), Mapping): missing_reuse_evidence += 1
+            if child.get("artifact_inputs") and not (child.get("artifact_identity") or child.get("evidence_digest")): missing_artifact_evidence += 1
+            contract = child.get("child_contract") or child.get("contract_ref") or child.get("federation_ref")
+            if contract and not child.get("placement"): missing_placement += 1
+            lineage = child.get("run_lineage") if isinstance(child.get("run_lineage"), Mapping) else {}
+            if lineage.get("relationship") == "child" and not (lineage.get("parent_run_id") or child.get("parent_node_id")): hierarchy_issues += 1
+    add("resume-checkpoints", "error" if parse_errors else "ok", f"checkpoints={len(checkpoint_rows)} parse_errors={len(parse_errors)}", parse_errors=parse_errors, missing_reuse_evidence=missing_reuse_evidence)
+    add("artifact-provenance", "warning" if missing_artifact_evidence else "ok", f"missing_evidence={missing_artifact_evidence}")
+    add("provider-placement", "warning" if missing_placement else "ok", f"missing_placement={missing_placement}")
+    add("hierarchy-lineage", "error" if hierarchy_issues else "ok", f"issues={hierarchy_issues}")
+
+    sync_root = state_dir() / "federation-sync" / repo_key(Path(config.repo_root))
+    sync_journals = list(sync_root.glob("*/*.json")) if sync_root.is_dir() else []
+    bad_sync: list[str] = []
+    for path in sync_journals:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            bad_sync.append(str(path)); continue
+        if not isinstance(payload, dict) or not isinstance(payload.get("federation_sync"), Mapping): bad_sync.append(str(path))
+    add("bootstrap-sync", "error" if bad_sync else "ok", f"recovery_journals={len(sync_journals)} malformed={len(bad_sync)}", malformed=bad_sync)
+    return checks
+
+
 def federation_doctor(config: Any, subject: str = "") -> dict[str, Any]:
     wanted = str(subject or "").strip()
     repositories: list[dict[str, Any]] = []
@@ -162,14 +241,17 @@ def federation_doctor(config: Any, subject: str = "") -> dict[str, Any]:
         if str(row.get("execution_provider") or "").startswith("ssh") and not attestation and not str(row.get("source_transport_evidence_digest") or ""):
             inconsistencies.append({"repository": repository, "kind": "remote-attestation-missing", "lineage_path": row.get("_path")})
 
+    platform_checks = _federation_platform_checks(config, wanted)
+    platform_ok = not any(str(row.get("status") or "") == "error" for row in platform_checks)
     return {
         "schema_version": DOCTOR_SCHEMA_VERSION,
         "kind": "devtool.federation-git-doctor",
         "subject": wanted,
-        "ok": all(bool(row.get("ok")) and bool((row.get("doctor") or {}).get("ok", True)) for row in repositories) and not inconsistencies,
+        "ok": all(bool(row.get("ok")) and bool((row.get("doctor") or {}).get("ok", True)) for row in repositories) and not inconsistencies and platform_ok,
         "repositories": repositories,
         "lineage_records": len(lineage_rows),
         "inconsistencies": inconsistencies,
+        "platform_checks": platform_checks,
     }
 
 

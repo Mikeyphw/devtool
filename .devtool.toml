@@ -573,7 +573,8 @@ roadmap-gate3 = [
   { id = "git-frx17", ref = "test:roadmap-git-frx17", depends_on = ["syntax"] },
   { id = "git-frx18-final", ref = "test:roadmap-git-frx18-final", depends_on = ["git-frx17"] },
   { id = "frx-y12-adoption", ref = "test:roadmap-frx-y12-adoption", depends_on = ["git-frx18-final"] },
-  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y12-adoption"] },
+  { id = "promise-remediation", ref = "test:roadmap-git-frx-final-promise-remediation", depends_on = ["frx-y12-adoption"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["promise-remediation"] },
 ]
 
 roadmap-frx-y09 = [
@@ -719,6 +720,7 @@ roadmap-current = [
   { id = "git-frx17", ref = "test:roadmap-git-frx17", depends_on = ["git-frx16"] },
   { id = "git-frx18", ref = "test:roadmap-git-frx18-final", depends_on = ["git-frx17"] },
   { id = "frx-y12", ref = "test:roadmap-frx-y12-adoption", depends_on = ["git-frx18"] },
+  { id = "final-promise-remediation", ref = "test:roadmap-git-frx-final-promise-remediation", depends_on = ["frx-y12"] },
 ]
 
 
@@ -863,6 +865,16 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-frx-y12-adoption.xml",
   "tests/test_frx_y12_shared_library_final_reseal.py",
+]
+
+[[test]]
+id = "roadmap-git-frx-final-promise-remediation"
+name = "GIT-FRX final roadmap promise remediation and Gate 3 reseal contract"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-git-frx-final-promise-remediation.xml",
+  "tests/test_git_frx_final_promise_remediation.py",
 ]
 
 [[test]]
