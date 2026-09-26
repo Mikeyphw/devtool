@@ -209,6 +209,17 @@ def producer_identity(
         "federation_child_run_id",
         "federation_artifact_return_root",
         "federation_path_mapping",
+        "federation_attestation_repository",
+        "federation_attestation_parent_run_id",
+        "federation_attestation_parent_node_id",
+        "federation_attestation_child_run_id",
+        "federation_attestation_federation_ref",
+        "federation_attestation_start_commit",
+        "federation_attestation_config_sha256",
+        "federation_attestation_git_remote_sha256",
+        "federation_source_transport_requested",
+        "federation_source_transport_effective",
+        "federation_source_transport_evidence_digest",
     )
     federation = {key.removeprefix("federation_"): meta.get(key) for key in federation_keys if meta.get(key) not in (None, "")}
     if federation:

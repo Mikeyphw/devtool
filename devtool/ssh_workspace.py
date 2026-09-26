@@ -8,7 +8,7 @@ mirror.  Managed paths are guarded by a workspace marker and a canonical-root
 check before any rsync operation that can delete remote files.
 """
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 import os
@@ -677,6 +677,148 @@ def _write_sync_state(config: SSHRunnerConfig, spec: SSHWorkspaceSpec, payload: 
         detail = (completed.stderr or completed.stdout or "").strip()
         raise ValueError(f"SSH workspace sync-state update failed with exit {completed.returncode}: {detail or 'no diagnostic output'}")
 
+def _git_bundle_sync(
+    config: SSHRunnerConfig,
+    spec: SSHWorkspaceSpec,
+    *,
+    worker: SSHWorkerProbe,
+    source_plan: Any,
+    retain_lease: bool,
+) -> dict[str, Any]:
+    """Materialize a frozen federation child from a verified Git bundle.
+
+    This is source transport only. FRX-Y11 remains the authority that produced
+    the frozen lineage; SSH merely transfers and materializes that exact object
+    closure into a Devtool-owned managed/ephemeral worker workspace.
+    """
+    from .federation_git_transport import (
+        build_remote_bundle_materialization_shell,
+        bundle_transport_evidence,
+        create_federated_git_bundle,
+    )
+    from .ssh_tmux_runner import _copy_local_file_to_remote
+
+    if spec.mode == "existing":
+        raise ValueError("git-bundle source transport requires a Devtool-managed or ephemeral SSH workspace")
+    if not worker.tools.get("git"):
+        raise ValueError("git-bundle source transport requires git on the remote worker")
+
+    from .ssh_resilience import acquire_workspace_lease, release_workspace_lease
+    from .ssh_tmux_runner import worker_session_name
+
+    lease = None
+    bundle = None
+    remote_bundle = ""
+    run_id = str(config.operation_id or os.environ.get("DEVTOOL_RUN_ID") or spec.instance_id).strip()
+    session_prefix = worker_session_name(config, operation="commands", repository=spec.remote_path, run_id=run_id)
+    lease = acquire_workspace_lease(config, spec, run_id=run_id, session_prefix=session_prefix, runner=_run_remote)
+    try:
+        status_before = workspace_status(config, spec)
+        if status_before.exists and (not status_before.is_directory or not status_before.safe):
+            raise ValueError(f"Refusing to materialize unsafe SSH workspace {spec.remote_path}: {status_before.detail}")
+        prepared = prepare_workspace(config, spec)
+        canonical = prepared.canonical_path or spec.remote_path
+        sync_id = _new_sync_id(spec)
+        source_revision = _source_revision(spec.repo_root)
+        bundle = create_federated_git_bundle(spec.repo_root, source_plan)
+        remote_bundle_dir = spec.workspace_root.rstrip("/") + "/.bundles"
+        remote_bundle = remote_bundle_dir + "/" + sync_id + ".bundle"
+        mkdir = _run_remote(config, f"set -eu; umask 077; mkdir -p -- {shlex.quote(remote_bundle_dir)}")
+        if mkdir.returncode != 0:
+            detail = (mkdir.stderr or mkdir.stdout or "").strip()
+            raise ValueError(f"Unable to prepare remote Git-bundle staging directory: {detail or mkdir.returncode}")
+        _copy_local_file_to_remote(config, bundle.path, remote_bundle)
+
+        transport: dict[str, Any] = {
+            "planned_mode": "git-bundle",
+            "effective_mode": "git-bundle",
+            "source_transport": source_plan.as_dict(),
+            "reconciliation": {"required": False, "complete": False},
+        }
+        _write_sync_state(config, spec, {
+            "schema_version": 1, "state": "in-progress", "sync_id": sync_id,
+            "started_unix": int(time.time()), "source_revision": source_revision,
+            "transport": transport, "federation_transport_identity": federation_transport_identity(spec.repo_root),
+        })
+        script = build_remote_bundle_materialization_shell(
+            source_plan, bundle, remote_root=canonical, remote_bundle=remote_bundle,
+        )
+        completed = _run_remote(config, script, timeout=None)
+        if completed.returncode != 0:
+            evidence = bundle_transport_evidence(
+                source_plan, bundle, remote_root=canonical, remote_bundle=remote_bundle, verified=False,
+            )
+            transport["source_transport_evidence"] = evidence
+            transport["reconciliation"] = {"required": False, "complete": False, "returncode": int(completed.returncode)}
+            _write_sync_state(config, spec, {
+                "schema_version": 1, "state": "partial", "recoverable": True, "sync_id": sync_id,
+                "updated_unix": int(time.time()), "returncode": int(completed.returncode),
+                "source_revision": source_revision, "transport": transport,
+                "federation_transport_identity": federation_transport_identity(spec.repo_root),
+            })
+            detail = (completed.stderr or completed.stdout or "").strip()
+            raise ValueError(
+                "Federated git-bundle materialization failed; source transport did not fall back to rsync: "
+                + (detail or f"exit {completed.returncode}")
+            )
+
+        evidence = bundle_transport_evidence(
+            source_plan, bundle, remote_root=canonical, remote_bundle=remote_bundle, verified=True,
+        )
+        transport["source_transport_evidence"] = evidence
+        transport["reconciliation"] = {"required": False, "complete": True, "returncode": 0}
+        federation = federation_transport_identity(spec.repo_root)
+        payload = _metadata_payload(
+            spec, changes=0, sync_id=sync_id, source_revision=source_revision,
+            transport=transport, federation=federation,
+        )
+        _write_sync_state(config, spec, {
+            "schema_version": 1, "state": "complete", "recoverable": False, "sync_id": sync_id,
+            "completed_unix": int(time.time()), "source_revision": source_revision, "change_count": 0,
+            "transport": transport, "federation_transport_identity": federation,
+        })
+        _write_remote_metadata(config, spec, payload)
+        status_after = workspace_status(config, spec)
+        lease_payload = lease.as_dict() if lease is not None else {}
+        if lease is not None and not retain_lease:
+            release_workspace_lease(config, lease, runner=_run_remote)
+            lease_payload = {}
+            lease = None
+        return {
+            "schema_version": 1,
+            "kind": "ssh-workspace-sync",
+            "ok": status_after.exists and status_after.safe,
+            "workspace": spec.as_dict(),
+            "status_before": status_before.as_dict(),
+            "status_after": status_after.as_dict(),
+            "changes": [],
+            "change_count": 0,
+            "sync_id": sync_id,
+            "source_revision": source_revision,
+            "delete_enabled": spec.delete,
+            "transport_mode": "git-bundle",
+            "source_transport_requested": source_plan.requested_transport,
+            "source_transport_effective": source_plan.effective_transport,
+            "source_transport_evidence_digest": str(evidence.get("evidence_digest") or ""),
+            "transport": transport,
+            "federation_transport_identity": federation,
+            "lease": lease_payload,
+            "detail": "frozen federation Git object closure materialized and remotely attested",
+        }
+    except Exception:
+        if remote_bundle:
+            try:
+                _run_remote(config, f"rm -f -- {shlex.quote(remote_bundle)}")
+            except Exception:
+                pass
+        if lease is not None:
+            release_workspace_lease(config, lease, runner=_run_remote)
+        raise
+    finally:
+        if bundle is not None:
+            bundle.path.unlink(missing_ok=True)
+
+
 def sync_workspace(
     config: SSHRunnerConfig,
     spec: SSHWorkspaceSpec,
@@ -687,16 +829,61 @@ def sync_workspace(
 ) -> dict[str, Any]:
     worker = worker or probe_worker(config)
     federation = federation_transport_identity(spec.repo_root)
+    from .federation_git_transport import plan_federated_git_source
+    from .invocation_origin import federation_lineage_from_environment
+
+    lineage = federation_lineage_from_environment() or {}
+    source_plan = plan_federated_git_source(
+        spec.repo_root, lineage=lineage, requested_transport=config.source_transport,
+    )
+    if source_plan.effective_transport == "git-bundle" and not worker.tools.get("git"):
+        if source_plan.requested_transport == "git-bundle":
+            raise ValueError("Strict git-bundle source transport requires git on the remote worker")
+        source_plan = replace(
+            source_plan, effective_transport="rsync", eligible=False,
+            reason="remote worker does not provide git; auto source transport selected rsync",
+        )
+    if spec.mode == "existing" and source_plan.effective_transport == "git-bundle":
+        if source_plan.requested_transport == "git-bundle":
+            raise ValueError("Strict git-bundle source transport requires a managed or ephemeral SSH workspace")
+        source_plan = replace(
+            source_plan, effective_transport="rsync", eligible=False,
+            reason="existing SSH checkouts retain rsync compatibility transport",
+        )
+
+    if dry_run and source_plan.effective_transport == "git-bundle":
+        status = workspace_status(config, spec)
+        return {
+            "schema_version": 1, "kind": "ssh-workspace-sync-plan", "ok": True, "dry_run": True,
+            "workspace": spec.as_dict(), "status": status.as_dict(), "changes": [], "change_count": 0,
+            "would_create_workspace": not status.exists and spec.mode != "existing",
+            "delete_enabled": spec.delete,
+            "transport_mode": "git-bundle",
+            "source_transport_requested": source_plan.requested_transport,
+            "source_transport_effective": source_plan.effective_transport,
+            "transport": {"source_transport": source_plan.as_dict(), "federation_transport_identity": federation},
+            "detail": "plan only; frozen federation source will use verified git-bundle transport",
+        }
     if dry_run:
         payload = plan_workspace_sync(config, spec, worker=worker)
         status = SSHWorkspaceStatus(**payload["status"])
         remote_bytes = _remote_workspace_bytes(config, spec, status)
         transport_plan = seed_plan(spec, status, worker, remote_bytes=remote_bytes)
-        payload["transport"] = {"plan": transport_plan.as_dict(), "federation_transport_identity": federation}
+        payload["transport"] = {
+            "plan": transport_plan.as_dict(), "source_transport": source_plan.as_dict(),
+            "federation_transport_identity": federation,
+        }
+        payload["source_transport_requested"] = source_plan.requested_transport
+        payload["source_transport_effective"] = source_plan.effective_transport
         return payload
 
+    if source_plan.effective_transport == "git-bundle":
+        return _git_bundle_sync(
+            config, spec, worker=worker, source_plan=source_plan, retain_lease=retain_lease,
+        )
+
     # Fail before creating/claiming a managed directory if either side is not
-    # ready for synchronization. This keeps bootstrap/tool failures non-mutating.
+    # ready for synchronization. This keeps rsync bootstrap/tool failures non-mutating.
     _rsync_executable()
     if not worker.tools.get("rsync"):
         raise ValueError("SSH workspace sync requires rsync on the remote worker; run 'devtool ssh bootstrap' first")
@@ -723,6 +910,7 @@ def sync_workspace(
             "planned_mode": transport_plan.mode,
             "effective_mode": "rsync-delta",
             "plan": transport_plan.as_dict(),
+            "source_transport": source_plan.as_dict(),
             "archive": {"used": False},
             "reconciliation": {"required": True, "complete": False},
         }
@@ -807,6 +995,8 @@ def sync_workspace(
                 "changes": changes,
                 "change_count": len(changes),
                 "transport_mode": transport["effective_mode"],
+                "source_transport_requested": source_plan.requested_transport,
+                "source_transport_effective": source_plan.effective_transport,
                 "transport": transport,
                 "federation_transport_identity": federation,
                 "detail": detail or f"rsync failed with exit {completed.returncode}; the next sync will resume from rsync partial state",
@@ -840,6 +1030,8 @@ def sync_workspace(
             "source_revision": source_revision,
             "delete_enabled": spec.delete,
             "transport_mode": transport["effective_mode"],
+            "source_transport_requested": source_plan.requested_transport,
+            "source_transport_effective": source_plan.effective_transport,
             "transport": transport,
             "federation_transport_identity": federation,
             "lease": lease_payload,

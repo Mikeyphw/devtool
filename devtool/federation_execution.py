@@ -884,6 +884,7 @@ def _run_federated_workflow_sequential(
                 resolution.root,
                 identity=RepositoryIdentity.from_dict(identity),
                 config_path=resolution.config_path or None,
+                lineage=lineage,
             )))
             child_started = time.monotonic()
             active_child_started = child_started
@@ -1408,6 +1409,7 @@ def _run_federated_workflow_parallel(
             resolution.root,
             identity=RepositoryIdentity.from_dict(identity),
             config_path=resolution.config_path or None,
+            lineage=lineage,
         )))
 
         child_started = time.monotonic()
@@ -1974,6 +1976,7 @@ def run_federated_direct_child(
         resolution.root,
         identity=RepositoryIdentity.from_dict(identity),
         config_path=resolution.config_path or None,
+        lineage=lineage,
     )))
     child_started = time.monotonic()
     try:

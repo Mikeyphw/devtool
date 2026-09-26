@@ -43,6 +43,7 @@ _DEFAULT_PATTERNS = (
     "**/coverage.xml",
     "**/coverage.json",
     ".devtool/ssh-runtime-logs/***",
+    ".devtool-federation-attestation.json",
 )
 
 

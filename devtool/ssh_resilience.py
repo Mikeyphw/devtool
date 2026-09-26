@@ -325,6 +325,20 @@ def runs_payload(config: SSHRunnerConfig) -> dict[str, Any]:
                 "lease_dir": legacy[8],
             })
             stdout_exists = stdout_size = stderr_exists = stderr_size = "0"
+        elif len(fields) == 18:
+            # OCI-06 briefly persisted a 13-field extended record before
+            # SSH-02 added finished_unix, durable output paths, typed contract
+            # identity and federation lineage. Keep those worker histories
+            # readable instead of shifting phase/source/image fields by one.
+            oci06_keys = (
+                "workspace_id", "workspace_path", "started_unix", "lease_dir",
+                "execution_mode", "execution_provider", "phase_node_id", "source_sync_id",
+                "oci_container", "oci_image_reference", "oci_image_digest",
+                "oci_definition_digest", "oci_build_context_sha256",
+            )
+            record = {key: "" for key in metadata_keys}
+            record.update(dict(zip(oci06_keys, fields[5:])))
+            stdout_exists = stdout_size = stderr_exists = stderr_size = "0"
         else:
             minimum = 5 + len(metadata_keys) + 4
             fields.extend([""] * (minimum - len(fields)))

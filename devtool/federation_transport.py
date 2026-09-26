@@ -30,16 +30,28 @@ FEDERATION_ATTESTATION_SCHEMA_VERSION = 1
 @dataclass(frozen=True, slots=True)
 class FederationRepositoryAttestation:
     schema_version: int = FEDERATION_ATTESTATION_SCHEMA_VERSION
+    repository: str = ""
+    parent_run_id: str = ""
+    parent_node_id: str = ""
+    child_run_id: str = ""
+    federation_ref: str = ""
+    start_commit: str = ""
     config_sha256: str = ""
     git_remote_sha256: str = ""
 
     @property
     def available(self) -> bool:
-        return bool(self.config_sha256 or self.git_remote_sha256)
+        return bool(self.config_sha256 or self.git_remote_sha256 or self.start_commit)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
+            "repository": self.repository,
+            "parent_run_id": self.parent_run_id,
+            "parent_node_id": self.parent_node_id,
+            "child_run_id": self.child_run_id,
+            "federation_ref": self.federation_ref,
+            "start_commit": self.start_commit,
             "config_sha256": self.config_sha256,
             "git_remote_sha256": self.git_remote_sha256,
             "available": self.available,
@@ -67,9 +79,18 @@ _TRANSPORT_KEYS = (
     "federation_artifact_return_root",
     "federation_path_mapping",
     "federation_attestation_schema_version",
+    "federation_attestation_repository",
+    "federation_attestation_parent_run_id",
+    "federation_attestation_parent_node_id",
+    "federation_attestation_child_run_id",
+    "federation_attestation_federation_ref",
+    "federation_attestation_start_commit",
     "federation_attestation_config_sha256",
     "federation_attestation_git_remote_sha256",
     "federation_attestation_required",
+    "federation_source_transport_requested",
+    "federation_source_transport_effective",
+    "federation_source_transport_evidence_digest",
 )
 
 
@@ -134,6 +155,7 @@ def build_repository_attestation(
     *,
     identity: RepositoryIdentity | Mapping[str, Any] | None = None,
     config_path: str | Path | None = None,
+    lineage: Mapping[str, Any] | None = None,
 ) -> FederationRepositoryAttestation:
     """Build path-independent repository evidence from the local checkout.
 
@@ -174,17 +196,37 @@ def build_repository_attestation(
         if candidate is not None:
             config_sha256 = _sha256_file(candidate)
 
-    git_remote_sha256 = _git_remote_sha256(root)
-    if identity_obj is not None and identity_obj.git_remote_fingerprint:
-        if git_remote_sha256 and git_remote_sha256 != identity_obj.git_remote_fingerprint:
+    lineage = {str(k): v for k, v in (lineage or {}).items()}
+    git_lineage = lineage.get("git_lineage") if isinstance(lineage.get("git_lineage"), Mapping) else {}
+    frozen_remote_digest = str((git_lineage or {}).get("remote_locator_digest") or "").strip()
+    if frozen_remote_digest:
+        from .federation_lock import git_remote_locator
+        safe_remote = git_remote_locator(root)
+        observed_remote_digest = hashlib.sha256(safe_remote.encode("utf-8")).hexdigest() if safe_remote else ""
+        if observed_remote_digest and observed_remote_digest != frozen_remote_digest:
             raise FederationTransportError(
-                "Federated child Git remote changed after repository identity was resolved"
+                "Federated child normalized Git remote changed after the source lock was resolved"
             )
-        # If git is temporarily unavailable locally, retain the already-computed
-        # secret-neutral identity signal from FRX-01.
-        git_remote_sha256 = git_remote_sha256 or identity_obj.git_remote_fingerprint
+        git_remote_sha256 = observed_remote_digest or frozen_remote_digest
+    else:
+        git_remote_sha256 = _git_remote_sha256(root)
+        if identity_obj is not None and identity_obj.git_remote_fingerprint:
+            if git_remote_sha256 and git_remote_sha256 != identity_obj.git_remote_fingerprint:
+                raise FederationTransportError(
+                    "Federated child Git remote changed after repository identity was resolved"
+                )
+            # Legacy FRX-09 children use the already-computed path-independent
+            # remote fingerprint. GIT-FRX-16 children prefer the frozen,
+            # credential-stripped remote-locator digest above.
+            git_remote_sha256 = git_remote_sha256 or identity_obj.git_remote_fingerprint
 
     return FederationRepositoryAttestation(
+        repository=str(lineage.get("repository") or ""),
+        parent_run_id=str(lineage.get("parent_run_id") or ""),
+        parent_node_id=str(lineage.get("parent_node_id") or ""),
+        child_run_id=str(lineage.get("child_run_id") or ""),
+        federation_ref=str(lineage.get("federation_ref") or ""),
+        start_commit=str((git_lineage or {}).get("start_commit") or ""),
         config_sha256=config_sha256,
         git_remote_sha256=git_remote_sha256,
     )
@@ -194,6 +236,12 @@ def federation_attestation_environment(attestation: FederationRepositoryAttestat
     return {
         "DEVTOOL_FEDERATION_ATTESTATION_SCHEMA_VERSION": str(attestation.schema_version),
         "DEVTOOL_FEDERATION_ATTESTATION_AVAILABLE": "1" if attestation.available else "0",
+        "DEVTOOL_FEDERATION_ATTESTATION_REPOSITORY": attestation.repository,
+        "DEVTOOL_FEDERATION_ATTESTATION_PARENT_RUN_ID": attestation.parent_run_id,
+        "DEVTOOL_FEDERATION_ATTESTATION_PARENT_NODE_ID": attestation.parent_node_id,
+        "DEVTOOL_FEDERATION_ATTESTATION_CHILD_RUN_ID": attestation.child_run_id,
+        "DEVTOOL_FEDERATION_ATTESTATION_FEDERATION_REF": attestation.federation_ref,
+        "DEVTOOL_FEDERATION_ATTESTATION_START_COMMIT": attestation.start_commit,
         "DEVTOOL_FEDERATION_ATTESTATION_CONFIG_SHA256": attestation.config_sha256,
         "DEVTOOL_FEDERATION_ATTESTATION_GIT_REMOTE_SHA256": attestation.git_remote_sha256,
     }
@@ -219,6 +267,12 @@ def federation_attestation_from_environment(environment: Mapping[str, str] | Non
         raise FederationTransportError("Invalid federated repository attestation availability marker")
     attestation = FederationRepositoryAttestation(
         schema_version=schema,
+        repository=str(env.get("DEVTOOL_FEDERATION_ATTESTATION_REPOSITORY") or "").strip(),
+        parent_run_id=str(env.get("DEVTOOL_FEDERATION_ATTESTATION_PARENT_RUN_ID") or "").strip(),
+        parent_node_id=str(env.get("DEVTOOL_FEDERATION_ATTESTATION_PARENT_NODE_ID") or "").strip(),
+        child_run_id=str(env.get("DEVTOOL_FEDERATION_ATTESTATION_CHILD_RUN_ID") or "").strip(),
+        federation_ref=str(env.get("DEVTOOL_FEDERATION_ATTESTATION_FEDERATION_REF") or "").strip(),
+        start_commit=str(env.get("DEVTOOL_FEDERATION_ATTESTATION_START_COMMIT") or "").strip(),
         config_sha256=str(env.get("DEVTOOL_FEDERATION_ATTESTATION_CONFIG_SHA256") or "").strip(),
         git_remote_sha256=str(env.get("DEVTOOL_FEDERATION_ATTESTATION_GIT_REMOTE_SHA256") or "").strip(),
     )
@@ -265,7 +319,38 @@ def verify_federation_environment_attestation(
     expected = federation_attestation_from_environment(environment)
     if not expected.available:
         return expected
+    import os
+
+    env = os.environ if environment is None else environment
+    routing_checks = (
+        (expected.repository, str(env.get("DEVTOOL_FEDERATION_REPOSITORY") or "").strip(), "repository"),
+        (expected.parent_run_id, str(env.get("DEVTOOL_FEDERATION_PARENT_RUN_ID") or "").strip(), "parent run"),
+        (expected.parent_node_id, str(env.get("DEVTOOL_FEDERATION_PARENT_NODE_ID") or "").strip(), "parent node"),
+        (expected.child_run_id, str(env.get("DEVTOOL_RUN_ID") or "").strip(), "child run"),
+        (expected.federation_ref, str(env.get("DEVTOOL_FEDERATION_REF") or "").strip(), "federation ref"),
+    )
+    for wanted, observed, label in routing_checks:
+        if wanted and wanted != observed:
+            raise FederationTransportError(
+                f"Federated repository attestation mismatch: {label} identity changed across provider re-entry"
+            )
+
     actual = build_repository_attestation(repo_root, config_path=config_path)
+    if expected.start_commit:
+        try:
+            completed = subprocess.run(
+                ["git", "-C", str(Path(repo_root).expanduser().resolve(strict=False)), "rev-parse", "HEAD"],
+                text=True, capture_output=True, check=False, timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise FederationTransportError(
+                "Federated repository attestation cannot verify the frozen start commit"
+            ) from exc
+        actual_head = completed.stdout.strip() if completed.returncode == 0 else ""
+        if actual_head != expected.start_commit:
+            raise FederationTransportError(
+                "Federated repository attestation mismatch: HEAD does not match the frozen start commit"
+            )
     if expected.config_sha256 and actual.config_sha256 != expected.config_sha256:
         raise FederationTransportError(
             "Federated repository attestation mismatch: .devtool.toml digest does not identify the enrolled child"
@@ -274,11 +359,17 @@ def verify_federation_environment_attestation(
         raise FederationTransportError(
             "Federated repository attestation mismatch: Git remote identity does not identify the enrolled child"
         )
-    return actual
+    return FederationRepositoryAttestation(
+        repository=expected.repository, parent_run_id=expected.parent_run_id,
+        parent_node_id=expected.parent_node_id, child_run_id=expected.child_run_id,
+        federation_ref=expected.federation_ref, start_commit=expected.start_commit,
+        config_sha256=actual.config_sha256, git_remote_sha256=actual.git_remote_sha256,
+    )
 
 
-def _attestation_values(metadata: Mapping[str, Any]) -> tuple[str, str]:
+def _attestation_values(metadata: Mapping[str, Any]) -> tuple[str, str, str]:
     return (
+        str(metadata.get("federation_attestation_start_commit") or "").strip(),
         str(metadata.get("federation_attestation_config_sha256") or "").strip(),
         str(metadata.get("federation_attestation_git_remote_sha256") or "").strip(),
     )
@@ -304,9 +395,9 @@ def build_federation_attestation_shell(
 ) -> str:
     """Return a fail-closed POSIX-shell probe for command-mode remote providers."""
 
-    config_sha256, git_remote_sha256 = _attestation_values(metadata)
+    start_commit, config_sha256, git_remote_sha256 = _attestation_values(metadata)
     required = bool(metadata.get("federation_attestation_required"))
-    if not config_sha256 and not git_remote_sha256:
+    if not start_commit and not config_sha256 and not git_remote_sha256:
         if required:
             raise FederationTransportError(
                 "Federated remote execution has no portable repository attestation signal"
@@ -317,15 +408,24 @@ def build_federation_attestation_shell(
         raise FederationTransportError("Federated repository attestation requires a provider-resolved remote root")
 
     root_assignment = _attestation_root_assignment(root)
+    qstart = shlex.quote(start_commit)
     qconfig = shlex.quote(config_sha256)
     qremote = shlex.quote(git_remote_sha256)
     parts = [
         root_assignment,
+        f"frx_expected_start={qstart}",
         f"frx_expected_config={qconfig}",
         f"frx_expected_remote={qremote}",
         '[ -d "$frx_root" ] || { echo "Devtool federation: remote repository root is missing" >&2; exit 74; }',
         "frx_matched=0",
     ]
+    if start_commit:
+        parts.extend([
+            'command -v git >/dev/null 2>&1 || { echo "Devtool federation: git is required for frozen-start attestation" >&2; exit 74; }',
+            'frx_actual_start="$(git -C "$frx_root" rev-parse HEAD 2>/dev/null || true)"',
+            '[ "$frx_actual_start" = "$frx_expected_start" ] || { echo "Devtool federation: remote frozen start commit attestation mismatch" >&2; exit 74; }',
+            "frx_matched=1",
+        ])
     if config_sha256:
         parts.extend([
             'command -v sha256sum >/dev/null 2>&1 || { echo "Devtool federation: sha256sum is required for repository attestation" >&2; exit 74; }',
@@ -414,7 +514,7 @@ def build_federation_transport_metadata(
     if not remote:
         remote = local
 
-    attestation = build_repository_attestation(local, identity=identity)
+    attestation = build_repository_attestation(local, identity=identity, lineage=lineage)
     if remote_required and not attestation.available:
         raise FederationTransportError(
             "Federated remote repository cannot be independently attested: "
@@ -479,6 +579,12 @@ def build_federation_transport_metadata(
         "federation_artifact_return_root": return_root,
         "federation_path_mapping": mapping,
         "federation_attestation_schema_version": attestation.schema_version,
+        "federation_attestation_repository": attestation.repository,
+        "federation_attestation_parent_run_id": attestation.parent_run_id,
+        "federation_attestation_parent_node_id": attestation.parent_node_id,
+        "federation_attestation_child_run_id": attestation.child_run_id,
+        "federation_attestation_federation_ref": attestation.federation_ref,
+        "federation_attestation_start_commit": attestation.start_commit,
         "federation_attestation_config_sha256": attestation.config_sha256,
         "federation_attestation_git_remote_sha256": attestation.git_remote_sha256,
         "federation_attestation_required": remote_required,

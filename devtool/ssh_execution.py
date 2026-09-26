@@ -64,6 +64,11 @@ class SSHExecutionPreparation:
             "ssh_sync_automatic": bool(self.sync),
             "ssh_source_sync_id": str(self.sync.get("sync_id") or ""),
             "ssh_source_revision": dict(self.sync.get("source_revision") or {}),
+            "ssh_source_transport_requested": str(self.sync.get("source_transport_requested") or ""),
+            "ssh_source_transport_effective": str(self.sync.get("source_transport_effective") or ""),
+            "federation_source_transport_requested": str(self.sync.get("source_transport_requested") or ""),
+            "federation_source_transport_effective": str(self.sync.get("source_transport_effective") or ""),
+            "federation_source_transport_evidence_digest": str(self.sync.get("source_transport_evidence_digest") or ""),
             "ssh_toolchain_kind": str(self.toolchain.get("kind") or "generic"),
             "ssh_toolchain_detail": str(self.toolchain.get("detail") or ""),
             "ssh_workspace_lease": dict(self.lease),
@@ -376,19 +381,35 @@ def prepare_ssh_command_execution(
                 run_identity = workspace.instance_id
             if dry_run:
                 if worker.tools.get("rsync"):
-                    sync = plan_workspace_sync(config, workspace, worker=worker)
+                    sync = sync_workspace(config, workspace, dry_run=True, worker=worker)
                 else:
-                    sync = {
-                        "schema_version": 1,
-                        "kind": "ssh-workspace-sync-plan",
-                        "ok": True,
-                        "dry_run": True,
-                        "workspace": workspace.as_dict(),
-                        "changes": [],
-                        "change_count": 0,
-                        "would_create_workspace": True,
-                        "detail": "sync planning deferred until the planned worker bootstrap installs rsync",
-                    }
+                    # Strict/eligible git-bundle transport does not depend on rsync.
+                    # Ask the source-transport planner first so dry-run/preflight
+                    # truth does not incorrectly describe a bundle child as rsync.
+                    from .federation_git_transport import plan_federated_git_source
+                    from .invocation_origin import federation_lineage_from_environment
+                    source_plan = plan_federated_git_source(
+                        repo_root,
+                        lineage=federation_lineage_from_environment() or {},
+                        requested_transport=config.source_transport,
+                    )
+                    if source_plan.effective_transport == "git-bundle":
+                        sync = sync_workspace(config, workspace, dry_run=True, worker=worker)
+                    else:
+                        sync = {
+                            "schema_version": 1,
+                            "kind": "ssh-workspace-sync-plan",
+                            "ok": True,
+                            "dry_run": True,
+                            "workspace": workspace.as_dict(),
+                            "changes": [],
+                            "change_count": 0,
+                            "would_create_workspace": True,
+                            "source_transport_requested": source_plan.requested_transport,
+                            "source_transport_effective": source_plan.effective_transport,
+                            "transport": {"source_transport": source_plan.as_dict()},
+                            "detail": "rsync planning deferred until the planned worker bootstrap installs rsync",
+                        }
                 remote_root = workspace.remote_path
                 session_prefix = worker_session_name(config, operation="commands", repository=remote_root, run_id=run_identity)
             else:

@@ -100,7 +100,7 @@ def gate_install_payload(roadmap_id: str = "SSH-02") -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m devtool.ssh_roadmap_fixtures")
-    parser.add_argument("command", choices=("contract", "execution", "final", "gate-install", "gate-install-final"))
+    parser.add_argument("command", choices=("contract", "execution", "final", "gate-install", "gate-install-final", "gate-install-git-frx16"))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -112,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
             payload = final_payload()
         elif args.command == "gate-install-final":
             payload = gate_install_payload("SSH-03")
+        elif args.command == "gate-install-git-frx16":
+            payload = gate_install_payload("GIT-FRX-16")
         else:
             payload = gate_install_payload("SSH-02")
     except ValueError as exc:

@@ -74,6 +74,10 @@ def test_artifact_transaction_validation_and_hook_state_are_child_owned(tmp_path
     resolution = resolve_federated_repository(config, "child")
     run_id = "fed-child-1"
     monkeypatch.setenv("DEVTOOL_XDG_DIR", str(tmp_path / "xdg"))
+    # Artifact validation intentionally redirects durable validation state to
+    # the primary repository. This synthetic federation fixture must not inherit
+    # the outer apply session or it can mistake the parent gate for child state.
+    monkeypatch.delenv("DEVTOOL_VALIDATION_STATE_REPO_ROOT", raising=False)
 
     with mock.patch.dict(os.environ, _fed_env(child, run_id), clear=False):
         artifact = child / "out.txt"
@@ -157,6 +161,9 @@ def test_parent_validation_never_satisfies_child_operational_validation(tmp_path
     config = _load(parent)
     resolution = resolve_federated_repository(config, "child")
     monkeypatch.setenv("DEVTOOL_XDG_DIR", str(tmp_path / "xdg"))
+    # Keep the synthetic parent/child validation state inside tmp_path rather
+    # than inheriting an enclosing artifact-validation session.
+    monkeypatch.delenv("DEVTOOL_VALIDATION_STATE_REPO_ROOT", raising=False)
 
     parent_session = create_session(
         config,

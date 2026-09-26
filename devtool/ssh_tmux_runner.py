@@ -107,6 +107,7 @@ class SSHRunnerConfig:
     workspace_mode: str = "existing"
     workspace_root: str = "~/.cache/devtool/workspaces"
     sync_mode: str = "incremental"
+    source_transport: str = "auto"
     sync_delete: bool = False
     sync_default_excludes: bool = True
     sync_excludes: tuple[str, ...] = ()
@@ -301,6 +302,8 @@ def _ssh_profile_section(data: Mapping[str, Any], profile: str) -> dict[str, Any
                     result["control_persist_seconds"] = transport.get("control_persist_seconds")
                 if "control_root" in transport:
                     result["control_root"] = transport.get("control_root")
+                if "source_transport" in transport:
+                    result["source_transport"] = transport.get("source_transport")
             environment = candidate.get("environment", {})
             if isinstance(environment, dict):
                 if "policy" in environment:
@@ -341,6 +344,8 @@ def _ssh_section(data: Mapping[str, Any], target_name: str = "", profile: str = 
                 merged["control_persist_seconds"] = transport.get("control_persist_seconds")
             if "control_root" in transport:
                 merged["control_root"] = transport.get("control_root")
+            if "source_transport" in transport:
+                merged["source_transport"] = transport.get("source_transport")
         environment = top.get("environment", {})
         if isinstance(environment, dict):
             if "policy" in environment:
@@ -517,6 +522,8 @@ def resolve_ssh_config(
     sync_mode = str(file_options.get("sync_mode", "incremental") or "incremental").strip().lower().replace("_", "-")
     if sync_mode != "incremental":
         raise ValueError(f"SSH sync mode must be incremental, got {sync_mode!r}")
+    from .federation_git_transport import normalize_source_transport
+    source_transport = normalize_source_transport(file_options.get("source_transport", "auto"))
     sync_delete = _bool_value(file_options.get("sync_delete"), workspace_mode != "existing")
     sync_default_excludes = _bool_value(file_options.get("sync_default_excludes"), True)
     raw_sync_excludes = file_options.get("sync_excludes", ())
@@ -634,6 +641,7 @@ def resolve_ssh_config(
         workspace_mode=workspace_mode,
         workspace_root=workspace_root,
         sync_mode=sync_mode,
+        source_transport=source_transport,
         sync_delete=sync_delete,
         sync_default_excludes=sync_default_excludes,
         sync_excludes=sync_excludes,

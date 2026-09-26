@@ -83,6 +83,10 @@ def planned_federated_git_lineage(
         "frozen_plan_identity": str(source_lock.get("lock_digest") or ""),
         "frozen_plan_equivalence_identity": str(source_lock.get("equivalence_digest") or ""),
         "frozen_repository_source_identity": str(source.get("source_digest") or ""),
+        "config_digest": str(source.get("config_digest") or ""),
+        "head_tree": str(source.get("head_tree") or ""),
+        "remote_locator": str(source.get("remote_locator") or ""),
+        "remote_locator_digest": str(source.get("remote_locator_digest") or ""),
         "start_commit": str(source.get("start_commit") or ""),
         "start_unborn": bool(source.get("unborn", False)),
         "planned_branch": str(source.get("branch") or ""),
@@ -146,6 +150,10 @@ def direct_federated_git_lineage(
         "frozen_plan_identity": "",
         "frozen_plan_equivalence_identity": "",
         "frozen_repository_source_identity": "",
+        "config_digest": "",
+        "head_tree": "",
+        "remote_locator": "",
+        "remote_locator_digest": "",
         "start_commit": start_commit,
         "start_unborn": start_unborn,
         "planned_branch": branch,
@@ -172,6 +180,10 @@ def git_lineage_environment(lineage: Mapping[str, Any]) -> dict[str, str]:
         "DEVTOOL_FEDERATION_FROZEN_PLAN_IDENTITY": lineage.get("frozen_plan_identity"),
         "DEVTOOL_FEDERATION_FROZEN_PLAN_EQUIVALENCE_IDENTITY": lineage.get("frozen_plan_equivalence_identity"),
         "DEVTOOL_FEDERATION_FROZEN_REPOSITORY_SOURCE_IDENTITY": lineage.get("frozen_repository_source_identity"),
+        "DEVTOOL_FEDERATION_GIT_CONFIG_DIGEST": lineage.get("config_digest"),
+        "DEVTOOL_FEDERATION_GIT_HEAD_TREE": lineage.get("head_tree"),
+        "DEVTOOL_FEDERATION_GIT_REMOTE_LOCATOR": lineage.get("remote_locator"),
+        "DEVTOOL_FEDERATION_GIT_REMOTE_LOCATOR_DIGEST": lineage.get("remote_locator_digest"),
     }
     return {key: str(value) for key, value in mapping.items() if str(value or "")}
 
