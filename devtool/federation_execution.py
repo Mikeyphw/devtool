@@ -194,6 +194,8 @@ def _parent_node_id(workflow: str, step_id: str) -> str:
 
 
 def _step_target(plan: FederatedPlanGraph, step: FederatedWorkflowStep) -> str:
+    if step.hierarchical:
+        return ""
     targets = {
         node.target
         for node in plan.nodes
@@ -463,11 +465,17 @@ def _step_child_contract(step: FederatedWorkflowStep) -> str:
 
 
 def _step_contract_ref(plan: FederatedPlanGraph, step: FederatedWorkflowStep) -> str:
+    if step.hierarchical:
+        return step.canonical_ref()
     target = _step_target(plan, step)
     return f"{step.repository}::{target}::{step.child_contract}" if target else ""
 
 
 def _step_display_workflow(step: FederatedWorkflowStep) -> str:
+    if step.contract_type == "federation":
+        return f"@federation:{step.contract_name}"
+    if step.contract_type == "group":
+        return f"@group:{step.contract_name}"
     return step.workflow or step.child_contract
 
 
@@ -493,6 +501,25 @@ def _execute_existing_child_contract(
             provider_profile=provider_profile,
             execution_environment=execution_environment,
         )))
+
+    if step.hierarchical:
+        if provider_profile:
+            raise FederationExecutionError(
+                "Hierarchical federation re-entry currently requires the local controller; "
+                "remote placement belongs to the child federation's own Y09 scheduler"
+            )
+        resolution = resolve_federated_repository(parent, step.repository)
+        argv = [
+            "-r", str(resolution.root),
+            "--internal-invocation-source", "federation",
+            "--internal-invocation-command", f"{lineage.get('federation_workflow')}:{step.step_id}",
+            "federation", "run",
+        ]
+        if step.contract_type == "group":
+            argv.extend(["--group", step.contract_name])
+        else:
+            argv.append(step.contract_name)
+        return int(reenter(argv))
 
     from .federation_bridge import (
         execute_planned_federated_job_child,
@@ -605,6 +632,20 @@ def _run_federated_workflow_sequential(
         "source_repository": owner_fingerprint,
         "effective_repository": owner_fingerprint,
     }
+    outer_parent = str(os.environ.get("DEVTOOL_FEDERATION_PARENT_RUN_ID") or "").strip()
+    if outer_parent:
+        parent_lineage.update({
+            "relationship": "nested-federation",
+            "parent_run_id": outer_parent,
+            "parent_node_id": str(os.environ.get("DEVTOOL_FEDERATION_PARENT_NODE_ID") or ""),
+            "target": str(os.environ.get("DEVTOOL_FEDERATION_TARGET") or ""),
+            "child_workflow": str(os.environ.get("DEVTOOL_FEDERATION_CHILD_WORKFLOW") or ""),
+            "federation_ref": str(os.environ.get("DEVTOOL_FEDERATION_REF") or ""),
+            "requested_ref": str(os.environ.get("DEVTOOL_FEDERATION_REQUESTED_REF") or ""),
+            "child_contract": str(os.environ.get("DEVTOOL_FEDERATION_CHILD_CONTRACT") or ""),
+            "contract_ref": str(os.environ.get("DEVTOOL_FEDERATION_CONTRACT_REF") or ""),
+            "hierarchy_depth": int(os.environ.get("DEVTOOL_FEDERATION_HIERARCHY_DEPTH") or "0") + 1,
+        })
     if federation_group:
         parent_lineage["federation_group"] = federation_group
     publish(RunStarted(
@@ -830,6 +871,7 @@ def _run_federated_workflow_sequential(
                 "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": scheduler_node.execution_environment,
                 "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
                 "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
+                "DEVTOOL_FEDERATION_HIERARCHY_DEPTH": str(int(os.environ.get("DEVTOOL_FEDERATION_HIERARCHY_DEPTH") or "0") + (1 if step.hierarchical else 0)),
             }
             if not scheduler_node.provider_profile and scheduler_node.execution_environment not in {"", "auto"}:
                 env["DEVTOOL_PROJECT_EXECUTION_ENVIRONMENT"] = scheduler_node.execution_environment
@@ -1174,6 +1216,20 @@ def _run_federated_workflow_parallel(
         "source_repository": owner_fingerprint,
         "effective_repository": owner_fingerprint,
     }
+    outer_parent = str(os.environ.get("DEVTOOL_FEDERATION_PARENT_RUN_ID") or "").strip()
+    if outer_parent:
+        parent_lineage.update({
+            "relationship": "nested-federation",
+            "parent_run_id": outer_parent,
+            "parent_node_id": str(os.environ.get("DEVTOOL_FEDERATION_PARENT_NODE_ID") or ""),
+            "target": str(os.environ.get("DEVTOOL_FEDERATION_TARGET") or ""),
+            "child_workflow": str(os.environ.get("DEVTOOL_FEDERATION_CHILD_WORKFLOW") or ""),
+            "federation_ref": str(os.environ.get("DEVTOOL_FEDERATION_REF") or ""),
+            "requested_ref": str(os.environ.get("DEVTOOL_FEDERATION_REQUESTED_REF") or ""),
+            "child_contract": str(os.environ.get("DEVTOOL_FEDERATION_CHILD_CONTRACT") or ""),
+            "contract_ref": str(os.environ.get("DEVTOOL_FEDERATION_CONTRACT_REF") or ""),
+            "hierarchy_depth": int(os.environ.get("DEVTOOL_FEDERATION_HIERARCHY_DEPTH") or "0") + 1,
+        })
     if federation_group:
         parent_lineage["federation_group"] = federation_group
     publish(RunStarted(
@@ -1334,6 +1390,7 @@ def _run_federated_workflow_parallel(
             "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": scheduler_node.execution_environment,
             "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
             "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
+            "DEVTOOL_FEDERATION_HIERARCHY_DEPTH": str(int(os.environ.get("DEVTOOL_FEDERATION_HIERARCHY_DEPTH") or "0") + (1 if step.hierarchical else 0)),
             # Keep each parallel child's HUD/EXO files isolated while
             # suppressing visible auto-HUD windows for internal children.
             "DEVTOOL_TASKER_DIR": str(child_state_dir),

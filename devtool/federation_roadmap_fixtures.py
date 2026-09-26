@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import subprocess
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,12 +14,13 @@ from .config import load_project_config
 from .federation_interfaces import build_interface_report
 from .federation_plan import build_federated_plan
 from .git_ownership import GitFederatedOwnershipError, resolve_federated_git_owner
-from .federation_lock import FederationSourceLock, compare_federation_source_locks
+from .federation_lock import FederationSourceLock, compare_federation_source_locks, write_federation_source_lock
 from .federation_git_lineage import finalize_federated_git_lineage, planned_federated_git_lineage
 from .artifact_registry import register_paths
 from .federation_execution import run_federated_workflow
 from .federation_resume import build_resume_plan, load_checkpoint, checkpoint_path
 from .git_federation_integration import integrate_federation_checkpoint
+from .federation_sync import federation_source_management
 
 
 def _load(root: Path):
@@ -587,11 +589,118 @@ steps=[{id="alpha",ref="alpha::work"},{id="beta",ref="beta::work"}]
             "remote_probe_owned_by": "ssh-01/ssh-03",
         }
 
+
+def hierarchy_fixture() -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="devtool-frx-y10-") as td:
+        root = Path(td); master = root / "master"; platform = root / "platform"; leaf = root / "leaf"
+        master.mkdir(); platform.mkdir(); leaf.mkdir()
+        (leaf / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="app"\n[targets.app]\nrunner="command"\n'
+            '[targets.app.jobs.check]\nrunner="command"\ncommand=["true"]\n[targets.app.workflows]\nvalidate=["job:check"]\n',
+            encoding="utf-8",
+        )
+        (platform / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[federation]\nschema=1\n[federation.repositories.app]\npath="../leaf"\n'
+            '[federation.workflows.release]\nsteps=[{id="app",ref="app::app::validate"}]\n',
+            encoding="utf-8",
+        )
+        (master / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[federation]\nschema=1\n[federation.repositories.platform]\npath="../platform"\n'
+            '[federation.workflows.ship]\nsteps=[{id="platform",ref="platform::@federation::release"}]\n',
+            encoding="utf-8",
+        )
+        config = _load(master)
+        plan = build_federated_plan(config, "ship")
+        direct = [node for node in plan.nodes if not node.synthetic]
+        if len(direct) != 1 or direct[0].key != "platform::@federation::release":
+            raise SystemExit("FRX-Y10 fixture flattened or lost the direct child federation")
+        calls: list[list[str]] = []
+        report = run_federated_workflow(
+            config, "ship", reenter=lambda argv: calls.append(list(argv)) or 0,
+            publish=lambda _event: None, snapshot_lookup=lambda _run_id: None,
+            parent_run_id="frx-y10-fixture-parent",
+        )
+        if not report.ok or len(calls) != 1 or calls[0][-3:] != ["federation", "run", "release"]:
+            raise SystemExit("FRX-Y10 fixture did not re-enter exactly one child federation")
+        lineage = dict(report.children[0].run_lineage or {})
+        return {
+            "schema_version": 1,
+            "roadmap_id": "FRX-Y10",
+            "parent_nodes": [node.key for node in direct],
+            "flattened_grandchildren": False,
+            "reentry_argv_tail": calls[0][-3:],
+            "lineage": {
+                "relationship": str(lineage.get("relationship") or ""),
+                "parent_run_id": str(lineage.get("parent_run_id") or ""),
+                "child_run_id": str(lineage.get("child_run_id") or ""),
+                "child_contract": str(lineage.get("child_contract") or ""),
+                "contract_ref": str(lineage.get("contract_ref") or ""),
+                "hierarchy_depth": int(lineage.get("hierarchy_depth") or 1),
+            },
+        }
+
+
+def bootstrap_sync_fixture() -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="devtool-frx-y11-") as td:
+        root = Path(td); seed = root / "seed"; bare = root / "origin.git"; child = root / "child"; parent = root / "parent"
+        seed.mkdir(); parent.mkdir()
+        (seed / "source.txt").write_text("fixture\n", encoding="utf-8")
+        (seed / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[workspace]\ndefault_target="app"\n[targets.app]\nrunner="command"\n'
+            '[targets.app.jobs.check]\nrunner="command"\ncommand=["true"]\n[targets.app.workflows]\nvalidate=["job:check"]\n',
+            encoding="utf-8",
+        )
+        _init_git(seed)
+        subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(bare)], check=True, timeout=20)
+        subprocess.run(["git", "clone", "-q", str(bare), str(child)], check=True, timeout=20)
+        (parent / ".devtool.toml").write_text(
+            '[project]\nrunner="command"\n[federation]\nschema=1\n[federation.repositories.child]\npath="../child"\n'
+            '[federation.workflows.release]\nsteps=[{id="child",ref="child::app::workflow:validate"}]\n',
+            encoding="utf-8",
+        )
+        with patch.dict(os.environ, {"XDG_STATE_HOME": str(root / "state")}, clear=False):
+            config = _load(parent)
+            frozen = FederationSourceLock.from_dict(build_federated_plan(config, "release").source_lock)
+            write_federation_source_lock(config, frozen)
+            shutil.rmtree(child)
+            missing = load_project_config(
+                parent, parent / ".devtool.toml", target_name="", allow_ambiguous_target=True,
+                allow_ambiguous_project_kind=True, allow_missing_federation_repositories=True,
+            )
+            preview = federation_source_management(missing, operation="bootstrap", apply=False)
+            applied = federation_source_management(missing, operation="bootstrap", apply=True)
+            synced = federation_source_management(missing, operation="sync", apply=False)
+        if not preview.ok or not applied.ok or not synced.ok:
+            raise SystemExit("FRX-Y11 fixture failed lock-driven bootstrap/sync")
+        if applied.lock_updated or synced.lock_updated:
+            raise SystemExit("FRX-Y11 fixture mutated the frozen lock as a source-management side effect")
+        return {
+            "schema_version": 1,
+            "roadmap_id": "FRX-Y11",
+            "lock_digest": frozen.lock_digest,
+            "source_locator_digest": frozen.repositories[0].remote_locator_digest,
+            "bootstrap_preview": {
+                "status": preview.status,
+                "states": [item.state for item in preview.actions],
+                "mutations": [item.mutation for item in preview.actions],
+            },
+            "bootstrap_apply": {
+                "status": applied.status,
+                "states": [item.state for item in applied.actions],
+                "verified": [item.verified for item in applied.actions],
+            },
+            "sync_preview": {
+                "status": synced.status,
+                "states": [item.state for item in synced.actions],
+            },
+            "lock_updated": False,
+        }
+
 def main(argv: list[str] | None=None) -> int:
     p=argparse.ArgumentParser(prog='python -m devtool.federation_roadmap_fixtures')
-    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage','resume-invalidation','artifact-edge','git-frx10-integration','git-frx14-cancellation','provider-budget'])
+    p.add_argument('fixture', choices=['interface','public-contract','repository-ownership','source-lock','source-drift','git-lineage','resume-invalidation','artifact-edge','git-frx10-integration','git-frx14-cancellation','provider-budget','hierarchy','bootstrap-sync'])
     ns=p.parse_args(argv)
-    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else resume_invalidation_fixture() if ns.fixture=='resume-invalidation' else artifact_edge_fixture() if ns.fixture=='artifact-edge' else git_frx10_integration_fixture() if ns.fixture=='git-frx10-integration' else git_frx14_cancellation_fixture() if ns.fixture=='git-frx14-cancellation' else provider_budget_fixture() if ns.fixture=='provider-budget' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
+    payload=(interface_fixture() if ns.fixture=='interface' else public_contract_fixture() if ns.fixture=='public-contract' else repository_ownership_fixture() if ns.fixture=='repository-ownership' else git_lineage_fixture() if ns.fixture=='git-lineage' else resume_invalidation_fixture() if ns.fixture=='resume-invalidation' else artifact_edge_fixture() if ns.fixture=='artifact-edge' else git_frx10_integration_fixture() if ns.fixture=='git-frx10-integration' else git_frx14_cancellation_fixture() if ns.fixture=='git-frx14-cancellation' else provider_budget_fixture() if ns.fixture=='provider-budget' else hierarchy_fixture() if ns.fixture=='hierarchy' else bootstrap_sync_fixture() if ns.fixture=='bootstrap-sync' else source_lock_fixture(mutate=ns.fixture=='source-drift'))
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 

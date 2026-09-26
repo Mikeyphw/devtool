@@ -354,8 +354,17 @@ def materialize_federation_group(parent: "ProjectConfig", group_name: str):
         if len(parts) == 2:
             repository, workflow = parts
             target = ""
+            contract_type = "workflow"
+            contract_name = workflow
+        elif len(parts) == 3 and parts[1] in {"@federation", "@group"}:
+            repository, boundary, contract_name = parts
+            target = ""
+            workflow = ""
+            contract_type = "federation" if boundary == "@federation" else "group"
         elif len(parts) == 3:
             repository, target, workflow = parts
+            contract_type = workflow.split(":", 1)[0] if ":" in workflow else "workflow"
+            contract_name = workflow.split(":", 1)[1] if ":" in workflow else workflow
         else:
             raise FederationPlanError(f"Invalid normalized federation group child ref {ref!r}")
         sequence += 1
@@ -365,8 +374,8 @@ def materialize_federation_group(parent: "ProjectConfig", group_name: str):
             repository=repository,
             target=target,
             workflow=workflow,
-            contract_type=(workflow.split(":", 1)[0] if ":" in workflow else "workflow"),
-            contract_name=(workflow.split(":", 1)[1] if ":" in workflow else workflow),
+            contract_type=contract_type,
+            contract_name=contract_name,
             depends_on=(),
             depends_on_declared=True,
         ))
@@ -542,6 +551,68 @@ def build_federated_plan(parent: "ProjectConfig", workflow_name: str) -> Federat
                     f"Federation workflow {name!r} has unresolved dependency {dependency_id!r} for step {step.step_id!r}"
                 )
             external_dependencies.extend(bounds[1])
+
+        if step.hierarchical:
+            from .federation_hierarchy import FederationHierarchyError, resolve_hierarchical_contract
+            try:
+                hierarchy = resolve_hierarchical_contract(parent, step)
+                child = _load_child(parent, step.repository)
+            except FederationHierarchyError as exc:
+                raise FederationPlanError(str(exc)) from exc
+            if step.repository not in repositories:
+                repositories.append(step.repository)
+            ownership = repository_ownership.get(step.repository)
+            if ownership is None:
+                ownership = _git_ownership_evidence(parent, step.repository, child)
+                repository_ownership[step.repository] = ownership
+            key = step.canonical_ref()
+            if key in seen_keys:
+                raise FederationPlanError(
+                    f"Federation workflow {name!r} invokes duplicate hierarchical child {key!r}"
+                )
+            seen_keys.add(key)
+            nodes.append(FederatedPlanNode(
+                key=key,
+                repository=step.repository,
+                target="",
+                workflow="",
+                local_key=step.child_contract,
+                depends_on=tuple(dict.fromkeys(external_dependencies)),
+                index=next_index,
+                metadata={
+                    "federation_step": step.step_id,
+                    "federation_ref": step.canonical_ref(),
+                    "requested_ref": step.ref,
+                    "target_explicit": False,
+                    "contract_type": step.contract_type,
+                    "contract_name": step.contract_name,
+                    "child_contract": step.child_contract,
+                    "contract_ref": step.canonical_ref(),
+                    "repository_identity": hierarchy.repository_identity,
+                    "git_ownership": dict(ownership),
+                    "hierarchical_federation": hierarchy.as_dict(),
+                    "child_schedule": {
+                        "reads": ["."],
+                        "writes": ["."],
+                        "writes_known": False,
+                        "read_only": False,
+                        "resource_class": "cpu-heavy",
+                        "global_reservations": [f"federation-layer:{hierarchy.subject_digest[:16]}"],
+                        "scope_reason": "nested federation is opaque at the parent ownership boundary",
+                    },
+                    "execution_contract": {
+                        "allowed_execution_environments": ["auto"],
+                        "preferred_execution_environment": "auto",
+                        "preferred_worker": "",
+                        "resources": {},
+                    },
+                    "artifact_inputs": [item.as_dict() for item in step.artifact_inputs],
+                    "federation_stage": step.stage,
+                },
+            ))
+            next_index += 1
+            invocation_bounds[step.step_id] = ((key,), (key,))
+            continue
 
         if step.contract_type != "workflow":
             if not step.target:

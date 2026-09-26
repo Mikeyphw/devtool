@@ -386,14 +386,18 @@ def _workflow_ref(
 
     if not isinstance(value, str) or not value.strip():
         raise _fail(
-            f"{path} must be a non-empty repository::workflow, "
-            "repository::target::workflow, repository::target::job:<name>, or "
-            "repository::target::wrapper:<name> reference"
+            f"{path} must be a non-empty repository::workflow, repository::target::workflow, "
+            "repository::@federation::<workflow>, repository::@group::<group>, "
+            "repository::target::job:<name>, or repository::target::wrapper:<name> reference"
         )
     raw = value.strip()
     parts = [part.strip() for part in raw.split("::")]
     if len(parts) not in {2, 3}:
-        raise _fail(f"{path} must use repository::workflow, repository::target::workflow, or a target-qualified job/wrapper contract; got {raw!r}")
+        raise _fail(
+            f"{path} must use repository::workflow, repository::target::workflow, "
+            "repository::@federation::<workflow>, repository::@group::<group>, or a target-qualified job/wrapper contract; "
+            f"got {raw!r}"
+        )
     if any(not part for part in parts):
         raise _fail(f"{path} must use non-empty repository, target (when present), and contract names in repository::workflow syntax; got {raw!r}")
 
@@ -408,6 +412,22 @@ def _workflow_ref(
     if len(parts) == 2:
         workflow = _name(parts[1], path=f"{path} workflow")
         return f"{repository}::{workflow}", repository, "", workflow, "workflow", workflow
+
+    # FRX-Y10 hierarchical federation references deliberately do not carry a
+    # target.  The directly enrolled child repository owns its federation
+    # config and any grandchild target selection below that boundary.
+    boundary = parts[1].lower()
+    if boundary in {"@federation", "@group"}:
+        contract_type = "federation" if boundary == "@federation" else "group"
+        contract_name = _name(parts[2], path=f"{path} {contract_type}")
+        return (
+            f"{repository}::{boundary}::{contract_name}",
+            repository,
+            "",
+            "",
+            contract_type,
+            contract_name,
+        )
 
     target = _name(parts[1], path=f"{path} target")
     subject = parts[2]
@@ -593,7 +613,9 @@ def _workflow_steps(name: str, raw: Mapping[str, Any], repositories: Mapping[str
     return tuple(steps)
 
 
-def load_federation_config(section: object, *, owner_root: str | Path) -> FederationConfig:
+def load_federation_config(
+    section: object, *, owner_root: str | Path, allow_missing_required: bool = False
+) -> FederationConfig:
     """Parse repository-owned ``[federation]`` configuration.
 
     ``owner_root`` is the config-owning repository root, not necessarily the
@@ -649,7 +671,7 @@ def load_federation_config(section: object, *, owner_root: str | Path) -> Federa
         if root.exists() and not root.is_dir():
             raise _fail(f"federation repository {name!r} exists but is not a directory: {root}")
         available = root.is_dir()
-        if required and not available:
+        if required and not available and not allow_missing_required:
             raise _fail(f"required federation repository {name!r} does not exist or is not a directory: {root}")
         if available and _direct_back_reference(root, owner):
             raise _fail(

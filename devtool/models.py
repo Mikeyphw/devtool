@@ -372,10 +372,20 @@ class FederatedWorkflowStep:
     def child_contract(self) -> str:
         if self.contract_type == "workflow":
             return f"workflow:{self.workflow}"
+        if self.contract_type in {"federation", "group"}:
+            return f"{self.contract_type}:{self.contract_name}"
         return f"{self.contract_type}:{self.contract_name}"
+
+    @property
+    def hierarchical(self) -> bool:
+        return self.contract_type in {"federation", "group"}
 
     def canonical_ref(self, resolved_target: str = "") -> str:
         target = str(resolved_target or self.target or "").strip()
+        if self.contract_type == "federation":
+            return f"{self.repository}::@federation::{self.contract_name}"
+        if self.contract_type == "group":
+            return f"{self.repository}::@group::{self.contract_name}"
         if self.contract_type == "workflow" and not target:
             return f"{self.repository}::{self.workflow}"
         if self.contract_type == "workflow":

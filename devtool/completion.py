@@ -835,7 +835,7 @@ _devtool() {
           ;;
         federation|fed)
           if (( ${#line} < 2 )); then
-            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry lock integrate capabilities graph interfaces conformance interface-check affected why
+            _values 'federation action' list inspect preflight gate1 gate2 execution-preflight final-seal seal status summary plan run exec resume retry lock integrate capabilities graph interfaces conformance interface-check affected why bootstrap sync
           else
             case $line[2] in
               list|preflight|gate1|gate2|execution-preflight|final-seal|seal)

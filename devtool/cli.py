@@ -110,6 +110,7 @@ from .federation_gate2 import build_federation_gate2_report, federation_gate2_as
 from .federation_final_seal import build_federation_final_seal_report, federation_final_seal_as_dict, render_federation_final_seal
 from .federation_plan import FederationPlanError, build_federated_plan, build_federated_group_plan
 from .federation_lock import FederationSourceLockError
+from .federation_sync import FederationSyncError
 from .federation_capabilities import FederationCapabilityError, build_capability_graph
 from .federation_impact import (
     FederationImpactError, analyze_federation_impact, explain_federation_impact,
@@ -1191,6 +1192,14 @@ def build_parser() -> argparse.ArgumentParser:
     federation_integrate.add_argument("--policy", choices=("per-repo", "dependency-group", "all-or-nothing-pointer-update"), default="", help="Override the workflow integration policy")
     federation_integrate.add_argument("--apply", action="store_true", help="Apply branch pointer integration; without this flag the command is a dry-run")
     federation_integrate.add_argument("--json", action="store_true", help="Emit machine-readable integration plan/evidence")
+    federation_bootstrap = federation_sub.add_parser("bootstrap", help="Preview or materialize repositories from the frozen federation source lock")
+    federation_bootstrap.add_argument("--repo", dest="repository", action="append", default=[], help="Limit source management to one frozen repository; repeatable")
+    federation_bootstrap.add_argument("--apply", action="store_true", help="Apply the lock-driven bootstrap; without this flag the command is a preview")
+    federation_bootstrap.add_argument("--json", action="store_true", help="Emit machine-readable bootstrap intent/evidence")
+    federation_sync = federation_sub.add_parser("sync", help="Preview or update existing repositories to the frozen federation source lock")
+    federation_sync.add_argument("--repo", dest="repository", action="append", default=[], help="Limit source management to one frozen repository; repeatable")
+    federation_sync.add_argument("--apply", action="store_true", help="Apply the lock-driven sync; without this flag the command is a preview")
+    federation_sync.add_argument("--json", action="store_true", help="Emit machine-readable sync intent/evidence")
     federation_exec = federation_sub.add_parser("exec", help="Execute one enrolled child wrapper or target-local-job public contract")
     federation_exec.add_argument("repository", help="Federation repository name")
     federation_exec.add_argument("--plan", action="store_true", help="Resolve the child public contract without executing it")
@@ -3711,6 +3720,10 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
             allow_ambiguous_target=args.command in {"targets", "tg", "groups", "gr", "jobs", "jb", "workflows", "wf", "plan", "pl", "affected", "aff", "preflight", "pf", "doctor", "dr", "completion-state"} or allow_bundle_bootstrap or workspace_selection,
+            allow_missing_federation_repositories=(
+                args.command in {"federation", "fed"}
+                and str(getattr(args, "federation_command", "") or "") in {"bootstrap", "sync"}
+            ),
         )
     except SystemExit as exc:
         # An overlay may introduce both the named target and .devtool.toml. Allow
@@ -11553,6 +11566,7 @@ def _status_payload(config: ProjectConfig, *, args: argparse.Namespace | None = 
 def _federation_parent_config(args: argparse.Namespace) -> ProjectConfig:
     # Federation discovery intentionally ignores parent --target/--variant.
     # Child target selection belongs to the child repository's own defaults.
+    action = str(getattr(args, "federation_command", "") or "")
     return load_project_config(
         args.repo,
         args.config,
@@ -11560,6 +11574,7 @@ def _federation_parent_config(args: argparse.Namespace) -> ProjectConfig:
         variant_name="",
         allow_ambiguous_target=True,
         allow_ambiguous_project_kind=True,
+        allow_missing_federation_repositories=action in {"bootstrap", "sync"},
     )
 
 
@@ -11912,14 +11927,21 @@ def _federation_command(args: argparse.Namespace) -> int:
                         render_status_table([("workflow", workflow_name), ("status", "succeeded"), ("affected", "none")])
                     return 0
                 config = scoped
+            nested_parent_run_id = (
+                str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
+                if str(os.environ.get("DEVTOOL_FEDERATION_RELATIONSHIP") or "").strip() == "child"
+                else ""
+            )
             report = (
                 run_federated_group(
                     config, group_name, reenter=main, parallel=parallel, max_parallel=max_parallel,
-                    drift_policy=str(getattr(args, "drift_policy", "fail") or "fail")
+                    drift_policy=str(getattr(args, "drift_policy", "fail") or "fail"),
+                    parent_run_id=nested_parent_run_id,
                 )
                 if group_name else run_federated_workflow(
                     config, workflow_name, reenter=main, parallel=parallel, max_parallel=max_parallel,
-                    drift_policy=str(getattr(args, "drift_policy", "fail") or "fail")
+                    drift_policy=str(getattr(args, "drift_policy", "fail") or "fail"),
+                    parent_run_id=nested_parent_run_id,
                 )
             )
             payload = report.as_dict()
@@ -11988,6 +12010,42 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append((child.step_id, f"{subject}; {child.lifecycle or child.status}; run={child.run_id or '-'}"))
                 render_status_table(rows)
             return int(report.exit_code)
+        if action in {"bootstrap", "sync"}:
+            from .federation_sync import federation_source_management
+            apply_changes = bool(getattr(args, "apply", False))
+            if apply_changes and not (bool(getattr(args, "yes", False)) or bool(getattr(args, "force", False))):
+                if console.is_interactive and sys.stdin.isatty():
+                    if not Confirm.ask(
+                        f"Apply federation {action} using the frozen source lock?",
+                        default=False, console=console,
+                    ):
+                        raise SystemExit(1)
+                else:
+                    raise SystemExit(f"federation {action} --apply requires --yes in non-interactive mode")
+            report = federation_source_management(
+                config,
+                operation=action,
+                repositories=getattr(args, "repository", []) or [],
+                apply=apply_changes,
+            )
+            payload = report.as_dict()
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("operation", action),
+                    ("mode", "apply" if apply_changes else "preview"),
+                    ("status", report.status),
+                    ("lock_digest", report.lock_digest or "-"),
+                    ("lock_updated", "yes" if report.lock_updated else "no"),
+                ]
+                for item in report.actions:
+                    detail = item.reason or item.state
+                    if item.commands:
+                        detail += "; " + " && ".join(" ".join(command) for command in item.commands)
+                    rows.append((item.repository, f"{item.state}; {detail}"))
+                render_status_table(rows)
+            return 0 if report.ok else 1
         if action == "integrate":
             from .git_federation_integration import integrate_federation_checkpoint
             apply_changes = bool(getattr(args, "apply", False))
@@ -12080,7 +12138,7 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append(("job", str(payload.get("job_reference"))))
                 render_status_table(rows)
             return code
-    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError, FederationResumeError) as exc:
+    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError, FederationResumeError, FederationSyncError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 

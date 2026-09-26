@@ -716,6 +716,7 @@ def load_project_config(
     allow_ambiguous_target: bool = False,
     allow_ambiguous_project_kind: bool = False,
     allow_parent_config: bool = True,
+    allow_missing_federation_repositories: bool = False,
 ) -> ProjectConfig:
     repo_root = resolve_repository_root(repo_root_arg, config_path_arg)
     config_path = find_config(repo_root, config_path_arg, search_ancestors=allow_parent_config)
@@ -841,6 +842,7 @@ def load_project_config(
         federation = load_federation_config(
             repo_federation_raw,
             owner_root=Path(repository_identity.root),
+            allow_missing_required=allow_missing_federation_repositories,
         )
     except FederationConfigError as exc:
         raise SystemExit(f"Invalid federation configuration in {repo_source_label}: {exc}") from exc

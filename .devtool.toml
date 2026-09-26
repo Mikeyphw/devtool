@@ -312,6 +312,18 @@ command = ["python", "-m", "devtool.federation_roadmap_fixtures", "provider-budg
 inputs = ["devtool/federation_scheduler.py", "devtool/federation_provider.py", "devtool/federation_plan.py", "devtool/ssh_provider_evidence.py", "devtool/ssh_worker.py", "devtool/ssh_environment.py", "devtool/ssh_prepare.py", "devtool/federation_roadmap_fixtures.py"]
 metadata = { read_only = true, roadmap_id = "FRX-Y09" }
 
+[targets.devtool.jobs.frx-y10-hierarchy-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "hierarchy"]
+inputs = ["devtool/federation_hierarchy.py", "devtool/federation_config.py", "devtool/federation_plan.py", "devtool/federation_execution.py", "devtool/federation_resume.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "FRX-Y10" }
+
+[targets.devtool.jobs.frx-y11-bootstrap-sync-fixture]
+runner = "command"
+command = ["python", "-m", "devtool.federation_roadmap_fixtures", "bootstrap-sync"]
+inputs = ["devtool/federation_sync.py", "devtool/federation_lock.py", "devtool/federation_config.py", "devtool/git_transaction_journal.py", "devtool/federation_roadmap_fixtures.py"]
+metadata = { read_only = true, roadmap_id = "FRX-Y11" }
+
 [targets.devtool.jobs.ssh01-contract-fixture]
 runner = "command"
 command = ["python", "-m", "devtool.ssh_roadmap_fixtures", "contract", "--json"]
@@ -517,6 +529,32 @@ roadmap-git-frx14-frx-y09 = [
   { id = "frx-y09", ref = "test:roadmap-frx-y09", depends_on = ["provider-fixture"] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["git-frx14", "frx-y09"] },
 ]
+roadmap-frx-y10 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "frx-y02", ref = "test:roadmap-frx-y02", depends_on = ["syntax"] },
+  { id = "frx-y09", ref = "test:roadmap-frx-y09", depends_on = ["syntax"] },
+  { id = "hierarchy-fixture", ref = "job:frx-y10-hierarchy-fixture", depends_on = ["frx-y02", "frx-y09"] },
+  { id = "frx-y10", ref = "test:roadmap-frx-y10", depends_on = ["hierarchy-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y10"] },
+]
+roadmap-frx-y11 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "git-frx08", ref = "test:roadmap-git-frx08-freeze", depends_on = ["syntax"] },
+  { id = "bootstrap-sync-fixture", ref = "job:frx-y11-bootstrap-sync-fixture", depends_on = ["git-frx08"] },
+  { id = "frx-y11", ref = "test:roadmap-frx-y11", depends_on = ["bootstrap-sync-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y11"] },
+]
+roadmap-frx-y10-y11 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "frx-y02", ref = "test:roadmap-frx-y02", depends_on = ["syntax"] },
+  { id = "frx-y09", ref = "test:roadmap-frx-y09", depends_on = ["syntax"] },
+  { id = "git-frx08", ref = "test:roadmap-git-frx08-freeze", depends_on = ["syntax"] },
+  { id = "hierarchy-fixture", ref = "job:frx-y10-hierarchy-fixture", depends_on = ["frx-y02", "frx-y09"] },
+  { id = "frx-y10", ref = "test:roadmap-frx-y10", depends_on = ["hierarchy-fixture"] },
+  { id = "bootstrap-sync-fixture", ref = "job:frx-y11-bootstrap-sync-fixture", depends_on = ["git-frx08", "frx-y10"] },
+  { id = "frx-y11", ref = "test:roadmap-frx-y11", depends_on = ["bootstrap-sync-fixture"] },
+  { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["frx-y10", "frx-y11"] },
+]
 roadmap-ssh01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "ssh01-fixture", ref = "job:ssh01-contract-fixture", depends_on = ["syntax"] },
@@ -602,6 +640,10 @@ roadmap-current = [
   { id = "git-frx14", ref = "test:roadmap-git-frx14", depends_on = ["git-frx14-fixture"] },
   { id = "frx-y09-fixture", ref = "job:frx-y09-provider-budget-fixture", depends_on = ["git-frx14", "ssh03"] },
   { id = "frx-y09", ref = "test:roadmap-frx-y09", depends_on = ["frx-y09-fixture"] },
+  { id = "frx-y10-fixture", ref = "job:frx-y10-hierarchy-fixture", depends_on = ["frx-y09", "frx-y02"] },
+  { id = "frx-y10", ref = "test:roadmap-frx-y10", depends_on = ["frx-y10-fixture"] },
+  { id = "frx-y11-fixture", ref = "job:frx-y11-bootstrap-sync-fixture", depends_on = ["frx-y10", "git-frx08-freeze"] },
+  { id = "frx-y11", ref = "test:roadmap-frx-y11", depends_on = ["frx-y11-fixture"] },
 ]
 
 
@@ -705,6 +747,26 @@ command = [
   "python", "-m", "pytest", "-q",
   "--junitxml=.devtool/reports/roadmap/roadmap-frx-y09.xml",
   "tests/test_frx_y09_provider_resource_scheduler.py",
+]
+
+[[test]]
+id = "roadmap-frx-y10"
+name = "FRX-Y10 hierarchical federation composition"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-frx-y10.xml",
+  "tests/test_frx_y10_hierarchical_federation.py",
+]
+
+[[test]]
+id = "roadmap-frx-y11"
+name = "FRX-Y11 frozen-lock multi-repository bootstrap and sync"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q",
+  "--junitxml=.devtool/reports/roadmap/roadmap-frx-y11.xml",
+  "tests/test_frx_y11_bootstrap_sync.py",
 ]
 
 [[test]]

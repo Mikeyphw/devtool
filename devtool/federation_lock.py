@@ -24,6 +24,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+from urllib.parse import urlsplit, urlunsplit
 from typing import Any, Iterable, Mapping, TYPE_CHECKING
 
 from .federation_discovery import resolve_federated_repository
@@ -54,6 +55,51 @@ def _digest(value: Any) -> str:
 
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def sanitize_git_remote_locator(value: str) -> str:
+    """Return a clone-capable locator without embedded credentials/query secrets."""
+    raw = str(value or "").strip()
+    if not raw or any(ch in raw for ch in ("\x00", "\n", "\r")):
+        return ""
+    # SCP-style SSH locators are already credential-token free.
+    if "://" not in raw and ":" in raw and not raw.startswith(("/", "./", "../")):
+        return raw
+    if "://" not in raw:
+        return raw
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return ""
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https", "ssh", "git", "file"}:
+        return ""
+    host = parsed.hostname or ""
+    if scheme == "file":
+        netloc = parsed.netloc
+    else:
+        if not host:
+            return ""
+        user = parsed.username or ""
+        # Passwords/tokens are never persisted. HTTPS credentials are delegated
+        # to Git's normal credential helper, while SSH usernames remain useful.
+        if scheme in {"http", "https"}:
+            user = ""
+        port = f":{parsed.port}" if parsed.port else ""
+        netloc = f"{user + '@' if user else ''}{host}{port}"
+    return urlunsplit((scheme, netloc, parsed.path, "", ""))
+
+
+def git_remote_locator(root: str | Path) -> str:
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(Path(root)), "config", "--get", "remote.origin.url"],
+            text=True, capture_output=True, check=False, timeout=8,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return sanitize_git_remote_locator(result.stdout.strip()) if result.returncode == 0 else ""
 
 
 def _path_identity(root: Path, relative: str) -> dict[str, Any]:
@@ -237,6 +283,8 @@ class FederationSourceRepository:
     source_digest: str = ""
     local_digest: str = ""
     equivalence_digest: str = ""
+    remote_locator: str = ""
+    remote_locator_digest: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -266,6 +314,8 @@ class FederationSourceRepository:
             "source_digest": self.source_digest,
             "local_digest": self.local_digest,
             "equivalence_digest": self.equivalence_digest,
+            "remote_locator": self.remote_locator,
+            "remote_locator_digest": self.remote_locator_digest,
         }
 
 
@@ -332,6 +382,8 @@ class FederationSourceLock:
                     source_digest=str(raw.get("source_digest") or ""),
                     local_digest=str(raw.get("local_digest") or ""),
                     equivalence_digest=str(raw.get("equivalence_digest") or ""),
+                    remote_locator=str(raw.get("remote_locator") or ""),
+                    remote_locator_digest=str(raw.get("remote_locator_digest") or ""),
                 )
             )
         return cls(
@@ -378,6 +430,8 @@ def _build_repository_source(parent: "ProjectConfig", plan: "FederatedPlanGraph"
     identity = child.repository_identity.as_dict() if child.repository_identity else {}
     config_digest = _config_digest(resolution.config_path or getattr(child, "config_path", None))
     remote_fingerprint = str(identity.get("git_remote_fingerprint") or "")
+    remote_locator = git_remote_locator(root)
+    remote_locator_digest = hashlib.sha256(remote_locator.encode("utf-8")).hexdigest() if remote_locator else ""
     node_dependencies = tuple(_repository_dependency_payload(plan, repository))
 
     try:
@@ -432,6 +486,8 @@ def _build_repository_source(parent: "ProjectConfig", plan: "FederatedPlanGraph"
             source_digest=_digest(portable_strict),
             local_digest=_digest(local),
             equivalence_digest=_digest(equivalence),
+            remote_locator=remote_locator,
+            remote_locator_digest=remote_locator_digest,
         )
 
     head = dict(state.head)
@@ -518,6 +574,8 @@ def _build_repository_source(parent: "ProjectConfig", plan: "FederatedPlanGraph"
         source_digest=_digest(portable_strict),
         local_digest=_digest(local),
         equivalence_digest=_digest(equivalence),
+        remote_locator=remote_locator,
+        remote_locator_digest=remote_locator_digest,
     )
 
 
@@ -822,6 +880,8 @@ __all__ = [
     "read_federation_source_lock",
     "resolve_execution_source_lock",
     "source_lock_path",
+    "sanitize_git_remote_locator",
+    "git_remote_locator",
     "update_federation_source_lock_repository",
     "write_federation_source_lock",
 ]
