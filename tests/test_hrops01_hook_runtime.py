@@ -332,3 +332,34 @@ def test_artifact_validation_module_no_longer_owns_subprocess_execution() -> Non
     assert "subprocess.Popen" not in source
     assert "_run_embedded_artifact_script" not in source
     assert "EmbeddedHookEngine" in source
+
+
+
+def test_hook_python_bytecode_is_suppressed_and_forced_bytecode_is_cleaned(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "hook_helper.py").write_text("VALUE = 42\n", encoding="utf-8")
+
+    script = b'''set -eu
+cd "$DEVTOOL_REPO_ROOT"
+python3 -c 'import hook_helper; assert hook_helper.VALUE == 42'
+printf ok > "$DEVTOOL_REPO_ROOT/preflight.json"
+'''
+    archive, manifest = archive_with_hooks(tmp_path / "no-pyc.zip", preflight=script)
+    result = run_artifact_preflight_script(repo, archive, phase="before_extract", manifest=manifest)
+    assert result and result.returncode == 0, result.output if result else ""
+    assert not (repo / "__pycache__").exists()
+    assert result.metadata["hook_event"]["discarded_python_bytecode_writes"] == []
+
+    forced = b'''set -eu
+cd "$DEVTOOL_REPO_ROOT"
+PYTHONDONTWRITEBYTECODE=0 python3 -c 'import hook_helper; assert hook_helper.VALUE == 42'
+printf ok > "$DEVTOOL_REPO_ROOT/preflight.json"
+'''
+    archive, manifest = archive_with_hooks(tmp_path / "forced-pyc.zip", preflight=forced)
+    result = run_artifact_preflight_script(repo, archive, phase="before_extract", manifest=manifest)
+    assert result and result.returncode == 0, result.output if result else ""
+    assert not (repo / "__pycache__").exists()
+    discarded = result.metadata["hook_event"]["discarded_python_bytecode_writes"]
+    assert any("__pycache__" in path or path.endswith((".pyc", ".pyo")) for path in discarded)
+    assert result.metadata["hook_event"]["write_violations"] == []

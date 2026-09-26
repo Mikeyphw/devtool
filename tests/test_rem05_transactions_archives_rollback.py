@@ -403,3 +403,49 @@ def test_archive_empty_non_directory_member_still_fails_closed(tmp_path: Path) -
 
     with pytest.raises(RuntimeError, match="Unsafe archive path: empty path"):
         list_archive_members(archive)
+
+
+def test_apply_verification_accepts_hook_managed_preview_kinds(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = ProjectConfig(repo_root=repo, kind="unknown")
+
+    (repo / "ledger.json").write_text("{}\n", encoding="utf-8")
+
+    for kind in ("preflight-write", "validation-write", "finalize-write"):
+        args = argparse.Namespace(
+            dry_run=False,
+            preview=False,
+            diff=False,
+            interactive=False,
+            validate_only=False,
+            command="apply-overlay",
+            _devtool_artifact_preview={
+                "changes": [{"kind": kind, "path": "ledger.json"}]
+            },
+            _devtool_artifact_type="overlay",
+            artifact="",
+            _devtool_transaction_repo_root="",
+        )
+        result = _verify_applied_artifact_effects(config, args)
+        assert result is not None
+        assert result.returncode == 0, result.output
+
+    (repo / "ledger.json").unlink()
+    args = argparse.Namespace(
+        dry_run=False,
+        preview=False,
+        diff=False,
+        interactive=False,
+        validate_only=False,
+        command="apply-overlay",
+        _devtool_artifact_preview={
+            "changes": [{"kind": "finalize-write", "path": "ledger.json"}]
+        },
+        _devtool_artifact_type="overlay",
+        artifact="",
+        _devtool_transaction_repo_root="",
+    )
+    result = _verify_applied_artifact_effects(config, args)
+    assert result is not None
+    assert result.returncode == 0, result.output

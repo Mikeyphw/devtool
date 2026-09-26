@@ -248,6 +248,12 @@ def _safe_script_path(raw: str, *, label: str) -> Path:
     return path
 
 
+def _is_python_bytecode_cache_path(rel: str) -> bool:
+    """Return True only for disposable Python bytecode/cache artifacts."""
+    path = Path(str(rel).replace("\\", "/"))
+    return "__pycache__" in path.parts or path.suffix.lower() in {".pyc", ".pyo"}
+
+
 def _strict_bool(value: Any, *, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
@@ -475,6 +481,10 @@ class EmbeddedHookEngine:
                 "TMPDIR": str(tmpdir.resolve()),
             })
             env.update(request.extra_env)
+            # Embedded hooks must not dirty the repository with interpreter
+            # bytecode. Set this after extra_env so artifact-controlled
+            # environment data cannot silently disable the invariant.
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
 
             stdin_text: str | None = None
             if protocol == "json-v1":
@@ -534,13 +544,30 @@ class EmbeddedHookEngine:
         duration = time.perf_counter() - start
         ended_wall = datetime.now(timezone.utc)
         restoration_errors: list[str] = []
+        transient_writes_removed: list[str] = []
+        transient_cleanup_errors: list[str] = []
         if mutation_snapshot is not None:
+            # PYTHONDONTWRITEBYTECODE covers normal Python descendants. As a
+            # fail-safe, clean any bytecode/cache artifacts a hook explicitly
+            # forced Python to generate before evaluating the declared-write
+            # boundary. Only disposable Python bytecode paths are normalized;
+            # real source/config/output mutations remain strict.
+            transient_candidates = [
+                path
+                for path in mutation_snapshot.changes(repo_root)
+                if _is_python_bytecode_cache_path(path)
+            ]
+            if transient_candidates:
+                transient_cleanup_errors = mutation_snapshot.restore(repo_root, transient_candidates)
+                if not transient_cleanup_errors:
+                    transient_writes_removed = list(transient_candidates)
+
             detected_writes, violations = mutation_snapshot.undeclared_changes(repo_root, request.declared_writes)
             if violations and request.restore_on_write_violation:
                 restoration_errors = mutation_snapshot.restore(repo_root, violations)
             if violations and rc == 0:
                 rc = 1
-            if restoration_errors and rc == 0:
+            if (restoration_errors or transient_cleanup_errors) and rc == 0:
                 rc = 1
         if structured is not None and structured.status == "fail" and rc == 0:
             rc = 1
@@ -578,6 +605,8 @@ class EmbeddedHookEngine:
                 output += "\nObservational hook writes were restored."
         if restoration_errors:
             output += ("\n" if output else "") + "Failed to restore observational hook writes: " + "; ".join(restoration_errors[:8])
+        if transient_cleanup_errors:
+            output += ("\n" if output else "") + "Failed to clean Python bytecode/cache writes: " + "; ".join(transient_cleanup_errors[:8])
         path = str(write_log(output, request.log_path, append=request.log_path is not None))
         issues: list[Issue] = []
         if structured is not None:
@@ -632,6 +661,8 @@ class EmbeddedHookEngine:
             "effective_capabilities": cap_report,
             "declared_writes": list(request.declared_writes),
             "detected_writes": detected_writes,
+            "discarded_python_bytecode_writes": transient_writes_removed,
+            "python_bytecode_cleanup_errors": transient_cleanup_errors,
             "write_violations": violations,
             "write_restoration_errors": restoration_errors,
             "writes_restored": bool(violations and request.restore_on_write_violation and not restoration_errors),

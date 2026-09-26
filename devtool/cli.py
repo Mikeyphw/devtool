@@ -8036,7 +8036,22 @@ def _artifact_commit_paths(args: argparse.Namespace, repo_root: Path | None = No
     The preview is computed before apply, so it contains exactly the paths the
     artifact is expected to add/modify/delete. This prevents unrelated dirty repo
     files from being included in the automatic handoff commit.
+
+    Under isolated-worktree apply, path relevance must be evaluated against the
+    transaction execution root rather than the primary checkout. Newly-added
+    artifact paths do not exist in the primary checkout until integration, so
+    checking there would incorrectly drop ``action=add`` paths from the private
+    commit index.
     """
+    relevance_root = repo_root
+    transaction_root = str(
+        getattr(args, "_devtool_transaction_repo_root", "") or ""
+    ).strip()
+    if transaction_root:
+        candidate = Path(transaction_root).expanduser()
+        if candidate.exists():
+            relevance_root = candidate
+
     paths: list[str] = []
     seen: set[str] = set()
 
@@ -8060,16 +8075,16 @@ def _artifact_commit_paths(args: argparse.Namespace, repo_root: Path | None = No
         Real tracked deletions remain relevant because they still exist in HEAD.
         """
         text = str(value or "").strip().replace("\\", "/")
-        if not text or repo_root is None:
+        if not text or relevance_root is None:
             return True
 
-        target = repo_root / Path(text)
+        target = relevance_root / Path(text)
         if target.exists() or target.is_symlink():
             return True
 
         head = subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD"],
-            cwd=repo_root,
+            cwd=relevance_root,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -8087,7 +8102,7 @@ def _artifact_commit_paths(args: argparse.Namespace, repo_root: Path | None = No
                 "--",
                 f":(literal){text}",
             ],
-            cwd=repo_root,
+            cwd=relevance_root,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -8223,6 +8238,34 @@ def _artifact_hook_presentation(args: argparse.Namespace) -> tuple[bool, bool]:
     return (not machine and not quiet and not verbose, verbose and not machine and not quiet)
 
 
+def _artifact_execution_repo_root(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    transaction: dict[str, object] | None = None,
+) -> Path:
+    """Return the repository root that owns the active artifact mutation.
+
+    Isolated apply transactions mutate and commit inside a Devtool-owned
+    worktree. The primary checkout is only advanced later by
+    ``mark_transaction_completed()``. Any staging/commit/verification step
+    before that integration checkpoint must therefore use the transaction
+    execution root, not a stale/fallback primary-checkout config root.
+    """
+    if isinstance(transaction, dict) and transaction:
+        try:
+            candidate = transaction_execution_root(transaction)
+            if candidate.exists():
+                return candidate
+        except Exception:
+            pass
+    raw = str(getattr(args, "_devtool_transaction_repo_root", "") or "").strip()
+    if raw:
+        candidate = Path(raw).expanduser().resolve()
+        if candidate.exists():
+            return candidate
+    return config.repo_root
+
+
 def _maybe_commit_after_apply(
     config: ProjectConfig,
     args: argparse.Namespace,
@@ -8261,13 +8304,15 @@ def _maybe_commit_after_apply(
             failure_raw = "$ " + " ".join(failure.argv) + "\n" + failure.output
             return results, raw_output + ("\n\n" if raw_output else "") + failure_raw
 
+    commit_repo_root = _artifact_execution_repo_root(config, args, transaction)
+
     from .git_signing import GitSigningError, resolve_signing_decision, signing_mode_from_config
     try:
         signing_decision = resolve_signing_decision(
-            config.repo_root, signing_mode_from_config(config, str(getattr(args, "signing", "") or ""))
+            commit_repo_root, signing_mode_from_config(config, str(getattr(args, "signing", "") or ""))
         )
         policy_evidence = preflight_commit_policy(
-            config.repo_root,
+            commit_repo_root,
             mode=commit_mode,
             transaction=transaction,
             fixup_target=str(getattr(args, "fixup_target", "") or ""),
@@ -8293,7 +8338,7 @@ def _maybe_commit_after_apply(
             )
         try:
             finalize_result = run_artifact_finalize_script(
-                config.repo_root,
+                commit_repo_root,
                 artifact_path,
                 phase="before_commit",
                 manifest=manifest,
@@ -8335,7 +8380,7 @@ def _maybe_commit_after_apply(
                 return results, raw_output
 
     commit_results, commit_raw = _git_commit_policy_with_optional_log(
-        config.repo_root,
+        commit_repo_root,
         commit_message,
         mode=commit_mode,
         fixup_target=policy_evidence.fixup_target or str(getattr(args, "fixup_target", "") or ""),
@@ -8368,8 +8413,8 @@ def _maybe_commit_after_apply(
     commit_succeeded = any(result.name == "git-commit" and result.returncode == 0 for result in commit_results)
     if commit_succeeded and signing_decision.enabled and not bool(getattr(args, "dry_run", False)):
         from .git_signing import verify_commit_signature
-        signed_commit = latest_commit_hash(config.repo_root)
-        verification = verify_commit_signature(config.repo_root, signed_commit)
+        signed_commit = latest_commit_hash(commit_repo_root)
+        verification = verify_commit_signature(commit_repo_root, signed_commit)
         verify_ok = bool(verification.get("verified"))
         verification_result = OperationResult(
             "git-signature-verify", ["git", "verify-commit", signed_commit], 0 if verify_ok else 1, 0.0,
@@ -8383,9 +8428,9 @@ def _maybe_commit_after_apply(
         if not verify_ok:
             return results, raw_output
     if commit_succeeded and commit_mode == "amend" and policy_evidence.supersedes_commit:
-        new_commit = latest_commit_hash(config.repo_root)
+        new_commit = latest_commit_hash(commit_repo_root)
         try:
-            note_evidence = migrate_devtool_note(config.repo_root, policy_evidence.supersedes_commit, new_commit)
+            note_evidence = migrate_devtool_note(commit_repo_root, policy_evidence.supersedes_commit, new_commit)
             note_result = OperationResult(
                 "git-note-migrate",
                 ["git", "notes", "--ref=refs/notes/devtool", "show", policy_evidence.supersedes_commit],
@@ -8423,7 +8468,7 @@ def _maybe_commit_after_apply(
             )
         try:
             after_commit = run_artifact_finalize_script(
-                config.repo_root,
+                commit_repo_root,
                 artifact_path,
                 phase="after_commit",
                 manifest=manifest,
@@ -8499,9 +8544,17 @@ def _record_transaction_commit_from_results(
     if committed is None:
         return
     metadata = dict(committed.metadata or {})
+    commit_root = repo_root
+    try:
+        transaction = read_transaction(transaction_path)
+        candidate = transaction_execution_root(transaction)
+        if candidate.exists():
+            commit_root = candidate
+    except Exception:
+        pass
     record_transaction_git_commit(
         transaction_path,
-        latest_commit_hash(repo_root),
+        latest_commit_hash(commit_root),
         commit_mode=str(metadata.get("commit_mode") or "new"),
         supersedes_commit=str(metadata.get("supersedes_commit") or ""),
         fixup_target=str(metadata.get("fixup_target") or ""),
@@ -11236,6 +11289,7 @@ def _verify_applied_artifact_effects(config: ProjectConfig, args: argparse.Names
         return OperationResult("apply-verification", ["devtool", "verify-apply"], 0, 0.0, "Applied artifact verification passed.", [])
 
     start = time.perf_counter()
+    verification_root = _artifact_execution_repo_root(config, args)
     artifact_type = str(getattr(args, "_devtool_artifact_type", "") or "").strip()
     snapshot = artifact_type == "snapshot" or "snapshot" in str(getattr(args, "command", ""))
     payload_hashes = _artifact_payload_hashes(
@@ -11244,6 +11298,7 @@ def _verify_applied_artifact_effects(config: ProjectConfig, args: argparse.Names
     )
     problems: list[str] = []
     checked = 0
+    hook_write_kinds = {"preflight-write", "validation-write", "finalize-write"}
 
     for change in changes:
         kind = str(change.get("kind") or "").strip()
@@ -11255,8 +11310,14 @@ def _verify_applied_artifact_effects(config: ProjectConfig, args: argparse.Names
             problems.append(str(exc))
             continue
         display = str(rel).replace("\\", "/")
-        target = config.repo_root / rel
+        target = verification_root / rel
         checked += 1
+        if kind in hook_write_kinds:
+            # Hook write paths are declared mutation scopes, not static payload
+            # postconditions. Their exact bytes/existence are determined at
+            # runtime. EmbeddedHookEngine already enforces the declared write
+            # boundary, and the apply transaction owns rollback/recovery.
+            continue
         if kind == "delete":
             if target.exists() or target.is_symlink():
                 problems.append(f"{display}: expected deleted but still exists")
