@@ -14156,13 +14156,14 @@ def _main_after_parse(
             if getattr(args, "print", False):
                 print(path.read_text(encoding="utf-8"))
             else:
-                console.print(str(path))
+                # Machine-consumable output: Rich must not hard-wrap paths.
+                print(str(path))
             return 0
         if logs_command in {"list", "ls"}:
             entries = list_log_entries()
             limit = max(1, int(getattr(args, "limit", 25) or 25))
             for line in format_log_entries(entries[-limit:]):
-                console.print(line)
+                print(line)
             return 0
         if logs_command in {"open", "show"}:
             path = resolve_log_path(str(getattr(args, "selector", "") or ""), use_fzf=bool(getattr(args, "fzf", True)))

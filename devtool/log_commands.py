@@ -100,39 +100,81 @@ def _phone_log_mirror_dir() -> Path | None:
     return Path("/sdcard/.logs/devtool")
 
 
+def _path_text(path: Path) -> str:
+    # Purely lexical: resolving an Android shared-storage path can itself block.
+    return os.path.abspath(os.fspath(path.expanduser()))
+
+
+def _is_android_shared_storage(path: Path) -> bool:
+    text = _path_text(path)
+    return text == "/sdcard" or text.startswith("/sdcard/") or text == "/storage" or text.startswith("/storage/")
+
+
+def _explicit_state_root_keys() -> set[str]:
+    values: list[str | Path] = [state_dir()]
+    for name in ("DEVTOOL_TASKER_DIR", "DEVTOOL_HUD_BRIDGE_DIR", "DEVTOOL_ANDROID_HUD_STATE_DIR"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            values.append(value)
+    return {_path_text(Path(value)) for value in values}
+
+
+def _partition_state_roots(roots: Iterable[Path]) -> tuple[list[Path], list[Path]]:
+    """Keep inferred /sdcard roots off the hot path on Termux."""
+    explicit = _explicit_state_root_keys()
+    fast: list[Path] = []
+    slow: list[Path] = []
+    for root in roots:
+        bucket = slow if _is_android_shared_storage(root) and _path_text(root) not in explicit else fast
+        if root not in bucket:
+            bucket.append(root)
+    return fast, slow
+
+
+def _log_paths_in_dir(directory: Path) -> list[Path]:
+    paths: list[Path] = []
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.name.endswith(".log"):
+                    try:
+                        if entry.is_file(follow_symlinks=False):
+                            paths.append(Path(entry.path))
+                    except OSError:
+                        continue
+    except OSError:
+        pass
+    return paths
+
+
 def _all_log_paths() -> list[Path]:
-    # Authoritative state logs are cheap local/XDG storage. Shared phone storage
-    # is a durability mirror and can become very slow to enumerate on Android,
-    # so only scan it as a fallback when no authoritative logs are available.
+    # Local/XDG and explicitly configured roots are authoritative. Inferred
+    # Android shared storage is fallback-only because it can block for seconds.
     paths: list[Path] = []
     seen: set[Path] = set()
-    authoritative_dirs: list[Path] = [logs_dir()]
-    for root in _candidate_state_roots():
-        candidate_dir = root / "logs"
-        if candidate_dir not in authoritative_dirs:
-            authoritative_dirs.append(candidate_dir)
-    for directory in authoritative_dirs:
-        try:
-            candidates = sorted(directory.glob("*.log"))
-        except OSError:
-            continue
-        for path in candidates:
-            if path not in seen:
-                seen.add(path)
-                paths.append(path)
-    if paths:
-        return sorted(paths, key=lambda item: (_safe_mtime(item), str(item)))
+    roots = _candidate_state_roots()
+    fast_roots, slow_roots = _partition_state_roots(roots)
 
-    phone_mirror = _phone_log_mirror_dir()
-    if phone_mirror is not None:
-        try:
-            mirror_candidates = sorted(phone_mirror.glob("*.log"))
-        except OSError:
-            mirror_candidates = []
-        for path in mirror_candidates:
-            if path not in seen:
-                seen.add(path)
-                paths.append(path)
+    fast_dirs: list[Path] = [logs_dir()]
+    for root in fast_roots:
+        candidate = root / "logs"
+        if candidate not in fast_dirs:
+            fast_dirs.append(candidate)
+
+    def collect(directories: Iterable[Path]) -> None:
+        for directory in directories:
+            for path in _log_paths_in_dir(directory):
+                if path not in seen:
+                    seen.add(path)
+                    paths.append(path)
+
+    collect(fast_dirs)
+    if not paths:
+        collect(root / "logs" for root in slow_roots)
+    if not paths:
+        phone_mirror = _phone_log_mirror_dir()
+        if phone_mirror is not None:
+            collect([phone_mirror])
     return sorted(paths, key=lambda item: (_safe_mtime(item), str(item)))
 
 
@@ -249,37 +291,48 @@ def _merge_active_runs(authoritative: ActiveRun, richer: ActiveRun) -> ActiveRun
 
 def list_active_runs() -> list[ActiveRun]:
     by_id: dict[str, ActiveRun] = {}
+    roots = _candidate_state_roots()
+    fast_roots, slow_roots = _partition_state_roots(roots)
 
-    # Repository locks are the authority for whether a devtool operation is
-    # active. They exist even when HUD publication is disabled or redirected.
-    for state in active_run_lock_records(_candidate_state_roots()):
+    # Repository locks are authoritative. Avoid inferred /sdcard state when a
+    # local or explicitly configured producer is already discoverable.
+    lock_states = active_run_lock_records(fast_roots)
+    if not lock_states and slow_roots:
+        lock_states = active_run_lock_records(slow_roots)
+    for state in lock_states:
         run = _active_run_from_payload(state, fallback_id="")
         if run is not None:
             by_id[run.run_id] = run
 
-    # HUD state contributes phase/progress/log detail and supports older
-    # producers that predate log paths in the single-run lock.
-    for root in _candidate_state_roots():
-        runs_dir = root / "runs"
-        try:
-            paths = sorted(runs_dir.glob("*.json"))
-        except OSError:
-            continue
-        for path in paths:
+    def merge_hud_roots(scan_roots: Iterable[Path]) -> None:
+        for root in scan_roots:
+            runs_dir = root / "runs"
             try:
-                state = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+                with os.scandir(runs_dir) as entries:
+                    paths = sorted(
+                        (Path(entry.path) for entry in entries if entry.name.endswith(".json")),
+                        key=str,
+                    )
+            except OSError:
                 continue
-            if not isinstance(state, dict):
-                continue
-            run = _active_run_from_payload(state, fallback_id=path.stem, source_path=path)
-            if run is None:
-                continue
-            existing = by_id.get(run.run_id)
-            by_id[run.run_id] = _merge_active_runs(existing, run) if existing else run
+            for path in paths:
+                try:
+                    state = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(state, dict):
+                    continue
+                run = _active_run_from_payload(state, fallback_id=path.stem, source_path=path)
+                if run is None:
+                    continue
+                existing = by_id.get(run.run_id)
+                by_id[run.run_id] = _merge_active_runs(existing, run) if existing else run
+
+    merge_hud_roots(fast_roots)
+    if not by_id and slow_roots:
+        merge_hud_roots(slow_roots)
 
     return sorted(by_id.values(), key=lambda run: run.updated_at or "", reverse=True)
-
 
 def _format_entry(entry: LogEntry, index: int) -> str:
     stamp = " ".join(part for part in (entry.date, entry.time) if part) or "unknown-time"
@@ -340,8 +393,8 @@ def resolve_log_path(selector: str = "", *, use_fzf: bool = True) -> Path | None
         path = Path(selector).expanduser()
         return path if path.exists() else None
     if selector == "latest":
-        entries = list_log_entries()
-        return entries[-1].path if entries else latest_log()
+        paths = _all_log_paths()
+        return paths[-1] if paths else latest_log()
     entries = list_log_entries()
     lines = [_format_entry(entry, index) for index, entry in enumerate(entries, start=1)]
     selected = choose_index(lines, use_fzf=use_fzf)
@@ -370,7 +423,7 @@ def tail_log(path: Path, *, lines: int = 200, follow: bool = True) -> int:
 
 
 def newest_logs(limit: int = 10) -> list[Path]:
-    return [entry.path for entry in list_log_entries()[-max(1, int(limit)):]]
+    return _all_log_paths()[-max(1, int(limit)):]
 
 
 def _accessible_log_path(path: Path | None, fallbacks: Iterable[Path]) -> Path | None:
