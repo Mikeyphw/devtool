@@ -406,29 +406,45 @@ def _uninstall_test_package(package_name: str, *, serial: str, install_command: 
 
 
 def _parse_counts(text: str) -> dict[str, int]:
-    # AndroidJUnitRunner normally exposes numtests and per-test status codes.
-    numtests = [int(value) for value in re.findall(r"INSTRUMENTATION_STATUS:\s*numtests=(\d+)", text)]
-    codes = [int(value) for value in re.findall(r"INSTRUMENTATION_STATUS_CODE:\s*(-?\d+)", text)]
+    """Parse AndroidJUnitRunner raw status codes without treating skips as failures.
+
+    Android instrumentation status codes are:
+      1  start
+      0  success
+     -1  error
+     -2  failure
+     -3  ignored
+     -4  assumption failure
+
+    Unknown negative completion codes remain fail-closed as failures.
+    """
+    numtests = [int(value) for value in re.findall(r"INSTRUMENTATION_STATUS:\s*numtests=(\d+)", text or "")]
+    codes = [int(value) for value in re.findall(r"INSTRUMENTATION_STATUS_CODE:\s*(-?\d+)", text or "")]
     started = sum(1 for value in codes if value == 1)
-    completed = sum(1 for value in codes if value == 0)
-    failed = sum(1 for value in codes if value < 0)
-    total = max(numtests or [started, completed + failed, 0])
-    passed = max(0, completed - failed)
-    if "FAILURES!!!" in text and failed == 0:
+    passed = sum(1 for value in codes if value == 0)
+    skipped = sum(1 for value in codes if value in {-3, -4})
+    failed = sum(1 for value in codes if value < 0 and value not in {-3, -4})
+    executed = passed + failed + skipped
+    total = max(numtests or [started, executed, 0])
+    if "FAILURES!!!" in (text or "") and failed == 0:
         failed = 1
-        passed = max(0, completed - failed)
+        executed = max(executed, passed + failed + skipped)
+        total = max(total, executed)
     return {
         "discovered": total,
         "selected": total,
-        "executed": completed + failed,
+        "executed": executed,
         "passed": passed,
         "failed": failed,
-        "skipped": 0,
+        "skipped": skipped,
         "total": total,
     }
 
-
 def _parse_failed_ids(output: str) -> list[str]:
+    """Return only genuine AndroidJUnitRunner failure/error IDs.
+
+    Ignored (-3) and assumption-failure (-4) completions are skips, not failures.
+    """
     current_class = ""
     current_test = ""
     failed: list[str] = []
@@ -443,11 +459,10 @@ def _parse_failed_ids(output: str) -> list[str]:
                 code = int(line.split(":", 1)[1].strip())
             except ValueError:
                 continue
-            if code < 0 and current_test:
+            if code < 0 and code not in {-3, -4} and current_test:
                 value = f"{current_class}.{current_test}" if current_class else current_test
                 failed.append(value)
     return list(dict.fromkeys(failed))
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build, install, and run Android instrumentation tests")

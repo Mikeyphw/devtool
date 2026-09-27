@@ -21,6 +21,8 @@ from devtool.android.instrumentation import (
     InstrumentationRequest,
     _choose_runner,
     _find_apks,
+    _parse_counts as _orchestrator_parse_counts,
+    _parse_failed_ids as _orchestrator_parse_failed_ids,
     request_from_config,
 )
 from devtool.android.release import AndroidReleaseOrchestrator
@@ -82,6 +84,39 @@ class InventoryManager(AndroidDeviceManager):
 
     def command_prefix(self, serial: str = "") -> list[str]:
         return ["/fake/adb", "-s", serial or "device-1"]
+
+
+def test_orchestrator_parser_distinguishes_skips_from_failures() -> None:
+    output = """
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: class=com.example.DeviceTest
+INSTRUMENTATION_STATUS: test=passes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.example.DeviceTest
+INSTRUMENTATION_STATUS: test=ignored
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS_CODE: -3
+INSTRUMENTATION_STATUS: class=com.example.DeviceTest
+INSTRUMENTATION_STATUS: test=assumption
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS_CODE: -4
+INSTRUMENTATION_STATUS: class=com.example.DeviceTest
+INSTRUMENTATION_STATUS: test=fails
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS_CODE: -2
+"""
+    counts = _orchestrator_parse_counts(output)
+    assert counts == {
+        "discovered": 4,
+        "selected": 4,
+        "executed": 4,
+        "passed": 1,
+        "failed": 1,
+        "skipped": 2,
+        "total": 4,
+    }
+    assert _orchestrator_parse_failed_ids(output) == ["com.example.DeviceTest.fails"]
 
 
 def test_instrumentation_config_string_false_and_malformed_values(tmp_path: Path) -> None:

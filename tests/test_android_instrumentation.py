@@ -25,8 +25,48 @@ INSTRUMENTATION_STATUS_CODE: -2
         counts = _parse_counts(output)
         self.assertEqual(counts["total"], 2)
         self.assertEqual(counts["failed"], 1)
-        self.assertEqual(counts["passed"], 0)
+        self.assertEqual(counts["passed"], 1)
+        self.assertEqual(counts["skipped"], 0)
+        self.assertEqual(counts["executed"], 2)
 
+
+    def test_android_junit_runner_ignored_and_assumption_are_skips(self) -> None:
+        output = """
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: class=com.example.ParserTest
+INSTRUMENTATION_STATUS: test=passes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.example.ParserTest
+INSTRUMENTATION_STATUS: test=ignored
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS_CODE: -3
+INSTRUMENTATION_STATUS: class=com.example.ParserTest
+INSTRUMENTATION_STATUS: test=assumption
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS_CODE: -4
+"""
+        counts = android_instrumentation._parse_counts(output)
+        self.assertEqual(counts["total"], 3)
+        self.assertEqual(counts["executed"], 3)
+        self.assertEqual(counts["passed"], 1)
+        self.assertEqual(counts["failed"], 0)
+        self.assertEqual(counts["skipped"], 2)
+        self.assertEqual(android_instrumentation._parse_failed_ids(output), [])
+
+    def test_android_junit_runner_real_failure_remains_failed(self) -> None:
+        output = """
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: class=com.example.ParserTest
+INSTRUMENTATION_STATUS: test=fails
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS_CODE: -2
+"""
+        counts = android_instrumentation._parse_counts(output)
+        self.assertEqual(counts["passed"], 0)
+        self.assertEqual(counts["failed"], 1)
+        self.assertEqual(counts["skipped"], 0)
+        self.assertEqual(android_instrumentation._parse_failed_ids(output), ["com.example.ParserTest.fails"])
 
     def test_rooted_termux_commands_reuse_configured_privilege_prefix(self) -> None:
         self.assertEqual(_local_pm_prefix("sudo pm install -r -t"), ["sudo", "pm"])
