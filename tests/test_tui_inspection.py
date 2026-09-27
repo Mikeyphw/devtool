@@ -106,6 +106,40 @@ def test_verbose_buffer_is_bounded_and_strips_terminal_control_sequences() -> No
     assert all("\x1b" not in line for line in lines)
 
 
+def test_huge_single_line_is_bounded_only_in_live_tui_projection() -> None:
+    console, _ = _console()
+    controller = TuiInspectionController(
+        console,
+        max_line_chars=512,
+        force_interactive=True,
+    )
+    huge = '{"results":[' + ('"capability",' * 20000) + '"TAIL-SENTINEL"]}'
+
+    controller.append_line(huge)
+    projected = controller.lines()[-1]
+
+    assert len(projected) <= 512
+    assert projected.startswith('{"results":[')
+    assert projected.endswith('"TAIL-SENTINEL"]}')
+    assert "TUI clipped" in projected
+    assert "full output kept in log" in projected
+
+
+def test_generic_tracker_does_not_publish_unbounded_machine_output_detail() -> None:
+    console, _ = _console()
+    tracker = GenericProgressTracker(["python3"], "/repo", "audit", console)
+    tracker.inspection = TuiInspectionController(console, force_interactive=True)
+    huge = '{"capability_count":98,"results":[' + ('{"id":"XGO"},' * 20000) + ']}'
+
+    tracker.update_from_line(huge)
+
+    snapshot = tracker.snapshot()
+    assert len(str(snapshot["detail"])) <= 2048
+    assert len(str(snapshot["last_line"])) <= 2048
+    assert "TUI clipped" in str(snapshot["detail"])
+    assert len(huge) > len(str(snapshot["detail"])) * 50
+
+
 def test_modal_rendering_keeps_progress_in_verbose_and_hides_it_in_logs_only() -> None:
     console, output = _console(width=62, height=20)
     controller = TuiInspectionController(console, force_interactive=True)
@@ -322,6 +356,25 @@ def test_all_live_progress_trackers_feed_the_shared_verbose_buffer(tmp_path: Pat
     tracker.update_from_line("shared verbose output line\n")
     assert tracker.inspection.lines()[-1] == "shared verbose output line"
 
+
+
+def test_runner_keeps_full_output_while_live_projection_is_bounded(tmp_path: Path) -> None:
+    console, _ = _console()
+    payload = "BEGIN-SENTINEL-" + ("x" * 12000) + "-END-SENTINEL"
+
+    with patch("devtool.runners.console", console):
+        code, output = _run_process_live(
+            ["python3", "-S", "-c", f"print({payload!r})"],
+            cwd=str(tmp_path),
+            env=os.environ.copy(),
+            verbose=False,
+            command_name="audit",
+            progress_parser="generic",
+        )
+
+    assert code == 0
+    assert payload in output
+    assert len(output) > 12000
 
 
 def test_runner_binds_existing_interrupt_path_to_tui_tracker(tmp_path: Path) -> None:

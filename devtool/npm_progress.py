@@ -31,6 +31,7 @@ from .rich_progress import (
     TuiInspectionController,
     compact_display_target,
     completion_line,
+    project_live_output_line,
 )
 from .tui_icons import activity_icon
 from .test_counts import TestCountAccumulator
@@ -163,16 +164,18 @@ class NpmProgressTracker:
         text = _strip_ansi(line.strip())
         if not text:
             return
-        self.last_line = text
-        if self._test_counts.feed(text):
+        live_text = project_live_output_line(text)
+        parser_text = project_live_output_line(text, limit=16384)
+        self.last_line = live_text
+        if self._test_counts.feed(parser_text):
             counts = self._test_counts.counts
             self.tests_passed, self.tests_failed = counts.passed, counts.failed
             self.tests_skipped, self.tests_total = counts.skipped, counts.total
-        banner = _parse_npm_banner(text)
+        banner = _parse_npm_banner(parser_text)
         if banner is not None:
             self._script_started(banner)
         else:
-            self.detail = text
+            self.detail = live_text
         self._publish()
 
     def finish(self, returncode: int) -> None:

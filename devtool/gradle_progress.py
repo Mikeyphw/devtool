@@ -26,6 +26,7 @@ from .rich_progress import (
     TuiInspectionController,
     compact_display_target,
     completion_line,
+    project_live_output_line,
 )
 from .tui_icons import activity_icon
 
@@ -437,7 +438,7 @@ class GradleProgressTracker:
             self._merge_total(max(0, int(summary.group("total") or 0)))
             self.completed = self.total
             self._update_requested_dependency_counts()
-            self.detail = text
+            self.detail = project_live_output_line(text)
             self.fallback_lines += 1
             self._publish(force=True)
             return True
@@ -464,7 +465,7 @@ class GradleProgressTracker:
         if any(text.startswith(prefix) for prefix in _LIFECYCLE_PREFIXES):
             self.real_progress_seen = True
             self._synthetic_stop.set()
-            self.detail = text
+            self.detail = project_live_output_line(text)
             if text.startswith("BUILD FAILED"):
                 self.errors = max(1, self.errors)
             self.fallback_lines += 1

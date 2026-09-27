@@ -19,6 +19,7 @@ from .rich_progress import (
     active_panel_title,
     compact_display_target,
     completion_line,
+    project_live_output_line,
 )
 from .tui_icons import activity_icon
 from .test_counts import TestCountAccumulator
@@ -111,16 +112,18 @@ class GenericProgressTracker:
         text = line.strip()
         if not text:
             return
-        self.last_line = text
-        self.detail = text
-        self._update_pytest_counters(text)
-        if self._test_counts.feed(text):
+        live_text = project_live_output_line(text)
+        parser_text = project_live_output_line(text, limit=16384)
+        self.last_line = live_text
+        self.detail = live_text
+        self._update_pytest_counters(parser_text)
+        if self._test_counts.feed(parser_text):
             counts = self._test_counts.counts
             self.tests_passed, self.tests_failed = counts.passed, counts.failed
             self.tests_skipped, self.tests_total = counts.skipped, counts.total
             self.completed, self.total, self.unit_label = counts.passed + counts.failed + counts.skipped, counts.total, "tests"
             self.percent = min(100.0, self.completed * 100.0 / counts.total) if counts.total else None
-        self._update_counters(text)
+        self._update_counters(parser_text)
         self._publish()
 
     def finish(self, returncode: int) -> None:

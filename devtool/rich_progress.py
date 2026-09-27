@@ -26,7 +26,7 @@ import time
 from typing import Callable
 
 from rich.console import Console, ConsoleOptions, Group, RenderResult
-from rich.cells import cell_len, set_cell_size
+from rich.cells import cell_len, get_character_cell_size, set_cell_size
 from rich.measure import Measurement
 from rich.panel import Panel
 from rich.text import Text
@@ -35,6 +35,49 @@ _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 
 _ABSOLUTE_PATH_RE = re.compile(r"(?<![\w:/])/(?:[^\s\[\]{}<>\"'`]+)")
 _ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+_DEFAULT_TUI_MAX_LINE_CHARS = 2048
+_MIN_TUI_MAX_LINE_CHARS = 256
+_MAX_TUI_MAX_LINE_CHARS = 65536
+
+
+def resolve_tui_max_line_chars(value: int | None = None) -> int:
+    """Return the bounded live-TUI line budget.
+
+    Full subprocess output is retained by the runner/log store. This limit only
+    controls the renderer-facing projection so pathological single-line JSON or
+    minified output cannot dominate terminal layout/rendering cost.
+    """
+
+    if value is None:
+        raw = os.environ.get("DEVTOOL_TUI_MAX_LINE_CHARS", "").strip()
+        if raw:
+            try:
+                value = int(raw)
+            except ValueError:
+                value = _DEFAULT_TUI_MAX_LINE_CHARS
+        else:
+            value = _DEFAULT_TUI_MAX_LINE_CHARS
+    return max(_MIN_TUI_MAX_LINE_CHARS, min(_MAX_TUI_MAX_LINE_CHARS, int(value)))
+
+
+def project_live_output_line(value: str, *, limit: int | None = None) -> str:
+    """Project one output line into a bounded live-rendering representation.
+
+    Preserve both the beginning and newest tail because command diagnostics often
+    place identity at the front and the actionable error/result at the end. The
+    unmodified line continues to live in the command result and durable log.
+    """
+
+    text = str(value or "")
+    maximum = resolve_tui_max_line_chars(limit)
+    if len(text) <= maximum:
+        return text
+    marker = f" … [TUI clipped; original={len(text)} chars; full output kept in log] … "
+    available = max(0, maximum - len(marker))
+    head = available // 2
+    tail = available - head
+    return text[:head] + marker + (text[-tail:] if tail else "")
 
 
 class TuiDisplayMode(str, Enum):
@@ -60,10 +103,12 @@ class TuiInspectionController:
         console: Console,
         *,
         max_lines: int = 400,
+        max_line_chars: int | None = None,
         force_interactive: bool | None = None,
     ) -> None:
         self.console = console
         self.max_lines = max(20, int(max_lines))
+        self.max_line_chars = resolve_tui_max_line_chars(max_line_chars)
         self.mode = TuiDisplayMode.COMPACT
         self._previous_mode = TuiDisplayMode.COMPACT
         self._lines: deque[str] = deque(maxlen=self.max_lines)
@@ -135,7 +180,11 @@ class TuiInspectionController:
         if not self.enabled:
             return
         clean = _ANSI_ESCAPE_RE.sub("", str(line or "")).replace("\r", "\n")
-        values = [part.rstrip() for part in clean.splitlines() if part.strip()]
+        values = [
+            project_live_output_line(part.rstrip(), limit=self.max_line_chars)
+            for part in clean.splitlines()
+            if part.strip()
+        ]
         if not values:
             return
         with self._lock:
@@ -577,13 +626,20 @@ def _left_truncate(value: str, width: int) -> str:
         return clean
     if width == 1:
         return "…"
-    tail = set_cell_size(clean, width - 1)
-    # set_cell_size truncates from the right. Preserve the newest/right-most
-    # detail by trimming codepoints from the left until it fits in cells.
-    tail = clean
-    while tail and cell_len(tail) > width - 1:
-        tail = tail[1:]
-    return "…" + tail
+
+    # Preserve the newest/right-most detail without repeatedly measuring ever
+    # smaller suffixes. The previous loop was O(n²) for giant single-line JSON
+    # output, which could visibly stall the Rich live renderer on Termux.
+    target = width - 1
+    used = 0
+    tail: list[str] = []
+    for char in reversed(clean):
+        size = max(0, get_character_cell_size(char))
+        if used + size > target:
+            break
+        tail.append(char)
+        used += size
+    return "…" + "".join(reversed(tail))
 
 
 def _phase_percent(state: ThreeLineProgressState) -> float | None:
