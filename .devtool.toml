@@ -5,6 +5,31 @@ run_module = "devtool"
 
 [workspace]
 default_target = "devtool"
+
+# CORE-X04: Devtool dogfoods the generated repository wrapper.  Keep this
+# intentionally small: the wrapper is a frontend over canonical Devtool, not a
+# second task/scheduler authority.
+[wrapper]
+schema = 2
+default_command = "test"
+
+[wrapper.commands.test]
+description = "Run Devtool's canonical Python test action"
+devtool = "test"
+target = "devtool"
+allow_passthrough = true
+
+[wrapper.commands.validate]
+description = "Run Devtool's canonical validation workflow"
+devtool = "validate"
+target = "devtool"
+allow_passthrough = true
+
+[wrapper.commands.build]
+description = "Run Devtool's canonical Python build action"
+devtool = "build"
+target = "devtool"
+allow_passthrough = true
 [execution]
 environment = "auto"
 chroot_name = "androidos"

@@ -352,6 +352,131 @@ def _parser_command_paths(parser: argparse.ArgumentParser) -> set[str]:
     return paths
 
 
+
+def _parser_command_entries(parser: argparse.ArgumentParser) -> tuple[tuple[tuple[str, ...], argparse.ArgumentParser], ...]:
+    """Return every argparse command spelling in deterministic traversal order.
+
+    Aliases intentionally appear as separate paths here.  ``adopt_parser_registry``
+    groups paths that point at the same parser object so one semantic command may
+    retain many accepted spellings without multiplying command identities.
+    """
+    entries: list[tuple[tuple[str, ...], argparse.ArgumentParser]] = []
+
+    def visit(current: argparse.ArgumentParser, prefix: tuple[str, ...] = ()) -> None:
+        for action in current._actions:
+            if not isinstance(action, argparse._SubParsersAction):  # type: ignore[attr-defined]
+                continue
+            for name, child in action.choices.items():
+                path = (*prefix, str(name))
+                entries.append((path, child))
+                visit(child, path)
+
+    visit(parser)
+    return tuple(entries)
+
+
+def _stable_command_id(path: Sequence[str]) -> str:
+    parts = []
+    for token in path:
+        normalized = "".join(ch if ch.isalnum() else "_" for ch in str(token).lower()).strip("_") or "command"
+        parts.append(normalized)
+    return "cli.command." + ".".join(parts)
+
+
+def adopt_parser_registry(base: CoreRegistry, parser: argparse.ArgumentParser) -> CoreRegistry:
+    """Adopt the complete live argparse command surface into CORE identity.
+
+    CORE-X04 is a migration boundary: older commands are still physically
+    registered by the legacy monolithic parser, but every live parser path must
+    now lower to a stable CORE command identity.  Generated help/completion/docs
+    consume this adopted registry and parity gates prevent unexplained drift.
+
+    Existing hand-authored CORE identities always win.  Missing parser commands
+    receive deterministic IDs and record ``adoption_source=argparse`` so later
+    modular registration work can migrate ownership without changing identity.
+    """
+    existing_paths: dict[tuple[str, ...], CliCommandSpec] = {}
+    for command in base.commands:
+        for path in command.all_paths():
+            existing_paths[path] = command
+
+    grouped: dict[int, list[tuple[str, ...]]] = {}
+    parsers: dict[int, argparse.ArgumentParser] = {}
+    order: list[int] = []
+    for path, child in _parser_command_entries(parser):
+        key = id(child)
+        if key not in grouped:
+            grouped[key] = []
+            parsers[key] = child
+            order.append(key)
+        if path not in grouped[key]:
+            grouped[key].append(path)
+
+    adopted: list[CliCommandSpec] = []
+    used_ids = set(base.commands_by_id)
+    for key in order:
+        paths = grouped[key]
+        known = next((existing_paths[path] for path in paths if path in existing_paths), None)
+        if known is not None:
+            # Hand-authored identities retain their canonical/alias contract.
+            # If argparse exposes additional spellings for the same parser, add
+            # them as migration aliases so parser parity is exhaustive.
+            extras = tuple(path for path in paths if path not in known.all_paths())
+            if extras:
+                replaced = CliCommandSpec(
+                    stable_id=known.stable_id,
+                    canonical_path=known.canonical_path,
+                    aliases=tuple(dict.fromkeys((*known.aliases, *extras))),
+                    options=known.options,
+                    metadata={**dict(known.metadata), "adoption_source": "canonical+argparse"},
+                )
+                adopted.append(replaced)
+                for path in replaced.all_paths():
+                    existing_paths[path] = replaced
+            continue
+
+        canonical = paths[0]
+        aliases = tuple(paths[1:])
+        stable_id = _stable_command_id(canonical)
+        if stable_id in used_ids:
+            suffix = hashlib.sha256(" ".join(canonical).encode()).hexdigest()[:8]
+            stable_id = f"{stable_id}.{suffix}"
+        used_ids.add(stable_id)
+        child = parsers[key]
+        summary = str(getattr(child, "description", "") or "").strip()
+        adopted.append(
+            CliCommandSpec(
+                stable_id=stable_id,
+                canonical_path=canonical,
+                aliases=aliases,
+                metadata={
+                    "domain": canonical[0] if canonical else "root",
+                    "summary": summary,
+                    "stability": "adopted",
+                    "adoption_source": "argparse",
+                },
+            )
+        )
+
+    # Replace any hand-authored command that gained parser aliases, then append
+    # newly adopted commands in stable traversal order.
+    replacements = {item.stable_id: item for item in adopted if item.stable_id in base.commands_by_id}
+    commands: list[CliCommandSpec] = [replacements.get(item.stable_id, item) for item in base.commands]
+    commands.extend(item for item in adopted if item.stable_id not in base.commands_by_id)
+    return CoreRegistry(
+        schema_version=base.schema_version,
+        commands=tuple(commands),
+        options=base.options,
+        config_documents=base.config_documents,
+        env=base.env,
+        reserved_namespaces=base.reserved_namespaces,
+    )
+
+
+def build_adopted_core_registry(parser: argparse.ArgumentParser) -> CoreRegistry:
+    """Return the full CORE-X04 command registry for the live frontend."""
+    return adopt_parser_registry(build_core_registry(), parser)
+
 def build_core_registry() -> CoreRegistry:
     options = (
         CliOptionSpec("cli.option.repo", "--repo", ("-r",), scope="global", value_kind="path", config_field_id="cfg.project.repo_root"),
@@ -387,7 +512,7 @@ def build_core_registry() -> CoreRegistry:
             ConfigFieldSpec("cfg.project.kind", ("project", "kind"), "enum", choices=("auto", "dotnet", "android", "gradle", "python", "node", "rust", "go", "maven", "cmake", "meson", "make", "command", "unknown")),
             ConfigFieldSpec("cfg.project.runner", ("project", "runner"), "enum", choices=("auto", "dotnet", "android", "gradle", "python", "node", "rust", "go", "maven", "cmake", "meson", "make", "command", "unknown")),
             ConfigFieldSpec("cfg.workspace.targets", ("targets"), "table"),
-            ConfigFieldSpec("cfg.wrapper.schema_version", ("wrapper", "schema_version"), "int"),
+            ConfigFieldSpec("cfg.wrapper.schema_version", ("wrapper", "schema"), "int"),
             ConfigFieldSpec("cfg.wrapper.commands", ("wrapper", "commands"), "table"),
             ConfigFieldSpec("cfg.federation.repositories", ("federation", "repositories"), "table"),
             ConfigFieldSpec("cfg.ui.profile", ("ui", "profile"), "string"),

@@ -1,0 +1,332 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "digest": "61c6953bcfe78b090034f445cce5d4d78edbecf388d123117362dfc86aec1bcc",
+  "documents": {
+    "global": {
+      "allow_unknown_top_level": [
+        "termux_chroot",
+        "termux",
+        "proot",
+        "android",
+        "gradle",
+        "dotnet",
+        "terminal",
+        "bootstrap",
+        "chroots",
+        "features",
+        "ssh"
+      ],
+      "fields": [
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.cli.output.copy",
+          "path": [
+            "cli",
+            "output",
+            "copy"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "bool"
+        },
+        {
+          "choices": [
+            "auto",
+            "summary",
+            "raw"
+          ],
+          "default": null,
+          "field_id": "cfg.cli.output.stdout_payload",
+          "path": [
+            "cli",
+            "output",
+            "stdout_payload"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "enum"
+        },
+        {
+          "choices": [
+            "auto",
+            "native-termux",
+            "chroot",
+            "proot-distro",
+            "desktop-linux",
+            "ssh",
+            "android-device",
+            "external-device"
+          ],
+          "default": null,
+          "field_id": "cfg.cli.environment.execution_environment",
+          "path": [
+            "cli",
+            "environment",
+            "execution_environment"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "enum"
+        },
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.cli.secrets.token",
+          "path": [
+            "cli",
+            "secrets",
+            "token"
+          ],
+          "reserved_namespace": null,
+          "sensitive": true,
+          "serialization": "redacted",
+          "value_kind": "string"
+        },
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.environment.default_chroot",
+          "path": [
+            "environment",
+            "default_chroot"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "string"
+        },
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.ui.profile",
+          "path": [
+            "ui",
+            "profile"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "string"
+        }
+      ],
+      "name": "global"
+    },
+    "repo": {
+      "allow_unknown_top_level": [
+        "jobs",
+        "tasks",
+        "artifacts",
+        "python",
+        "node",
+        "rust",
+        "go",
+        "maven",
+        "cmake",
+        "meson",
+        "make",
+        "test_profiles",
+        "variants",
+        "ssh"
+      ],
+      "fields": [
+        {
+          "choices": [
+            "auto",
+            "dotnet",
+            "android",
+            "gradle",
+            "python",
+            "node",
+            "rust",
+            "go",
+            "maven",
+            "cmake",
+            "meson",
+            "make",
+            "command",
+            "unknown"
+          ],
+          "default": null,
+          "field_id": "cfg.project.kind",
+          "path": [
+            "project",
+            "kind"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "enum"
+        },
+        {
+          "choices": [
+            "auto",
+            "dotnet",
+            "android",
+            "gradle",
+            "python",
+            "node",
+            "rust",
+            "go",
+            "maven",
+            "cmake",
+            "meson",
+            "make",
+            "command",
+            "unknown"
+          ],
+          "default": null,
+          "field_id": "cfg.project.runner",
+          "path": [
+            "project",
+            "runner"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "enum"
+        },
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.workspace.targets",
+          "path": [
+            "t",
+            "a",
+            "r",
+            "g",
+            "e",
+            "t",
+            "s"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "table"
+        },
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.wrapper.schema_version",
+          "path": [
+            "wrapper",
+            "schema"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "int"
+        },
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.wrapper.commands",
+          "path": [
+            "wrapper",
+            "commands"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "table"
+        },
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.federation.repositories",
+          "path": [
+            "federation",
+            "repositories"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "table"
+        },
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.ui.profile",
+          "path": [
+            "ui",
+            "profile"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "string"
+        }
+      ],
+      "name": "repo"
+    }
+  },
+  "environment": [
+    {
+      "env_id": "env.devtool.repo_root",
+      "name": "DEVTOOL_REPO_ROOT",
+      "protected": true,
+      "sensitive": false,
+      "value_kind": "string"
+    },
+    {
+      "env_id": "env.devtool.transaction_root",
+      "name": "DEVTOOL_TRANSACTION_ROOT",
+      "protected": true,
+      "sensitive": false,
+      "value_kind": "string"
+    },
+    {
+      "env_id": "env.devtool.validation_state_repo_root",
+      "name": "DEVTOOL_VALIDATION_STATE_REPO_ROOT",
+      "protected": true,
+      "sensitive": false,
+      "value_kind": "string"
+    },
+    {
+      "env_id": "env.devtool.internal_invocation_source",
+      "name": "DEVTOOL_INTERNAL_INVOCATION_SOURCE",
+      "protected": true,
+      "sensitive": true,
+      "value_kind": "string"
+    }
+  ],
+  "kind": "devtool.config-schema",
+  "option_config_links": [
+    {
+      "config_field_id": "cfg.project.repo_root",
+      "option_id": "cli.option.repo"
+    },
+    {
+      "config_field_id": "cfg.project.config_file",
+      "option_id": "cli.option.config"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target"
+    },
+    {
+      "config_field_id": "cfg.cli.output.copy",
+      "option_id": "cli.option.copy"
+    },
+    {
+      "config_field_id": "cfg.cli.output.stdout_payload",
+      "option_id": "cli.option.stdout_payload"
+    },
+    {
+      "config_field_id": "cfg.cli.environment.execution_environment",
+      "option_id": "cli.option.execution_environment"
+    }
+  ],
+  "registry_digest": "9107791dd5ab2cb39609d463b3d28a956821344419e740ed08d71899260a84ed",
+  "registry_schema_version": 1,
+  "reserved_namespaces": [
+    "devtool",
+    "devtool.internal",
+    "devtool.transaction",
+    "devtool.validation"
+  ],
+  "schema_version": 1
+}

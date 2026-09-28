@@ -82,7 +82,7 @@ def test_core_registry_cli_emits_machine_payload(capsys: pytest.CaptureFixture[s
     assert payload["schema_version"] == 1
     assert len(payload["digest"]) == 64
     assert any(command["stable_id"] == "cli.command.apply.overlay" for command in payload["commands"])
-    assert payload["parser_parity"]["missing_count"] >= 1
+    assert payload["parser_parity"]["missing_count"] == 0
 
 
 def test_compat_registry_alias_command_remains_available(capsys: pytest.CaptureFixture[str]) -> None:

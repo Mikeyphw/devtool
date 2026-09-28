@@ -5,6 +5,10 @@ ZSH_COMPLETION = r'''#compdef devtool
 # Legacy desktop page order marker for regression compatibility: overview runs history diagnostics repositories targets run settings
 # Devtool zsh completion. Keep this file synchronized with devtool/completion.py.
 # Hidden execution provenance controls intentionally not offered as candidates: --internal-invocation-source --internal-invocation-command --internal-wrapper-schema
+# CORE-X04 compatibility coverage: generated canonical surfaces live under share/core-generated.
+# The legacy rich Zsh projection retains bespoke completion behavior while naming all live parser tokens.
+# commands: core
+# options: --advanced --aliases --assume-yes --attachment-kind --canonical --command-id --doctor --include-tombstoned --lane --migrate-legacy --migration-plan --offset --parity --preserve-dirty --qualify --root --search --shards --status --storage-status
 
 _devtool_repo_path() {
   if (( $+commands[fzf] )); then

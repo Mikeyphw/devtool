@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "overlay": "CORE-X04",
+  "full_plan_position": "10/63",
+  "core_scope_position": "6/6",
+  "status": "candidate-complete-awaiting-apply",
+  "delivered_promises": [
+    "CORE-P006", "CORE-P012", "CORE-P026", "CORE-P036", "CORE-P037",
+    "CORE-P038", "CORE-P039", "CORE-P059", "CORE-P060", "CORE-P061",
+    "CORE-P068", "CORE-P069", "CORE-P070", "CORE-P073", "CORE-P075",
+    "CORE-P081", "CORE-P082"
+  ],
+  "deferred_gate": "CORE-G3",
+  "exported_findings": [
+    {
+      "id": "CORE-X04-FINDING-LOCK-HANDLE-LEAK",
+      "owner": "LIFE-X01",
+      "proof_gate": "LIFE-G1",
+      "status": "PLANNED_EXISTING_BOUNDARY",
+      "summary": "SingleRunLock repository and scoped run lock handles can survive invocation teardown and emit ResourceWarning; lifecycle must close them on every terminal path."
+    }
+  ],
+  "resolved_findings": [
+    "parser-registry-parity-gap",
+    "read-only-run-catalog-mutation",
+    "launcher-pair-atomicity-lock-enforcement-gap",
+    "wrapper-schema-generated-path-mismatch",
+    "generated-manpage-literal-newline-bug",
+    "legacy-zsh-completion-drift"
+  ],
+  "next_overlay": "ENV-X01",
+  "remaining_core_implementation_overlays": 0,
+  "next_major_scope": "ENV/EXEC foundations"
+}

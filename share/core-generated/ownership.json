@@ -1,0 +1,27 @@
+{
+  "authority": "generated-projection",
+  "canonical_sources": [
+    "CoreRegistry",
+    "argparse adoption boundary"
+  ],
+  "drift_policy": "exact-generated-set",
+  "forbidden_authorities": [
+    "execution",
+    "scheduler",
+    "transaction",
+    "artifact-registry",
+    "device-fabric"
+  ],
+  "generated_files": [
+    "machine-help.json",
+    "config-schema.json",
+    "completion.zsh",
+    "completion.bash",
+    "completion.fish",
+    "reference.md",
+    "devtool-core.1"
+  ],
+  "manifest_file": "manifest.json",
+  "owner": "CORE",
+  "schema_version": 1
+}

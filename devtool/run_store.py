@@ -289,7 +289,22 @@ class RunQuery:
     run_id: str | None = None
     command_id: str | None = None
     attachment_kind: str | None = None
+    status: str | None = None
+    provider: str | None = None
+    name_contains: str | None = None
+    since: float | None = None
+    until: float | None = None
     include_tombstoned: bool = False
+    offset: int = 0
+    limit: int = 100
+
+    def __post_init__(self) -> None:
+        if self.offset < 0:
+            raise ValueError("RunQuery offset must be non-negative")
+        if self.limit < 1 or self.limit > 1000:
+            raise ValueError("RunQuery limit must be between 1 and 1000")
+        if self.since is not None and self.until is not None and self.since > self.until:
+            raise ValueError("RunQuery since must not be after until")
 
 
 @dataclass(slots=True)
@@ -302,9 +317,17 @@ class RunCatalog:
     references: dict[str, RunReference] = field(default_factory=dict)
 
     @classmethod
-    def open(cls, root: str | Path) -> "RunCatalog":
+    def open(cls, root: str | Path, *, create: bool = True) -> "RunCatalog":
+        """Open a run catalog.
+
+        ``create=False`` is the observation/query path: it never creates the
+        catalog directory merely because a user asked for history/help/status.
+        Mutation owners call the default ``create=True`` path and ``save()``
+        still creates the directory at the durability boundary.
+        """
         root_path = Path(root)
-        root_path.mkdir(parents=True, exist_ok=True)
+        if create:
+            root_path.mkdir(parents=True, exist_ok=True)
         catalog = cls(root=root_path)
         index = root_path / "catalog.json"
         if index.exists():
@@ -371,10 +394,28 @@ class RunCatalog:
 
     def query(self, query: RunQuery) -> list[Mapping[str, Any]]:
         results: list[Mapping[str, Any]] = []
-        for run_id, descriptor in sorted(self.runs.items()):
+        ordered = sorted(
+            self.runs.items(),
+            key=lambda item: (float(item[1].get("created_at") or item[1].get("started_at") or 0.0), item[0]),
+            reverse=True,
+        )
+        for run_id, descriptor in ordered:
             if query.run_id and run_id != query.run_id:
                 continue
             if query.command_id and descriptor.get("command_id") != query.command_id:
+                continue
+            if query.status and str(descriptor.get("status") or "") != query.status:
+                continue
+            provider = str(descriptor.get("provider") or descriptor.get("execution_provider") or "")
+            if query.provider and provider != query.provider:
+                continue
+            name = str(descriptor.get("name") or descriptor.get("label") or descriptor.get("command_id") or run_id)
+            if query.name_contains and query.name_contains.lower() not in name.lower():
+                continue
+            timestamp = float(descriptor.get("created_at") or descriptor.get("started_at") or 0.0)
+            if query.since is not None and timestamp < query.since:
+                continue
+            if query.until is not None and timestamp > query.until:
                 continue
             attachments = [a for a in self.attachments.values() if a.run_id == run_id]
             if query.attachment_kind:
@@ -386,7 +427,7 @@ class RunCatalog:
                 if query.attachment_kind and not attachments:
                     continue
             results.append({"run": dict(descriptor), "attachments": [a.to_dict() for a in attachments], "streams": [s.to_dict() for s in self.streams.values() if s.run_id == run_id]})
-        return results
+        return results[query.offset : query.offset + query.limit]
 
     def gc_plan(self) -> GcPlan:
         delete: list[str] = []
@@ -411,7 +452,17 @@ class RunCatalog:
     def doctor(self) -> dict[str, Any]:
         plan = self.gc_plan()
         status = "pass" if not plan.dangling_refs else "fail"
-        return {"schema_version": 1, "status": status, "gc_plan": plan.to_dict(), "run_count": len(self.runs), "attachment_count": len(self.attachments)}
+        return {
+            "schema_version": 2,
+            "status": status,
+            "gc_plan": plan.to_dict(),
+            "run_count": len(self.runs),
+            "attachment_count": len(self.attachments),
+            "stream_count": len(self.streams),
+            "reference_count": len(self.references),
+            "root_classification": "private-state",
+            "index_rebuildable": True,
+        }
 
     def to_dict(self, *, include_private_paths: bool = False) -> dict[str, Any]:
         return {
@@ -524,3 +575,201 @@ def launcher_update_plan(source: str | Path, destination: str | Path) -> Launche
     dst = Path(destination)
     repo_lock = dst.parent / ".devtool-wrapper.lock"
     return LauncherUpdatePlan(source=str(source), destination=str(destination), lock_path=str(repo_lock), backup_path=str(dst.with_suffix(dst.suffix + ".bak")), atomic=True)
+
+
+def legacy_run_storage_plan(repo_root: str | Path, *, catalog_root: str | Path) -> dict[str, Any]:
+    """Describe legacy run/log families without mutating them.
+
+    CORE owns the migration *classification* and destination envelope.  LIFE
+    remains responsible for recovery-sensitive transaction state and DIST owns
+    published artifacts/caches, so those families are explicitly external.
+    """
+    repo = Path(repo_root).resolve(strict=False)
+    catalog = Path(catalog_root).resolve(strict=False)
+    candidates = (
+        ("legacy-logs", repo / ".devtool" / "logs", "migrate-as-run-attachments"),
+        ("legacy-test-runs", repo / ".devtool" / "test-runs", "migrate-as-test-attachments"),
+        ("legacy-evidence", repo / ".devtool" / "evidence", "migrate-as-evidence-attachments"),
+        ("legacy-desktop-history", repo / ".devtool" / "desktop" / "history", "migrate-as-run-metadata"),
+        ("transactions", repo / ".devtool" / "transactions", "external-life-owned"),
+        ("published-artifacts", repo / ".devtool" / "build-artifacts", "external-dist-owned"),
+    )
+    rows = []
+    for family, path, action in candidates:
+        exists = path.exists()
+        rows.append({"family": family, "path": str(path), "exists": exists, "action": action})
+    return {
+        "schema_version": 1,
+        "kind": "devtool.run-store-migration-plan",
+        "repository": str(repo),
+        "catalog_root": str(catalog),
+        "families": rows,
+        "migration_candidates": sum(1 for row in rows if row["exists"] and str(row["action"]).startswith("migrate")),
+        "mutates": False,
+    }
+
+
+def migrate_legacy_run_storage(
+    repo_root: str | Path,
+    catalog: RunCatalog,
+    *,
+    max_files: int = 10_000,
+) -> dict[str, Any]:
+    """Adopt readable legacy run/log/history files into RUN V3 metadata.
+
+    Migration is explicit and non-destructive: legacy bytes remain in place and
+    become private attachments in the canonical catalog.  Re-running the
+    migration is idempotent because run and attachment identities are derived
+    from stable source family/path/content identity.  LIFE-owned transaction
+    state and DIST-owned published artifacts are never imported here.
+    """
+    if max_files < 1:
+        raise ValueError("max_files must be positive")
+    repo = Path(repo_root).resolve(strict=False)
+    plan = legacy_run_storage_plan(repo, catalog_root=catalog.root)
+    action_to_kind = {
+        "migrate-as-run-attachments": "legacy-log",
+        "migrate-as-test-attachments": "legacy-test-evidence",
+        "migrate-as-evidence-attachments": "legacy-evidence",
+        "migrate-as-run-metadata": "legacy-history",
+    }
+    migrated = 0
+    families: list[dict[str, Any]] = []
+    truncated = False
+    for row in plan["families"]:
+        action = str(row.get("action") or "")
+        kind = action_to_kind.get(action)
+        if kind is None or not row.get("exists"):
+            continue
+        source_root = Path(str(row["path"]))
+        files: list[Path]
+        if source_root.is_file():
+            files = [source_root]
+        else:
+            files = sorted(path for path in source_root.rglob("*") if path.is_file() and not path.is_symlink())
+        run_id = "legacy-" + _sha({"repository": str(repo), "family": row["family"]})[:24]
+        family_count = 0
+        earliest: float | None = None
+        for source in files:
+            if migrated >= max_files:
+                truncated = True
+                break
+            try:
+                stat = source.stat()
+                attachment = AttachmentDescriptor.from_file(run_id=run_id, path=source, kind=kind, privacy="private")
+            except OSError:
+                continue
+            catalog.add_attachment(attachment)
+            timestamp = float(stat.st_mtime)
+            earliest = timestamp if earliest is None else min(earliest, timestamp)
+            family_count += 1
+            migrated += 1
+        if family_count:
+            catalog.add_run(
+                {
+                    "run_id": run_id,
+                    "command_id": "legacy.import",
+                    "status": "legacy",
+                    "provider": "legacy-local",
+                    "name": f"Legacy {row['family']} import",
+                    "created_at": earliest or 0.0,
+                    "legacy_source_family": row["family"],
+                    "legacy_source_root": str(source_root),
+                }
+            )
+            families.append({"family": row["family"], "run_id": run_id, "attachments": family_count})
+        if truncated:
+            break
+    if migrated:
+        catalog.save()
+    return {
+        "schema_version": 1,
+        "kind": "devtool.run-store-migration-result",
+        "repository": str(repo),
+        "catalog_root": str(catalog.root),
+        "migrated_attachments": migrated,
+        "families": families,
+        "truncated": truncated,
+        "max_files": max_files,
+        "mutated": bool(migrated),
+        "source_bytes_preserved": True,
+    }
+
+
+def repository_storage_inventory(repo_root: str | Path, catalog_root: str | Path) -> dict[str, Any]:
+    """Classify known durable repository-local storage families.
+
+    The inventory is intentionally ownership-oriented rather than a deletion
+    plan. Unknown top-level ``.devtool`` families are surfaced as unclassified
+    so CORE cannot silently acquire another durable state universe.
+    """
+    repo = Path(repo_root).resolve(strict=False)
+    devtool_root = repo / ".devtool"
+    known = {
+        "private": ("state", "CORE"),
+        "logs": ("legacy", "CORE-migration"),
+        "test-runs": ("legacy", "CORE-migration"),
+        "evidence": ("legacy", "CORE-migration"),
+        "desktop": ("legacy", "CORE-migration"),
+        "transactions": ("state", "LIFE"),
+        "build-artifacts": ("published", "DIST"),
+        "cache": ("cache", "external/provider"),
+    }
+    rows: list[dict[str, Any]] = [
+        {
+            "path": str(Path(catalog_root).resolve(strict=False)),
+            "classification": "state",
+            "owner": "CORE",
+            "family": "run-v3",
+            "exists": Path(catalog_root).exists(),
+        },
+        {
+            "path": str(repo / "share" / "core-generated"),
+            "classification": "projection",
+            "owner": "CORE",
+            "family": "core-generated",
+            "exists": (repo / "share" / "core-generated").exists(),
+        },
+    ]
+    if devtool_root.exists():
+        for child in sorted(devtool_root.iterdir(), key=lambda item: item.name):
+            classification, owner = known.get(child.name, ("unclassified", "unknown"))
+            rows.append(
+                {
+                    "path": str(child),
+                    "classification": classification,
+                    "owner": owner,
+                    "family": child.name,
+                    "exists": True,
+                }
+            )
+    unclassified = [row for row in rows if row["classification"] == "unclassified"]
+    return {
+        "schema_version": 1,
+        "kind": "devtool.repository-storage-inventory",
+        "paths": rows,
+        "unclassified": unclassified,
+        "status": "pass" if not unclassified else "fail",
+    }
+
+
+def run_storage_status(repo_root: str | Path, catalog: RunCatalog) -> dict[str, Any]:
+    doctor = catalog.doctor()
+    migration = legacy_run_storage_plan(repo_root, catalog_root=catalog.root)
+    inventory = repository_storage_inventory(repo_root, catalog.root)
+    status = "pass" if doctor["status"] == "pass" and inventory["status"] == "pass" else "fail"
+    return {
+        "schema_version": 1,
+        "kind": "devtool.run-storage-status",
+        "status": status,
+        "repository": str(Path(repo_root).resolve(strict=False)),
+        "catalog": doctor,
+        "migration": migration,
+        "inventory": inventory,
+        "ownership": {
+            "catalog": "CORE",
+            "transactions": "LIFE",
+            "published_artifacts": "DIST",
+            "execution_status": "EXO",
+        },
+    }

@@ -28,6 +28,8 @@ class WrapperConfigError(ValueError):
 
 
 WRAPPER_SCHEMA_VERSION = 1
+WRAPPER_CANONICAL_SCHEMA_VERSION = 2
+WRAPPER_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2})
 WRAPPER_OPTION_TYPES = frozenset({"boolean", "string", "integer", "float", "choice", "path"})
 WRAPPER_PATH_BASES = frozenset({"cwd", "repo"})
 WRAPPER_RESERVED_OPTION_SPELLINGS = frozenset({"help", "h", "version"})
@@ -494,8 +496,9 @@ def load_wrapper_config(
         return WrapperConfig()
 
     schema = raw.get("schema", WRAPPER_SCHEMA_VERSION)
-    if isinstance(schema, bool) or not isinstance(schema, int) or schema != WRAPPER_SCHEMA_VERSION:
-        raise _fail(f"wrapper.schema must be {WRAPPER_SCHEMA_VERSION}")
+    if isinstance(schema, bool) or not isinstance(schema, int) or schema not in WRAPPER_SUPPORTED_SCHEMA_VERSIONS:
+        supported = ", ".join(str(item) for item in sorted(WRAPPER_SUPPORTED_SCHEMA_VERSIONS))
+        raise _fail(f"wrapper.schema must be one of: {supported}")
 
     commands_raw = _table(raw.get("commands"), path="[wrapper.commands]")
     commands: dict[str, WrapperCommandConfig] = {}

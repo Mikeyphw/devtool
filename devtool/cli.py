@@ -1032,6 +1032,23 @@ def build_parser() -> argparse.ArgumentParser:
     logs_tail.add_argument("--fzf", dest="fzf", action="store_true", default=True)
     logs_tail.add_argument("--no-fzf", dest="fzf", action="store_false")
 
+    runs_cmd = subparsers.add_parser("runs", help="Query canonical CORE RUN V3 history")
+    runs_cmd.add_argument("--json", action="store_true", help="Emit machine-readable run query results")
+    runs_cmd.add_argument("--root", default="", help="Override RUN V3 catalog root")
+    runs_cmd.add_argument("--run-id", default="", help="Filter by exact run ID")
+    runs_cmd.add_argument("--command-id", default="", help="Filter by canonical command ID")
+    runs_cmd.add_argument("--status", default="", help="Filter by projected run status")
+    runs_cmd.add_argument("--provider", default="", help="Filter by execution provider")
+    runs_cmd.add_argument("--name", default="", help="Case-insensitive run name/label filter")
+    runs_cmd.add_argument("--attachment-kind", default="", help="Require an available attachment kind")
+    runs_cmd.add_argument("--include-tombstoned", action="store_true", help="Include tombstoned attachment metadata")
+    runs_cmd.add_argument("--offset", type=int, default=0, help="Pagination offset")
+    runs_cmd.add_argument("--limit", type=int, default=100, help="Pagination limit (1..1000)")
+    runs_mode = runs_cmd.add_mutually_exclusive_group()
+    runs_mode.add_argument("--storage-status", action="store_true", help="Show canonical storage/ownership/doctor status")
+    runs_mode.add_argument("--migration-plan", action="store_true", help="Show read-only legacy run/log migration classification")
+    runs_mode.add_argument("--migrate-legacy", action="store_true", help="Explicitly adopt readable legacy run/log/history files into RUN V3 metadata without deleting source bytes")
+
     tag_cmd = subparsers.add_parser("tag")
     tag_cmd.add_argument("name")
     tag_cmd.add_argument("-m", "--message", default="")
@@ -1041,7 +1058,8 @@ def build_parser() -> argparse.ArgumentParser:
     rn.add_argument("--to-ref", default="HEAD")
 
     completion = subparsers.add_parser("completion")
-    completion.add_argument("shell", choices=["zsh"])
+    completion.add_argument("shell", choices=["zsh", "bash", "fish"])
+    completion.add_argument("--canonical", action="store_true", help="Generate completion from the CORE command registry instead of the legacy checked-in Zsh projection")
     completion_state = subparsers.add_parser("completion-state", help="Emit config-aware values for shell/editor completion")
     completion_state.add_argument("--kind", choices=["targets", "groups", "ui-profiles", "test-profiles", "variants", "jobs", "target-jobs", "target-job-keys", "target-job-refs", "workflows", "wrapper-commands", "wrapper-aliases", "wrapper-options", "pytest-tests", "all"], default="all")
     completion_state.add_argument("--format", choices=["lines", "json"], default="lines")
@@ -1074,6 +1092,11 @@ def build_parser() -> argparse.ArgumentParser:
     wrapper_verify.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
     wrapper_status = wrapper_sub.add_parser("status", help="Show repository devtoolw launcher status")
     wrapper_status.add_argument("--json", action="store_true", help="Emit launcher status as JSON")
+    wrapper_migrate = wrapper_sub.add_parser("migrate", help="Migrate a schema-1 repository wrapper contract to canonical schema 2")
+    wrapper_migrate_mode = wrapper_migrate.add_mutually_exclusive_group()
+    wrapper_migrate_mode.add_argument("--check", action="store_true", help="Report whether wrapper schema migration is needed without changing files")
+    wrapper_migrate_mode.add_argument("--write", action="store_true", help="Atomically update only the [wrapper] schema declaration")
+    wrapper_migrate.add_argument("--json", action="store_true", help="Emit secret-safe migration metadata as JSON")
     wrapper_seal = wrapper_sub.add_parser("seal", help="Run wrapper cross-surface final seal checks")
     wrapper_seal.add_argument("--json", action="store_true", help="Emit wrapper final seal as JSON")
 
@@ -1355,6 +1378,16 @@ def build_parser() -> argparse.ArgumentParser:
     core_run_store.add_argument("--json", action="store_true", help="Emit machine-readable run catalog state")
     core_run_store.add_argument("--root", default="", help="Override the run catalog root; defaults to <repo>/.devtool/private/run-v3")
     core_run_store.add_argument("--doctor", action="store_true", help="Emit storage doctor/GC state instead of the full catalog")
+    core_surfaces = core_sub.add_parser("surfaces", help="Generate or verify CORE-X04 machine help, schema, completion, and reference projections")
+    core_surfaces.add_argument("--json", action="store_true", help="Emit the generated-surface manifest as JSON")
+    surface_mode = core_surfaces.add_mutually_exclusive_group()
+    surface_mode.add_argument("--write", default="", metavar="DIR", help="Write generated projections atomically to DIR")
+    surface_mode.add_argument("--check", default="", metavar="DIR", help="Fail when generated projections in DIR drift from canonical sources")
+    core_help = core_sub.add_parser("help", help="Search canonical machine help without scraping argparse text")
+    core_help.add_argument("--json", action="store_true", help="Emit canonical machine-help JSON")
+    core_help.add_argument("--search", default="", help="Filter by command ID, path, alias, domain, or summary")
+    core_help.add_argument("--aliases", action="store_true", help="Include compatibility aliases")
+    core_help.add_argument("--advanced", action="store_true", help="Include hidden/internal parser options")
 
     registry_cmd = subparsers.add_parser("registry", help=argparse.SUPPRESS)
     registry_cmd.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
@@ -1388,6 +1421,12 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_migrate.add_argument("--global", dest="global_config", action="store_true", help="Migrate legacy UI preferences in the user global config")
     cfg_doctor = cfg_sub.add_parser("doctor")
     cfg_doctor.add_argument("--global", dest="global_config", action="store_true", help="Diagnose the user global config")
+    cfg_schema = cfg_sub.add_parser("schema", help="Emit the generated CORE configuration schema/reference contract")
+    cfg_schema.add_argument("--json", action="store_true", help="Emit machine-readable schema JSON")
+    cfg_status = cfg_sub.add_parser("status", help="Show canonical effective configuration, migration, and provenance status")
+    cfg_status.add_argument("--json", action="store_true", help="Emit machine-readable status JSON")
+    cfg_diff = cfg_sub.add_parser("diff", help="Show effective fields whose provenance differs from built-in/default authority")
+    cfg_diff.add_argument("--json", action="store_true", help="Emit machine-readable provenance diff JSON")
 
     ssh_cmd = subparsers.add_parser("ssh", help="Manage, qualify, and operate named SSH build workers")
     ssh_sub = ssh_cmd.add_subparsers(dest="ssh_command", required=True)
@@ -12825,6 +12864,19 @@ def _resolve_config_editor(requested: str = "") -> list[str]:
     raise SystemExit("No editor found. Set [terminal].preferred or DEVTOOL_EDITOR/VISUAL/EDITOR.")
 
 def _config_command(args: argparse.Namespace) -> int:
+    if args.config_command == "schema":
+        from .core_surfaces import build_generated_surfaces
+
+        payload = build_generated_surfaces(build_parser()).config_schema
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(f"Devtool config schema v{payload.get('schema_version')} registry={payload.get('registry_digest')}")
+            for name, document in sorted((payload.get("documents") or {}).items()):
+                fields = document.get("fields", []) if isinstance(document, dict) else []
+                print(f"  {name}: {len(fields)} canonical fields")
+        return 0
+
     if args.config_command == "path":
         if getattr(args, "global_config", False):
             print(global_config_path())
@@ -12963,6 +13015,49 @@ def _config_command(args: argparse.Namespace) -> int:
             rows.extend((f"provenance.{key}", value) for key, value in sorted(config.config_provenance.items()))
             render_status_table(rows)
         return 0
+    if args.config_command in {"status", "diff"}:
+        path = config.config_path or (config.repo_root / ".devtool.toml")
+        migration = migration_report(path) if path.exists() else {"needs_migration": False, "findings": []}
+        provenance = dict(sorted(config.config_provenance.items()))
+        differences = [
+            {"field": key, "source": value}
+            for key, value in provenance.items()
+            if str(value).strip().lower() not in {"", "default", "builtin", "built-in"}
+        ]
+        payload = {
+            "schema_version": 1,
+            "kind": "devtool.config-status" if args.config_command == "status" else "devtool.config-diff",
+            "config_path": str(path),
+            "repo_root": str(config.repo_root),
+            "migration_needed": bool(migration.get("needs_migration")),
+            "migration_safe": bool(migration.get("safe_to_write", True)),
+            "wrapper_schema": int(config.wrapper.schema) if config.wrapper.commands else None,
+            "selected_target": config.selected_target or "",
+            "runner": config.runner,
+            "platform": config.platform or "",
+            "provenance": provenance,
+            "differences": differences,
+            "difference_count": len(differences),
+        }
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        elif args.config_command == "status":
+            rows = [
+                ("config", str(path)),
+                ("runner", config.runner),
+                ("platform", config.platform or "-"),
+                ("selected_target", config.selected_target or "-"),
+                ("migration", "recommended" if payload["migration_needed"] else "canonical"),
+                ("non_default_sources", str(len(differences))),
+            ]
+            render_status_table(rows)
+        else:
+            rows = [(item["field"], item["source"]) for item in differences]
+            if not rows:
+                rows = [("status", "no non-default provenance entries")]
+            render_status_table(rows)
+        return 0
+
     if args.config_command == "doctor":
         migration = migration_report(config.config_path) if config.config_path and config.config_path.exists() else {"needs_migration": False}
         rows = [
@@ -13544,6 +13639,32 @@ def _handle_wrapper_command(args: argparse.Namespace) -> int:
             return 1
         return 0
 
+    if action == "migrate":
+        from .wrapper_migration import migrate_wrapper_schema_file
+
+        config_path = find_config(repo_root, getattr(args, "config", None)) or (repo_root / ".devtool.toml")
+        if not config_path.exists():
+            print(f"Error: Config not found: {config_path}", file=sys.stderr)
+            return 2
+        try:
+            result = migrate_wrapper_schema_file(config_path, write=bool(getattr(args, "write", False)))
+        except (OSError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        payload = result.public_dict()
+        payload["path"] = str(config_path)
+        payload["written"] = bool(getattr(args, "write", False) and result.changed)
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            status = "migration needed" if result.changed else "canonical schema 2"
+            print(f"Wrapper schema: {status}")
+            print(f"Source schema: {result.source_schema}")
+            print(f"Target schema: {result.target_schema}")
+            if payload["written"]:
+                print(f"Updated: {config_path}")
+        return 1 if bool(getattr(args, "check", False)) and result.changed else 0
+
     config = load_wrapper_project_config(str(repo_root), getattr(args, "config", None))
 
     if action == "describe":
@@ -13868,9 +13989,14 @@ def _main_after_parse(
         return 0
 
     if args.command in {"completion"}:
-        if args.shell == "zsh":
+        if args.shell == "zsh" and not bool(getattr(args, "canonical", False)):
             print(ZSH_COMPLETION)
             return 0
+        from .core_surfaces import build_generated_surfaces
+
+        bundle = build_generated_surfaces(parser)
+        print(bundle.completions[str(args.shell)], end="")
+        return 0
 
     if args.command == "completion-state":
         config = _load_command_config(args)
@@ -14168,7 +14294,49 @@ def _main_after_parse(
         return 0
 
     if args.command in {"core", "registry"}:
-        if args.command == "core" and str(getattr(args, "core_command", "") or "") == "runtime":
+        core_action = str(getattr(args, "core_command", "") or "") if args.command == "core" else "registry"
+        if args.command == "core" and core_action in {"surfaces", "help"}:
+            from .core_surfaces import (
+                build_generated_surfaces, check_generated_surfaces, filter_machine_help,
+                render_help_text, write_generated_surfaces,
+            )
+
+            bundle = build_generated_surfaces(parser)
+            if core_action == "help":
+                payload = filter_machine_help(
+                    bundle.machine_help,
+                    search=str(getattr(args, "search", "") or ""),
+                    include_aliases=bool(getattr(args, "aliases", False)),
+                    include_advanced=bool(getattr(args, "advanced", False)),
+                )
+                if bool(getattr(args, "json", False)):
+                    print(json.dumps(payload, indent=2, ensure_ascii=False))
+                else:
+                    print(render_help_text(payload), end="")
+                return 0
+            write_dir = str(getattr(args, "write", "") or "")
+            check_dir = str(getattr(args, "check", "") or "")
+            if write_dir:
+                payload = write_generated_surfaces(bundle, write_dir)
+                payload["status"] = "pass"
+            elif check_dir:
+                payload = check_generated_surfaces(bundle, check_dir)
+            else:
+                payload = bundle.to_dict()
+                payload["status"] = "pass" if int((payload.get("parser_parity") or {}).get("missing_count") or 0) == 0 else "fail"
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                parity = payload.get("parser_parity") or {}
+                print(f"CORE generated surfaces: {payload.get('status')} registry={payload.get('registry_digest', bundle.registry.digest)}")
+                if parity:
+                    print(f"Parser parity: covered={len(parity.get('covered', []))} missing={parity.get('missing_count', 0)}")
+                if payload.get("drift"):
+                    for item in payload.get("drift", []):
+                        print(f"  drift: {item.get('path')} ({item.get('reason')})")
+            return 0 if payload.get("status") == "pass" else 1
+
+        if args.command == "core" and core_action == "runtime":
             from .core_runtime import InteractionPolicy, OutputRequest, ResolutionContext, render_runtime_text, runtime_payload
 
             repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
@@ -14198,13 +14366,13 @@ def _main_after_parse(
                 print(render_runtime_text(payload))
             return 0
 
-        if args.command == "core" and str(getattr(args, "core_command", "") or "") == "run-store":
+        if args.command == "core" and core_action == "run-store":
             from .core_runtime import private_run_root
             from .run_store import RunCatalog
 
             repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
             root_arg = str(getattr(args, "root", "") or "")
-            catalog = RunCatalog.open(root_arg or private_run_root(repo_root))
+            catalog = RunCatalog.open(root_arg or private_run_root(repo_root), create=False)
             payload = catalog.doctor() if bool(getattr(args, "doctor", False)) else catalog.to_dict()
             if bool(getattr(args, "json", False)):
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -14215,9 +14383,15 @@ def _main_after_parse(
                     print(f"CORE run-store catalog: {len(payload.get('runs', {}))} runs")
             return 0
 
-        from .core_registry import core_registry_payload, render_core_registry_text
+        from .core_registry import build_adopted_core_registry, core_registry_payload, render_core_registry_text
 
-        payload = core_registry_payload(include_parser_parity=bool(getattr(args, "parity", False)), parser=build_parser() if bool(getattr(args, "parity", False)) else None)
+        if bool(getattr(args, "parity", False)):
+            adopted = build_adopted_core_registry(parser)
+            payload = adopted.to_dict()
+            payload["digest"] = adopted.digest
+            payload["parser_parity"] = adopted.parser_parity(parser)
+        else:
+            payload = core_registry_payload()
         if bool(getattr(args, "json", False)):
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
@@ -14308,6 +14482,69 @@ def _main_after_parse(
         if bool(getattr(args, "strict", False)) and payload.get("config_migration", {}).get("needs_migration"):
             return 1
         return 0
+
+    if args.command == "runs":
+        from .core_runtime import private_run_root
+        from .run_store import RunCatalog, RunQuery, legacy_run_storage_plan, migrate_legacy_run_storage, run_storage_status
+
+        repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
+        root_arg = str(getattr(args, "root", "") or "")
+        catalog = RunCatalog.open(root_arg or private_run_root(repo_root), create=False)
+        if bool(getattr(args, "storage_status", False)):
+            payload = run_storage_status(repo_root, catalog)
+        elif bool(getattr(args, "migration_plan", False)):
+            payload = legacy_run_storage_plan(repo_root, catalog_root=catalog.root)
+        elif bool(getattr(args, "migrate_legacy", False)):
+            payload = migrate_legacy_run_storage(repo_root, catalog)
+        else:
+            try:
+                query = RunQuery(
+                    run_id=str(getattr(args, "run_id", "") or "") or None,
+                    command_id=str(getattr(args, "command_id", "") or "") or None,
+                    status=str(getattr(args, "status", "") or "") or None,
+                    provider=str(getattr(args, "provider", "") or "") or None,
+                    name_contains=str(getattr(args, "name", "") or "") or None,
+                    attachment_kind=str(getattr(args, "attachment_kind", "") or "") or None,
+                    include_tombstoned=bool(getattr(args, "include_tombstoned", False)),
+                    offset=int(getattr(args, "offset", 0) or 0),
+                    limit=int(getattr(args, "limit", 100) or 100),
+                )
+            except ValueError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 2
+            rows = catalog.query(query)
+            payload = {
+                "schema_version": 1,
+                "kind": "devtool.run-query",
+                "repository": str(repo_root),
+                "catalog_root": str(catalog.root),
+                "query": {
+                    "run_id": query.run_id,
+                    "command_id": query.command_id,
+                    "status": query.status,
+                    "provider": query.provider,
+                    "name": query.name_contains,
+                    "attachment_kind": query.attachment_kind,
+                    "include_tombstoned": query.include_tombstoned,
+                    "offset": query.offset,
+                    "limit": query.limit,
+                },
+                "runs": rows,
+                "count": len(rows),
+            }
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            if payload.get("kind") == "devtool.run-query":
+                rows = payload.get("runs", []) or []
+                if not rows:
+                    print("No matching runs.")
+                for row in rows:
+                    run = row.get("run", {}) if isinstance(row, dict) else {}
+                    print(f"{run.get('run_id', '-')}  {run.get('status', '-')}  {run.get('command_id', '-')}  {run.get('provider', run.get('execution_provider', '-'))}")
+            else:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0 if payload.get("status", "pass") != "fail" else 1
 
     if args.command in {"logs"}:
         logs_command = str(getattr(args, "logs_command", "") or "latest")
