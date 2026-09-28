@@ -407,6 +407,13 @@ roadmap-env-x02 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "env-x02", ref = "test:roadmap-env-x02", depends_on = ["syntax"] },
 ]
+roadmap-env-g1 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "env-x01-milestone", ref = "test:roadmap-env-g1-x01-milestone", depends_on = ["syntax"] },
+  { id = "env-x02-milestone", ref = "test:roadmap-env-g1-x02-milestone", depends_on = ["syntax"] },
+  { id = "cross-consumer", ref = "test:roadmap-env-g1-cross-consumer", depends_on = ["env-x01-milestone", "env-x02-milestone"] },
+  { id = "env-g1", ref = "test:roadmap-env-g1", depends_on = ["cross-consumer"] },
+]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
@@ -1273,4 +1280,87 @@ command = [
   "tests/test_ssh_tmux_runner.py",
   "tests/test_project_runners.py",
   "tests/test_sshw03_remote_execution_toolchains.py",
+]
+
+# ENV-G1 bounded milestone qualifications. These intentionally avoid the
+# package-bootstrap-heavy implementation suites while keeping those full suites
+# available as roadmap-env-x01 / roadmap-env-x02 for reseal/debug use.
+[[test]]
+id = "roadmap-env-g1-x01-milestone"
+name = "ENV-G1 X01 milestone invariants"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x01_host_privilege_foundation.py::test_explicit_sparse_linux_environment_does_not_leak_android_parent_platform",
+  "tests/test_env_x01_host_privilege_foundation.py::test_build_resource_policy_does_not_inherit_android_platform_for_synthetic_desktop",
+  "tests/test_env_x01_host_privilege_foundation.py::test_termux_host_identity_separates_android_host_from_native_substrate",
+  "tests/test_env_x01_host_privilege_foundation.py::test_chroot_identity_is_a_guest_substrate_not_native_termux",
+  "tests/test_env_x01_host_privilege_foundation.py::test_passive_provider_discovery_never_treats_su_presence_as_readiness",
+  "tests/test_env_x01_host_privilege_foundation.py::test_privilege_plan_requires_global_capability_authorization",
+  "tests/test_env_x01_host_privilege_foundation.py::test_repo_config_cannot_grant_privilege",
+  "tests/test_env_x01_host_privilege_foundation.py::test_protected_runtime_environment_names_cannot_be_forged",
+  "tests/test_env_x01_host_privilege_foundation.py::test_chroot_candidate_requires_real_tool_receipt_and_ready_privilege",
+  "tests/test_env_x01_host_privilege_foundation.py::test_proot_uid_zero_never_satisfies_real_host_privilege",
+  "tests/test_env_x01_host_privilege_foundation.py::test_capability_first_selection_prefers_qualified_current_substrate",
+  "tests/test_env_x01_host_privilege_foundation.py::test_action_required_privilege_candidate_is_not_auto_selected",
+  "tests/test_env_x01_host_privilege_foundation.py::test_chroot_entry_no_longer_has_implicit_sudo_default",
+  "tests/test_env_x01_host_privilege_foundation.py::test_resource_cache_reclaim_executes_only_after_global_policy_authorization",
+  "tests/test_env_x01_host_privilege_foundation.py::test_resource_cache_reclaim_is_denied_without_global_policy_authorization",
+]
+
+[[test]]
+id = "roadmap-env-g1-x02-milestone"
+name = "ENV-G1 X02 milestone invariants"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x02_language_environment_convergence.py::test_composition_order_is_host_direnv_mise_language",
+  "tests/test_env_x02_language_environment_convergence.py::test_direnv_presence_does_not_authorize_itself",
+  "tests/test_env_x02_language_environment_convergence.py::test_direnv_passive_status_authorizes_without_devtool_override",
+  "tests/test_env_x02_language_environment_convergence.py::test_mise_receipt_captures_version_trust_exact_version_backend",
+  "tests/test_env_x02_language_environment_convergence.py::test_tool_versions_alone_is_not_auto_mise_ownership",
+  "tests/test_env_x02_language_environment_convergence.py::test_asdf_explicit_provider_uses_tool_versions_and_exec",
+  "tests/test_env_x02_language_environment_convergence.py::test_tool_versions_auto_selects_asdf_not_mise_when_asdf_available",
+  "tests/test_env_x02_language_environment_convergence.py::test_mise_owned_marker_wins_auto_over_shared_asdf_marker",
+  "tests/test_env_x02_language_environment_convergence.py::test_direnv_path_cannot_replace_asdf_owned_tool",
+  "tests/test_env_x02_language_environment_convergence.py::test_asdf_version_override_is_provenance_bearing",
+  "tests/test_env_x02_language_environment_convergence.py::test_pyenv_explicit_provider_resolves_runtime_and_wraps",
+  "tests/test_env_x02_language_environment_convergence.py::test_python_version_auto_selects_pyenv_only_for_python_targets",
+  "tests/test_env_x02_language_environment_convergence.py::test_asdf_shared_marker_wins_auto_before_pyenv_marker",
+  "tests/test_env_x02_language_environment_convergence.py::test_direnv_cannot_override_pyenv_version",
+  "tests/test_env_x02_language_environment_convergence.py::test_destination_python_environment_is_repo_relative",
+  "tests/test_env_x02_language_environment_convergence.py::test_ssh_drops_host_owned_python_and_go_paths",
+  "tests/test_env_x02_language_environment_convergence.py::test_go_build_fail_events_are_not_lost",
+  "tests/test_env_x02_language_environment_convergence.py::test_go_environment_qualifies_asdf_selected_go_before_effective_toolchain",
+  "tests/test_env_x02_language_environment_convergence.py::test_asdf_golang_plugin_maps_to_go_executable_identity",
+  "tests/test_env_x02_language_environment_convergence.py::test_asdf_system_passthrough_does_not_claim_python_runtime",
+  "tests/test_env_x02_language_environment_convergence.py::test_pyenv_system_passthrough_does_not_claim_python_runtime",
+  "tests/test_env_x02_language_environment_convergence.py::test_toolchain_wrapper_reverification_uses_authoritative_execution_path_when_spec_env_omits_path",
+  "tests/test_env_x02_language_environment_convergence.py::test_asdf_version_override_without_version_file_establishes_runtime_ownership",
+  "tests/test_env_x02_language_environment_convergence.py::test_provider_disappearance_after_qualification_fails_closed",
+  "tests/test_env_x02_language_environment_convergence.py::test_pyenv_requested_and_active_version_mismatch_fails_closed",
+]
+
+[[test]]
+id = "roadmap-env-g1-cross-consumer"
+name = "ENV-G1 folded cross-consumer regressions"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_all_project_optimizations.py::FirstClassRunnerPlanningTests::test_python_hatch_restore_ignores_stale_venv_environment_path",
+  "tests/test_all_project_optimizations.py::FirstClassRunnerPlanningTests::test_rust_coalesces_build_and_test_and_preserves_incremental_cache",
+]
+
+# ENV-G1 fresh-process host/language milestone gate.
+[[test]]
+id = "roadmap-env-g1"
+name = "ENV-G1 host and language environment milestone"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_g1_host_language_gate.py",
 ]

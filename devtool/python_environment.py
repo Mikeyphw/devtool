@@ -383,7 +383,7 @@ def resolve_python_environment(
         qualified=True, detail="destination runtime probe deferred to execution destination",
     )
 
-    if execution not in _REMOTE_ENVIRONMENTS and info.manager in _MANAGER_OWNED and not receipt.qualified:
+    if execution not in _REMOTE_ENVIRONMENTS and info.manager in _MANAGER_OWNED and not receipt.qualified and request.action != "restore":
         raise PythonProjectError(
             f"Python environment manager {info.manager!r} is selected but could not be qualified: "
             f"{receipt.detail or 'manager executable/environment probe unavailable'}"

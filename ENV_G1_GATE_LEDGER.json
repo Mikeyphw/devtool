@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "program": "M004 ENV",
+  "gate": "ENV-G1",
+  "gate_window_position": "3/3",
+  "major_scope_position": "3/7",
+  "full_plan_position": "13/63",
+  "audited_user_commits": {
+    "ENV-X01": "8305b8c",
+    "ENV-X02": "65667cf"
+  },
+  "audited_promises": {
+    "ENV-X01": [
+      "ENV-P001..ENV-P015",
+      "ENV-P029 foundation/consumption boundary"
+    ],
+    "ENV-X02": [
+      "ENV_X02_PROMISE_LEDGER.json delivered set",
+      "ENV-P105..P131 provider extension ownership/disposition"
+    ]
+  },
+  "gate_proofs": [
+    "ENV-P115",
+    "ENV-P126",
+    "ENV-P131"
+  ],
+  "folded_fixes": [
+    {
+      "id": "ENV-G1-FIX-01",
+      "summary": "Manager-owned Python restore distinguishes stale/default environment path state from explicitly configured [python].environment and remains action-aware during restore/bootstrap."
+    },
+    {
+      "id": "ENV-G1-FIX-02",
+      "summary": "RustRunner no longer executes Go environment resolution or Go cache planning introduced by X02 patch contamination."
+    }
+  ],
+  "validation_contract": {
+    "kind": "devtool-artifact-validation-tests",
+    "top_level_expected": {
+      "passed": 48,
+      "failed": 0,
+      "skipped": 0
+    },
+    "steps": [
+      {
+        "id": "env-g1-x01-milestone",
+        "expected_passed": 15,
+        "inline": true,
+        "purpose": "bounded X01 host/privilege/substrate milestone invariants"
+      },
+      {
+        "id": "env-g1-x02-milestone",
+        "expected_passed": 25,
+        "inline": true,
+        "purpose": "bounded X02 mise/asdf/pyenv/direnv/Python/Go milestone invariants"
+      },
+      {
+        "id": "env-g1-cross-consumer",
+        "expected_passed": 2,
+        "inline": true,
+        "purpose": "folded Hatch/Rust cross-consumer regressions"
+      },
+      {
+        "id": "env-g1-fresh-process",
+        "expected_passed": 6,
+        "inline": true,
+        "nested_fresh_process_checks": 8
+      }
+    ],
+    "workflow_dogfood": {
+      "passed": 48,
+      "failed": 0,
+      "skipped": 0,
+      "stages_passed": 5,
+      "construction_host_duration_seconds": 14.92
+    },
+    "full_reseal_tests_preserved": [
+      "roadmap-env-x01",
+      "roadmap-env-x02"
+    ],
+    "artifact_replay_per_suite": [
+      15,
+      25,
+      2,
+      6
+    ],
+    "artifact_summary_projection_observed": 6,
+    "artifact_replay_status": "passed"
+  },
+  "reconciliations": [
+    {
+      "id": "ENV-G1-X02-LIVE-COUNT-01",
+      "observed": "live ENV-X02 v3 apply summary reported 225 passed",
+      "gate_action": "verify committed roadmap-env-x02 collects >=270 and execute exact X02 command inline during ENV-G1",
+      "export": "LIFE-P127 + TEST/PRES validation truth"
+    },
+    {
+      "id": "ENV-G1-LIVE-RUNTIME-03",
+      "observed": "live ENV-G1 v1 replay of roadmap-env-x01 took 1035.06s because broad implementation tests performed Python environment bootstrap/repair paths; X02 was then interrupted after 185.14s",
+      "gate_action": "replace full implementation-suite replay with bounded milestone test identities while preserving roadmap-env-x01/roadmap-env-x02 for reseal/debug qualification",
+      "evidence": "corrected roadmap-env-g1 workflow: 5 stages, 48/48 tests, 0 warnings/errors"
+    },
+    {
+      "id": "ENV-G1-ARTIFACT-AGGREGATION-04",
+      "observed": "clean-base ENV-G1 v2 artifact replay executed 15 + 25 + 2 + 6 = 48 tests successfully but apply summary projected only 6 passed",
+      "gate_action": "retain authoritative per-suite evidence and 48/48 workflow proof; export summary aggregation defect",
+      "export": "existing TEST/PRES multi-suite result-projection obligations"
+    }
+  ],
+  "cross_program_incidents": [
+    "LIFE-P123",
+    "LIFE-P124",
+    "LIFE-P125",
+    "LIFE-P126",
+    "LIFE-P127"
+  ],
+  "later_env_scope_preserved": [
+    "ENV-X03",
+    "ENV-G2",
+    "ENV-X04",
+    "ENV-G3"
+  ],
+  "next": {
+    "overlay": "EXEC-X01",
+    "full_plan_position": "14/63",
+    "remaining_before_next_major_scope": 0,
+    "next_major_scope": "EXEC"
+  }
+}

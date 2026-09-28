@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "program": "M006 LIFE",
+  "date": "2026-09-28",
+  "plan_total_unchanged": 63,
+  "owner": {"implementation": "LIFE-X01", "gate": "LIFE-G1"},
+  "promises": {
+    "LIFE-P123": "Recovery normalizes and verifies Git index/worktree/stat state for restored paths so byte-identical restoration cannot remain phantom-dirty.",
+    "LIFE-P124": "Preserve-dirty conflict rejection requires a proven content/index delta relative to the authoritative baseline/generation, not cached dirty state alone.",
+    "LIFE-P125": "A validated transaction result commit has a durable resumable publication phase and can be idempotently published after interruption when preconditions remain valid.",
+    "LIFE-P126": "Recovery preserves provenance distinguishing genuine pre-existing user dirt from Devtool-created/restored transaction state.",
+    "LIFE-P127": "Same-run artifact validation refs resolve against authoritative post-apply transaction candidate/config truth; stale validation declaration/count projection is not accepted."
+  },
+  "exports": {
+    "TEST": ["LIFE-P124", "LIFE-P127"],
+    "PRES": ["LIFE-P123", "LIFE-P124", "LIFE-P125", "LIFE-P127"],
+    "RUN": ["LIFE-P125", "LIFE-P126"]
+  },
+  "excluded": ["ARC R09B age_seconds=1 is ARC-owned and not a Devtool promise"]
+}

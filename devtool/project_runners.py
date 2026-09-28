@@ -1905,13 +1905,22 @@ class PythonRunner(ProjectRunner):
         explicit = config.config_provenance.get("python_executable", "default") != "default"
         return str(config.python_executable or "python3").strip() or "python3", explicit
 
-    def _plan(self, config: ProjectConfig):
+    def _plan(self, config: ProjectConfig, *, action: str = "run"):
         from .environment_composition import build_environment_composition_plan
         from .python_environment import PythonEnvironmentRequest, normalize_lock_policy, resolve_python_environment
         from .toolchains import selected_toolchain_manager
         info = self._info(config)
         options = self._options(config)
-        environment = self._environment_path(config) if info.manager in {"venv", "uv"} else str(options.get("environment") or "")
+        configured_python_options = config.configured_runner_options.get("python", {})
+        environment_explicit = isinstance(configured_python_options, dict) and "environment" in configured_python_options
+        if info.manager in {"venv", "uv"}:
+            environment = self._environment_path(config)
+        else:
+            # Historical/derived runner state may still carry the default venv
+            # path. Manager-owned environments (Poetry/PDM/Pipenv/Hatch) must
+            # ignore that stale default, while an explicitly configured
+            # [python].environment remains a fail-closed ownership conflict.
+            environment = str(options.get("environment") or "") if environment_explicit else ""
         configured_python, strict_python = self._configured_python(config)
         planning_env = {**os.environ, **config.env}
         destination = str(config.execution_environment or "").strip().lower().replace("_", "-") in {"ssh", "oci", "ssh-oci", "ssh-proot-oci", "chroot", "proot", "proot-distro"}
@@ -1937,13 +1946,13 @@ class PythonRunner(ProjectRunner):
         key = (
             str(info.root), info.manager, configured_python, environment,
             tuple(self._list_option(config, "groups")), tuple(self._list_option(config, "extras")),
-            config.execution_environment, info.requires_python, info.dependency_files, composition.identity, lock_policy,
+            config.execution_environment, info.requires_python, info.dependency_files, composition.identity, lock_policy, action,
         )
         cache = getattr(self, "_python_plan_cache", None)
         if isinstance(cache, dict) and key in cache:
             return cache[key]
         request = PythonEnvironmentRequest(
-            root=str(info.root), action="run", runtime_provider=runtime_provider,
+            root=str(info.root), action=action, runtime_provider=runtime_provider,
             manager=info.manager, environment=environment, configured_python=configured_python,
             configured_python_explicit=strict_python, lock_policy=lock_policy,
             offline=_bool_option(options.get("offline"), False), groups=key[4], extras=key[5],
@@ -1959,8 +1968,8 @@ class PythonRunner(ProjectRunner):
         cache[key] = plan
         return plan
 
-    def apply_environment_metadata(self, config: ProjectConfig, specs: list[CommandSpec]) -> list[CommandSpec]:
-        plan = self._plan(config)
+    def apply_environment_metadata(self, config: ProjectConfig, specs: list[CommandSpec], *, action: str = "run") -> list[CommandSpec]:
+        plan = self._plan(config, action=action)
         for spec in specs:
             metadata = dict(spec.metadata)
             metadata["python_environment"] = plan.to_dict()
@@ -2445,7 +2454,7 @@ class PythonRunner(ProjectRunner):
         if config.restore_command:
             return [*prefix, CommandSpec("restore", _shell_split_option(config.restore_command, name="config.restore_command"), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), explicit=True))]
         info = self._info(config)
-        plan = self._plan(config)
+        plan = self._plan(config, action="restore")
         options = self._options(config)
         groups = self._list_option(config, "groups")
         extras = self._list_option(config, "extras")
@@ -3162,14 +3171,8 @@ class RustRunner(ProjectRunner):
         return argv
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
-        from .go_environment import destination_go_environment, destination_go_output_dir
         root = self._root(config)
-        resolved_go = self._resolved_environment(config, action)
         env = _optimized_env(config, self.kind)
-        env.update(destination_go_environment(root, config.execution_environment))
-        for key, value in resolved_go.environment:
-            if key not in {"GOAUTH"}:
-                env.setdefault(key, value)
         workers = resolve_build_policy(config, self.kind).max_workers
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
         if explicit:

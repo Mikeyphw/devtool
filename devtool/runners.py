@@ -808,7 +808,7 @@ def build_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
         specs = runner.build_specs(config, action)
     annotate = getattr(runner, "apply_environment_metadata", None)
     if callable(annotate):
-        specs = annotate(config, specs)
+        specs = annotate(config, specs, action=action)
     return _apply_config_metadata(config, specs)
 
 
