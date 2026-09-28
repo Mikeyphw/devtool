@@ -626,42 +626,44 @@ def _command_delegates_memory_guard(argv: Sequence[str]) -> bool:
 
 
 def _try_root_cache_reclaim() -> bool:
-    """Drop clean page cache once when direct root, su, or passwordless sudo works."""
+    """Drop clean page cache only when trusted global policy explicitly permits it."""
 
     if os.name != "posix":
         return False
-    command = "sync; echo 1 > /proc/sys/vm/drop_caches"
-    try:
-        if hasattr(os, "geteuid") and os.geteuid() == 0:
-            os.sync()
-            Path("/proc/sys/vm/drop_caches").write_text("1\n", encoding="ascii")
-            return True
-    except OSError:
-        pass
+    from .host_context import detect_host_context
+    from .privilege import (
+        LINUX_VM_DROP_CACHES, PrivilegeRequest, load_global_privilege_policy, resolve_privilege_plan,
+    )
 
-    candidates: list[list[str]] = []
-    su = shutil.which("su")
-    if su:
-        candidates.append([su, "-c", command])
-    sudo = shutil.which("sudo")
-    shell = shutil.which("sh") or "/bin/sh"
-    if sudo:
-        candidates.append([sudo, "-n", shell, "-c", command])
-    for candidate in candidates:
-        try:
-            result = subprocess.run(
-                candidate,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if result.returncode == 0:
-            return True
-    return False
+    request = PrivilegeRequest(
+        LINUX_VM_DROP_CACHES,
+        reason="memory pressure cache reclaim",
+        requested_by="memory-guard",
+        interactive=False,
+        mutation=True,
+        reversible=False,
+    )
+    try:
+        plan = resolve_privilege_plan(
+            request,
+            policy=load_global_privilege_policy(),
+            host=detect_host_context(),
+            probe=True,
+            allow_action_required=False,
+        )
+    except (PermissionError, SystemExit):
+        return False
+
+    command = [shutil.which("sh") or "/bin/sh", "-c", "sync; echo 1 > /proc/sys/vm/drop_caches"]
+    argv = plan.wrap_argv(command)
+    try:
+        result = subprocess.run(
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=5, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 _TERMUX_DOTNET_ENV = "DEVTOOL_TERMUX_DOTNET"
@@ -2482,6 +2484,12 @@ def run_specs(
             continue
 
         env = os.environ.copy()
+        from .environment_qualification import assert_environment_overlay_safe
+        try:
+            assert_environment_overlay_safe(config.env, source="project execution environment")
+            assert_environment_overlay_safe(spec.env, source=f"command spec {spec.name}")
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
         if str(spec.metadata.get("execution_mode") or "") != "proot-distro":
             env.update(config.env)
             env.update(spec.env)

@@ -2001,7 +2001,7 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         )
         self.assertFalse(_command_delegates_memory_guard(["./gradlew", "test"]))
 
-    def test_root_cache_reclaim_uses_termux_su_without_prompting(self) -> None:
+    def test_standalone_root_cache_reclaim_never_self_elevates(self) -> None:
         completed = subprocess.CompletedProcess(["su"], 0)
         with (
             patch("devtool.android_build.os.geteuid", return_value=2000),
@@ -2011,13 +2011,9 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             ),
             patch("devtool.android_build.subprocess.run", return_value=completed) as run_mock,
         ):
-            self.assertTrue(android_try_root_cache_reclaim())
+            self.assertFalse(android_try_root_cache_reclaim())
 
-        argv = run_mock.call_args.args[0]
-        self.assertEqual(argv[:2], ["/system/xbin/su", "-c"])
-        self.assertIn("drop_caches", argv[2])
-        self.assertIs(run_mock.call_args.kwargs["stdin"], subprocess.DEVNULL)
-        self.assertEqual(run_mock.call_args.kwargs["timeout"], 5)
+        run_mock.assert_not_called()
 
     def test_android_builder_memory_guard_aborts_before_system_pressure_escalates(self) -> None:
         snapshot = (1, 0, 0, 100.0, 100.0)

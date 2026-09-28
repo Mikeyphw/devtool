@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .execution_environments import normalize_execution_environment
+from .environment_qualification import assert_environment_overlay_safe
 from .models import JobConfig, TargetConfig, WorkflowConfig, WorkflowStepRef
 
 _RUNNER_ALIASES = {"generic": "command"}
@@ -159,6 +160,11 @@ def load_jobs(
         raw_env = raw_value.get("env", {})
         if raw_env is not None and not isinstance(raw_env, dict):
             raise SystemExit(f"[{context_prefix}.{name}.env] must be a TOML table")
+        if isinstance(raw_env, dict):
+            try:
+                assert_environment_overlay_safe(raw_env, source=f"{context_prefix}.{name}.env")
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
         env = {} if "env" in raw_value and isinstance(raw_env, dict) and not raw_env else {str(k): str(v) for k, v in base_env.items()}
         if isinstance(raw_env, dict):
             env.update({str(k): str(v) for k, v in raw_env.items()})

@@ -1,62 +1,75 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import re
 import shlex
+import sys
 from dataclasses import replace
 
 from .models import CommandSpec
 from .execution_environments import chroot_environment_assignments
+from .host_context import detect_host_context
+from .privilege import HOST_CHROOT_ENTER, PrivilegeRequest, load_global_privilege_policy, resolve_privilege_plan
 
 
 def build_chroot_exec_argv(command: str, chroot_name: str, *, use_sudo: bool | None = None, env: dict[str, str] | None = None) -> list[str]:
-    """Build the Termux chrootctl command used to execute a shell command.
+    """Build the trusted Termux chroot entry command.
 
-    The runner intentionally uses the Android chroot workflow:
-
-        sudo chrootctl --name <name> exec -- zsh -lc '<command>'
-
-    Environment overrides keep this testable and let non-root setups customize
-    the launcher without changing project config:
-
-    - DEVTOOL_CHROOTCTL: chrootctl executable, default ``chrootctl``
-    - DEVTOOL_CHROOT_SUDO: sudo executable. Set to an empty string to skip sudo.
+    ENV-X01 removes the old implicit ``sudo chrootctl`` default.  Chroot entry
+    is now a scoped ``host.chroot.enter`` privilege request.  Legacy callers
+    that explicitly set ``DEVTOOL_CHROOT_SUDO`` or ``use_sudo`` retain a
+    compatibility path, but repository configuration cannot grant privilege.
     """
 
     name = chroot_name.strip()
     if not name:
         raise ValueError("chroot_name must not be empty")
 
-    env_map = os.environ if env is None else env
+    env_map = dict(os.environ if env is None else env)
     chrootctl = str(env_map.get("DEVTOOL_CHROOTCTL", "chrootctl")).strip() or "chrootctl"
-    sudo = str(env_map.get("DEVTOOL_CHROOT_SUDO", "sudo"))
-    if use_sudo is False:
-        sudo = ""
-    elif use_sudo is True and not sudo.strip():
-        sudo = "sudo"
 
     # Make every command executed inside chroot see Linuxbrew first.
-    #
-    # This is injected into the zsh -lc payload, not the host devtool process,
-    # so commands such as npm/python/node resolved by chrootctl use Linuxbrew
-    # before the chroot's default PATH.
-    #
-    # Override with:
-    #   DEVTOOL_CHROOT_PATH_PREFIX=/custom/bin:/other/bin
-    #
-    # Disable with:
-    #   DEVTOOL_CHROOT_PATH_PREFIX=
-    path_prefix = str(env_map.get("DEVTOOL_CHROOT_PATH_PREFIX", "/home/linuxbrew/.linuxbrew/bin"))
-    path_prefix = path_prefix.strip()
+    path_prefix = str(env_map.get("DEVTOOL_CHROOT_PATH_PREFIX", "/home/linuxbrew/.linuxbrew/bin")).strip()
     if path_prefix:
-        # Quote only the static prefix. Keep "$PATH" expandable inside chroot.
         command = "export PATH=" + shlex.quote(path_prefix) + ':"$PATH"; ' + command
 
-    argv: list[str] = []
-    if sudo.strip():
-        argv.append(sudo.strip())
-    argv.extend([chrootctl, "--name", name, "exec", "--", "zsh", "-lc", command])
-    return argv
+    base_argv = [chrootctl, "--name", name, "exec", "--", "zsh", "-lc", command]
+
+    # Explicit compatibility overrides are trusted user/process intent.  There
+    # is deliberately no default value here; absence enters the broker path.
+    if use_sudo is False:
+        return base_argv
+    explicit = env_map.get("DEVTOOL_CHROOT_SUDO") if "DEVTOOL_CHROOT_SUDO" in env_map else None
+    if use_sudo is True:
+        explicit = str(explicit or "sudo")
+    if explicit is not None:
+        prefix = shlex.split(str(explicit).strip()) if str(explicit).strip() else []
+        if prefix and Path(prefix[0]).name == "sudo" and "-n" not in prefix:
+            prefix.append("-n")
+        return [*prefix, *base_argv]
+
+    interactive = str(env_map.get("DEVTOOL_PRIVILEGE_INTERACTIVE", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if "DEVTOOL_PRIVILEGE_INTERACTIVE" not in env_map:
+        interactive = bool(getattr(sys.stdin, "isatty", lambda: False)() and getattr(sys.stdout, "isatty", lambda: False)())
+    request = PrivilegeRequest(
+        HOST_CHROOT_ENTER,
+        scope="host",
+        reason=f"enter chroot {name}",
+        requested_by="chroot-execution",
+        interactive=interactive,
+        mutation=False,
+        reversible=True,
+    )
+    plan = resolve_privilege_plan(
+        request,
+        policy=load_global_privilege_policy(),
+        host=detect_host_context(env_map),
+        env=env_map,
+        probe=True,
+        allow_action_required=interactive,
+    )
+    return plan.wrap_argv(base_argv)
 
 
 def wrap_specs_for_chroot(specs: list[CommandSpec], chroot_name: str) -> list[CommandSpec]:

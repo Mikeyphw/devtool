@@ -132,7 +132,7 @@ class AndroidLiveHudBridge:
         return shutil.which("am") or ("/system/bin/am" if Path("/system/bin/am").exists() else None)
 
     @staticmethod
-    def _package_commands(package: str) -> list[list[str]]:
+    def _package_commands(package: str, *, allow_privileged: bool = False) -> list[list[str]]:
         commands: list[list[str]] = []
         pm_override = os.environ.get("DEVTOOL_ANDROID_PM", "").strip()
         pm = pm_override or shutil.which("pm") or ("/system/bin/pm" if Path("/system/bin/pm").exists() else "")
@@ -142,19 +142,16 @@ class AndroidLiveHudBridge:
         if cmd:
             commands.append([cmd, "package", "path", package])
 
-        # Package-manager visibility can be restricted for the Termux UID on
-        # recent Android releases. Root is available in the supported Termux
-        # workflow, so use it as a final read-only discovery fallback.
-        su = shutil.which("su")
-        if su and os.environ.get("DEVTOOL_ANDROID_HUD_NO_ROOT_DISCOVERY", "").strip().lower() not in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
-            quoted = shlex.quote(package)
-            commands.append([su, "-c", f"/system/bin/pm path {quoted}"])
-            commands.append([su, "-c", f"/system/bin/cmd package path {quoted}"])
+        # Presentation/read-only package discovery is privilege-passive by
+        # default. A future explicit control action may opt into a scoped
+        # android.host.package-manager privilege request, but HUD rendering
+        # itself must never trigger a root-manager prompt.
+        if allow_privileged:
+            su = shutil.which("su")
+            if su:
+                quoted = shlex.quote(package)
+                commands.append([su, "-c", f"/system/bin/pm path {quoted}"])
+                commands.append([su, "-c", f"/system/bin/cmd package path {quoted}"])
         return commands
 
     def token(self) -> str:

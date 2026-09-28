@@ -16,11 +16,11 @@ class ChrootExecutionWrapperTests(unittest.TestCase):
     def test_wrap_specs_uses_termux_chrootctl_zsh_shape(self) -> None:
         spec = CommandSpec("build", ["dotnet", "build", "Demo.sln", "/p:DefineConstants=A B"])
         wrapped = wrap_specs_for_chroot([spec], "androidos")
-        self.assertEqual(wrapped[0].argv[:6], ["sudo", "chrootctl", "--name", "androidos", "exec", "--"])
-        self.assertEqual(wrapped[0].argv[6], "zsh")
-        self.assertEqual(wrapped[0].argv[7], "-lc")
+        chroot_index = wrapped[0].argv.index("chrootctl")
+        self.assertEqual(wrapped[0].argv[chroot_index:chroot_index + 7], ["chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
+        self.assertNotIn("sudo", wrapped[0].argv[:chroot_index])
         self.assertEqual(
-            wrapped[0].argv[8],
+            wrapped[0].argv[chroot_index + 7],
             'export PATH=/home/linuxbrew/.linuxbrew/bin:"$PATH"; exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1 DEVTOOL_CHROOT_CONTEXT=androidos dotnet build Demo.sln \'/p:DefineConstants=A B\'',
         )
         self.assertEqual(wrapped[0].metadata["execution_mode"], "chroot")
@@ -177,12 +177,15 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         )
         with patch("devtool.termux_chroot_runner.resolve_chroot_identity", return_value=self.identity()):
             outer = build_runner_command(config, forwarded)
-        self.assertEqual(outer[:8], ["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
-        self.assertIn("runuser -u mike", outer[8])
-        self.assertIn("HOME=/home/mike", outer[8])
-        self.assertIn("cd /home/mike/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot", outer[8])
-        self.assertNotIn("/sdcard", outer[8])
-        self.assertNotIn("/storage/emulated", outer[8])
+        chroot_index = outer.index("chrootctl")
+        self.assertEqual(outer[chroot_index:chroot_index + 7], ["chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
+        self.assertNotIn("sudo", outer[:chroot_index])
+        command = outer[chroot_index + 7]
+        self.assertIn("runuser -u mike", command)
+        self.assertIn("HOME=/home/mike", command)
+        self.assertIn("cd /home/mike/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot", command)
+        self.assertNotIn("/sdcard", command)
+        self.assertNotIn("/storage/emulated", command)
         inner = build_inner_command(config, forwarded, identity=self.identity())
         self.assertIn("runuser -u mike", inner)
         self.assertIn("cd /home/mike/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot", inner)
@@ -308,8 +311,10 @@ class TermuxChrootRunnerTests(unittest.TestCase):
                 repo_root="/data/data/com.termux/files/home/Code/demo",
                 env=env,
             )
-        self.assertEqual(wrapped[0].argv[:8], ["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
-        command = wrapped[0].argv[8]
+        chroot_index = wrapped[0].argv.index("chrootctl")
+        self.assertEqual(wrapped[0].argv[chroot_index:chroot_index + 7], ["chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
+        self.assertNotIn("sudo", wrapped[0].argv[:chroot_index])
+        command = wrapped[0].argv[chroot_index + 7]
         self.assertIn('exec env -i', command)
         self.assertIn('HOME=/home/termux', command)
         self.assertIn('PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', command)
@@ -341,7 +346,9 @@ class TermuxChrootRunnerTests(unittest.TestCase):
                 env=env,
             )
 
-        command = wrapped[0].argv[8]
+        chroot_index = wrapped[0].argv.index("chrootctl")
+        self.assertNotIn("sudo", wrapped[0].argv[:chroot_index])
+        command = wrapped[0].argv[chroot_index + 7]
 
         self.assertIn(
             "PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:"

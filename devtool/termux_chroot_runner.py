@@ -89,7 +89,9 @@ class RunnerConfig:
     linux_home: str = ""
     tool: str = "devtool"
     chrootctl: str = "chrootctl"
-    sudo: str = "sudo"
+    # None means use the canonical ENV privilege broker. An explicit string
+    # (including "") is retained only as a compatibility override.
+    sudo: str | None = None
     translate_paths: bool = True
     host: bool = False
     print_command: bool = False
@@ -211,7 +213,7 @@ def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerC
         linux_home=env.get("DEVTOOL_TERMUX_CHROOT_HOME", "").strip(),
         tool=env.get("DEVTOOL_TERMUX_CHROOT_TOOL", "~/.local/bin/devtool").strip() or "~/.local/bin/devtool",
         chrootctl=env.get("DEVTOOL_CHROOTCTL", "chrootctl").strip() or "chrootctl",
-        sudo=env.get("DEVTOOL_CHROOT_SUDO", "sudo"),
+        sudo=env.get("DEVTOOL_CHROOT_SUDO") if "DEVTOOL_CHROOT_SUDO" in env else None,
         path_map=default_path_map(env),
     )
     forwarded: list[str] = []
@@ -233,7 +235,7 @@ def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerC
         elif token == "--runner-chrootctl" or token.startswith("--runner-chrootctl="):
             config.chrootctl = _take_value(config.chrootctl).strip() or config.chrootctl
         elif token == "--runner-sudo" or token.startswith("--runner-sudo="):
-            config.sudo = _take_value(config.sudo)
+            config.sudo = _take_value(config.sudo or "")
         elif token == "--runner-map" or token.startswith("--runner-map="):
             config.path_map = _split_path_map(_take_value("")) + config.path_map
         elif token == "--runner-no-path-translate":
@@ -476,7 +478,10 @@ def build_inner_command(
 def build_runner_command(config: RunnerConfig, forwarded: list[str]) -> list[str]:
     identity_env = dict(os.environ)
     identity_env["DEVTOOL_CHROOTCTL"] = config.chrootctl
-    identity_env["DEVTOOL_CHROOT_SUDO"] = config.sudo
+    if config.sudo is None:
+        identity_env.pop("DEVTOOL_CHROOT_SUDO", None)
+    else:
+        identity_env["DEVTOOL_CHROOT_SUDO"] = config.sudo
     if config.linux_user:
         identity_env["DEVTOOL_TERMUX_CHROOT_USER"] = config.linux_user
     if config.linux_home:

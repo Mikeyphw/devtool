@@ -17,6 +17,7 @@ import time
 from typing import Any, Mapping
 
 from .execution_providers import provider_metadata
+from .privilege import SSH_PROVISION_PACKAGES
 from .ssh_multiplex import evidence as multiplex_evidence
 from .ssh_tmux_runner import (
     SSHRunnerConfig,
@@ -485,6 +486,12 @@ def bootstrap_worker(
     force: bool = False,
 ) -> dict[str, Any]:
     before = probe_worker(config)
+    privilege_requirement = {
+        "capability_id": SSH_PROVISION_PACKAGES if before.platform != "termux" else "",
+        "scope": "remote-host",
+        "required_for": "provisioning" if before.platform != "termux" else "none",
+        "routine_ssh_execution_requires_privilege": False,
+    }
     missing = before.missing_required
     if not missing:
         return {
@@ -494,6 +501,7 @@ def bootstrap_worker(
             "changed": False,
             "profile": config.profile,
             "destination": config.destination,
+            "privilege_requirement": privilege_requirement,
             "missing_before": [],
             "installed": [],
             "probe": before.as_dict(),
@@ -507,6 +515,7 @@ def bootstrap_worker(
             "changed": False,
             "profile": config.profile,
             "destination": config.destination,
+            "privilege_requirement": privilege_requirement,
             "missing_before": missing,
             "installed": [],
             "probe": before.as_dict(),
@@ -522,6 +531,7 @@ def bootstrap_worker(
             "dry_run": True,
             "profile": config.profile,
             "destination": config.destination,
+            "privilege_requirement": privilege_requirement,
             "missing_before": missing,
             "installed": missing,
             "probe": before.as_dict(),
@@ -538,6 +548,7 @@ def bootstrap_worker(
             "changed": False,
             "profile": config.profile,
             "destination": config.destination,
+            "privilege_requirement": privilege_requirement,
             "missing_before": missing,
             "installed": [],
             "probe": before.as_dict(),
@@ -551,6 +562,7 @@ def bootstrap_worker(
         "changed": True,
         "profile": config.profile,
         "destination": config.destination,
+        "privilege_requirement": privilege_requirement,
         "missing_before": missing,
         "installed": [name for name in missing if after.tools.get(name)],
         "probe": after.as_dict(),

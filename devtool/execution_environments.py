@@ -14,10 +14,15 @@ from pathlib import Path
 import shutil
 from typing import Iterable, Mapping
 
+from .host_context import detect_host_context
+
 AUTO = "auto"
 NATIVE_TERMUX = "native-termux"
 CHROOT = "chroot"
 DESKTOP_LINUX = "desktop-linux"
+DESKTOP_MACOS = "desktop-macos"
+DESKTOP_WINDOWS = "desktop-windows"
+HOST = "host"
 ANDROID_DEVICE = "android-device"
 EXTERNAL_DEVICE = "external-device"
 SSH = "ssh"
@@ -28,6 +33,9 @@ EXECUTION_ENVIRONMENTS = (
     NATIVE_TERMUX,
     CHROOT,
     DESKTOP_LINUX,
+    DESKTOP_MACOS,
+    DESKTOP_WINDOWS,
+    HOST,
     ANDROID_DEVICE,
     EXTERNAL_DEVICE,
     SSH,
@@ -126,20 +134,24 @@ def is_termux_host(env: Mapping[str, str] | None = None) -> bool:
 
 
 def detect_current_environment(env: Mapping[str, str] | None = None) -> str:
-    env = env or os.environ
-    if inside_chroot(env):
-        return CHROOT
-    if is_termux_host(env):
-        return NATIVE_TERMUX
-    return DESKTOP_LINUX
+    context = detect_host_context(env)
+    substrate = context.current_substrate
+    if substrate in {CHROOT, NATIVE_TERMUX, DESKTOP_LINUX, DESKTOP_MACOS, DESKTOP_WINDOWS, SSH, PROOT_DISTRO}:
+        return substrate
+    # Unknown hosts remain explicit instead of being mislabeled as Linux.
+    return substrate
 
 
 def normalize_execution_environment(value: str | None) -> str:
     normalized = str(value or AUTO).strip().lower().replace("_", "-") or AUTO
     aliases = {
-        "host": DESKTOP_LINUX,
+        "host": HOST,
         "desktop": DESKTOP_LINUX,
         "linux": DESKTOP_LINUX,
+        "macos": DESKTOP_MACOS,
+        "darwin": DESKTOP_MACOS,
+        "windows": DESKTOP_WINDOWS,
+        "win32": DESKTOP_WINDOWS,
         "termux": NATIVE_TERMUX,
         "native": NATIVE_TERMUX,
         "android": ANDROID_DEVICE,
@@ -268,6 +280,9 @@ def resolve_execution_plan(
     if request == AUTO:
         effective = current
         reason = "auto selected the current execution environment"
+    elif request == HOST:
+        effective = current
+        reason = "host resolves to the current host substrate"
     else:
         effective = request
         reason = "explicit execution environment"
@@ -356,8 +371,8 @@ def preflight_execution(
                     checks.append(PreflightCheck("target-path-map", "ready", f"{target} -> {translated}"))
     elif plan.effective == NATIVE_TERMUX:
         checks.append(PreflightCheck("termux", "ready" if plan.current == NATIVE_TERMUX else "incompatible", plan.current))
-    elif plan.effective == DESKTOP_LINUX:
-        checks.append(PreflightCheck("desktop-linux", "ready" if plan.current == DESKTOP_LINUX else "incompatible", plan.current))
+    elif plan.effective in {DESKTOP_LINUX, DESKTOP_MACOS, DESKTOP_WINDOWS}:
+        checks.append(PreflightCheck(plan.effective, "ready" if plan.current == plan.effective else "incompatible", plan.current))
     elif plan.effective == PROOT_DISTRO:
         executable = shutil.which(os.environ.get("DEVTOOL_PROOT_DISTRO_COMMAND", "proot-distro"))
         checks.append(PreflightCheck(

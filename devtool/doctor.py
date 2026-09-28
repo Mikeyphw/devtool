@@ -21,6 +21,9 @@ from .federation_final_seal import build_federation_final_seal_report
 from .federation_observability import build_federation_observability
 from .android.capabilities import resolve_android_execution_context
 from .android.devices import AndroidDeviceManager
+from .host_context import detect_host_context
+from .privilege import PrivilegeRequest, load_global_privilege_policy, qualify_privilege_providers
+from .environment_qualification import CapabilityRequirements, qualify_environment
 
 @dataclass(slots=True)
 class DoctorCheck:
@@ -96,17 +99,14 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
         f"{device_report.code}: {device_report.detail}",
     ))
 
-    su = shutil.which("su")
-    root_detail = "su unavailable"
-    root_status = "optional"
-    if su:
-        try:
-            proc = subprocess.run([su, "-c", "id -u"], capture_output=True, text=True, timeout=3, check=False)
-            root_detail = (proc.stdout or proc.stderr).strip() or f"exit {proc.returncode}"
-            root_status = "ok" if proc.returncode == 0 and proc.stdout.strip() == "0" else "optional"
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            root_detail = str(exc)
-    checks.append(DoctorCheck("device", "root", root_status, root_detail))
+    host = detect_host_context()
+    checks.append(DoctorCheck("host", "context", "ok", f"{host.host_kind}; substrate={host.current_substrate}; arch={host.architecture}"))
+    passive_request = PrivilegeRequest("host.diagnostic", reason="passive doctor inventory", requested_by="doctor", interactive=False)
+    provider_rows = qualify_privilege_providers(passive_request, host=host, probe=False)
+    for row in provider_rows:
+        status = "ok" if row.state == "ready" else "optional"
+        checks.append(DoctorCheck("host-privilege", row.provider, status, f"{row.state}: {row.detail}"))
+    checks.append(DoctorCheck("device", "root", "optional", "not probed by passive doctor; use explicit privilege diagnostics to authorize/probe"))
 
     checks.append(DoctorCheck("project", "git", "ok" if (config.repo_root / ".git").exists() else "missing", str(config.repo_root / ".git")))
     checks.append(DoctorCheck("project", "config", "ok" if config.config_path else "optional", str(config.config_path) if config.config_path else "using detected defaults"))
@@ -315,6 +315,14 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
 def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
     checks = collect_doctor_checks(config)
     features = resolve_feature_flags(config.repo_root, config_path=config.config_path)
+    host = detect_host_context()
+    policy = load_global_privilege_policy()
+    passive_request = PrivilegeRequest("host.diagnostic", reason="passive doctor inventory", requested_by="doctor")
+    privilege = qualify_privilege_providers(passive_request, host=host, probe=False)
+    environment = qualify_environment(
+        CapabilityRequirements(), host=host, policy=policy,
+        requested="auto", chroot_name=config.chroot_name, probe_privilege=False,
+    )
     return {
         "schema_version": 1,
         "repository": str(config.repo_root),
@@ -322,6 +330,13 @@ def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
         "runner": config.runner,
         "platform": config.platform,
         "selected_target": config.selected_target,
+        "host_context": host.to_dict(),
+        "privilege": {
+            "policy": policy.to_dict(),
+            "passive": True,
+            "providers": [item.to_dict() for item in privilege],
+        },
+        "environment_qualification": environment.to_dict(),
         "jobs": sorted(config.jobs),
         "target_jobs": {
             target_name: sorted(target.jobs)

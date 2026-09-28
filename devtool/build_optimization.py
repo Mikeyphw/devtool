@@ -130,7 +130,14 @@ def _effective_environment(config: ProjectConfig) -> str:
             return normalize_execution_environment(configured)
         except ValueError:
             pass
-    return detect_current_environment()
+    # Resolve from an explicit environment snapshot rather than letting the
+    # ambient Python platform leak into policy selection.  This matters on
+    # Termux/Android where tests and delegated execution can model a desktop
+    # Linux environment by replacing os.environ while the parent interpreter
+    # still reports Android.  detect_host_context() treats an explicit mapping
+    # as the target process environment and still recognizes real Termux via
+    # TERMUX/PREFIX/HOME markers.
+    return detect_current_environment(dict(os.environ))
 
 
 def _bool_option(value: object, default: bool) -> bool:

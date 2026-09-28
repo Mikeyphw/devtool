@@ -123,7 +123,7 @@ def test_bridge_falls_back_to_installed_release_when_debug_is_absent(tmp_path: P
 
 
 
-def test_package_discovery_includes_root_fallback_when_su_exists(tmp_path: Path) -> None:
+def test_package_discovery_is_privilege_passive_even_when_su_exists(tmp_path: Path) -> None:
     env = {
         **_isolated_bridge_environment(tmp_path),
         "PATH": str(tmp_path),
@@ -136,20 +136,17 @@ def test_package_discovery_includes_root_fallback_when_su_exists(tmp_path: Path)
         side_effect=lambda name: str(su) if name == "su" else None,
     ):
         commands = AndroidLiveHudBridge._package_commands(DEBUG_PACKAGE)
-    assert [str(su), "-c", f"/system/bin/pm path {DEBUG_PACKAGE}"] in commands
-    assert [str(su), "-c", f"/system/bin/cmd package path {DEBUG_PACKAGE}"] in commands
+    assert not any(command[:2] == [str(su), "-c"] for command in commands)
 
 
-def test_package_discovery_can_disable_root_fallback(tmp_path: Path) -> None:
-    env = {
-        **_isolated_bridge_environment(tmp_path),
-        "DEVTOOL_ANDROID_HUD_NO_ROOT_DISCOVERY": "1",
-    }
+def test_package_discovery_privileged_fallback_requires_explicit_opt_in(tmp_path: Path) -> None:
+    env = _isolated_bridge_environment(tmp_path)
     with patch.dict(os.environ, env, clear=False), patch(
         "devtool.android_live_hud.shutil.which", return_value="/system/bin/su"
     ):
-        commands = AndroidLiveHudBridge._package_commands(DEBUG_PACKAGE)
-    assert not any(command[:2] == ["/system/bin/su", "-c"] for command in commands)
+        commands = AndroidLiveHudBridge._package_commands(DEBUG_PACKAGE, allow_privileged=True)
+    assert ["/system/bin/su", "-c", f"/system/bin/pm path {DEBUG_PACKAGE}"] in commands
+    assert ["/system/bin/su", "-c", f"/system/bin/cmd package path {DEBUG_PACKAGE}"] in commands
 
 def test_bridge_requires_token(tmp_path: Path) -> None:
     with patch.dict(os.environ, _isolated_bridge_environment(tmp_path), clear=False):

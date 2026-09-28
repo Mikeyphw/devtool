@@ -28,6 +28,7 @@ from .workflow_config import (
 )
 from .toolchains import normalize_toolchain_manager
 from .execution_environments import EXECUTION_ENVIRONMENTS, normalize_execution_environment
+from .environment_qualification import assert_environment_overlay_safe
 from .features import FEATURE_DEFAULTS, FeatureFlags, resolve_feature_flags
 from .ui_core.preferences import UIPreferencesError, resolve_ui_preferences, validate_ui_config
 
@@ -36,7 +37,7 @@ CONFIG_NAME = ".devtool.toml"
 GLOBAL_CONFIG_NAME = "config.toml"
 GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
     "cli", "environment", "termux_chroot", "termux", "proot", "android", "gradle", "dotnet", "terminal",
-    "bootstrap", "chroots", "features", "ui", "ssh",
+    "bootstrap", "chroots", "features", "ui", "ssh", "privilege",
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
     "project", "workspace", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
@@ -182,6 +183,13 @@ def minimal_global_config_template() -> str:
         "keep_artifact = false",
         "delete_artifact_on_failure = false",
         "ignore_checksum = false",
+        "",
+        "[privilege]",
+        "# Trusted user/global policy only; repository config cannot grant privilege.",
+        "allow = [\"host.chroot.enter\"]",
+        "deny = [\"linux.vm.drop_caches\"]",
+        "provider_order = [\"direct-root\", \"root-bridge\", \"android-su\", \"sudo\", \"doas\"]",
+        "allow_interactive_authorization = false",
         "",
         "[cli.environment]",
         "execution_environment = \"auto\"",
@@ -770,6 +778,11 @@ def load_project_config(
         raise SystemExit(f"Invalid UI configuration: {exc}") from exc
 
     repo_project_raw = _require_table(repo_loaded, "project", source=repo_source_label)
+    if "privilege" in repo_loaded:
+        raise SystemExit(
+            f"Invalid repository config {repo_source_label}: [privilege] is global-only trusted policy; "
+            "repositories may declare capability requirements but may not authorize elevation."
+        )
     repo_execution_section = _require_table(repo_loaded, "execution", source=repo_source_label)
     git_raw = _require_table(loaded, "git", source=source_label)
     git_config = dict(git_raw)
@@ -789,7 +802,15 @@ def load_project_config(
     targets_raw = _require_table(loaded, "targets", source=source_label)
     jobs_raw = _require_table(loaded, "jobs", source=source_label)
     project_section = _apply_project_env_overrides(dict(project_raw))
+    try:
+        assert_environment_overlay_safe({str(k): str(v) for k, v in env_raw.items()}, source=str(repo_source_label) + " [env]")
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     env_section = _apply_runtime_env_overrides({str(k): str(v) for k, v in env_raw.items()})
+    try:
+        assert_environment_overlay_safe(env_section, source="resolved project/runtime environment overlay")
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     python_env_override = os.environ.get("DEVTOOL_PROJECT_PYTHON")
 
     override_kind = normalize_runner_name(kind_override)
@@ -997,6 +1018,10 @@ def load_project_config(
             if isinstance(variant_options, dict):
                 for key, value in variant_options.items():
                     if key == "env" and isinstance(value, dict):
+                        try:
+                            assert_environment_overlay_safe(value, source=f"targets.{selected_target.name}.variants.{selected_variant_name}.env")
+                        except ValueError as exc:
+                            raise SystemExit(str(exc)) from exc
                         effective_env.update({str(k): str(v) for k, v in value.items()})
                     else:
                         runner_options[key] = _merge_option_value(runner_options.get(key), value)
@@ -1014,6 +1039,10 @@ def load_project_config(
         if isinstance(variant_options, dict):
             for key, value in variant_options.items():
                 if key == "env" and isinstance(value, dict):
+                    try:
+                        assert_environment_overlay_safe(value, source=f"variants.{selected_variant_name}.env")
+                    except ValueError as exc:
+                        raise SystemExit(str(exc)) from exc
                     effective_env.update({str(k): str(v) for k, v in value.items()})
                 elif isinstance(value, dict):
                     runner_options[key] = _merge_option_value(runner_options.get(key), value)
@@ -1563,6 +1592,11 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
         raw_env = raw_value.get("env", {})
         if raw_env is not None and not isinstance(raw_env, dict):
             raise SystemExit(f"[targets.{name}.env] must be a TOML table")
+        if isinstance(raw_env, dict):
+            try:
+                assert_environment_overlay_safe(raw_env, source=f"targets.{name}.env")
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
         target_env = {} if "env" in raw_value and isinstance(raw_env, dict) and not raw_env else dict(base_env)
         for key, value in raw_env.items() if isinstance(raw_env, dict) else []:
             target_env[str(key)] = str(value)

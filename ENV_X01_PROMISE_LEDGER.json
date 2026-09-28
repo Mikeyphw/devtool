@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "overlay": "ENV-X01",
+  "gate_window": "1 of 3",
+  "scope_position": "ENV 1 of 7",
+  "full_plan_position": "11 of 63",
+  "status": "candidate",
+  "promises_delivered": [
+    "ENV-P001",
+    "ENV-P002",
+    "ENV-P003",
+    "ENV-P004",
+    "ENV-P005",
+    "ENV-P006",
+    "ENV-P007",
+    "ENV-P008",
+    "ENV-P009",
+    "ENV-P010",
+    "ENV-P011",
+    "ENV-P012",
+    "ENV-P013",
+    "ENV-P014",
+    "ENV-P015"
+  ],
+  "foundation_delivered_early": [
+    "ENV-P029"
+  ],
+  "discovered_bugs_absorbed": [
+    "provider qualification ignored supplied PATH",
+    "action-required privilege could be auto-selected",
+    "qualification cache identity omitted TTL",
+    "passive HUD package discovery could invoke su",
+    "apply notification presentation fallback could invoke su",
+    "standalone Android cache reclaim could self-elevate",
+    "chroot entry defaulted implicitly to sudo",
+    "unsupported host identity collapsed to desktop Linux",
+    "explicit sparse environment mappings leaked the parent Android platform identity (ENV-P001)",
+    "ENV-X01 artifact qualification used an ad-hoc pytest validator instead of Devtool first-class validation.tests/test identity",
+    "build resource policy re-detected ambient Android platform instead of using the authoritative environment snapshot, clamping synthetic desktop concurrency"
+  ],
+  "exported_existing_campaign_obligations": [
+    {
+      "owner": "CORE-G3",
+      "id": "CORE-G3-CONFIG-OWNERSHIP-01",
+      "summary": "Explicit config paths inside the requested repository must not be rejected merely because the config file is nested below the repository root."
+    },
+    {
+      "owner": "PRES-X04/PRES-G3",
+      "id": "PRES-NONINTERACTIVE-TERM-CLEAR",
+      "summary": "Non-interactive output must not emit terminal-clear behavior that requires TERM."
+    },
+    {
+      "owner": "LIFE-X01/LIFE-G1",
+      "id": "LIFE-SELF-REFRESH-CANDIDATE-SHADOW",
+      "summary": "Editable-install/self-refresh qualification must inspect installed binding metadata without transaction-candidate import shadowing; a candidate worktree must not force a redundant or deadlocking primary-source reinstall."
+    }
+  ],
+  "validation": {
+    "passed": 437,
+    "failed": 0,
+    "subtests_passed": 7,
+    "gradle_validation": false,
+    "known_baseline_exclusion": "tests/test_rem03_cli_config_discovery.py::test_feature_flags_and_doctor_use_explicit_config_path",
+    "mechanism": "Devtool artifact validation.tests -> first-class [[test]] roadmap-env-x01; wrapper replay available"
+  },
+  "next_overlay": "ENV-X02",
+  "remaining_before_next_major_scope": 2,
+  "next_major_scope": "EXEC"
+}

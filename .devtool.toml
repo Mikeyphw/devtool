@@ -399,6 +399,10 @@ inputs = ["pyproject.toml", "devtool/ssh_roadmap_fixtures.py"]
 metadata = { read_only = false, roadmap_id = "SSH-03", transaction_root_aware = true }
 
 [targets.devtool.workflows]
+roadmap-env-x01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "env-x01", ref = "test:roadmap-env-x01", depends_on = ["syntax"] },
+]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
@@ -1210,3 +1214,33 @@ resources = ["external-tools"]
 parallel_safety = "serial-process-global"
 budget_class = "external"
 contract_level = "public-contract"
+
+
+# ENV-X01 first-class bounded qualification. Artifact validation references
+# this durable test identity directly so the parent Devtool apply run owns
+# execution/test evidence; no nested CLI or ad-hoc validator is required.
+[[test]]
+id = "roadmap-env-x01"
+name = "ENV-X01 host privilege and substrate foundation"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x01_host_privilege_foundation.py",
+  "tests/test_termux_chroot_runner.py",
+  "tests/test_android_live_hud.py",
+  "tests/test_android_instrumentation.py",
+  "tests/test_android_runner.py",
+  "tests/test_execution_environments.py",
+  "tests/test_config.py",
+  "tests/test_global_config.py",
+  "tests/test_arch_ov04_05_doctor_profiles_artifacts.py",
+  "tests/test_project_runners.py",
+  "tests/test_runners_termux.py",
+  "tests/test_ssh01_transport_environment_worker_preparation.py",
+  "tests/test_ssh02_execution_history_recovery_convergence.py",
+  "tests/test_ssh03_lifecycle_hardening_final_qualification.py",
+  "tests/test_apply_notifications.py",
+  "tests/test_ui07_ui08_confirmation_notification_terminal.py",
+  "tests/test_all_project_optimizations.py",
+  "tests/test_ov03_config_execution_contracts.py",
+]

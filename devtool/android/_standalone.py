@@ -1055,45 +1055,9 @@ def _critical_memory_pressure(
 
 
 def _try_root_cache_reclaim() -> bool:
-    """Drop clean filesystem caches once when root is available.
-
-    This deliberately uses ``drop_caches=1`` only. It does not kill Android
-    applications, alter swap, or drop inode/dentry caches.
-    """
-
-    if os.name != "posix":
-        return False
-    command = "sync; echo 1 > /proc/sys/vm/drop_caches"
-    try:
-        if hasattr(os, "geteuid") and os.geteuid() == 0:
-            os.sync()
-            Path("/proc/sys/vm/drop_caches").write_text("1\n", encoding="ascii")
-            return True
-    except OSError:
-        pass
-
-    candidates: list[list[str]] = []
-    su = shutil.which("su")
-    if su:
-        candidates.append([su, "-c", command])
-    sudo = shutil.which("sudo")
-    shell = shutil.which("sh") or "/bin/sh"
-    if sudo:
-        candidates.append([sudo, "-n", shell, "-c", command])
-    for candidate in candidates:
-        try:
-            result = subprocess.run(
-                candidate,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if result.returncode == 0:
-            return True
+    """Standalone builds never elevate implicitly for cache reclaim."""
+    # Privileged resource mutation is owned by the host privilege broker in
+    # the full Devtool runtime. Standalone build helpers cannot authorize it.
     return False
 
 

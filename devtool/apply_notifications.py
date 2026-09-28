@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -235,9 +234,7 @@ def _post_desktop(notification: ApplyNotification) -> None:
 
 def _post_android(notification: ApplyNotification) -> None:
     if not _android_app_run_notification_active():
-        posted = _post_termux_notification(notification)
-        if not posted:
-            _post_root_notification(notification)
+        _post_termux_notification(notification)
 
     toasted = _post_termux_toast(notification.toast)
     if not toasted:
@@ -281,20 +278,3 @@ def _post_android_bridge_toast(notification: ApplyNotification) -> bool:
         "toast": notification.toast,
     }
     return AndroidLiveHudBridge().send("toast", payload)
-
-
-def _post_root_notification(notification: ApplyNotification) -> bool:
-    if shutil.which("su") is None:
-        return False
-    command = shlex.join([
-        "cmd",
-        "notification",
-        "post",
-        "-S",
-        "bigtext",
-        "-t",
-        notification.title,
-        APPLY_NOTIFICATION_ID,
-        notification.body,
-    ])
-    return _run_quiet(["su", "-c", command])
