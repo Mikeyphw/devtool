@@ -403,6 +403,10 @@ roadmap-env-x01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "env-x01", ref = "test:roadmap-env-x01", depends_on = ["syntax"] },
 ]
+roadmap-env-x02 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "env-x02", ref = "test:roadmap-env-x02", depends_on = ["syntax"] },
+]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
@@ -1243,4 +1247,30 @@ command = [
   "tests/test_ui07_ui08_confirmation_notification_terminal.py",
   "tests/test_all_project_optimizations.py",
   "tests/test_ov03_config_execution_contracts.py",
+]
+
+
+# ENV-X02 first-class language-environment convergence qualification.
+[[test]]
+id = "roadmap-env-x02"
+name = "ENV-X02 language environment convergence"
+runner = "pytest"
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x02_language_environment_convergence.py",
+  "tests/test_toolchains.py",
+  "tests/test_test_selection.py",
+  "tests/test_go_failure_reporting.py",
+  "tests/test_go_executable_builds.py",
+  "tests/test_python_support.py",
+  "tests/test_python_audit_package_discovery_hotfix.py",
+  "tests/test_python_audit_scope_hotfix.py",
+  "tests/test_python_chroot_bootstrap.py",
+  "tests/test_python_chroot_env_consistency.py",
+  "tests/test_python_format_autofix.py",
+  "tests/test_python_validation_diagnostics_hotfix.py",
+  "tests/test_ov04_detection_python_selection_contracts.py",
+  "tests/test_ssh_tmux_runner.py",
+  "tests/test_project_runners.py",
+  "tests/test_sshw03_remote_execution_toolchains.py",
 ]

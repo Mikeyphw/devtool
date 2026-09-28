@@ -1879,20 +1879,23 @@ class PythonRunner(ProjectRunner):
         return info
 
     def _environment_path(self, config: ProjectConfig) -> str:
+        from .python_environment import destination_python_environment_root
         from .python_support import default_python_environment_root
         options = self._options(config)
         value = str(options.get("environment") or "").strip()
         if not value:
             normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
-            if normalized_environment in {"proot", "proot-distro"}:
-                from .python_support import python_repo_key
-                return str((self._root(config) / ".devtool" / "proot" / "python" / python_repo_key(self._root(config))).resolve())
             name = config.selected_target or "python"
+            if normalized_environment in {"ssh", "oci", "ssh-oci", "ssh-proot-oci", "chroot", "proot", "proot-distro"}:
+                return destination_python_environment_root(self._root(config), normalized_environment, name)
             return str(default_python_environment_root(self._root(config), name).resolve())
         path = Path(value).expanduser()
         if not path.is_absolute():
+            normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
+            if normalized_environment in {"ssh", "oci", "ssh-oci", "ssh-proot-oci", "chroot", "proot", "proot-distro"}:
+                return value
             path = self._root(config) / path
-        return str(path.resolve())
+        return str(path.resolve()) if path.is_absolute() else str(path)
 
     def _configured_python(self, config: ProjectConfig) -> tuple[str, bool]:
         options = self._options(config)
@@ -1903,27 +1906,50 @@ class PythonRunner(ProjectRunner):
         return str(config.python_executable or "python3").strip() or "python3", explicit
 
     def _plan(self, config: ProjectConfig):
-        from .python_support import resolve_environment
+        from .environment_composition import build_environment_composition_plan
+        from .python_environment import PythonEnvironmentRequest, normalize_lock_policy, resolve_python_environment
+        from .toolchains import selected_toolchain_manager
         info = self._info(config)
-        environment = self._environment_path(config) if info.manager == "venv" else str(self._options(config).get("environment") or "")
+        options = self._options(config)
+        environment = self._environment_path(config) if info.manager in {"venv", "uv"} else str(options.get("environment") or "")
         configured_python, strict_python = self._configured_python(config)
+        planning_env = {**os.environ, **config.env}
+        destination = str(config.execution_environment or "").strip().lower().replace("_", "-") in {"ssh", "oci", "ssh-oci", "ssh-proot-oci", "chroot", "proot", "proot-distro"}
+        provider = selected_toolchain_manager(config, cwd=str(info.root), env=planning_env, destination=destination)
+        composition = build_environment_composition_plan(
+            info.root, use_mise=provider == "mise", use_asdf=provider == "asdf", use_pyenv=provider == "pyenv", language_provider=info.manager,
+            env=planning_env, declared_overlay=config.env, destination=destination,
+        )
+        composition.require_valid()
+        runtime_provider = "system"
+        if provider in {"mise", "asdf", "pyenv"}:
+            try:
+                resolved_python = composition.require_runtime_tool("python", destination=destination)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+            if resolved_python:
+                runtime_provider = provider
+            if resolved_python and not destination and not strict_python:
+                configured_python = resolved_python
+                strict_python = True
+        locked = _bool_option(options.get("locked"), True)
+        lock_policy = normalize_lock_policy(str(options.get("lock_policy") or ""), locked_compat=locked)
         key = (
             str(info.root), info.manager, configured_python, environment,
             tuple(self._list_option(config, "groups")), tuple(self._list_option(config, "extras")),
-            config.execution_environment, info.requires_python, info.dependency_files,
+            config.execution_environment, info.requires_python, info.dependency_files, composition.identity, lock_policy,
         )
         cache = getattr(self, "_python_plan_cache", None)
         if isinstance(cache, dict) and key in cache:
             return cache[key]
-        plan = resolve_environment(
-            info,
-            configured_python=configured_python,
-            environment=environment,
-            groups=key[4],
-            extras=key[5],
-            execution_environment=config.execution_environment,
-            strict_configured_python=strict_python,
+        request = PythonEnvironmentRequest(
+            root=str(info.root), action="run", runtime_provider=runtime_provider,
+            manager=info.manager, environment=environment, configured_python=configured_python,
+            configured_python_explicit=strict_python, lock_policy=lock_policy,
+            offline=_bool_option(options.get("offline"), False), groups=key[4], extras=key[5],
+            execution_environment=config.execution_environment, destination_name=config.selected_target or "python",
         )
+        plan = resolve_python_environment(info, request, composition=composition, env=planning_env)
         if not plan.compatible:
             raise SystemExit(plan.compatibility_detail)
         if not isinstance(cache, dict):
@@ -1932,6 +1958,20 @@ class PythonRunner(ProjectRunner):
         cache.clear()
         cache[key] = plan
         return plan
+
+    def apply_environment_metadata(self, config: ProjectConfig, specs: list[CommandSpec]) -> list[CommandSpec]:
+        plan = self._plan(config)
+        for spec in specs:
+            metadata = dict(spec.metadata)
+            metadata["python_environment"] = plan.to_dict()
+            metadata["python_environment_identity"] = plan.identity
+            domains = dict(metadata.get("environment_domains") or {})
+            domains["python"] = plan.identity
+            if plan.composition_identity:
+                domains.setdefault("composition", plan.composition_identity)
+            metadata["environment_domains"] = domains
+            spec.metadata = metadata
+        return specs
 
     def _env(self, config: ProjectConfig, *, isolated: bool = False) -> dict[str, str]:
         from .python_support import python_cache_env, python_repo_key
@@ -3122,8 +3162,14 @@ class RustRunner(ProjectRunner):
         return argv
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
+        from .go_environment import destination_go_environment, destination_go_output_dir
         root = self._root(config)
+        resolved_go = self._resolved_environment(config, action)
         env = _optimized_env(config, self.kind)
+        env.update(destination_go_environment(root, config.execution_environment))
+        for key, value in resolved_go.environment:
+            if key not in {"GOAUTH"}:
+                env.setdefault(key, value)
         workers = resolve_build_policy(config, self.kind).max_workers
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
         if explicit:
@@ -3315,7 +3361,43 @@ class GoRunner(ProjectRunner):
             path = self._root(config) / path
         return path.resolve()
 
-    def _build_driver(self, config: ProjectConfig, action: str, workers: int) -> str:
+    def _resolved_environment(self, config: ProjectConfig, action: str):
+        from .environment_composition import build_environment_composition_plan
+        from .go_environment import GoEnvironmentRequest, resolve_go_environment
+        from .toolchains import selected_toolchain_manager
+        options = self._options(config)
+        env = {**os.environ, **config.env, **_optimized_env(config, self.kind)}
+        destination = str(config.execution_environment or "").strip().lower().replace("_", "-") in {"ssh", "oci", "ssh-oci", "ssh-proot-oci", "chroot", "proot", "proot-distro"}
+        provider = selected_toolchain_manager(config, cwd=str(self._root(config)), env=env, destination=destination)
+        composition = build_environment_composition_plan(
+            self._root(config), use_mise=provider == "mise", use_asdf=provider == "asdf", use_pyenv=False,
+            language_provider="go", env=env, declared_overlay=config.env, destination=destination,
+        )
+        composition.require_valid()
+        try:
+            resolved_provider_go = composition.require_runtime_tool("go", destination=destination) if provider in {"mise", "asdf"} else ""
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        go_provider = provider if resolved_provider_go else "system"
+        request = GoEnvironmentRequest(
+            root=str(self._root(config)), action=action, execution_environment=config.execution_environment,
+            launcher=str(options.get("executable") or options.get("launcher") or "go"),
+            toolchain_provider=go_provider,
+            provider_identity=(composition.mise.identity if go_provider == "mise" else composition.asdf.identity if go_provider == "asdf" else ""),
+            composition_identity=composition.identity,
+            gotoolchain=str(options.get("gotoolchain") or env.get("GOTOOLCHAIN") or ""),
+            workspace=str(options.get("workspace") or "auto"),
+            target_goos=str(options.get("goos") or env.get("GOOS") or ""),
+            target_goarch=str(options.get("goarch") or env.get("GOARCH") or ""),
+            dependency_mode=str(options.get("dependency_mode") or "module"),
+            offline=_bool_option(options.get("offline"), False), packages=tuple(self._packages(config)),
+        )
+        resolved = resolve_go_environment(request, env=env, composition=composition)
+        if not resolved.qualified:
+            raise SystemExit(resolved.detail or "Go environment is not qualified")
+        return resolved
+
+    def _build_driver(self, config: ProjectConfig, action: str, workers: int, *, output_dir: str = "") -> str:
         """Return a POSIX-shell Go executable discovery/build driver.
 
         Discovery happens inside the selected execution environment instead of
@@ -3325,7 +3407,7 @@ class GoRunner(ProjectRunner):
         """
         targets = self._build_targets(config)
         output_names = self._output_names(config)
-        output_dir = self._build_output_dir(config, action)
+        output_dir = output_dir or str(self._build_output_dir(config, action))
         quoted_targets = " ".join(shlex.quote(item) for item in targets)
         output_map = "\n".join(
             f"resolve_output_name {shlex.quote(target)} {shlex.quote(name)}"
@@ -3544,14 +3626,25 @@ done < "$plan"
 """
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
+        from .go_environment import destination_go_environment, destination_go_output_dir
         root = self._root(config)
+        resolved_go = self._resolved_environment(config, action)
         env = _optimized_env(config, self.kind)
+        env.update(destination_go_environment(root, config.execution_environment))
+        for key, value in resolved_go.environment:
+            if key != "GOAUTH":
+                env.setdefault(key, value)
         workers = resolve_build_policy(config, self.kind).max_workers
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
         if explicit:
             return [CommandSpec(
                 action, _shell_split_option(explicit, name="explicit command"), env=env, cwd=str(root),
-                metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
+                metadata=_tool_metadata(
+                    self.kind, root, explicit=True, collect_artifacts=action == "package",
+                    verify_artifacts=action == "package", artifact_required=action == "package",
+                    go_environment=resolved_go.to_dict(), go_environment_identity=resolved_go.identity,
+                    environment_domains={"go": resolved_go.identity},
+                ),
             )]
         packages = self._packages(config)
         artifact_action = action in {"build", "package"}
@@ -3566,7 +3659,8 @@ done < "$plan"
             else:
                 argv = ["go", "mod", "download"]
         elif action in {"build", "package"}:
-            argv = ["sh", "-c", self._build_driver(config, action, workers)]
+            destination_out = destination_go_output_dir(action, config.execution_environment)
+            argv = ["sh", "-c", self._build_driver(config, action, workers, output_dir=destination_out)]
         elif action in {"test", "wine-test"}:
             argv = ["go", "test", "-json", "-p", str(workers), *packages]
         elif action == "lint":
@@ -3585,14 +3679,19 @@ done < "$plan"
             verify_artifacts=artifact_action,
             artifact_required=action == "package",
             go_build_targets=self._build_targets(config) if artifact_action else [],
+            go_environment=resolved_go.to_dict(),
+            go_environment_identity=resolved_go.identity,
+            environment_domains={"go": resolved_go.identity},
         )
         if artifact_action:
-            metadata["artifact_directories"] = [str(self._build_output_dir(config, action))]
+            destination_out = destination_go_output_dir(action, config.execution_environment)
+            metadata["artifact_directories"] = [destination_out or str(self._build_output_dir(config, action))]
             metadata["artifact_allow_cached"] = False
         if action in {"test", "wine-test"}:
             metadata["progress_parser"] = "go-test-json"
             metadata["go_test_json"] = True
             metadata["test_framework"] = "go"
+            metadata["go_packages"] = list(packages)
         spec = CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=metadata)
         if action in {"test", "wine-test"}:
             from .test_selection import apply_test_selection

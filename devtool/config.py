@@ -2138,7 +2138,7 @@ detached = false # whole-run devtool mode only
 # caches remain worker-local and persist across source syncs.
 
 [toolchain]
-manager = "auto" # auto | mise | none
+manager = "auto" # auto | mise | asdf | pyenv | none
 
 [android]
 variant = "debug"

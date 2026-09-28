@@ -1,0 +1,216 @@
+{
+  "schema_version": 2,
+  "program": "M004 ENV",
+  "overlay": "ENV-X02",
+  "gate_window_position": "2/3",
+  "major_scope_position": "2/7",
+  "full_plan_position": "12/63",
+  "base_user_commit": "8305b8c",
+  "supersedes_artifact": "env_x02_language_environment_convergence_v2.zip",
+  "delivered": [
+    "ENV-P025",
+    "ENV-P026",
+    "ENV-P027",
+    "ENV-P028",
+    "ENV-P030",
+    "ENV-P031",
+    "ENV-P032",
+    "ENV-P033",
+    "ENV-P034",
+    "ENV-P035",
+    "ENV-P036",
+    "ENV-P037",
+    "ENV-P038",
+    "ENV-P039",
+    "ENV-P040",
+    "ENV-P041",
+    "ENV-P042",
+    "ENV-P044",
+    "ENV-P045",
+    "ENV-P046",
+    "ENV-P047",
+    "ENV-P048",
+    "ENV-P050",
+    "ENV-P057",
+    "ENV-P058",
+    "ENV-P059",
+    "ENV-P060",
+    "ENV-P061",
+    "ENV-P062",
+    "ENV-P063",
+    "ENV-P064",
+    "ENV-P105",
+    "ENV-P106",
+    "ENV-P107",
+    "ENV-P108",
+    "ENV-P109",
+    "ENV-P110",
+    "ENV-P111",
+    "ENV-P112",
+    "ENV-P114",
+    "ENV-P117",
+    "ENV-P118",
+    "ENV-P119",
+    "ENV-P120",
+    "ENV-P121",
+    "ENV-P122",
+    "ENV-P123",
+    "ENV-P124",
+    "ENV-P128",
+    "ENV-P129",
+    "ENV-P130"
+  ],
+  "preserved_upstream_regression_proved": {
+    "ENV-P029": "Protected Devtool execution namespaces remain ENV-X01 authority; ENV-X02 consumes and regression-proves the boundary rather than claiming ownership."
+  },
+  "foundations_not_finally_closed": {
+    "ENV-P043": "PythonExecutionSnapshot type exists; destination-returned actual execution snapshot remains ENV-X04/adoption work.",
+    "ENV-P049": "Validator isolation/project-runtime foundation exists; ENV-G1 must prove fresh-process runtime ownership and later ENV work completes dependency bootstrap policy.",
+    "ENV-P051..ENV-P056": "Python recursive source/lock/cache/ownership/explain lifecycle remains ENV-X04.",
+    "ENV-P065..ENV-P072": "Advanced Go provider/cross-target/cache/security/snapshot/explain lifecycle remains ENV-X04; P068/P069/P072 have foundations only.",
+    "ENV-P113": "Destination asdf state, legacy-version-file resolution and remote ASDF_DATA_DIR ownership remain ENV-X04.",
+    "ENV-P115": "ENV-G1 must prove fresh-process asdf fixtures.",
+    "ENV-P116": "ENV-G3 closes cross-substrate asdf matrix/final disposition.",
+    "ENV-P125": "Destination-returned pyenv snapshots and destination PYENV_ROOT ownership remain ENV-X04.",
+    "ENV-P126": "ENV-G1 must prove fresh-process pyenv fixtures.",
+    "ENV-P127": "ENV-G3 closes cross-substrate pyenv matrix/final disposition.",
+    "ENV-P131": "ENV-G1 proves unrelated-tool non-ownership, plugin/executable mapping, system pass-through and declared-but-unresolvable fail-closed behavior."
+  },
+  "early_foundations": {
+    "pyenv_delegation": "Provider-role conflict/selection and Python-runtime composition foundation is present because it shares the same provider-ownership boundary; full pyenv lifecycle remains ENV-X04."
+  },
+  "absorbed_bugs": [
+    {
+      "id": "ENV-X02-BUG-01",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": ".tool-versions no longer grants mise auto-ownership; shared marker ownership is deterministic."
+    },
+    {
+      "id": "ENV-X02-BUG-02",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "Python source audit closes extensionless-script file handles."
+    },
+    {
+      "id": "ENV-X02-BUG-03",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "direnv absent/blocked/authorized states are distinct and never auto-trusted."
+    },
+    {
+      "id": "ENV-X02-BUG-04",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "asdf plugin provenance is credential/query/fragment safe."
+    },
+    {
+      "id": "ENV-X02-BUG-05",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "Requested asdf versions cannot masquerade as observed current versions."
+    },
+    {
+      "id": "ENV-X02-BUG-06",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "Provider identity verification detects path drift, disappearance and same-path content replacement."
+    },
+    {
+      "id": "ENV-X02-BUG-07",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "Go provider qualification occurs before effective toolchain evidence; system Go is not recorded for provider-owned execution."
+    },
+    {
+      "id": "ENV-X02-BUG-08",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "toolchain doctor reports asdf/pyenv selection truthfully."
+    },
+    {
+      "id": "ENV-X02-BUG-09",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "asdf plugin IDs are distinct from executable IDs, including golang -> go."
+    },
+    {
+      "id": "ENV-X02-BUG-10",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "asdf current output supports version-first and plugin+version shapes."
+    },
+    {
+      "id": "ENV-X02-BUG-11",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "Composition-provider identity no longer falsely implies Python/Go runtime ownership for unrelated tools."
+    },
+    {
+      "id": "ENV-X02-BUG-12",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "asdf/pyenv system pass-through preserves system runtime ownership."
+    },
+    {
+      "id": "ENV-X02-BUG-13",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "pyenv now records PYENV_DIR/legacy-file/source provenance and fails on requested-vs-active mismatch."
+    },
+    {
+      "id": "ENV-X02-BUG-14",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "ASDF_DIR/ASDF_DATA_DIR now reject invalid relative configuration and participate in provider provenance."
+    },
+    {
+      "id": "ENV-X02-BUG-15",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "Provider post-qualification re-verification now uses the authoritative parent/config/spec execution environment instead of treating CommandSpec.env as the whole process environment."
+    },
+    {
+      "id": "ENV-X02-BUG-16",
+      "owner": "ENV-X02/ENV-G1",
+      "status": "fixed-in-overlay",
+      "summary": "ASDF_<TOOL>_VERSION overrides now participate in canonical selected-tool/runtime ownership even without a version file and remain subject to observed-current qualification."
+    }
+  ],
+  "validation": {
+    "kind": "devtool-first-class-test",
+    "test_id": "roadmap-env-x02",
+    "passed": 270,
+    "failed": 0,
+    "skipped": 0,
+    "warnings": 0,
+    "errors": 0
+  },
+  "next": {
+    "overlay": "ENV-G1",
+    "full_plan_position": "13/63",
+    "remaining_before_next_major_scope": 1,
+    "next_major_scope": "EXEC",
+    "next_major_scope_first_overlay": "EXEC-X01"
+  },
+  "consumed_upstream_authority": {
+    "ENV-P029": "Protected Devtool runtime namespace authority is delivered by ENV-X01; X02 consumes and regression-proves it without creating a competing authority."
+  },
+  "plan_extensions": {
+    "asdf": "ENV-P105..ENV-P116",
+    "pyenv": "ENV-P117..ENV-P127",
+    "cross_provider": "ENV-P128..ENV-P131",
+    "campaign_total": 63,
+    "new_overlay_count": 0
+  },
+  "audit_loop": {
+    "status": "closed",
+    "final_pass": "Pass 8",
+    "remaining_x02_owned_gaps": 0,
+    "later_owner_obligations": [
+      "ENV-G1",
+      "ENV-X04",
+      "ENV-G3"
+    ]
+  }
+}

@@ -655,7 +655,11 @@ def _detect_manager(root: Path, data: Mapping[str, Any], configured: str) -> tup
             return "hatch", ""
     if (root / "Pipfile").is_file():
         return "pipenv", ""
-    return ("uv", "") if shutil.which("uv") else ("venv", "")
+    # uv sync is a project-model frontend, not a generic replacement for pip.
+    # Requirements-only/setup.py-only repositories must not be selected merely
+    # because uv happens to be installed on the planning host.
+    uv_project = (root / "pyproject.toml").is_file() or (root / "uv.lock").is_file()
+    return ("uv", "") if uv_project and shutil.which("uv") else ("venv", "")
 
 
 def _detect_framework(root: Path, data: Mapping[str, Any], configured: str) -> str:
@@ -1031,14 +1035,19 @@ def resolve_python_executable(root: Path, configured: str, environment: str = ""
             env_root = root / env_root
         candidates.append(str(env_root / "bin" / "python"))
     configured = str(configured or "").strip()
-    if configured:
+    # Explicit configuration is authoritative.  The normal Devtool default is
+    # only a fallback and must not shadow project runtime markers.
+    if configured and strict_configured:
         candidates.append(configured)
     hint = _python_version_hint(root)
     if hint:
         normalized = hint.removeprefix("python")
         candidates.extend([f"python{normalized}", f"python{'.'.join(normalized.split('.')[:2])}"])
-    candidates.extend([str(root / ".venv" / "bin" / "python"), sys.executable, "python3"])
-    for candidate in candidates:
+    candidates.append(str(root / ".venv" / "bin" / "python"))
+    if configured and not strict_configured:
+        candidates.append(configured)
+    candidates.extend([sys.executable, "python3"])
+    for candidate in dict.fromkeys(candidates):
         path = Path(candidate).expanduser()
         if path.is_absolute() or "/" in candidate:
             if path.is_file() and os.access(path, os.X_OK):
@@ -1090,7 +1099,12 @@ def _is_proot_execution_environment(value: str) -> bool:
 
 
 def _is_guest_execution_environment(value: str) -> bool:
-    return _is_chroot_execution_environment(value) or _is_proot_execution_environment(value)
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    return (
+        _is_chroot_execution_environment(normalized)
+        or _is_proot_execution_environment(normalized)
+        or normalized in {"ssh", "oci", "ssh-oci", "ssh-proot-oci"}
+    )
 
 
 def resolve_bootstrap_python(
@@ -1426,7 +1440,10 @@ def build_sync_command(
     if info.manager == "poetry":
         if offline:
             raise PythonProjectError("Offline restore for Poetry is not enforceable by Devtool; refusing network-ambiguous execution.")
-        command = ["poetry", "install", "--sync"]
+        version_text = _manager_version("poetry")
+        match = re.search(r"(?:Poetry\s*\(version\s*)?(\d+)\.(\d+)", version_text, re.I)
+        modern_sync = bool(match and int(match.group(1)) >= 2)
+        command = ["poetry", "sync"] if modern_sync else ["poetry", "install", "--sync"]
         if groups:
             command.extend(["--with", ",".join(groups)])
         if extras:
@@ -2464,11 +2481,14 @@ def run_validator(args: argparse.Namespace) -> int:
     except PythonProjectError as exc:
         print(f"Python validator environment error: {exc}", file=sys.stderr)
         return 86
-    env = os.environ.copy()
+    # Embedded validators are evidence-producing execution.  Do not let an
+    # ambient host PYTHONPATH satisfy undeclared imports and create false-green
+    # validation.  Preserve a small allowlisted baseline, then add only the
+    # project source roots that belong to this validator contract.
+    env = {str(k): str(v) for k, v in os.environ.items() if str(k) not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"}}
     env.update(python_cache_env(root, os.environ.get("DEVTOOL_EXECUTION_CONTEXT", "host")))
     source_paths = [str((root / item).resolve()) for item in info.source_roots]
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = os.pathsep.join([*source_paths, *([existing] if existing else [])])
+    env["PYTHONPATH"] = os.pathsep.join(source_paths)
     command = python_script_argv(plan, str(args.script.resolve()))
     execution_cwd = args.cwd.resolve() if args.cwd else root
     try:
@@ -2831,7 +2851,8 @@ def _python_audit_files(root: Path) -> list[Path]:
         if path.suffix:
             continue
         try:
-            first = path.open("rb").readline(256).decode("utf-8", "ignore").casefold()
+            with path.open("rb") as handle:
+                first = handle.readline(256).decode("utf-8", "ignore").casefold()
         except OSError:
             continue
         if first.startswith("#!") and "python" in first:

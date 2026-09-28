@@ -221,10 +221,21 @@ class GoTestJSONStream:
             self._started_packages.add(package)
             return f"==> go-test package {package}\n"
 
-        if action == "output":
+        if action in {"output", "build-output"}:
             output = str(event.get("Output") or "")
-            self._record_output(package, test, output)
+            build_package = package or str(event.get("ImportPath") or "").strip()
+            self._record_output(build_package, test, output)
             return output
+
+        if action == "build-fail":
+            build_package = package or str(event.get("ImportPath") or event.get("FailedBuild") or "").strip()
+            self._record_package_result(build_package, "fail")
+            if build_package:
+                key = f"{build_package}\0fail"
+                if key not in self._finished_packages:
+                    self._finished_packages.add(key)
+                    return f"<== go-test package {build_package} fail\n"
+            return ""
 
         if action in {"pass", "fail", "skip"} and test:
             elapsed_value = event.get("Elapsed")
@@ -235,13 +246,14 @@ class GoTestJSONStream:
             self._record_test_result(package, test, action, elapsed)
             return ""
 
-        if action in {"pass", "fail", "skip"} and package:
-            self._record_package_result(package, action)
-            key = f"{package}\0{action}"
+        if action in {"pass", "fail", "skip"} and (package or event.get("FailedBuild")):
+            effective_package = package or str(event.get("FailedBuild") or "").strip()
+            self._record_package_result(effective_package, action)
+            key = f"{effective_package}\0{action}"
             if key in self._finished_packages:
                 return ""
             self._finished_packages.add(key)
-            return f"<== go-test package {package} {action}\n"
+            return f"<== go-test package {effective_package} {action}\n"
 
         return ""
 

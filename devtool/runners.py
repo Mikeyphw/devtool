@@ -801,10 +801,15 @@ def build_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
         return _apply_config_metadata(config, build_workflow_specs(config, action))
     runner = get_project_runner(config)
     if action == "validate":
-        return _apply_config_metadata(config, runner.build_validation_specs(config))
-    if action == "wine-validate":
-        return _apply_config_metadata(config, runner.build_validation_specs(config, wine=True))
-    return _apply_config_metadata(config, runner.build_specs(config, action))
+        specs = runner.build_validation_specs(config)
+    elif action == "wine-validate":
+        specs = runner.build_validation_specs(config, wine=True)
+    else:
+        specs = runner.build_specs(config, action)
+    annotate = getattr(runner, "apply_environment_metadata", None)
+    if callable(annotate):
+        specs = annotate(config, specs)
+    return _apply_config_metadata(config, specs)
 
 
 def build_validation_specs(

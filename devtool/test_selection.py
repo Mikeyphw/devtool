@@ -830,8 +830,29 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
                 separator = len(argv)
             argv[separator:separator] = values
     elif config.kind == "go":
-        values = _native_test_values(selection)
-        pattern = selection.native_filter or _regex_union_exact(values)
+        if selection.tags or selection.exclude_tags or selection.classes:
+            raise SystemExit(
+                "Go test selection cannot safely translate tags/classes to native semantics; "
+                "use explicit test names, paths/changed selection, or test_selection.filter."
+            )
+        if selection.paths:
+            from .go_environment import packages_for_changed_paths
+            root = Path(config.project_root or config.repo_root).expanduser().resolve()
+            packages = list(packages_for_changed_paths(root, selection.paths))
+            if not packages:
+                raise SystemExit("Go path/changed test selection resolved to zero packages; refusing a false-green run.")
+            original_packages = [str(item) for item in metadata.get("go_packages", []) if str(item)]
+            if original_packages and argv[-len(original_packages):] == original_packages:
+                argv = argv[:-len(original_packages)]
+            argv.extend(packages)
+            metadata["go_selected_packages"] = packages
+            metadata["go_selection_mode"] = "package-path"
+        explicit_names = [*selection.ids, *selection.methods, *selection.selectors]
+        if explicit_names and selection.paths:
+            raise SystemExit(
+                "Go path/changed package selection cannot be combined with generic test-name selection without a proven catalog mapping."
+            )
+        pattern = selection.native_filter or _regex_union_exact(explicit_names)
         if pattern:
             try:
                 index = argv.index("test")
@@ -839,6 +860,7 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
                 index = 1
             if "-run" not in argv:
                 argv[index + 1:index + 1] = ["-run", pattern]
+            metadata["go_selection_mode"] = "test-name"
     elif config.kind == "maven":
         if selection.native_filter:
             argv.append(f"-Dtest={selection.native_filter}")

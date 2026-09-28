@@ -97,6 +97,11 @@ def _execution_kind(specs: Iterable[Any]) -> str:
         runner = str(metadata.get("runner") or metadata.get("project_type") or "").strip().lower()
         if metadata.get("gradle_direct") or runner == "gradle":
             return "gradle"
+    for spec in specs:
+        metadata = dict(getattr(spec, "metadata", {}) or {})
+        runner = str(metadata.get("runner") or metadata.get("project_type") or "").strip().lower()
+        if runner == "go" or metadata.get("go_environment"):
+            return "go"
     return "generic"
 
 
@@ -259,6 +264,21 @@ def ensure_remote_toolchain(
             "owner": "staged-android-builder",
             "persistent_caches": ["$HOME/.gradle", "$HOME/.cache/devtool"],
             "detail": "Android JDK/SDK/NDK/Gradle provisioning delegated to the staged remote builder",
+        }
+    if kind == "go":
+        if config.execution_provider == SSH_PROOT_OCI:
+            return {
+                "ok": True, "kind": "go", "owner": "ssh-proot-oci-destination",
+                "detail": "Go qualification is destination-owned by the OCI runtime and must be completed there",
+            }
+        remote_go = str(worker.tools.get("go") or "").strip()
+        remote_version = str(worker.versions.get("go") or "").strip()
+        if not remote_go:
+            raise ValueError("SSH Go worker does not provide a usable go executable; remote Go execution is not qualified")
+        return {
+            "ok": True, "kind": "go", "go": remote_go, "go_version": remote_version,
+            "persistent_caches": ["$HOME/.cache/go-build", "$HOME/go/pkg/mod"],
+            "detail": f"Go remote toolchain ready: {remote_version or remote_go}",
         }
     if kind != "gradle":
         return {"ok": True, "kind": kind, "detail": "no additional remote build toolchain provisioning required"}

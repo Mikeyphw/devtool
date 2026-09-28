@@ -42,7 +42,8 @@ class ToolchainWrapperTests(unittest.TestCase):
                     env={"PATH": os.environ.get("PATH", "")},
                 )
 
-            self.assertEqual(wrapped[0].argv, ["mise", "exec", "--", "pytest", "-q"])
+            self.assertEqual(Path(wrapped[0].argv[0]).name, "mise")
+            self.assertEqual(wrapped[0].argv[1:], ["exec", "--", "pytest", "-q"])
             self.assertEqual(wrapped[0].metadata["progress_argv"], ["pytest", "-q"])
             self.assertEqual(wrapped[0].metadata["toolchain_manager"], "mise")
 
