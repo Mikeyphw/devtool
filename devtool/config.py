@@ -710,10 +710,11 @@ def _parse_test_specs(loaded: dict[str, Any], source: object) -> dict[str, Any]:
             required=bool(item.get("required", True)), requires_device=bool(item.get("requires_device", False)),
             requires_network=bool(item.get("requires_network", False)), selector=str(item.get("selector") or ""),
             aliases=_tuple_field("aliases"), behavior=str(item.get("behavior") or ""), lanes=_tuple_field("lanes"),
-            resources=_tuple_field("resources"), parallel_safety=str(item.get("parallel_safety") or "parallel-safe"),
+            resources=_tuple_field("resources"), parallel_safety=str(item.get("parallel_safety") or "serial-process-global"),
             required_tools=_tuple_field("required_tools"), required_capabilities=_tuple_field("required_capabilities"),
             budget_class=str(item.get("budget_class") or "default"), contract_level=str(item.get("contract_level") or "public-contract"),
-            groups=_tuple_field("groups"), dependencies=_tuple_field("dependencies"), metadata={"declared": True})
+            groups=_tuple_field("groups"), dependencies=_tuple_field("dependencies"),
+            selection_groups=_tuple_field("selection_groups"), metadata={"declared": True})
     return out
 
 

@@ -96,7 +96,14 @@ class ArtifactFixtureBuilder:
     def _sha(data: bytes) -> str:
         return hashlib.sha256(data).hexdigest()
 
-    def overlay(self, files: Mapping[str, str | bytes], *, name: str = "fixture-overlay", target: str = "devtool") -> Path:
+    def _single_artifact(
+        self,
+        files: Mapping[str, str | bytes],
+        *,
+        name: str,
+        target: str,
+        artifact_type: str,
+    ) -> Path:
         self._counter += 1
         normalized: dict[str, bytes] = {}
         for relative, payload in sorted(files.items()):
@@ -107,7 +114,7 @@ class ArtifactFixtureBuilder:
         ]
         manifest = {
             "schema_version": 2,
-            "type": "overlay",
+            "type": artifact_type,
             "name": name,
             "target": target,
             "base_contract_mode": "touched-files",
@@ -124,12 +131,77 @@ class ArtifactFixtureBuilder:
                 self._write(archive, path, data)
         return output
 
+    def overlay(self, files: Mapping[str, str | bytes], *, name: str = "fixture-overlay", target: str = "devtool") -> Path:
+        return self._single_artifact(files, name=name, target=target, artifact_type="overlay")
+
+    def snapshot(self, files: Mapping[str, str | bytes], *, name: str = "fixture-snapshot", target: str = "devtool") -> Path:
+        return self._single_artifact(files, name=name, target=target, artifact_type="snapshot")
+
+    def bundle(self, overlays: Sequence[Path], *, name: str = "fixture-bundle") -> Path:
+        self._counter += 1
+        rows: list[dict[str, Any]] = []
+        payloads: list[tuple[str, bytes]] = []
+        for index, path in enumerate(overlays, 1):
+            data = Path(path).read_bytes()
+            arcname = f"overlays/{index:03d}_{Path(path).name}"
+            payloads.append((arcname, data))
+            rows.append({
+                "id": Path(path).stem,
+                "path": arcname,
+                "label": Path(path).stem,
+                "required": True,
+                "sha256": self._sha(data),
+                "size": len(data),
+            })
+        manifest = {
+            "schema_version": 2,
+            "type": "overlay_bundle",
+            "kind": "devtool.overlay_bundle",
+            "name": name,
+            "target_mode": "per_overlay",
+            "overlays": rows,
+            "apply_order": rows,
+            "apply": {
+                "atomic": True,
+                "conflict_policy": "fail",
+                "requires_clean_worktree": False,
+                "commit": {"enabled": False, "strategy": "single", "message": ""},
+            },
+            "validation": {"required": False, "strategy": "per-overlay", "rollback_on_failure": True, "failure_action": "pause"},
+        }
+        output = self.root / f"{name}-{self._counter:03d}.zip"
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+            self._write(archive, "devtool-bundle.json", (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode())
+            for arcname, data in payloads:
+                self._write(archive, arcname, data)
+        return output
+
     @staticmethod
     def _write(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
         info = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
         info.compress_type = zipfile.ZIP_DEFLATED
         info.external_attr = 0o100644 << 16
         archive.writestr(info, data, compresslevel=9)
+
+
+@dataclass
+class StableRepositoryBoundary:
+    """Pure repository-state fake for unit/contract tests that do not need Git."""
+
+    head: str = "deadbeef"
+    branch: str = "main"
+    dirty: bool = False
+    tracked_paths: tuple[str, ...] = ()
+    calls: list[str] = field(default_factory=list)
+
+    def snapshot(self) -> dict[str, Any]:
+        self.calls.append("snapshot")
+        return {
+            "head": self.head,
+            "branch": self.branch,
+            "dirty": self.dirty,
+            "tracked_paths": list(self.tracked_paths),
+        }
 
 
 @dataclass

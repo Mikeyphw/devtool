@@ -45,7 +45,7 @@ markers = [
   "requires_tool(name): requires an external executable; skipped when unavailable",
   "requires_posix: requires POSIX process/signal/file-descriptor semantics",
   "not_termux(reason): host integration that is impossible on native Termux",
-  "slow_external: intentional real external-tool integration allowed to exceed the normal timing budget",
+  "slow_external: legacy intentional slow-test budget exemption; does not imply external-tool lane membership",
   "fast: fast deterministic editing-feedback lane",
   "unit: unit/contract classification (legacy-compatible)",
   "integration: real Git/process/PTY/repository integration lane",

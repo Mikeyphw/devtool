@@ -1159,3 +1159,29 @@ command = [
   "tests/test_sshw06_final_worker_seal.py",
   "tests/test_sshw_roadmap_gap_hotfix.py",
 ]
+
+# TEST-G2 stable-group roadmap jobs. These intentionally consume current pytest
+# selectors through devtool-tests.toml instead of duplicating mutable path lists.
+[[test]]
+id = "roadmap-test-g2"
+name = "TEST-G2 lane/selection milestone group"
+runner = "pytest"
+command = ["uv", "run", "--isolated", "--frozen", "--with-requirements", "devtool-test-requirements.lock", "python", "-m", "pytest", "-q", "--tb=short"]
+selection_groups = ["roadmap.test.g2"]
+lanes = ["system"]
+resources = ["serial-process-global"]
+parallel_safety = "serial-process-global"
+budget_class = "system"
+contract_level = "public-contract"
+
+[[test]]
+id = "roadmap-test-g2-external"
+name = "TEST-G2 exact external-tool qualification"
+runner = "pytest"
+command = ["uv", "run", "--isolated", "--frozen", "--with-requirements", "devtool-test-requirements.lock", "python", "-m", "pytest", "-q", "--tb=short", "--devtool-lane", "external"]
+selection_groups = ["roadmap.test.g2.external"]
+lanes = ["external"]
+resources = ["external-tools"]
+parallel_safety = "serial-process-global"
+budget_class = "external"
+contract_level = "public-contract"

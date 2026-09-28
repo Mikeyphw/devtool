@@ -24,7 +24,17 @@ from devtool.test_model import TestSpec
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _spec(check_id: str, selector: str, *, lanes=("fast",), aliases=(), resources=(), safety="parallel-safe") -> TestSpec:
+def _spec(
+    check_id: str,
+    selector: str,
+    *,
+    lanes=("fast",),
+    aliases=(),
+    resources=(),
+    safety="parallel-safe",
+    required_tools=(),
+    required_capabilities=(),
+) -> TestSpec:
     return TestSpec(
         id=check_id,
         name=check_id,
@@ -35,6 +45,8 @@ def _spec(check_id: str, selector: str, *, lanes=("fast",), aliases=(), resource
         lanes=lanes,
         resources=resources,
         parallel_safety=safety,
+        required_tools=required_tools,
+        required_capabilities=required_capabilities,
     )
 
 
@@ -65,7 +77,7 @@ def test_semantic_lanes_are_selections_not_duplicate_commands() -> None:
     inventory = TestInventory((
         _spec("fast", "tests/test_fast.py", lanes=("fast",)),
         _spec("integration", "tests/test_git.py", lanes=("integration",)),
-        _spec("external", "tests/test_compiler.py", lanes=("external",)),
+        _spec("external", "tests/test_compiler.py", lanes=("external",), required_tools=("python",)),
         _spec("system", "tests/test_final_seal.py", lanes=("system",)),
     ))
     assert inventory.select(lanes=("fast",)).resolved_check_ids == ("fast",)

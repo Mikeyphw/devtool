@@ -1,5 +1,11 @@
 schema_version = 1
 
+[environment]
+manager = "uv"
+requirements_lock = "devtool-test-requirements.lock"
+python = ">=3.11"
+
+
 # TEST-X02 stable roadmap/check identities. The durable id/alias is semantic;
 # selectors may move as the suite is reorganized around behavior boundaries.
 
@@ -115,6 +121,62 @@ budget_class = "fast"
 contract_level = "public-contract"
 groups = ["roadmap.test.g2", "roadmap.test.foundation"]
 
+[[checks]]
+id = "test.g2.lane-selection"
+name = "TEST-G2 lane and selection milestone"
+runner = "pytest"
+selector = "tests/test_test_g2_lane_selection_gate.py"
+aliases = ["TEST-G2"]
+behavior = "test-system.lane-selection-gate"
+lanes = ["system"]
+resources = ["serial-process-global"]
+parallel_safety = "serial-process-global"
+budget_class = "system"
+contract_level = "public-contract"
+groups = ["roadmap.test.g2", "roadmap.test.system"]
+
+[[checks]]
+id = "test.external.gradle-smoke"
+name = "Real Gradle executable qualification smoke"
+runner = "pytest"
+selector = "tests/test_test_g2_external_tools.py::test_real_gradle_tool_when_available"
+behavior = "test-system.external.gradle"
+lanes = ["external"]
+resources = ["requires-tool:gradle"]
+parallel_safety = "serial-process-global"
+required_tools = ["gradle"]
+budget_class = "external"
+contract_level = "public-contract"
+groups = ["roadmap.test.g2.external"]
+
+[[checks]]
+id = "test.external.go-smoke"
+name = "Real Go executable qualification smoke"
+runner = "pytest"
+selector = "tests/test_test_g2_external_tools.py::test_real_go_tool_when_available"
+behavior = "test-system.external.go"
+lanes = ["external"]
+resources = ["requires-tool:go"]
+parallel_safety = "serial-process-global"
+required_tools = ["go"]
+budget_class = "external"
+contract_level = "public-contract"
+groups = ["roadmap.test.g2.external"]
+
+[[checks]]
+id = "test.external.javac-smoke"
+name = "Real javac/java qualification smoke"
+runner = "pytest"
+selector = "tests/test_test_g2_external_tools.py::test_real_javac_and_java_tools_when_available"
+behavior = "test-system.external.javac"
+lanes = ["external"]
+resources = ["requires-tool:javac", "requires-tool:java"]
+parallel_safety = "serial-process-global"
+required_tools = ["javac", "java"]
+budget_class = "external"
+contract_level = "public-contract"
+groups = ["roadmap.test.g2.external"]
+
 [[groups]]
 id = "roadmap.test.foundation"
 description = "Fast/foundation contracts used while implementing the TEST roadmap."
@@ -130,9 +192,90 @@ checks = ["test.failure-trustworthiness", "test.g1.isolation-trust"]
 id = "roadmap.test.g2"
 aliases = ["TEST-G2-group"]
 description = "Selection/inventory contracts that TEST-G2 will qualify."
-checks = ["test.selection.framework", "test.pytest.policy", "test.validation.truth", "test.validation.reports", "test.git.transaction-isolation", "test.x02.inventory-selection"]
+checks = ["test.selection.framework", "test.pytest.policy", "test.validation.truth", "test.validation.reports", "test.git.transaction-isolation", "test.x02.inventory-selection", "test.g2.lane-selection"]
 
 [[groups]]
 id = "roadmap.test.system"
 description = "Broad roadmap/seal checks; intentionally excluded from fast feedback."
-checks = ["test.g1.isolation-trust"]
+checks = ["test.g1.isolation-trust", "test.g2.lane-selection"]
+
+[[groups]]
+id = "roadmap.test.g2.external"
+description = "Exact external-tool checks used by TEST-G2 qualification."
+checks = ["test.external.gradle-smoke", "test.external.go-smoke", "test.external.javac-smoke"]
+
+# TEST-G2 audit-loop remediation: central classification rules move known heavy
+# historical campaigns out of ordinary edit feedback without relying on file
+# names as roadmap identity.  Rules classify selector-derived tests only;
+# explicit durable checks above remain authoritative.
+[[classifications]]
+id = "campaign.frx-system"
+pattern = "tests/test_frx*.py*"
+lanes = ["system"]
+resources = ["historical-campaign"]
+parallel_safety = "serial-process-global"
+budget_class = "system"
+contract_level = "public-contract"
+behavior = "federation.campaign-qualification"
+
+[[classifications]]
+id = "campaign.git-frx-system"
+pattern = "tests/test_git_frx*.py*"
+lanes = ["system"]
+resources = ["historical-campaign", "requires-git"]
+parallel_safety = "serial-repository"
+required_tools = ["git"]
+budget_class = "system"
+contract_level = "public-contract"
+behavior = "git-federation.campaign-qualification"
+
+[[classifications]]
+id = "campaign.final-seal-system"
+pattern = "tests/test_*final_seal*.py*"
+lanes = ["system"]
+resources = ["historical-seal"]
+parallel_safety = "serial-process-global"
+budget_class = "system"
+contract_level = "public-contract"
+behavior = "roadmap.final-seal"
+
+[[classifications]]
+id = "campaign.final-reseal-system"
+pattern = "tests/test_*final_reseal*.py*"
+lanes = ["system"]
+resources = ["historical-seal"]
+parallel_safety = "serial-process-global"
+budget_class = "system"
+contract_level = "public-contract"
+behavior = "roadmap.final-reseal"
+
+[[classifications]]
+id = "campaign.final-qualification-system"
+pattern = "tests/test_*final_qualification*.py*"
+lanes = ["system"]
+resources = ["historical-seal"]
+parallel_safety = "serial-process-global"
+budget_class = "system"
+contract_level = "public-contract"
+behavior = "roadmap.final-qualification"
+
+[[classifications]]
+id = "integration.pty"
+pattern = "tests/test_validation_interactive_menu.py*"
+lanes = ["integration"]
+resources = ["requires-pty"]
+parallel_safety = "serial-process-global"
+required_capabilities = ["posix"]
+budget_class = "integration"
+contract_level = "public-contract"
+behavior = "validation.interactive-pty"
+
+[[classifications]]
+id = "campaign.any-seal-system"
+pattern = "tests/test_*seal*.py*"
+lanes = ["system"]
+resources = ["historical-seal"]
+parallel_safety = "serial-process-global"
+budget_class = "system"
+contract_level = "public-contract"
+behavior = "roadmap.seal-qualification"

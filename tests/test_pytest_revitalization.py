@@ -32,7 +32,7 @@ def test_pytest_runtime_exposes_termux_capabilities_and_strict_slow_budget() -> 
     assert '--devtool-slow-threshold' in conftest
     assert '--devtool-strict-slow' in conftest
     assert '--devtool-lane' in conftest
-    assert 'lanes_for_pytest_item' in conftest
+    assert 'policy_for_pytest_item' in conftest
     assert 'report.outcome = "failed"' in conftest
 
 

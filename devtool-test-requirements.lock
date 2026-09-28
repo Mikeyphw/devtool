@@ -1,0 +1,3 @@
+# TEST-X02/G2 explicit test environment lock.
+# Consumed with: uv run --isolated --frozen --with-requirements devtool-test-requirements.lock ...
+pytest==9.0.2

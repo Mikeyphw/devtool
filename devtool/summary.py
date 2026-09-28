@@ -450,11 +450,18 @@ def _extract_test_totals(results: list[OperationResult]) -> tuple[int, int, int,
         skipped = sum(int(match.group(4)) for match in vstest)
         return passed, failed, skipped, total
 
-    pytest_match = _PYTEST_SUMMARY_RE.search(output)
-    if pytest_match and any(pytest_match.group(name) for name in ("failed", "passed", "skipped")):
-        failed = _safe_int(pytest_match.group("failed"))
-        passed = _safe_int(pytest_match.group("passed"))
-        skipped = _safe_int(pytest_match.group("skipped"))
+    # A validation gate may execute several pytest commands.  Treat each pytest
+    # terminal summary as an independent test run and aggregate them; using only
+    # the first match under-reports multi-command gates such as TEST-G1/G2.
+    pytest_matches = [
+        match
+        for match in _PYTEST_SUMMARY_RE.finditer(output)
+        if any(match.group(name) for name in ("failed", "passed", "skipped"))
+    ]
+    if pytest_matches:
+        failed = sum(_safe_int(match.group("failed")) for match in pytest_matches)
+        passed = sum(_safe_int(match.group("passed")) for match in pytest_matches)
+        skipped = sum(_safe_int(match.group("skipped")) for match in pytest_matches)
         return passed, failed, skipped, passed + failed + skipped
     return None
 

@@ -44,14 +44,15 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    from devtool.test_inventory import lanes_for_pytest_item
+    from devtool.test_inventory import policy_for_pytest_item
 
     requested_lane = str(config.getoption("--devtool-lane") or "").strip()
     deselected: list[pytest.Item] = []
     selected: list[pytest.Item] = []
     for item in items:
         marker_names = [marker.name for marker in item.iter_markers()]
-        lanes = lanes_for_pytest_item(root=Path(str(config.rootpath)), nodeid=item.nodeid, marker_names=marker_names, path=str(item.fspath))
+        policy = policy_for_pytest_item(root=Path(str(config.rootpath)), nodeid=item.nodeid, marker_names=marker_names, path=str(item.fspath))
+        lanes = tuple(policy.get("lanes") or ())
         for lane in lanes:
             item.add_marker(getattr(pytest.mark, lane))
         item.user_properties.append(("devtool_lanes", ",".join(lanes)))
@@ -59,13 +60,17 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             deselected.append(item)
             continue
         selected.append(item)
+        required_tools = list(policy.get("required_tools") or ())
         for marker in item.iter_markers(name="requires_tool"):
-            if not marker.args:
-                continue
-            tool = str(marker.args[0])
+            if marker.args:
+                required_tools.append(str(marker.args[0]))
+        for tool in dict.fromkeys(required_tools):
             if shutil.which(tool) is None:
                 item.add_marker(pytest.mark.skip(reason=f"required external tool is unavailable: {tool}"))
-        if item.get_closest_marker("requires_posix") is not None and os.name != "posix":
+        required_capabilities = set(str(value).casefold() for value in (policy.get("required_capabilities") or ()))
+        if item.get_closest_marker("requires_posix") is not None:
+            required_capabilities.add("posix")
+        if "posix" in required_capabilities and os.name != "posix":
             item.add_marker(pytest.mark.skip(reason="requires POSIX process semantics"))
         marker = item.get_closest_marker("not_termux")
         if marker is not None and HOST_IS_TERMUX:
@@ -334,3 +339,8 @@ def artifact_fixture_builder(tmp_path: Path):
 def stable_command_boundary():
     from tests.support.factories import StableCommandBoundary
     return StableCommandBoundary()
+
+@pytest.fixture
+def stable_repository_boundary():
+    from tests.support.factories import StableRepositoryBoundary
+    return StableRepositoryBoundary()

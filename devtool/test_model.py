@@ -142,20 +142,24 @@ class TestSpec:
     behavior: str = ""
     lanes: tuple[str, ...] = ()
     resources: tuple[str, ...] = ()
-    parallel_safety: str = "parallel-safe"
+    parallel_safety: str = "serial-process-global"
     required_tools: tuple[str, ...] = ()
     required_capabilities: tuple[str, ...] = ()
     budget_class: str = "default"
     contract_level: str = "public-contract"
     groups: tuple[str, ...] = ()
     dependencies: tuple[str, ...] = ()
+    # Stable inventory groups consumed by declared roadmap/test jobs.  These
+    # select current node IDs at execution planning time instead of baking
+    # mutable pytest paths into roadmap commands.
+    selection_groups: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
     def __post_init__(self):
         object.__setattr__(self, "id", _id(self.id, "test spec id"))
         object.__setattr__(self, "runner", _id(self.runner, "test runner id"))
         object.__setattr__(self, "command", tuple(str(x) for x in self.command))
         if self.timeout_seconds is not None and self.timeout_seconds <= 0: raise ValueError("timeout must be > 0")
-        tuple_fields = ("aliases", "lanes", "resources", "required_tools", "required_capabilities", "groups", "dependencies")
+        tuple_fields = ("aliases", "lanes", "resources", "required_tools", "required_capabilities", "groups", "dependencies", "selection_groups")
         for name in tuple_fields:
             object.__setattr__(self, name, tuple(dict.fromkeys(str(x).strip() for x in getattr(self, name) if str(x).strip())))
         if self.parallel_safety not in {"parallel-safe", "serial-process-global", "serial-repository", "serial-device", "serial-port/socket"}:

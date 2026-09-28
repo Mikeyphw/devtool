@@ -1107,6 +1107,7 @@ def build_parser() -> argparse.ArgumentParser:
     pytest_select.add_argument("--check", action="append", default=[], help="Select a durable check ID or alias; repeatable")
     pytest_select.add_argument("--group", action="append", default=[], help="Select a stable check group or alias; repeatable")
     pytest_select.add_argument("--shards", type=int, default=0, metavar="COUNT", help="Produce a deterministic immutable shard plan")
+    pytest_select.add_argument("--qualify", action="store_true", help="Qualify exact required tools/capabilities and the declared test environment")
     pytest_select.add_argument("--json", action="store_true", help="Emit canonical selection JSON")
 
     audit_cmd = subparsers.add_parser("audit", help="Record and compare federation-aware source audit passes")
@@ -2554,18 +2555,23 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             test_skipped = sum(int(match.group(4)) for match in vstest_matches)
             return test_passed, test_failed, test_skipped, test_total
 
-        # Pytest fallback, for validating devtool itself.
-        pytest_match = _re.search(
-            r"(?:(?P<failed>\d+)\s+failed(?:,\s*)?)?"
-            r"(?:(?P<passed>\d+)\s+passed(?:,\s*)?)?"
-            r"(?:(?P<skipped>\d+)\s+skipped)?",
-            raw_output,
-            _re.IGNORECASE,
-        )
-        if pytest_match and any(pytest_match.group(name) for name in ("failed", "passed", "skipped")):
-            test_failed = int(pytest_match.group("failed") or 0)
-            test_passed = int(pytest_match.group("passed") or 0)
-            test_skipped = int(pytest_match.group("skipped") or 0)
+        # Pytest fallback, for validating Devtool itself.  Aggregate every
+        # terminal summary instead of reporting only the first validation command.
+        pytest_matches = [
+            match
+            for match in _re.finditer(
+                r"(?:(?P<failed>\d+)\s+failed(?:,\s*)?)?"
+                r"(?:(?P<passed>\d+)\s+passed(?:,\s*)?)?"
+                r"(?:(?P<skipped>\d+)\s+skipped)?",
+                raw_output,
+                _re.IGNORECASE,
+            )
+            if any(match.group(name) for name in ("failed", "passed", "skipped"))
+        ]
+        if pytest_matches:
+            test_failed = sum(int(match.group("failed") or 0) for match in pytest_matches)
+            test_passed = sum(int(match.group("passed") or 0) for match in pytest_matches)
+            test_skipped = sum(int(match.group("skipped") or 0) for match in pytest_matches)
             return (
                 test_passed,
                 test_failed,
@@ -14187,6 +14193,19 @@ def _main_after_parse(
                     provenance={"source": "cli", "inventory_digest": inventory.digest},
                     shard_count=int(getattr(args, "shards", 0) or 0),
                 )
+                if bool(getattr(args, "qualify", False)):
+                    from .test_inventory import qualify_selection_environment
+                    qualification = qualify_selection_environment(selection, inventory)
+                    payload = selection.to_dict()
+                    payload["environment_qualification"] = qualification.to_dict()
+                    if bool(getattr(args, "json", False)):
+                        print(json.dumps(payload, indent=2, ensure_ascii=False))
+                    else:
+                        print(render_selection_text(selection))
+                        print(f"environment: {qualification.qualification_id} ready={str(qualification.ready).lower()}")
+                        for tool in qualification.tools:
+                            print(f"  tool {tool.name}: {'available' if tool.available else 'missing'} {tool.path} {tool.version}".rstrip())
+                    return 0 if qualification.ready else 3
                 print(json.dumps(selection.to_dict(), indent=2, ensure_ascii=False) if bool(getattr(args, "json", False)) else render_selection_text(selection))
                 return 0
             except (KeyError, ValueError) as exc:

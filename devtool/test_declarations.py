@@ -1,5 +1,7 @@
 """Bridge first-class TestSpec declarations into the existing Devtool operation/progress pipeline."""
 from __future__ import annotations
+from pathlib import Path
+
 from .models import CommandSpec, ProjectConfig
 
 def select_tests(config: ProjectConfig, names=(), *, all_tests=False):
@@ -16,9 +18,22 @@ def command_specs(config: ProjectConfig, names=(), *, all_tests=False):
     for t in select_tests(config,names,all_tests=all_tests):
         cwd=t.cwd or str(config.project_root or config.repo_root)
         env=dict(config.env); env.update(dict(t.env))
+        argv=list(t.command)
+        selection_payload=None
+        if t.selection_groups:
+            if t.runner != "pytest":
+                raise SystemExit(f"Declared test {t.id!r} selection_groups require runner='pytest'.")
+            from .test_inventory import compile_pytest_inventory
+            inventory=compile_pytest_inventory(Path(config.repo_root))
+            selection=inventory.select(
+                groups=t.selection_groups,
+                provenance={"source":"declared-test", "test_spec_id":t.id, "inventory_digest":inventory.digest},
+            )
+            argv.extend(selection.resolved_pytest_nodes)
+            selection_payload=selection.to_dict()
         specs.append(CommandSpec(
             name=f"test:{t.id}",
-            argv=list(t.command),
+            argv=argv,
             cwd=cwd,
             env=env,
             metadata={
@@ -42,6 +57,8 @@ def command_specs(config: ProjectConfig, names=(), *, all_tests=False):
                 "test_contract_level": t.contract_level,
                 "test_groups": list(t.groups),
                 "test_dependencies": list(t.dependencies),
+                "test_selection_groups": list(t.selection_groups),
+                "test_selection": selection_payload,
             },
         ))
     return specs
