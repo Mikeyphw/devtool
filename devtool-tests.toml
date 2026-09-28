@@ -279,3 +279,27 @@ parallel_safety = "serial-process-global"
 budget_class = "system"
 contract_level = "public-contract"
 behavior = "roadmap.seal-qualification"
+
+[[checks]]
+id = "core.x01.registry-trust"
+name = "CORE-X01 canonical CLI/config registry and trust boundary"
+runner = "pytest"
+selector = "tests/test_core_x01_registry.py"
+aliases = ["CORE-X01"]
+behavior = "core.registry-trust"
+lanes = ["fast"]
+parallel_safety = "parallel-safe"
+budget_class = "fast"
+contract_level = "public-contract"
+groups = ["roadmap.core.g1", "roadmap.core.foundation"]
+
+[[groups]]
+id = "roadmap.core.foundation"
+description = "CORE registry and identity foundation contracts."
+checks = ["core.x01.registry-trust"]
+
+[[groups]]
+id = "roadmap.core.g1"
+aliases = ["CORE-G1-group"]
+description = "CORE-X01/X02 command, config, wrapper, and trust contracts that CORE-G1 will qualify."
+checks = ["core.x01.registry-trust"]

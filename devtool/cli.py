@@ -1340,6 +1340,16 @@ def build_parser() -> argparse.ArgumentParser:
     federation_exec.add_argument("--json", action="store_true", help="Emit machine-readable bridge resolution or execution state")
     federation_exec.add_argument("contract_argv", nargs=argparse.REMAINDER, help="Use -- wrapper <args...> or -- job <reference>")
 
+    core_cmd = subparsers.add_parser("core", help="Inspect canonical Devtool core registries and trust-boundary metadata")
+    core_sub = core_cmd.add_subparsers(dest="core_command", required=True)
+    core_registry = core_sub.add_parser("registry", aliases=["reg"], help="Emit the canonical CLI/config/env registry")
+    core_registry.add_argument("--json", action="store_true", help="Emit machine-readable registry JSON")
+    core_registry.add_argument("--parity", action="store_true", help="Include parser/registry parity evidence")
+
+    registry_cmd = subparsers.add_parser("registry", help=argparse.SUPPRESS)
+    registry_cmd.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    registry_cmd.add_argument("--parity", action="store_true", help=argparse.SUPPRESS)
+
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
     cfg_path = cfg_sub.add_parser("path", help="Print the repo or global config path")
@@ -14145,6 +14155,16 @@ def _main_after_parse(
             print(renderer(payload))
         if bool(getattr(args, "strict", False)) and payload.get("status") != "pass":
             return 1
+        return 0
+
+    if args.command in {"core", "registry"}:
+        from .core_registry import core_registry_payload, render_core_registry_text
+
+        payload = core_registry_payload(include_parser_parity=bool(getattr(args, "parity", False)), parser=build_parser() if bool(getattr(args, "parity", False)) else None)
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(render_core_registry_text(payload))
         return 0
 
     if args.command == "pytest":
