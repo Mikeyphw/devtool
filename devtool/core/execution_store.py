@@ -8,6 +8,7 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 from .execution_contract import ExecutionStatus, NodeId, RunId, canonical_execution_status
+from .execution_semantics import ExecutionIntent, NodeDefinitionIdentity, ReusableNodeRecord, shadow_reuse_metadata
 from .execution_limits import (
     MAX_PROCESS_LAST_OUTPUT_CHARS,
     bounded_log_ref,
@@ -138,6 +139,8 @@ class ExecutionReducer:
             node.label = node.label or str(workflow_node.label)
             node.kind = str(workflow_node.ref.kind or "operation")
             node.depends_on = tuple(str(value) for value in workflow_node.depends_on)
+            definition = NodeDefinitionIdentity.from_workflow_node(workflow_node)
+            intent = ExecutionIntent.from_workflow_node(workflow_node)
             node.metadata.update(
                 {
                     "target": str(workflow_node.target),
@@ -145,6 +148,10 @@ class ExecutionReducer:
                     "index": int(workflow_node.index),
                     "runner": str(workflow_node.runner),
                     "action": str(workflow_node.action),
+                    "node_definition_id": definition.value,
+                    "node_definition": definition.to_dict(),
+                    "reuse_prediction": shadow_reuse_metadata(definition),
+                    "execution_intent": intent.to_dict(),
                 }
             )
 
@@ -306,6 +313,18 @@ class ExecutionReducer:
         node.evidence_refs[:] = merge_bounded_evidence(node.evidence_refs, event.evidence)
         node.finished_at = event.timestamp
         node.metadata.update(dict(event.metadata or {}))
+        definition_id = str(node.metadata.get("node_definition_id") or "").strip()
+        if definition_id:
+            reusable_record = ReusableNodeRecord(
+                node_definition_id=definition_id,
+                source_run_id=str(run.run_id),
+                source_node_id=str(node.node_id),
+                execution_status=node.status.value,
+                evidence_refs=tuple(str(value) for value in node.evidence_refs if str(value)),
+                reason="exec-x01-shadow-record; qualification deferred to EXEC-X02",
+            )
+            # Attached to canonical EXO node history; no parallel reuse database.
+            node.metadata["reusable_node_record"] = reusable_record.to_dict()
 
     def _process_started(self, run: ExecutionRunState, event: "ProcessStarted") -> None:
         process_id = str(event.process_id or "").strip()

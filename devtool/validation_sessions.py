@@ -25,8 +25,16 @@ from typing import Any, Iterable, Sequence
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .validation_failures import FailureClassification, classify_validation_failure
 from .federation_ownership import federation_operational_owner_from_environment
+from .core.execution_semantics import (
+    ResolvedValidationContract,
+    ValidationOutcome,
+    ValidationOutcomeState,
+    canonical_validation_check_identity,
+    resolved_validation_contract_from_specs,
+    validation_outcome_from_operation,
+)
 
-SESSION_SCHEMA_VERSION = 6
+SESSION_SCHEMA_VERSION = 7
 DEFAULT_PHASE_ORDER = (
     "static",
     "preflight",
@@ -40,6 +48,7 @@ DEFAULT_PHASE_ORDER = (
     "finalize",
 )
 _TERMINAL_PHASE_STATES = {"passed", "not-applicable", "succeeded", "skipped"}
+_SATISFYING_PHASE_STATES = {"passed", "not-applicable", "succeeded"}
 _RUNNABLE_PHASE_STATES = {"pending", "interrupted", "stale"}
 _BLOCKING_PHASE_STATES = {"failed"}
 _ACTIVE_SESSION_STATES = {
@@ -172,6 +181,11 @@ class PhaseRecord:
     progress_unit: str = ""
     progress_updated_at: str = ""
     plan_change: str = ""
+    validation_check_id: str = ""
+    validation_identity_provenance: str = ""
+    validation_applicability_policy: str = "always"
+    validation_administrative: bool = False
+    applicability_evidence: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -210,11 +224,27 @@ class ValidationSession:
     report_path: str = ""
     commit_status: str = "not-requested"
     commit_hash: str = ""
+    validation_run_request: dict[str, Any] = field(default_factory=dict)
+    resolved_validation_contract: dict[str, Any] = field(default_factory=dict)
+    validation_verdict: dict[str, Any] = field(default_factory=dict)
 
     @property
     def complete(self) -> bool:
-        required = [item for item in self.phases if item.required]
-        return bool(required) and all(item.status in _TERMINAL_PHASE_STATES for item in required)
+        # Contract satisfaction and execution completion are distinct.  An
+        # empty/optional-only required set is vacuously satisfied, but selected
+        # non-administrative checks must still reach a terminal execution state
+        # before the session can finalize. A generic execution skip is terminal
+        # lifecycle state but never satisfies a required proof obligation.
+        planned = [item for item in self.phases if not item.validation_administrative]
+        if not all(item.status in _TERMINAL_PHASE_STATES for item in planned):
+            return False
+        verdict = dict(self.validation_verdict or {})
+        if str(verdict.get("status") or "").strip():
+            return bool(verdict.get("satisfied", str(verdict.get("status")) == "satisfied"))
+        # Migration-only fallback for older durable sessions which predate the
+        # canonical ResolvedValidationContract/ValidationVerdict fields.
+        required = [item for item in planned if item.required]
+        return all(item.status in _SATISFYING_PHASE_STATES for item in required)
 
     @property
     def failed(self) -> bool:
@@ -578,8 +608,12 @@ def _phase_from_dict(payload: dict[str, Any]) -> PhaseRecord:
     values["duration_seconds"] = _finite_float(values.get("duration_seconds")) or 0.0
     values["required"] = _strict_bool(values.get("required"), True)
     values["supports_progress"] = _strict_bool(values.get("supports_progress"), False)
+    values["validation_administrative"] = _strict_bool(values.get("validation_administrative"), False)
+    values["validation_check_id"] = str(values.get("validation_check_id") or values["key"])
+    values["validation_identity_provenance"] = str(values.get("validation_identity_provenance") or "legacy-session")
+    values["validation_applicability_policy"] = str(values.get("validation_applicability_policy") or "always")
     values["progress_percent"] = max(0, min(100, _coerce_int(values.get("progress_percent"), 0)))
-    for key in ("depends_on", "input_domains", "issues"):
+    for key in ("depends_on", "input_domains", "issues", "applicability_evidence"):
         value = values.get(key)
         values[key] = value if isinstance(value, list) else []
     history_value = payload.get("attempt_history", []) if isinstance(payload, dict) else []
@@ -803,6 +837,9 @@ def _migrate_session_payload(payload: dict[str, Any]) -> dict[str, Any]:
     migrated.setdefault("report_path", "")
     migrated.setdefault("commit_status", "not-requested")
     migrated.setdefault("commit_hash", "")
+    migrated.setdefault("validation_run_request", {})
+    migrated.setdefault("resolved_validation_contract", {})
+    migrated.setdefault("validation_verdict", {})
     migrated["schema_version"] = SESSION_SCHEMA_VERSION
     return migrated
 
@@ -1239,10 +1276,18 @@ def phase_name_for_spec(spec: CommandSpec) -> str:
         if component in mapping:
             return mapping[component]
     name = spec.name.lower()
+    # Compatibility-only migration path. Canonical ValidationCheck identity
+    # never uses substring inference; record provenance whenever legacy durable
+    # session naming still needs it.
     for token, phase in mapping.items():
         if token in name:
+            spec.metadata.setdefault("validation_identity_provenance", "legacy-command-name-inference")
             return phase
-    return "finalize" if "final" in name else name.replace("android-validation-", "")
+    if "final" in name:
+        spec.metadata.setdefault("validation_identity_provenance", "legacy-command-name-inference")
+        return "finalize"
+    spec.metadata.setdefault("validation_identity_provenance", "legacy-exact-spec-name")
+    return name.replace("android-validation-", "")
 
 
 def phase_key_for_spec(spec: CommandSpec, index: int = 0) -> str:
@@ -1283,6 +1328,9 @@ def annotate_specs(specs: Sequence[CommandSpec], *, session_id: str = "") -> lis
     for index, spec in enumerate(specs, start=1):
         metadata = dict(spec.metadata)
         phase_name = phase_name_for_spec(spec)
+        inferred_provenance = str(spec.metadata.get("validation_identity_provenance") or "").strip()
+        if inferred_provenance:
+            metadata["validation_identity_provenance"] = inferred_provenance
         scope = str(metadata.get("validation_scope") or _phase_scope(spec)).strip() or "repository"
         identity = (scope, phase_name)
         occurrences[identity] = occurrences.get(identity, 0) + 1
@@ -1417,6 +1465,8 @@ def phase_records(specs: Sequence[CommandSpec]) -> list[PhaseRecord]:
         scope = str(spec.metadata.get("validation_scope") or _phase_scope(spec)).strip() or "repository"
         label = f"{scope}: {phase_name}" if scope != "repository" else phase_name
         key = phase_key_for_spec(spec, index)
+        check_id, identity_provenance = canonical_validation_check_identity(spec, index=index, allow_legacy=True)
+        applicability_policy = str(spec.metadata.get("validation_applicability_policy") or "always").strip().lower() or "always"
         record = PhaseRecord(
             key=key,
             name=phase_name,
@@ -1432,6 +1482,10 @@ def phase_records(specs: Sequence[CommandSpec]) -> list[PhaseRecord]:
                 _strict_bool(spec.metadata.get("validation_supports_progress", False), False)
                 or bool(spec.metadata.get("progress_parser"))
             ),
+            validation_check_id=check_id,
+            validation_identity_provenance=identity_provenance,
+            validation_applicability_policy=applicability_policy,
+            validation_administrative=_strict_bool(spec.metadata.get("validation_administrative", False), False),
         )
         records.append(record)
         declared_dependencies[key] = _string_list(spec.metadata.get("validation_depends_on"))
@@ -1491,6 +1545,34 @@ def required_checkpoint_satisfied(session: ValidationSession) -> bool:
     success_states = {"passed", "not-applicable", "succeeded"}
     return all(key in by_key and by_key[key].status in success_states for key in keys)
 
+def _update_validation_verdict(session: ValidationSession) -> None:
+    payload = getattr(session, "resolved_validation_contract", {}) or {}
+    if not isinstance(payload, dict) or not payload.get("checks"):
+        return
+    contract = ResolvedValidationContract.from_dict(payload)
+    outcomes: list[ValidationOutcome] = []
+    state_map = {
+        "passed": ValidationOutcomeState.PASSED,
+        "succeeded": ValidationOutcomeState.PASSED,
+        "failed": ValidationOutcomeState.FAILED,
+        "skipped": ValidationOutcomeState.SKIPPED,
+        "not-applicable": ValidationOutcomeState.NOT_APPLICABLE,
+        "blocked": ValidationOutcomeState.BLOCKED,
+        "cancelled": ValidationOutcomeState.CANCELLED,
+        "interrupted": ValidationOutcomeState.CANCELLED,
+    }
+    for phase in session.phases:
+        state = state_map.get(str(phase.status or ""))
+        if state is None:
+            continue
+        outcomes.append(ValidationOutcome(
+            check_id=str(phase.validation_check_id or phase.key),
+            state=state,
+            applicability_evidence=tuple(str(v) for v in phase.applicability_evidence if str(v)),
+            reason=str(phase.last_verdict or phase.invalidated_reason or ""),
+        ))
+    session.validation_verdict = contract.evaluate(outcomes).to_dict()
+
 def create_session(
     config: ProjectConfig,
     specs: Sequence[CommandSpec],
@@ -1540,6 +1622,16 @@ def create_session(
     minimum_phase, checkpoint_keys = _required_checkpoint(
         records, str(session_context.get("minimum_phase") or "finalize")
     )
+    validation_request = session_options.pop("validation_run_request", {})
+    if not isinstance(validation_request, dict):
+        validation_request = {}
+    contract = resolved_validation_contract_from_specs(
+        annotated,
+        minimum_checkpoint=minimum_phase,
+        source=str(session_context.get("validation_task_source") or "resolved-validation"),
+        allow_legacy_identity=True,
+    )
+    initial_verdict = contract.evaluate(())
     session = ValidationSession(
         session_id=session_id,
         repo_root=str(config.repo_root.resolve()),
@@ -1563,6 +1655,9 @@ def create_session(
         required_checkpoint_keys=checkpoint_keys,
         required_checkpoint_name=minimum_phase,
         plan_fingerprint=_plan_fingerprint(records),
+        validation_run_request=dict(validation_request),
+        resolved_validation_contract=contract.to_dict(),
+        validation_verdict=initial_verdict.to_dict(),
     )
     # Deferred apply sessions keep a transaction/rollback point available.
     # Store this explicitly so checkpoint output and recovery UX do not need
@@ -2441,12 +2536,24 @@ def record_phase_result(session: ValidationSession, key: str, result: OperationR
         session.last_error = phase.output_tail or f"{phase.label} emitted error diagnostics despite exit 0"
         session.paused_reason = "validation phase emitted error diagnostics; applied changes were retained"
     elif result.returncode == 0:
-        phase.status = "not-applicable" if result.skipped else "passed"
+        canonical_outcome = validation_outcome_from_operation(
+            str(phase.validation_check_id or phase.key), result
+        )
+        phase.applicability_evidence = list(canonical_outcome.applicability_evidence)
+        if canonical_outcome.state is ValidationOutcomeState.NOT_APPLICABLE:
+            phase.status = "not-applicable"
+        elif canonical_outcome.state is ValidationOutcomeState.SKIPPED:
+            phase.status = "skipped"
+        else:
+            phase.status = "passed"
         updated_fingerprints = dict(session.fingerprints or {})
         for domain in relevant_domains:
             if domain in attempt.input_snapshot_after:
                 updated_fingerprints[domain] = attempt.input_snapshot_after[domain]
         session.fingerprints = updated_fingerprints
+        # Update the sole semantic satisfaction evaluator before deriving the
+        # session completion state from it.
+        _update_validation_verdict(session)
         session.status = "validated" if session.complete and required_checkpoint_satisfied(session) else "paused"
         if session.status == "validated":
             session.validated_at = session.validated_at or phase.finished_at
@@ -2466,6 +2573,7 @@ def record_phase_result(session: ValidationSession, key: str, result: OperationR
         session.paused_reason = "validation phase failed; applied changes were retained"
     _clear_phase_owner(phase)
     session.git_head = _git_head(Path(session.repo_root))
+    _update_validation_verdict(session)
     save_session(session, active=True)
     append_event(session, "phase-finished", data={
         "phase_key": phase.key,
@@ -2806,6 +2914,7 @@ def status_text(session: ValidationSession) -> str:
         f"Progress: {completed}/{len(session.phases)} phases",
         f"Minimum checkpoint: {session.required_checkpoint_name or 'finalize'} ({'satisfied' if required_checkpoint_satisfied(session) else 'pending'})",
         f"Plan drift: {session.plan_drift_status or 'none'}",
+        f"Validation verdict: {str((session.validation_verdict or {}).get('status') or 'unknown')}",
         f"Next: {next_phase.label if next_phase else '-'}",
     ]
     if artifact:

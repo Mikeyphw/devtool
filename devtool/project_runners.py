@@ -1175,6 +1175,8 @@ class AndroidGradleRunner(ProjectRunner):
                     "validation_memory_guard_mb": policy.memory_guard_mb,
                     "validation_low_priority": policy.low_priority,
                     "validation_change_scope": change_scope,
+                    "validation_administrative": phase == "finalize",
+                    "validation_required": phase != "finalize",
                 },
             )
 

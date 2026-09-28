@@ -61,7 +61,7 @@ class DurableResumePlanTests(unittest.TestCase):
             with patch("devtool.cli._validation_specs_for_args", return_value=planned) as planner:
                 session, first_specs = _load_or_create_validation_session(config, first_args, parser)
             self.assertEqual(planner.call_count, 1)
-            self.assertEqual(SESSION_SCHEMA_VERSION, 6)
+            self.assertEqual(SESSION_SCHEMA_VERSION, 7)
             self.assertEqual(len(session.plan_specs), 8)
 
             for phase in session.phases[:4]:

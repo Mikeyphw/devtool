@@ -414,6 +414,10 @@ roadmap-env-g1 = [
   { id = "cross-consumer", ref = "test:roadmap-env-g1-cross-consumer", depends_on = ["env-x01-milestone", "env-x02-milestone"] },
   { id = "env-g1", ref = "test:roadmap-env-g1", depends_on = ["cross-consumer"] },
 ]
+roadmap-exec-x01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "exec-x01", ref = "test:roadmap-exec-x01", depends_on = ["syntax"] },
+]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
@@ -1363,4 +1367,29 @@ timeout_seconds = 180
 command = [
   "python", "-m", "pytest", "-q", "--tb=short",
   "tests/test_env_g1_host_language_gate.py",
+]
+
+# EXEC-X01 canonical execution intent + validation request/contract foundation.
+# Kept bounded and non-Gradle; reuse is shadow-only until EXEC-X02/G1.
+[[test]]
+id = "roadmap-exec-x01"
+name = "EXEC-X01 execution and validation semantics foundation"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x01_execution_validation_foundation.py",
+  "tests/test_exo03_execution_store_reducer.py",
+  "tests/test_validation_sessions.py",
+  "tests/test_validation_phase25_27.py",
+  "tests/test_validation_phase28.py",
+  "tests/test_validation_control_api.py",
+  "tests/test_validation_resume_startup_regression.py",
+  "tests/test_validation_reports_phase32.py",
+  "tests/test_validation_phase_progress.py",
+  "tests/test_mp03_mp04_workflow_graph_runtime.py",
+  "tests/test_exo_target_local_jobs_workflow_boundaries.py",
+  "tests/test_frx_x01_target_qualified_workflow_identity.py",
+  "tests/test_test_workflow_convergence.py",
+  "tests/test_android_validation_workbench_phase29_31.py",
 ]

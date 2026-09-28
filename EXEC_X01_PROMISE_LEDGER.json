@@ -1,0 +1,132 @@
+{
+  "deferred_ranges": [
+    {
+      "owner": "EXEC-X02 / EXEC-G1 and later reuse overlays",
+      "promises": [
+        "EXEC-P012",
+        "EXEC-P014..EXEC-P022",
+        "EXEC-P024..EXEC-P036"
+      ]
+    },
+    {
+      "owner": "later EXEC implementation/gates and named exported programs",
+      "promises": [
+        "EXEC-P047..EXEC-P049",
+        "EXEC-P051",
+        "EXEC-P053..EXEC-P077",
+        "EXEC-P079..EXEC-P087"
+      ]
+    }
+  ],
+  "delivered_promises": {
+    "EXEC-P006": "delivered",
+    "EXEC-P007": "delivered",
+    "EXEC-P008": "delivered",
+    "EXEC-P009": "delivered",
+    "EXEC-P010": "delivered",
+    "EXEC-P011": "delivered",
+    "EXEC-P013": "delivered",
+    "EXEC-P023": "delivered",
+    "EXEC-P037": "delivered",
+    "EXEC-P038": "delivered",
+    "EXEC-P039": "delivered",
+    "EXEC-P040": "delivered",
+    "EXEC-P041": "delivered",
+    "EXEC-P042": "delivered",
+    "EXEC-P043": "delivered",
+    "EXEC-P044": "delivered",
+    "EXEC-P045": "delivered",
+    "EXEC-P046": "delivered"
+  },
+  "exports": [
+    {
+      "id": "EXEC-X01-EXPORT-TEST-RMP-ROADMAP-INVENTORY",
+      "owners": [
+        "TEST",
+        "RMP"
+      ],
+      "status": "baseline-reproduced",
+      "summary": "hard-coded EXPECTED_TESTS/EXPECTED_WORKFLOWS in test_devtool_roadmap_native_execution_contract.py omit newer roadmap identities; reproduced on untouched post-ENV-G1 source",
+      "target_overlays": [
+        "TEST-X03/TEST-G3",
+        "RMP-X01/RMP-G1"
+      ]
+    },
+    {
+      "id": "EXEC-X01-EXPORT-LIFE-HOOK-FD",
+      "owners": [
+        "LIFE-X01",
+        "LIFE-G1"
+      ],
+      "status": "existing-obligation",
+      "summary": "ResourceWarning: unclosed file in devtool/hooks/engine.py:523 during validation hook execution"
+    },
+    {
+      "id": "EXEC-X01-EXPORT-TEST-PRES-MULTISUITE-COUNT",
+      "owners": [
+        "TEST",
+        "PRES"
+      ],
+      "status": "existing-obligation",
+      "summary": "artifact aggregate may report only last structured test suite although all suites executed"
+    }
+  ],
+  "merge_window": {
+    "decision": "do-not-merge",
+    "inspected": [
+      "EXEC-X01",
+      "EXEC-X02",
+      "EXEC-G1"
+    ],
+    "reason": "identity/schema foundation, qualification/fingerprint implementation, and authoritative gate are distinct ownership/validation boundaries"
+  },
+  "next": {
+    "full_plan": "15/63",
+    "gate_after_next": "EXEC-G1",
+    "gate_window": "2/3",
+    "major_scope": "2/7",
+    "next_scope_after_gate": "ENV-X03",
+    "overlay": "EXEC-X02",
+    "remaining_before_gate_window_exit": 1
+  },
+  "overlay": "EXEC-X01",
+  "position": {
+    "full_plan": "14/63",
+    "gate_window": "1/3",
+    "major_scope": "1/7"
+  },
+  "preserved_or_bridged": {
+    "EXEC-P001": "EXO remains sole execution lifecycle authority",
+    "EXEC-P003": "Validation remains sole generic validation verdict authority",
+    "EXEC-P004": "RUN V3 remains durable run/evidence/history authority",
+    "EXEC-P005": "no second history or validation run store introduced",
+    "EXEC-P050": "existing validation plan pinning preserved",
+    "EXEC-P052": "existing revision guard carried by ValidationControlIntent",
+    "EXEC-P058": "canonical model excludes administrative synthetic finalize; broader convergence later",
+    "EXEC-P078": "semantic request/contract/verdict now exposed in validation report; full PRES adoption later",
+    "EXEC-P082": "bounded non-Gradle implementation validation used"
+  },
+  "schema_version": 1,
+  "status": "replay-qualified",
+  "validation": {
+    "artifact_clean_base_replay": {
+      "base": "reconstructed successful ENV-G1 v2 bytes; source guards are content-addressed",
+      "devtool_errors": 0,
+      "devtool_warnings": 0,
+      "lifecycle_stages_passed": 8,
+      "status": "passed",
+      "tests_failed": 0,
+      "tests_passed": 195,
+      "tests_skipped": 0
+    },
+    "devtool_errors": 0,
+    "devtool_warnings": 0,
+    "first_class_test": "roadmap-exec-x01",
+    "first_class_workflow": "roadmap-exec-x01",
+    "known_external_warning": "LIFE-owned ResourceWarning at devtool/hooks/engine.py:523",
+    "tests_failed": 0,
+    "tests_passed": 195,
+    "tests_skipped": 0,
+    "workflow_stages_passed": 2
+  }
+}

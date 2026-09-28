@@ -239,6 +239,13 @@ from .transactions import (
     transaction_root,
 )
 from .validation_evidence import preserve_validation_evidence
+from .core.execution_semantics import (
+    ExecutionRoot,
+    ExecutionRootKind,
+    ValidationControlAction,
+    ValidationControlIntent,
+    ValidationRunRequest,
+)
 from .validation_sessions import (
     ValidationSession,
     ValidationSessionError,
@@ -4343,7 +4350,7 @@ def _normalize_command_aliases(args: argparse.Namespace) -> None:
                 elif _validation_phase_values(args):
                     scope = "selected"
                 else:
-                    scope = "remaining" if api_action == "resume" and _validation_json_requested(args) else "next"
+                    scope = "remaining" if api_action == "resume" else "next"
                 args.validation_run_scope = scope
             if scope == "next":
                 args.validation_next = True
@@ -4359,15 +4366,13 @@ def _normalize_command_aliases(args: argparse.Namespace) -> None:
                 args.validation_complete = False
     if command in {"start-validation", "sv"}:
         args._devtool_validation_mode = "start"
-        if _validation_json_requested(args):
-            args._devtool_validation_api_action = "start"
+        args._devtool_validation_api_action = "start"
         args.sequential = True
         args.restart_session = True
         args.command = "validate"
     elif command in {"resume-validation", "rv"}:
         args._devtool_validation_mode = "resume"
-        if _validation_json_requested(args):
-            args._devtool_validation_api_action = "resume"
+        args._devtool_validation_api_action = "resume"
         args.sequential = True
         args.resume = True
         args.command = "validate"
@@ -4401,19 +4406,10 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
             parser.error(f"validate {scope} requires an artifact archive")
         if scope in {"overlay", "overlays"} and exclusive_tasks:
             parser.error("--task applies to project validation, not validate overlay/overlays artifact inspection.")
-        api_action = str(getattr(args, "_devtool_validation_api_action", "") or "")
-        run_scope = str(getattr(args, "validation_run_scope", "") or "")
-        phases = _validation_phase_values(args)
-        if api_action in {"start", "run", "resume", "retry"}:
-            if run_scope == "through" and not str(getattr(args, "through", "") or "").strip():
-                if not _validation_json_requested(args):
-                    parser.error("validate run --scope through requires --through PHASE")
-            if run_scope == "selected" and not phases:
-                if not _validation_json_requested(args):
-                    parser.error("validate run --scope selected requires one or more --phase PHASE values")
-            if run_scope in {"next", "remaining"} and (phases or str(getattr(args, "through", "") or "").strip()):
-                if not _validation_json_requested(args):
-                    parser.error(f"validate run --scope {run_scope} cannot be combined with --phase or --through")
+        # Nested validation-control requests are validated later by
+        # _validate_validation_api_request().  Keep those semantic errors out of
+        # argparse so text and machine/JSON surfaces reject the same request,
+        # while machine callers still receive the typed invalid_request payload.
     if args.command not in APPLY_COMMANDS:
         return
     deferred = bool(getattr(args, "defer_validate", False))
@@ -4936,7 +4932,10 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
     if filter_value:
         selection["filter"] = filter_value
     task_values = _cli_string_list(getattr(args, "test_task", None))
-    if task_values:
+    validation_task_compat = bool(getattr(args, "_devtool_cli_test_task_explicit", False)) and (
+        str(getattr(args, "command", "") or "") in {"validate", "v", *APPLY_COMMANDS}
+    )
+    if task_values and not validation_task_compat:
         selection["tasks"] = task_values
         selection["task"] = task_values[0]
     changed_from = str(getattr(args, "changed_from", "") or "").strip()
@@ -5240,7 +5239,7 @@ def _exclusive_cross_project_validation_specs(
             )
     if not specs:
         parser.error("Validation --task did not resolve to any executable validation units.")
-    return _annotate_exclusive_native_specs(config, specs, tasks, source="cli")
+    return _annotate_exclusive_native_specs(config, specs, tasks, source="legacy-cli-task-compat")
 
 
 def _exclusive_android_validation_specs(
@@ -5998,6 +5997,82 @@ def _validation_json_requested(args: argparse.Namespace) -> bool:
     return bool(getattr(args, "json", False) or str(getattr(args, "machine", "") or ""))
 
 
+def _canonical_validation_run_request(config: ProjectConfig, args: argparse.Namespace) -> ValidationRunRequest:
+    """Resolve validation intent independently from presentation/output mode."""
+
+    from .test_selection import resolve_test_selection
+
+    tasks = _exclusive_validation_task_values(args)
+    roots: list[ExecutionRoot] = []
+    if tasks:
+        roots.extend(
+            ExecutionRoot(
+                ExecutionRootKind.NATIVE_TASK,
+                task,
+                target=str(config.selected_target or ""),
+                runner=str(config.kind or ""),
+                provenance="legacy-validate-task-compat",
+            )
+            for task in tasks
+        )
+    elif str(config.selected_target or "").strip():
+        roots.append(ExecutionRoot(
+            ExecutionRootKind.TARGET,
+            str(config.selected_target),
+            target=str(config.selected_target),
+            runner=str(config.kind or ""),
+        ))
+    else:
+        roots.append(ExecutionRoot(
+            ExecutionRootKind.REPOSITORY,
+            str(Path(config.repo_root).resolve()),
+            runner=str(config.kind or ""),
+        ))
+
+    api_action = str(getattr(args, "_devtool_validation_api_action", "") or "").strip().lower()
+    mode = str(getattr(args, "_devtool_validation_mode", "") or "").strip().lower()
+    action_name = api_action or mode or "run"
+    action_map = {
+        "start": ValidationControlAction.START,
+        "run": ValidationControlAction.RUN,
+        "resume": ValidationControlAction.RESUME,
+        "retry": ValidationControlAction.RETRY,
+    }
+    control_action = action_map.get(action_name, ValidationControlAction.RUN)
+    phase_values = tuple(_validation_phase_values(args))
+    scope = str(getattr(args, "validation_run_scope", "") or "").strip().lower()
+    if not scope:
+        scope = "remaining" if control_action is ValidationControlAction.RESUME else "next"
+    selected = phase_values if scope == "selected" else ()
+    through = (
+        str(getattr(args, "through", "") or getattr(args, "pause_after", "") or "").strip()
+        if scope == "through"
+        else ""
+    )
+    control = ValidationControlIntent(
+        action=control_action,
+        scope=scope,
+        selected_checks=selected,
+        through=through,
+        expected_revision=_validation_expected_revision(args),
+        compatibility_source=("validate-task" if tasks else ""),
+    )
+    control.validate()
+    selection = resolve_test_selection(config).as_dict()
+    return ValidationRunRequest(
+        action=action_name,
+        execution_roots=tuple(roots),
+        selected_checks=selected,
+        test_selection=selection,
+        contract_ref=str(getattr(args, "validation_contract", "") or ""),
+        control=control,
+        fresh=bool(getattr(args, "restart_session", False)),
+        output_format=("json" if _validation_json_requested(args) else "text"),
+        verbosity=str(getattr(args, "verbosity", "") or ""),
+        copy_output=bool(getattr(args, "copy", False)),
+    )
+
+
 def _validation_machine_text(payload: dict[str, object], args: argparse.Namespace) -> str:
     compact = str(getattr(args, "machine", "") or "") == "compact"
     return json.dumps(payload, ensure_ascii=False, indent=None if compact else 2, separators=(",", ":") if compact else None)
@@ -6377,6 +6452,9 @@ def _load_or_create_validation_session(
                 "The active validation session owns a pending apply transaction. Resume or abort it instead of replacing it."
             )
         session_options = _validation_session_options(args)
+        validation_request = _canonical_validation_run_request(config, args)
+        session_options["validation_run_request"] = validation_request.to_dict()
+        args._devtool_validation_run_request = validation_request.to_dict()
         session_options["execution_environment"] = str(config.execution_environment or "auto")
         session_options["chroot_name"] = str(config.chroot_name or "")
         session_options["linux_user"] = str(os.environ.get("USER") or "")

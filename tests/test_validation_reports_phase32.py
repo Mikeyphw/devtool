@@ -71,6 +71,9 @@ def test_report_persists_complete_phase_attempt_git_commit_and_source_context(tm
     assert report["plan"]["completed_phases"] == 2
     assert report["attempts"]["count"] == 2
     assert report["commit"] == {"status": "committed", "hash": "deadbeef", "message": "Apply fix"}
+    assert report["semantics"]["resolved_validation_contract"]["digest"]
+    assert report["semantics"]["validation_verdict"]["status"] == "satisfied"
+    assert "validation_run_request" in report["semantics"]
     assert session.report_path.endswith(f"{session.session_id}.json")
 
 
@@ -150,6 +153,6 @@ def test_schema_v4_session_migrates_to_report_capable_schema(tmp_path: Path) -> 
     state.write_text(json.dumps(payload), encoding="utf-8")
     from devtool.validation_sessions import load_session
     migrated = load_session(tmp_path, session.session_id)
-    assert SESSION_SCHEMA_VERSION == 6
+    assert SESSION_SCHEMA_VERSION == 7
     assert migrated.initial_git_head == migrated.git_head
     assert migrated.commit_status == "not-requested"

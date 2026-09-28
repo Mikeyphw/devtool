@@ -1,0 +1,37 @@
+{
+  "exports": [
+    {
+      "id": "EXEC-X01-EXPORT-TEST-RMP-ROADMAP-INVENTORY",
+      "owners": [
+        "TEST",
+        "RMP"
+      ],
+      "status": "baseline-reproduced",
+      "summary": "hard-coded EXPECTED_TESTS/EXPECTED_WORKFLOWS in test_devtool_roadmap_native_execution_contract.py omit newer roadmap identities; reproduced on untouched post-ENV-G1 source",
+      "target_overlays": [
+        "TEST-X03/TEST-G3",
+        "RMP-X01/RMP-G1"
+      ]
+    },
+    {
+      "id": "EXEC-X01-EXPORT-LIFE-HOOK-FD",
+      "owners": [
+        "LIFE-X01",
+        "LIFE-G1"
+      ],
+      "status": "existing-obligation",
+      "summary": "ResourceWarning: unclosed file in devtool/hooks/engine.py:523 during validation hook execution"
+    },
+    {
+      "id": "EXEC-X01-EXPORT-TEST-PRES-MULTISUITE-COUNT",
+      "owners": [
+        "TEST",
+        "PRES"
+      ],
+      "status": "existing-obligation",
+      "summary": "artifact aggregate may report only last structured test suite although all suites executed"
+    }
+  ],
+  "schema_version": 1,
+  "source_overlay": "EXEC-X01"
+}

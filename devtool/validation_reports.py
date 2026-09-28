@@ -191,6 +191,11 @@ def build_validation_report(
             "finalized_at": session.finalized_at,
             "updated_at": session.updated_at,
         },
+        "semantics": {
+            "validation_run_request": dict(getattr(session, "validation_run_request", {}) or {}),
+            "resolved_validation_contract": dict(getattr(session, "resolved_validation_contract", {}) or {}),
+            "validation_verdict": dict(getattr(session, "validation_verdict", {}) or {}),
+        },
         "plan": {
             "plan_fingerprint": session.plan_fingerprint,
             "required_checkpoint_name": session.required_checkpoint_name,
