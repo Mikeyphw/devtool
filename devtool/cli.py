@@ -1345,6 +1345,12 @@ def build_parser() -> argparse.ArgumentParser:
     core_registry = core_sub.add_parser("registry", aliases=["reg"], help="Emit the canonical CLI/config/env registry")
     core_registry.add_argument("--json", action="store_true", help="Emit machine-readable registry JSON")
     core_registry.add_argument("--parity", action="store_true", help="Include parser/registry parity evidence")
+    core_runtime = core_sub.add_parser("runtime", help="Resolve the CORE-X02 effective config and private run envelope")
+    core_runtime.add_argument("--json", action="store_true", help="Emit machine-readable runtime envelope JSON")
+    core_runtime.add_argument("--format", choices=["human", "json", "copy"], default="human", help="Requested frontend output format")
+    core_runtime.add_argument("--stdout-payload", choices=["auto", "summary", "raw"], default="auto", help="Requested stdout payload semantics")
+    core_runtime.add_argument("--assume-yes", action="store_true", help="Resolve a non-interactive interaction policy")
+    core_runtime.add_argument("argv", nargs=argparse.REMAINDER, help="Command argv to lower into the runtime envelope; prefix with -- when needed")
 
     registry_cmd = subparsers.add_parser("registry", help=argparse.SUPPRESS)
     registry_cmd.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
@@ -14158,6 +14164,36 @@ def _main_after_parse(
         return 0
 
     if args.command in {"core", "registry"}:
+        if args.command == "core" and str(getattr(args, "core_command", "") or "") == "runtime":
+            from .core_runtime import InteractionPolicy, OutputRequest, ResolutionContext, render_runtime_text, runtime_payload
+
+            repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
+            runtime_argv = [token for token in (getattr(args, "argv", None) or []) if token != "--"]
+            if not runtime_argv:
+                runtime_argv = ["validate"]
+            output = OutputRequest(
+                format=str(getattr(args, "format", "human") or "human"),
+                copy=bool(getattr(args, "copy", False)),
+                stdout_payload=str(getattr(args, "stdout_payload", "auto") or "auto"),
+            )
+            context = ResolutionContext.from_argv(
+                runtime_argv,
+                repo_root=repo_root,
+                cli_values={
+                    "cli.option.copy": bool(getattr(args, "copy", False)),
+                    "cli.option.stdout_payload": str(getattr(args, "stdout_payload", "auto") or "auto"),
+                },
+                env=os.environ,
+                output=output,
+                interaction=InteractionPolicy.from_flags(yes=bool(getattr(args, "assume_yes", False)), interactive=not bool(getattr(args, "assume_yes", False))),
+            )
+            payload = runtime_payload(context)
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(render_runtime_text(payload))
+            return 0
+
         from .core_registry import core_registry_payload, render_core_registry_text
 
         payload = core_registry_payload(include_parser_parity=bool(getattr(args, "parity", False)), parser=build_parser() if bool(getattr(args, "parity", False)) else None)

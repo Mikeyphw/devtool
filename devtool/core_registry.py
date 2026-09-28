@@ -379,6 +379,7 @@ def build_core_registry() -> CoreRegistry:
         CliCommandSpec("cli.command.pytest.inventory", ("pytest", "inventory"), metadata={"domain": "test"}),
         CliCommandSpec("cli.command.pytest.select", ("pytest", "select"), metadata={"domain": "test"}),
         CliCommandSpec("cli.command.core.registry", ("core", "registry"), aliases=(("registry",),), metadata={"domain": "core"}),
+        CliCommandSpec("cli.command.core.runtime", ("core", "runtime"), metadata={"domain": "core", "run_descriptor": True}),
     )
     repo_config = ConfigDocument(
         "repo",
@@ -399,6 +400,7 @@ def build_core_registry() -> CoreRegistry:
             ConfigFieldSpec("cfg.cli.output.copy", ("cli", "output", "copy"), "bool"),
             ConfigFieldSpec("cfg.cli.output.stdout_payload", ("cli", "output", "stdout_payload"), "enum", choices=("auto", "summary", "raw")),
             ConfigFieldSpec("cfg.cli.environment.execution_environment", ("cli", "environment", "execution_environment"), "enum", choices=("auto", "native-termux", "chroot", "proot-distro", "desktop-linux", "ssh", "android-device", "external-device")),
+            ConfigFieldSpec("cfg.cli.secrets.token", ("cli", "secrets", "token"), "string", sensitive=True),
             ConfigFieldSpec("cfg.environment.default_chroot", ("environment", "default_chroot"), "string"),
             ConfigFieldSpec("cfg.ui.profile", ("ui", "profile"), "string"),
         ),

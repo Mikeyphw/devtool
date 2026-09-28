@@ -303,3 +303,11 @@ id = "roadmap.core.g1"
 aliases = ["CORE-G1-group"]
 description = "CORE-X01/X02 command, config, wrapper, and trust contracts that CORE-G1 will qualify."
 checks = ["core.x01.registry-trust"]
+
+[[checks]]
+id = "core-x02-runtime-envelope"
+selector = "tests/test_core_x02_runtime_envelope.py"
+lane = "fast"
+group = "core"
+resource = "python"
+serial = false
