@@ -1351,6 +1351,10 @@ def build_parser() -> argparse.ArgumentParser:
     core_runtime.add_argument("--stdout-payload", choices=["auto", "summary", "raw"], default="auto", help="Requested stdout payload semantics")
     core_runtime.add_argument("--assume-yes", action="store_true", help="Resolve a non-interactive interaction policy")
     core_runtime.add_argument("argv", nargs=argparse.REMAINDER, help="Command argv to lower into the runtime envelope; prefix with -- when needed")
+    core_run_store = core_sub.add_parser("run-store", help="Inspect the CORE-X03 private run catalog/doctor state")
+    core_run_store.add_argument("--json", action="store_true", help="Emit machine-readable run catalog state")
+    core_run_store.add_argument("--root", default="", help="Override the run catalog root; defaults to <repo>/.devtool/private/run-v3")
+    core_run_store.add_argument("--doctor", action="store_true", help="Emit storage doctor/GC state instead of the full catalog")
 
     registry_cmd = subparsers.add_parser("registry", help=argparse.SUPPRESS)
     registry_cmd.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
@@ -14192,6 +14196,23 @@ def _main_after_parse(
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
             else:
                 print(render_runtime_text(payload))
+            return 0
+
+        if args.command == "core" and str(getattr(args, "core_command", "") or "") == "run-store":
+            from .core_runtime import private_run_root
+            from .run_store import RunCatalog
+
+            repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
+            root_arg = str(getattr(args, "root", "") or "")
+            catalog = RunCatalog.open(root_arg or private_run_root(repo_root))
+            payload = catalog.doctor() if bool(getattr(args, "doctor", False)) else catalog.to_dict()
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                if bool(getattr(args, "doctor", False)):
+                    print(f"CORE run-store doctor: {payload.get('status')} ({payload.get('run_count', 0)} runs)")
+                else:
+                    print(f"CORE run-store catalog: {len(payload.get('runs', {}))} runs")
             return 0
 
         from .core_registry import core_registry_payload, render_core_registry_text

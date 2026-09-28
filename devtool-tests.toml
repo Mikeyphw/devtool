@@ -295,8 +295,8 @@ groups = ["roadmap.core.g1", "roadmap.core.foundation"]
 
 [[groups]]
 id = "roadmap.core.foundation"
-description = "CORE registry and identity foundation contracts."
-checks = ["core.x01.registry-trust", "core.x02.runtime-envelope"]
+description = "CORE registry, runtime envelope, and run-store foundation contracts."
+checks = ["core.x01.registry-trust", "core.x02.runtime-envelope", "core.x03.run-store-wrapper"]
 
 [[groups]]
 id = "roadmap.core.g1"
@@ -330,3 +330,24 @@ parallel_safety = "serial-process-global"
 budget_class = "system"
 contract_level = "public-contract"
 groups = ["roadmap.core.g1"]
+
+[[checks]]
+id = "core.x03.run-store-wrapper"
+name = "CORE-X03 RUN V3 catalog, stream/attachment storage, and wrapper runtime qualification"
+runner = "pytest"
+selector = "tests/test_core_x03_run_store.py"
+aliases = ["CORE-X03"]
+behavior = "core.run-store-wrapper-runtime"
+lanes = ["fast"]
+resources = ["filesystem-private-state"]
+parallel_safety = "parallel-safe"
+budget_class = "fast"
+contract_level = "public-contract"
+groups = ["roadmap.core.g2", "roadmap.core.foundation"]
+
+[[groups]]
+id = "roadmap.core.g2"
+aliases = ["CORE-G2-group"]
+description = "CORE-X03 durable run/catalog/wrapper-runtime contracts plus CORE-G2 qualification."
+checks = ["core.x03.run-store-wrapper"]
+
