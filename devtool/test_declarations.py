@@ -30,6 +30,18 @@ def command_specs(config: ProjectConfig, names=(), *, all_tests=False):
                 "timeout_seconds": t.timeout_seconds,
                 "requires_device": t.requires_device,
                 "requires_network": t.requires_network,
+                "test_selector": t.selector,
+                "test_aliases": list(t.aliases),
+                "test_behavior": t.behavior,
+                "test_lanes": list(t.lanes),
+                "test_resources": list(t.resources),
+                "test_parallel_safety": t.parallel_safety,
+                "test_required_tools": list(t.required_tools),
+                "test_required_capabilities": list(t.required_capabilities),
+                "test_budget_class": t.budget_class,
+                "test_contract_level": t.contract_level,
+                "test_groups": list(t.groups),
+                "test_dependencies": list(t.dependencies),
             },
         ))
     return specs

@@ -1,0 +1,138 @@
+schema_version = 1
+
+# TEST-X02 stable roadmap/check identities. The durable id/alias is semantic;
+# selectors may move as the suite is reorganized around behavior boundaries.
+
+[[checks]]
+id = "test.failure-trustworthiness"
+name = "Failure trustworthiness and process-state isolation"
+runner = "pytest"
+selector = "tests/test_test_x01_failure_trustworthiness.py"
+aliases = ["TEST-X01"]
+behavior = "test-system.isolation"
+lanes = ["integration"]
+resources = ["serial-process-global", "requires-git"]
+parallel_safety = "serial-process-global"
+required_tools = ["git"]
+budget_class = "integration"
+contract_level = "public-contract"
+groups = ["roadmap.test.g1", "roadmap.test.foundation"]
+
+[checks.migration]
+source_campaign = "TEST-X01"
+historical_selector = "tests/test_test_x01_failure_trustworthiness.py"
+
+[[checks]]
+id = "test.g1.isolation-trust"
+name = "TEST-G1 isolation/trust milestone"
+runner = "pytest"
+selector = "tests/test_test_g1_isolation_trust_gate.py"
+aliases = ["TEST-G1"]
+behavior = "test-system.isolation-gate"
+lanes = ["system"]
+resources = ["serial-process-global", "requires-git"]
+parallel_safety = "serial-process-global"
+required_tools = ["git"]
+budget_class = "system"
+contract_level = "public-contract"
+groups = ["roadmap.test.g1", "roadmap.test.system"]
+
+[[checks]]
+id = "test.selection.framework"
+name = "Language-neutral test selection contracts"
+runner = "pytest"
+selector = "tests/test_test_selection.py"
+aliases = ["TS00-selection"]
+behavior = "test-system.selection"
+lanes = ["fast"]
+parallel_safety = "parallel-safe"
+budget_class = "fast"
+contract_level = "public-contract"
+groups = ["roadmap.test.g2", "roadmap.test.foundation"]
+
+[[checks]]
+id = "test.pytest.policy"
+name = "Pytest strict policy and portable harness contracts"
+runner = "pytest"
+selector = "tests/test_pytest_revitalization.py"
+behavior = "test-system.pytest-policy"
+lanes = ["fast"]
+parallel_safety = "parallel-safe"
+budget_class = "fast"
+contract_level = "public-contract"
+groups = ["roadmap.test.g2", "roadmap.test.foundation"]
+
+[[checks]]
+id = "test.validation.truth"
+name = "Validation session truth contracts"
+runner = "pytest"
+selector = "tests/test_rem07_validation_truth_sessions.py"
+behavior = "validation.session-truth"
+lanes = ["integration"]
+resources = ["serial-repository"]
+parallel_safety = "serial-repository"
+budget_class = "integration"
+contract_level = "public-contract"
+groups = ["roadmap.test.g2"]
+
+[[checks]]
+id = "test.validation.reports"
+name = "Validation report persistence contracts"
+runner = "pytest"
+selector = "tests/test_validation_reports_phase32.py"
+behavior = "validation.reporting"
+lanes = ["integration"]
+resources = ["serial-repository"]
+parallel_safety = "serial-repository"
+budget_class = "integration"
+contract_level = "public-contract"
+groups = ["roadmap.test.g2"]
+
+[[checks]]
+id = "test.git.transaction-isolation"
+name = "Isolated Git transaction worktree contracts"
+runner = "pytest"
+selector = "tests/test_git_frx03_isolated_worktree_transactions.py"
+behavior = "git.transaction-isolation"
+lanes = ["integration"]
+resources = ["serial-repository", "requires-git"]
+parallel_safety = "serial-repository"
+required_tools = ["git"]
+budget_class = "integration"
+contract_level = "public-contract"
+groups = ["roadmap.test.g2"]
+
+[[checks]]
+id = "test.x02.inventory-selection"
+name = "TEST-X02 stable inventory and selection contracts"
+runner = "pytest"
+selector = "tests/test_test_x02_inventory_selection.py"
+aliases = ["TEST-X02"]
+behavior = "test-system.inventory-selection"
+lanes = ["fast"]
+parallel_safety = "parallel-safe"
+budget_class = "fast"
+contract_level = "public-contract"
+groups = ["roadmap.test.g2", "roadmap.test.foundation"]
+
+[[groups]]
+id = "roadmap.test.foundation"
+description = "Fast/foundation contracts used while implementing the TEST roadmap."
+checks = ["test.failure-trustworthiness", "test.selection.framework", "test.pytest.policy", "test.x02.inventory-selection"]
+
+[[groups]]
+id = "roadmap.test.g1"
+aliases = ["TEST-G1-group"]
+description = "TEST-G1 implementation plus authoritative milestone proof."
+checks = ["test.failure-trustworthiness", "test.g1.isolation-trust"]
+
+[[groups]]
+id = "roadmap.test.g2"
+aliases = ["TEST-G2-group"]
+description = "Selection/inventory contracts that TEST-G2 will qualify."
+checks = ["test.selection.framework", "test.pytest.policy", "test.validation.truth", "test.validation.reports", "test.git.transaction-isolation", "test.x02.inventory-selection"]
+
+[[groups]]
+id = "roadmap.test.system"
+description = "Broad roadmap/seal checks; intentionally excluded from fast feedback."
+checks = ["test.g1.isolation-trust"]

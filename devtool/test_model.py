@@ -124,6 +124,7 @@ class TestResult:
 
 @dataclass(frozen=True)
 class TestSpec:
+    __test__ = False
     id: str
     name: str
     runner: str
@@ -134,10 +135,35 @@ class TestSpec:
     required: bool = True
     requires_device: bool = False
     requires_network: bool = False
+    # TEST-X02 canonical inventory identity/policy. ``id`` is the durable check
+    # identity; ``selector`` is the current executable node/path and may move.
+    selector: str = ""
+    aliases: tuple[str, ...] = ()
+    behavior: str = ""
+    lanes: tuple[str, ...] = ()
+    resources: tuple[str, ...] = ()
+    parallel_safety: str = "parallel-safe"
+    required_tools: tuple[str, ...] = ()
+    required_capabilities: tuple[str, ...] = ()
+    budget_class: str = "default"
+    contract_level: str = "public-contract"
+    groups: tuple[str, ...] = ()
+    dependencies: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
     def __post_init__(self):
         object.__setattr__(self, "id", _id(self.id, "test spec id"))
         object.__setattr__(self, "runner", _id(self.runner, "test runner id"))
         object.__setattr__(self, "command", tuple(str(x) for x in self.command))
         if self.timeout_seconds is not None and self.timeout_seconds <= 0: raise ValueError("timeout must be > 0")
+        tuple_fields = ("aliases", "lanes", "resources", "required_tools", "required_capabilities", "groups", "dependencies")
+        for name in tuple_fields:
+            object.__setattr__(self, name, tuple(dict.fromkeys(str(x).strip() for x in getattr(self, name) if str(x).strip())))
+        if self.parallel_safety not in {"parallel-safe", "serial-process-global", "serial-repository", "serial-device", "serial-port/socket"}:
+            raise ValueError(f"invalid parallel_safety: {self.parallel_safety!r}")
+        if self.contract_level not in {"public-contract", "white-box"}:
+            raise ValueError(f"invalid contract_level: {self.contract_level!r}")
+        allowed_lanes = {"fast", "integration", "external", "system", "full"}
+        unknown_lanes = sorted(set(self.lanes) - allowed_lanes)
+        if unknown_lanes:
+            raise ValueError("invalid test lane(s): " + ", ".join(unknown_lanes))
         object.__setattr__(self, "env", _frozen_map(self.env)); object.__setattr__(self, "metadata", _frozen_map(self.metadata))

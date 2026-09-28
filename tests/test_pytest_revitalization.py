@@ -22,10 +22,17 @@ def test_pytest_runtime_exposes_termux_capabilities_and_strict_slow_budget() -> 
     assert 'requires_posix' in pytest_config
     assert 'not_termux(reason)' in pytest_config
     assert 'slow_external' in pytest_config
+    assert 'integration:' in pytest_config
+    assert 'external:' in pytest_config
+    assert 'system:' in pytest_config
+    assert 'devtool_check(id)' in pytest_config
+    assert 'requires_git:' in pytest_config
     assert '--strict-markers' in pytest_config
     assert '--strict-config' in pytest_config
     assert '--devtool-slow-threshold' in conftest
     assert '--devtool-strict-slow' in conftest
+    assert '--devtool-lane' in conftest
+    assert 'lanes_for_pytest_item' in conftest
     assert 'report.outcome = "failed"' in conftest
 
 

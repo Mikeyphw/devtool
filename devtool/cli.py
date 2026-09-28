@@ -1097,6 +1097,17 @@ def build_parser() -> argparse.ArgumentParser:
     pytest_profile.add_argument("--top", type=int, default=30, help="Maximum number of slow entries to show")
     pytest_profile.add_argument("--strict", action="store_true", help="Fail when unmarked tests exceed the slow threshold")
     pytest_profile.add_argument("--json", action="store_true", help="Emit a structured pytest-profile report")
+    pytest_inventory = pytest_sub.add_parser("inventory", help="Inspect stable Devtool test/check identity and lane/resource policy")
+    pytest_inventory.add_argument("--lane", choices=("fast", "integration", "external", "system", "full"), default="", help="Filter inventory by semantic lane")
+    pytest_inventory.add_argument("--group", default="", help="Filter by stable check group or alias")
+    pytest_inventory.add_argument("--explain", default="", metavar="CHECK", help="Explain one durable check ID or historical alias")
+    pytest_inventory.add_argument("--json", action="store_true", help="Emit canonical inventory JSON")
+    pytest_select = pytest_sub.add_parser("select", help="Resolve an immutable deterministic test selection")
+    pytest_select.add_argument("--lane", action="append", default=[], choices=("fast", "integration", "external", "system", "full"), help="Select a semantic lane; repeatable")
+    pytest_select.add_argument("--check", action="append", default=[], help="Select a durable check ID or alias; repeatable")
+    pytest_select.add_argument("--group", action="append", default=[], help="Select a stable check group or alias; repeatable")
+    pytest_select.add_argument("--shards", type=int, default=0, metavar="COUNT", help="Produce a deterministic immutable shard plan")
+    pytest_select.add_argument("--json", action="store_true", help="Emit canonical selection JSON")
 
     audit_cmd = subparsers.add_parser("audit", help="Record and compare federation-aware source audit passes")
     audit_sub = audit_cmd.add_subparsers(dest="audit_command", required=True)
@@ -14131,7 +14142,8 @@ def _main_after_parse(
         return 0
 
     if args.command == "pytest":
-        if str(getattr(args, "pytest_command", "") or "") == "profile":
+        pytest_action = str(getattr(args, "pytest_command", "") or "")
+        if pytest_action == "profile":
             from .pytest_profile import render_pytest_profile_json, render_pytest_profile_text, run_pytest_profile
 
             repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
@@ -14144,6 +14156,42 @@ def _main_after_parse(
             )
             print(render_pytest_profile_json(result) if bool(getattr(args, "json", False)) else render_pytest_profile_text(result))
             return result.returncode
+        if pytest_action in {"inventory", "select"}:
+            from .test_inventory import compile_pytest_inventory, render_inventory_text, render_selection_text
+
+            repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
+            inventory = compile_pytest_inventory(repo_root)
+            try:
+                if pytest_action == "inventory":
+                    explain = str(getattr(args, "explain", "") or "").strip()
+                    if explain:
+                        payload = inventory.explain(explain)
+                        print(json.dumps(payload, indent=2, ensure_ascii=False) if bool(getattr(args, "json", False)) else "\n".join(f"{key}: {value}" for key, value in payload.items()))
+                    elif bool(getattr(args, "json", False)):
+                        selection = inventory.select(
+                            lanes=(str(getattr(args, "lane", "") or ""),) if getattr(args, "lane", "") else (),
+                            groups=(str(getattr(args, "group", "") or ""),) if getattr(args, "group", "") else (),
+                        )
+                        selected = set(selection.resolved_check_ids)
+                        payload = inventory.to_dict()
+                        payload["inventory_digest"] = inventory.digest
+                        payload["specs"] = [row for row in payload["specs"] if row["check_id"] in selected]
+                        print(json.dumps(payload, indent=2, ensure_ascii=False))
+                    else:
+                        print(render_inventory_text(inventory, lane=str(getattr(args, "lane", "") or ""), group=str(getattr(args, "group", "") or "")))
+                    return 0
+                selection = inventory.select(
+                    lanes=getattr(args, "lane", ()) or (),
+                    checks=getattr(args, "check", ()) or (),
+                    groups=getattr(args, "group", ()) or (),
+                    provenance={"source": "cli", "inventory_digest": inventory.digest},
+                    shard_count=int(getattr(args, "shards", 0) or 0),
+                )
+                print(json.dumps(selection.to_dict(), indent=2, ensure_ascii=False) if bool(getattr(args, "json", False)) else render_selection_text(selection))
+                return 0
+            except (KeyError, ValueError) as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 2
         return 1
 
     if args.command in {"compatibility", "compat"}:

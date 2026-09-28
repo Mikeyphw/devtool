@@ -28,6 +28,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Fail the test session when an unmarked test exceeds --devtool-slow-threshold.",
     )
+    group.addoption(
+        "--devtool-lane",
+        action="store",
+        choices=("fast", "integration", "external", "system", "full"),
+        default=str(os.environ.get("DEVTOOL_TEST_LANE", "") or ""),
+        help="Select one semantic Devtool test lane; full keeps all collected tests.",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -37,7 +44,21 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    from devtool.test_inventory import lanes_for_pytest_item
+
+    requested_lane = str(config.getoption("--devtool-lane") or "").strip()
+    deselected: list[pytest.Item] = []
+    selected: list[pytest.Item] = []
     for item in items:
+        marker_names = [marker.name for marker in item.iter_markers()]
+        lanes = lanes_for_pytest_item(root=Path(str(config.rootpath)), nodeid=item.nodeid, marker_names=marker_names, path=str(item.fspath))
+        for lane in lanes:
+            item.add_marker(getattr(pytest.mark, lane))
+        item.user_properties.append(("devtool_lanes", ",".join(lanes)))
+        if requested_lane and requested_lane != "full" and requested_lane not in lanes:
+            deselected.append(item)
+            continue
+        selected.append(item)
         for marker in item.iter_markers(name="requires_tool"):
             if not marker.args:
                 continue
@@ -50,6 +71,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         if marker is not None and HOST_IS_TERMUX:
             reason = str(marker.args[0]) if marker.args else "host integration is unavailable on native Termux"
             item.add_marker(pytest.mark.skip(reason=reason))
+    if deselected:
+        items[:] = selected
+        config.hook.pytest_deselected(items=deselected)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -274,3 +298,39 @@ def isolate_devtool_runtime_env(
         monkeypatch.setenv("DEVTOOL_NO_HUD", "1")
         monkeypatch.setenv("DEVTOOL_NO_AUTO_HUD", "1")
         monkeypatch.setenv("DEVTOOL_HUD_SINGLETON", "off")
+
+
+@pytest.fixture
+def repo_factory(tmp_path: Path):
+    from tests.support.factories import RepoFactory
+    return RepoFactory(tmp_path / "repos")
+
+
+@pytest.fixture
+def git_repo_factory(tmp_path: Path):
+    from tests.support.factories import GitRepoFactory
+    root = tmp_path / "git-repos"
+    root.mkdir(parents=True, exist_ok=True)
+    return GitRepoFactory(root)
+
+
+@pytest.fixture
+def validation_session_factory(tmp_path: Path):
+    from tests.support.factories import ValidationSessionFactory
+    root = tmp_path / "validation-sessions"
+    root.mkdir(parents=True, exist_ok=True)
+    return ValidationSessionFactory(root)
+
+
+@pytest.fixture
+def artifact_fixture_builder(tmp_path: Path):
+    from tests.support.factories import ArtifactFixtureBuilder
+    root = tmp_path / "artifacts"
+    root.mkdir(parents=True, exist_ok=True)
+    return ArtifactFixtureBuilder(root)
+
+
+@pytest.fixture
+def stable_command_boundary():
+    from tests.support.factories import StableCommandBoundary
+    return StableCommandBoundary()

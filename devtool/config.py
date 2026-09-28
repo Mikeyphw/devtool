@@ -696,11 +696,24 @@ def _parse_test_specs(loaded: dict[str, Any], source: object) -> dict[str, Any]:
             raise SystemExit(f"Invalid config {source}: test {test_id!r} requires command or task.")
         env=item.get("env", {}) or {}
         if not isinstance(env, dict): raise SystemExit(f"Invalid config {source}: test {test_id!r} env must be a table.")
+        def _tuple_field(name: str) -> tuple[str, ...]:
+            value = item.get(name, ())
+            if isinstance(value, str):
+                value = [part.strip() for part in value.split(",") if part.strip()]
+            if not isinstance(value, (list, tuple)):
+                raise SystemExit(f"Invalid config {source}: test {test_id!r} {name} must be a string array.")
+            return tuple(dict.fromkeys(str(part).strip() for part in value if str(part).strip()))
+
         out[test_id] = TestSpec(id=test_id, name=str(item.get("name") or test_id), runner=runner, command=tuple(command),
             cwd=str(item.get("cwd") or "") or None, env={str(k):str(v) for k,v in env.items()},
             timeout_seconds=float(item["timeout_seconds"]) if item.get("timeout_seconds") is not None else None,
             required=bool(item.get("required", True)), requires_device=bool(item.get("requires_device", False)),
-            requires_network=bool(item.get("requires_network", False)), metadata={"declared": True})
+            requires_network=bool(item.get("requires_network", False)), selector=str(item.get("selector") or ""),
+            aliases=_tuple_field("aliases"), behavior=str(item.get("behavior") or ""), lanes=_tuple_field("lanes"),
+            resources=_tuple_field("resources"), parallel_safety=str(item.get("parallel_safety") or "parallel-safe"),
+            required_tools=_tuple_field("required_tools"), required_capabilities=_tuple_field("required_capabilities"),
+            budget_class=str(item.get("budget_class") or "default"), contract_level=str(item.get("contract_level") or "public-contract"),
+            groups=_tuple_field("groups"), dependencies=_tuple_field("dependencies"), metadata={"declared": True})
     return out
 
 
