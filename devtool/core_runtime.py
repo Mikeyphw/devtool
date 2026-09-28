@@ -259,6 +259,39 @@ class RunEnvelope:
         }
 
 
+
+
+def command_identity_digest(invocation: TrustedInvocationEnvelope) -> str:
+    """Digest the semantic command identity, not the transport spelling.
+
+    Aliases, wrapper shims, and output frontends may preserve their invoked
+    spelling for provenance, but a run identity must be bound to the canonical
+    command ID/path only.
+    """
+    return _sha256({
+        "command_id": invocation.command_id,
+        "canonical_path": list(invocation.canonical_path),
+    })
+
+
+def config_identity_digest(resolved: ResolvedConfig) -> str:
+    """Digest effective configuration that changes execution semantics.
+
+    Output routing/copy preferences are represented separately by OutputRequest
+    and must not change run identity or resume/cache semantics.
+    """
+    values = {
+        key: _safe_value(value)
+        for key, value in sorted(resolved.values.items())
+        if not key.startswith("cfg.cli.output.")
+    }
+    provenance = [
+        item.to_dict()
+        for item in resolved.provenance
+        if not item.field_id.startswith("cfg.cli.output.")
+    ]
+    return _sha256({"values": values, "provenance": provenance})
+
 def _safe_value(value: Any) -> Any:
     if isinstance(value, SecretRef):
         return value.to_dict()
@@ -344,10 +377,12 @@ def build_run_envelope(context: ResolutionContext, registry: CoreRegistry | None
     invocation = registry.envelope_for(context.argv, source=context.invocation_source)
     scope = CliProjectScope.from_repo(context.repo_root)
     resolved = resolve_effective_config(context, registry)
+    command_digest = command_identity_digest(invocation)
+    config_digest = config_identity_digest(resolved)
     descriptor_payload = {
         "command_id": invocation.command_id,
-        "command_digest": invocation.digest,
-        "config_digest": resolved.semantic_digest,
+        "command_digest": command_digest,
+        "config_digest": config_digest,
         "scope_digest": scope.scope_digest,
     }
     run_id = _sha256(descriptor_payload)[:32]
@@ -355,8 +390,8 @@ def build_run_envelope(context: ResolutionContext, registry: CoreRegistry | None
         run_id=run_id,
         schema_version=3,
         command_id=invocation.command_id,
-        command_digest=invocation.digest,
-        config_digest=resolved.semantic_digest,
+        command_digest=command_digest,
+        config_digest=config_digest,
         scope_digest=scope.scope_digest,
         run_root=str(private_run_root(context.repo_root) / run_id),
         private=True,

@@ -296,18 +296,37 @@ groups = ["roadmap.core.g1", "roadmap.core.foundation"]
 [[groups]]
 id = "roadmap.core.foundation"
 description = "CORE registry and identity foundation contracts."
-checks = ["core.x01.registry-trust"]
+checks = ["core.x01.registry-trust", "core.x02.runtime-envelope"]
 
 [[groups]]
 id = "roadmap.core.g1"
 aliases = ["CORE-G1-group"]
-description = "CORE-X01/X02 command, config, wrapper, and trust contracts that CORE-G1 will qualify."
-checks = ["core.x01.registry-trust"]
+description = "CORE-X01/X02 command, config, wrapper, runtime-envelope, and trust contracts qualified by CORE-G1."
+checks = ["core.x01.registry-trust", "core.x02.runtime-envelope", "core.g1.identity-authority"]
 
 [[checks]]
-id = "core-x02-runtime-envelope"
+id = "core.x02.runtime-envelope"
+name = "CORE-X02 effective config, secret-safe runtime envelope, and CLI surface"
+runner = "pytest"
 selector = "tests/test_core_x02_runtime_envelope.py"
-lane = "fast"
-group = "core"
-resource = "python"
-serial = false
+aliases = ["CORE-X02"]
+behavior = "core.runtime-envelope"
+lanes = ["fast"]
+parallel_safety = "parallel-safe"
+budget_class = "fast"
+contract_level = "public-contract"
+groups = ["roadmap.core.g1", "roadmap.core.foundation"]
+
+[[checks]]
+id = "core.g1.identity-authority"
+name = "CORE-G1 command/config/runtime identity and trust gate"
+runner = "pytest"
+selector = "tests/test_core_g1_identity_authority_gate.py"
+aliases = ["CORE-G1"]
+behavior = "core.identity-authority-gate"
+lanes = ["system"]
+resources = ["serial-process-global"]
+parallel_safety = "serial-process-global"
+budget_class = "system"
+contract_level = "public-contract"
+groups = ["roadmap.core.g1"]
