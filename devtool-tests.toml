@@ -349,5 +349,19 @@ groups = ["roadmap.core.g2", "roadmap.core.foundation"]
 id = "roadmap.core.g2"
 aliases = ["CORE-G2-group"]
 description = "CORE-X03 durable run/catalog/wrapper-runtime contracts plus CORE-G2 qualification."
-checks = ["core.x03.run-store-wrapper"]
+checks = ["core.x03.run-store-wrapper", "core.g2.run-store-authority"]
+
+[[checks]]
+id = "core.g2.run-store-authority"
+name = "CORE-G2 RUN V3 private stream, attachment, GC, and wrapper authority gate"
+runner = "pytest"
+selector = "tests/test_core_g2_run_store_authority_gate.py"
+aliases = ["CORE-G2"]
+behavior = "core.run-store-authority-gate"
+lanes = ["system"]
+resources = ["filesystem-private-state", "serial-process-global"]
+parallel_safety = "serial-process-global"
+budget_class = "system"
+contract_level = "public-contract"
+groups = ["roadmap.core.g2"]
 

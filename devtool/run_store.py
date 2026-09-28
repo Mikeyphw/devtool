@@ -177,24 +177,29 @@ class StreamDescriptor:
     bytes_written: int
     truncated: bool
     sha256: str
+    privacy: str = "private"
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:
             raise ValueError("StreamDescriptor schema_version must be 1")
         if self.kind not in _STREAM_KINDS:
             raise ValueError(f"invalid stream kind: {self.kind!r}")
+        if self.privacy not in _PRIVACY_MODES:
+            raise ValueError(f"invalid stream privacy: {self.privacy!r}")
         if self.byte_limit < 0 or self.bytes_written < 0:
             raise ValueError("stream byte counts must be non-negative")
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, include_private_path: bool = False) -> dict[str, Any]:
+        path = self.path if include_private_path or self.privacy == "public" else ""
         return {
             "schema_version": self.schema_version,
             "stream_id": self.stream_id,
             "run_id": self.run_id,
             "kind": self.kind,
-            "path": self.path,
+            "path": path,
             "node_id": self.node_id,
             "process_id": self.process_id,
+            "privacy": self.privacy,
             "byte_limit": self.byte_limit,
             "bytes_written": self.bytes_written,
             "truncated": self.truncated,
@@ -210,8 +215,13 @@ def write_bounded_stream(
     content: bytes | str,
     node_id: str = "root",
     process_id: str = "process",
+    privacy: str = "private",
     byte_limit: int = 1_048_576,
 ) -> StreamDescriptor:
+    if kind not in _STREAM_KINDS:
+        raise ValueError(f"invalid stream kind: {kind!r}")
+    if privacy not in _PRIVACY_MODES:
+        raise ValueError(f"invalid stream privacy: {privacy!r}")
     if byte_limit < 0:
         raise ValueError("byte_limit must be non-negative")
     data = content.encode("utf-8") if isinstance(content, str) else bytes(content)
@@ -231,6 +241,7 @@ def write_bounded_stream(
         path=str(path),
         node_id=node_id,
         process_id=process_id,
+        privacy=privacy,
         byte_limit=byte_limit,
         bytes_written=len(stored),
         truncated=truncated,
@@ -300,7 +311,7 @@ class RunCatalog:
             raw = json.loads(index.read_text())
             catalog.runs = {str(k): v for k, v in raw.get("runs", {}).items()}
             catalog.attachments = {k: AttachmentDescriptor(**v) for k, v in raw.get("attachments", {}).items()}
-            catalog.streams = {k: StreamDescriptor(**v) for k, v in raw.get("streams", {}).items()}
+            catalog.streams = {k: StreamDescriptor(**({"privacy": "private", **v})) for k, v in raw.get("streams", {}).items()}
             catalog.events = {k: CoalescedEvent(**v) for k, v in raw.get("events", {}).items()}
             catalog.references = {k: RunReference(**v) for k, v in raw.get("references", {}).items()}
         return catalog
@@ -372,6 +383,8 @@ class RunCatalog:
                     continue
             if not query.include_tombstoned:
                 attachments = [a for a in attachments if a.state != "tombstoned"]
+                if query.attachment_kind and not attachments:
+                    continue
             results.append({"run": dict(descriptor), "attachments": [a.to_dict() for a in attachments], "streams": [s.to_dict() for s in self.streams.values() if s.run_id == run_id]})
         return results
 
@@ -405,7 +418,7 @@ class RunCatalog:
             "schema_version": 1,
             "runs": dict(sorted(self.runs.items())),
             "attachments": {key: value.to_dict(include_private_path=include_private_paths) for key, value in sorted(self.attachments.items())},
-            "streams": {key: value.to_dict() for key, value in sorted(self.streams.items())},
+            "streams": {key: value.to_dict(include_private_path=include_private_paths) for key, value in sorted(self.streams.items())},
             "events": {key: value.to_dict() for key, value in sorted(self.events.items())},
             "references": {key: value.to_dict() for key, value in sorted(self.references.items())},
         }
