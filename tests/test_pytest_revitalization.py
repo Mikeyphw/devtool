@@ -16,10 +16,14 @@ def read(path: str) -> str:
 
 def test_pytest_runtime_exposes_termux_capabilities_and_strict_slow_budget() -> None:
     conftest = read("tests/conftest.py")
-    assert 'requires_tool(name)' in conftest
-    assert 'requires_posix' in conftest
-    assert 'not_termux(reason)' in conftest
-    assert 'slow_external' in conftest
+    pytest_config = read("pyproject.toml")
+    # Marker policy is static/fail-closed so pytest validates it during collection.
+    assert 'requires_tool(name)' in pytest_config
+    assert 'requires_posix' in pytest_config
+    assert 'not_termux(reason)' in pytest_config
+    assert 'slow_external' in pytest_config
+    assert '--strict-markers' in pytest_config
+    assert '--strict-config' in pytest_config
     assert '--devtool-slow-threshold' in conftest
     assert '--devtool-strict-slow' in conftest
     assert 'report.outcome = "failed"' in conftest

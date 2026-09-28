@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Sequence
 
 import pytest
 
@@ -30,10 +31,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line("markers", "requires_tool(name): requires an external executable; skipped when unavailable")
-    config.addinivalue_line("markers", "requires_posix: requires POSIX process/signal/file-descriptor semantics")
-    config.addinivalue_line("markers", "not_termux(reason): host integration that is impossible on native Termux")
-    config.addinivalue_line("markers", "slow_external: intentional real external-tool integration allowed to exceed the normal timing budget")
+    # Marker/warning policy is statically declared in pyproject.toml so
+    # collection fails closed before test modules can mutate policy.
     config._devtool_slow_calls = []  # type: ignore[attr-defined]
 
 
@@ -57,6 +56,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[object]):
     outcome = yield
     report = outcome.get_result()
+    if report.when == "call":
+        item._devtool_call_report = report  # type: ignore[attr-defined]
     if report.when != "call":
         return
     threshold = float(item.config.getoption("--devtool-slow-threshold"))
@@ -115,7 +116,79 @@ HUD_TEST_FILES = {
 
 
 @pytest.fixture(autouse=True)
-def isolate_devtool_runtime_env(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, tmp_path: Path) -> None:
+def devtool_process_state_guard(request: pytest.FixtureRequest):
+    """Attribute process-global leaks to the test that created them, then restore."""
+
+    from devtool.process_state import ProcessStateGuard, format_process_state_differences
+
+    guard = ProcessStateGuard.capture()
+    yield guard
+    differences = guard.verify_and_restore()
+    if differences:
+        details = format_process_state_differences(differences)
+        call_report = getattr(request.node, "_devtool_call_report", None)
+        if call_report is not None and bool(getattr(call_report, "failed", False)):
+            # Preserve the original product failure as the primary outcome while
+            # still attributing/restoring any process-state drift caused by it.
+            request.node.add_report_section(
+                "teardown",
+                "Devtool process-state leak (restored)",
+                f"{request.node.nodeid} leaked process state:\n{details}",
+            )
+        else:
+            pytest.fail(
+                f"{request.node.nodeid} leaked process state:\n" + details,
+                pytrace=False,
+            )
+
+
+@dataclass(frozen=True)
+class DevtoolCliInvocation:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+@pytest.fixture
+def devtool_cli(capsys: pytest.CaptureFixture[str]) -> Callable[[Sequence[str]], DevtoolCliInvocation]:
+    """Canonical isolated harness for repeated in-process Devtool CLI calls."""
+
+    from devtool.cli import main
+    from devtool.process_state import ProcessStateGuard, format_process_state_differences
+
+    def invoke(argv: Sequence[str]) -> DevtoolCliInvocation:
+        guard = ProcessStateGuard.capture()
+        raised: BaseException | None = None
+        returncode = 1
+        captured = None
+        try:
+            returncode = int(main([str(item) for item in argv]))
+            captured = capsys.readouterr()
+        except BaseException as exc:  # preserve attribution before re-raising
+            raised = exc
+        finally:
+            differences = guard.verify_and_restore()
+        if differences:
+            pytest.fail(
+                "in-process Devtool CLI invocation leaked process state:\n"
+                + format_process_state_differences(differences),
+                pytrace=False,
+            )
+        if raised is not None:
+            raise raised
+        assert captured is not None
+        return DevtoolCliInvocation(returncode, captured.out, captured.err)
+
+    return invoke
+
+
+@pytest.fixture(autouse=True)
+def isolate_devtool_runtime_env(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    devtool_process_state_guard,
+) -> None:
     """Keep ordinary tests from reusing a developer's live HUD/log state."""
 
     # Tests must never inherit the developer's live Termux/chroot session,
@@ -130,6 +203,16 @@ def isolate_devtool_runtime_env(monkeypatch: pytest.MonkeyPatch, request: pytest
         "DEVTOOL_CHROOT_CONTEXT",
         "DEVTOOL_AUTO_CHROOT_ACTIVE",
         "DEVTOOL_RUN_ID",
+        # Pytest can itself be launched by Devtool while an artifact transaction
+        # is active.  Those parent-process roots are valid for the outer apply,
+        # but nested tests must not inherit them or tmp-repo validation/session
+        # state is redirected into the live repository.
+        "DEVTOOL_TRANSACTION_REPO_ROOT",
+        "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
+        "DEVTOOL_VALIDATION_STATE_REPO_ROOT",
+        "DEVTOOL_TRANSACTION_COMMIT_MODE",
+        "DEVTOOL_TRANSACTION_ISOLATION",
+        "DEVTOOL_PRESERVE_DIRTY_REQUESTED",
         "DEVTOOL_ANDROID_HUD_STATE_DIR",
         "DEVTOOL_HUD_BRIDGE_DIR",
         "DEVTOOL_TASKER_DIR",

@@ -99,7 +99,8 @@ def test_runner_applies_in_worktree_and_primary_changes_only_at_completion(tmp_p
 
     assert (root / "tracked.txt").read_text(encoding="utf-8") == "before\n"
     assert (execution_root / "tracked.txt").read_text(encoding="utf-8") == "after\n"
-    assert os.environ["DEVTOOL_TRANSACTION_REPO_ROOT"] == str(execution_root)
+    assert "DEVTOOL_TRANSACTION_REPO_ROOT" not in os.environ
+    assert "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT" not in os.environ
 
     mark_transaction_completed(result.metadata["transaction_path"])
     assert (root / "tracked.txt").read_text(encoding="utf-8") == "after\n"

@@ -78,6 +78,7 @@ from .core import configure_logging, finalize_execution_run
 from .core.events import BuildStarted, OverlayApplied, configure_event_console, publish_event
 from .overlay import check_overlay, inspect_patch_equivalence, rebase_overlay
 from .plugins import discover_plugins, doctor_plugin
+from .process_state import preserve_process_state
 from .doctor import collect_doctor_checks, doctor_payload
 from .validation_profiles import apply_profile as apply_validation_workflow_profile, available_profiles as available_validation_profiles
 from .detect import detect_repo, render_detect_text
@@ -8692,9 +8693,19 @@ def _append_run_log_summary(
                 return "succeeded" if result.returncode == 0 else "failed"
         return ""
 
+    # Final-log rendering must not create new process-global run identity.
+    # CLI execution establishes DEVTOOL_RUN_ID earlier; direct/library callers
+    # can supply ``_devtool_run_id`` without poisoning the hosting interpreter.
+    summary_run_id = str(
+        getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")
+    ).strip()
+    if not summary_run_id:
+        summary_run_id = __import__("uuid").uuid4().hex
+        args._devtool_run_id = summary_run_id
+
     lines = [
         "--- devtool run final ---",
-        f"Devtool run id: {_ensure_run_id(args)}",
+        f"Devtool run id: {summary_run_id}",
         f"Devtool status: {status}",
         f"Devtool exit code: {code}",
         f"Devtool command: {str(getattr(args, 'command', '') or 'devtool')}",
@@ -13592,7 +13603,15 @@ def _apply_ui_cli_overrides(args: argparse.Namespace) -> None:
             os.environ[env_key] = value
 
 
+
 def main(argv: list[str] | None = None) -> int:
+    """Run one CLI invocation without leaking repository-scoped process state."""
+
+    with preserve_process_state():
+        return _main_impl(argv)
+
+
+def _main_impl(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     parse_argv, passthrough_args = split_runner_passthrough_args(raw_argv)
     parse_argv, universal_json = extract_universal_json_flag(parse_argv)

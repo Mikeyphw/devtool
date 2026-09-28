@@ -2134,7 +2134,7 @@ class PythonRunner(ProjectRunner):
         report = root / ".devtool" / "reports" / "pytest.xml"
         coverage = options.get("coverage", {})
         coverage = dict(coverage) if isinstance(coverage, dict) else {}
-        argv = self._module(config, "pytest", f"--junitxml={report}")
+        argv = self._module(config, "pytest", "--tb=short", "-ra", f"--junitxml={report}")
         selection = resolve_test_selection(config)
         target_values = list(dict.fromkeys(str(item) for item in targets if str(item)))
         defaults_suppressed = bool(selection.exact_pytest() and not selection.pytest_include_defaults)

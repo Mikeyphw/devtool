@@ -29,6 +29,12 @@ def set_log_dir_override(path: str | Path | None) -> None:
     _RUNTIME_LOG_DIR = Path(text).expanduser() if text else None
 
 
+def get_log_dir_override() -> Path | None:
+    """Return the current in-process log-dir override without resolving it."""
+
+    return _RUNTIME_LOG_DIR
+
+
 def logs_dir() -> Path:
     env_override = os.environ.get("DEVTOOL_LOG_DIR", "").strip()
     path = _RUNTIME_LOG_DIR or (Path(env_override).expanduser() if env_override else state_dir() / "logs")

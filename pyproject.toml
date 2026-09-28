@@ -36,3 +36,18 @@ include-package-data = true
 [tool.setuptools.packages.find]
 include = ["devtool*"]
 exclude = ["tests*", "share*", "completions*"]
+
+[tool.pytest.ini_options]
+addopts = "--tb=short -ra --strict-markers --strict-config"
+testpaths = ["tests"]
+filterwarnings = ["default"]
+markers = [
+  "requires_tool(name): requires an external executable; skipped when unavailable",
+  "requires_posix: requires POSIX process/signal/file-descriptor semantics",
+  "not_termux(reason): host integration that is impossible on native Termux",
+  "slow_external: intentional real external-tool integration allowed to exceed the normal timing budget",
+  "fast: fast deterministic test lane",
+  "unit: unit test lane",
+  "serial: test requires exclusive process-global or external state",
+  "stateful: test intentionally exercises persistent state boundaries",
+]

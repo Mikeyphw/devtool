@@ -63,6 +63,7 @@ from .test_adapters import (
 from .transactions import create_apply_transaction, rollback_transaction, checkpoint_transaction_applied
 from .transaction_worktree import transaction_execution_root
 from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, redact_sensitive_value, write_log
+from .process_state import preserve_environment_keys
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .core.events import NodeDiscovered, NodeFinished, NodeStarted, TaskFinished, TaskStarted, WarningDetected, publish_event
 from .core.execution_contract import NodeId, RunId
@@ -2824,6 +2825,24 @@ def run_specs(
                         result_metadata["failed_test_ids"] = failed_ids
                     except Exception:
                         pass
+                    if report_parser == "pytest-junit" and tests.get("report_files"):
+                        from .test_reporting import render_structured_test_summary, structured_junit_summary
+
+                        normalized_for_summary = (
+                            _reconcile_test_results(canonical_test_id, [collection.test_result])
+                            if collection.test_result is not None
+                            else None
+                        )
+                        structured_summary = structured_junit_summary(
+                            normalized_for_summary,
+                            issues=collection.issues,
+                        )
+                        result_metadata["structured_test_summary"] = structured_summary
+                        result_metadata["failure_clusters"] = list(structured_summary.get("failure_clusters") or [])
+                        result_metadata["generated_surface_root_diagnostics"] = list(
+                            structured_summary.get("generated_surface_root_diagnostics") or []
+                        )
+                        output = (output.rstrip() + "\n" if output else "") + render_structured_test_summary(structured_summary) + "\n"
                 elif report_parser == "android-lint":
                     result_metadata["lint"] = collection.metadata
                     if collection.metadata.get("report_files"):
@@ -3427,6 +3446,38 @@ def apply_overlay(
     render_hook_progress: bool = False,
     stream_hook_output: bool = False,
 ) -> OperationResult:
+    """Apply one overlay without leaking transaction-root process state."""
+
+    with preserve_environment_keys((
+        "DEVTOOL_TRANSACTION_REPO_ROOT",
+        "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
+        "DEVTOOL_VALIDATION_STATE_REPO_ROOT",
+    )):
+        return _apply_overlay_impl(
+            repo_root, artifact, force=force, yes=yes, dry_run=dry_run,
+            log_path=log_path, preview=preview, ignore_checksum=ignore_checksum,
+            skip_artifact_validation=skip_artifact_validation,
+            lifecycle_progress=lifecycle_progress,
+            render_hook_progress=render_hook_progress,
+            stream_hook_output=stream_hook_output,
+        )
+
+
+def _apply_overlay_impl(
+    repo_root: Path,
+    artifact: str,
+    *,
+    force: bool = False,
+    yes: bool = False,
+    dry_run: bool = False,
+    log_path: Path | str | None = None,
+    preview: dict | None = None,
+    ignore_checksum: bool = False,
+    skip_artifact_validation: bool = False,
+    lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None,
+    render_hook_progress: bool = False,
+    stream_hook_output: bool = False,
+) -> OperationResult:
     artifact_path = resolve_artifact_path(artifact)
     if is_overlay_bundle(artifact_path):
         return apply_overlay_bundle(
@@ -3460,6 +3511,38 @@ def apply_overlay(
 
 
 def apply_overlay_bundle(
+    repo_root: Path,
+    artifact: str | Path | Sequence[str | Path],
+    *,
+    force: bool = False,
+    yes: bool = False,
+    dry_run: bool = False,
+    log_path: Path | str | None = None,
+    preview: dict | None = None,
+    source_artifacts: Sequence[str | Path] | None = None,
+    ignore_checksum: bool = False,
+    skip_artifact_validation: bool = False,
+    lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None,
+    render_hook_progress: bool = False,
+    stream_hook_output: bool = False,
+) -> OperationResult:
+    """Apply an overlay bundle without leaking transaction-root process state."""
+
+    with preserve_environment_keys((
+        "DEVTOOL_TRANSACTION_REPO_ROOT",
+        "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
+        "DEVTOOL_VALIDATION_STATE_REPO_ROOT",
+    )):
+        return _apply_overlay_bundle_impl(
+            repo_root, artifact, force=force, yes=yes, dry_run=dry_run,
+            log_path=log_path, preview=preview, source_artifacts=source_artifacts,
+            ignore_checksum=ignore_checksum, skip_artifact_validation=skip_artifact_validation,
+            lifecycle_progress=lifecycle_progress, render_hook_progress=render_hook_progress,
+            stream_hook_output=stream_hook_output,
+        )
+
+
+def _apply_overlay_bundle_impl(
     repo_root: Path,
     artifact: str | Path | Sequence[str | Path],
     *,
@@ -3700,8 +3783,13 @@ def apply_overlay_bundle(
 
 
 def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False) -> OperationResult:
-    artifact_path = resolve_artifact_path(artifact)
-    return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
+    with preserve_environment_keys((
+        "DEVTOOL_TRANSACTION_REPO_ROOT",
+        "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
+        "DEVTOOL_VALIDATION_STATE_REPO_ROOT",
+    )):
+        artifact_path = resolve_artifact_path(artifact)
+        return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
 
 
 def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False, lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None, render_hook_progress: bool = False, stream_hook_output: bool = False) -> OperationResult:
