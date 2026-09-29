@@ -58,6 +58,13 @@ description = "Run the EXEC-X03 one-graph validation convergence workflow"
 workflow = "roadmap-exec-x03"
 target = "devtool"
 
+
+# EXEC-G2 one-graph validation proof gate.
+[wrapper.commands.exec-g2]
+description = "Run the EXEC-G2 one-graph validation proof gate"
+workflow = "roadmap-exec-g2"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -475,6 +482,12 @@ roadmap-exec-x03 = [
   { id = "authority", ref = "test:roadmap-exec-x03-authority", depends_on = ["syntax"] },
   { id = "validation", ref = "test:roadmap-exec-x03-validation", depends_on = ["authority"] },
   { id = "artifact", ref = "test:roadmap-exec-x03-artifact", depends_on = ["authority"] },
+]
+
+roadmap-exec-g2 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "one-graph-proof", ref = "test:roadmap-exec-g2-one-graph-proof", depends_on = ["syntax"] },
+  { id = "x03-regression", ref = "test:roadmap-exec-g2-x03-regression", depends_on = ["one-graph-proof"] },
 ]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -1677,3 +1690,35 @@ name = "EXEC-X03 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "exec-x03"]
+
+# EXEC-G2 one-graph validation proof gate. This gate proves the X03 convergence
+# contracts without broadening into EXEC-X04's operational reuse adoption.
+[[test]]
+id = "roadmap-exec-g2-one-graph-proof"
+name = "EXEC-G2 one-graph validation authority proof"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_g2_validation_proof_gate.py",
+]
+
+[[test]]
+id = "roadmap-exec-g2-x03-regression"
+name = "EXEC-G2 retained EXEC-X03 convergence regression"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x03_validation_convergence.py",
+  "tests/test_validation_control_api.py",
+  "tests/test_validation_reports_phase32.py",
+  "tests/test_artifact_v2.py",
+]
+
+[[test]]
+id = "roadmap-exec-g2-artifact-bootstrap"
+name = "EXEC-G2 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 360
+command = ["./devtoolw", "exec-g2"]

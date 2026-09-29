@@ -1,0 +1,29 @@
+{
+  "overlay": "EXEC-G2",
+  "exports": [
+    {
+      "owner": "EXEC-X04",
+      "obligation": "Adopt one-graph validation/reuse contracts across native runners, local workflows/gates/seals, transaction/apply validation, federation resume, roadmap/gate execution graphs, same-run interruption continuation, cross-run selective reuse, explicit fresh/rerun controls, source-proof retention, and semantic explain/diff data."
+    },
+    {
+      "owner": "ENV-X04",
+      "obligation": "Keep Gradle/native task-plan details and environment/native-runner planning under ENV/runner ownership while consuming EXEC proof contracts."
+    },
+    {
+      "owner": "ANDROID",
+      "obligation": "Integrate device-specific proof and freshness through Android-owned contracts; EXEC consumes the typed result."
+    },
+    {
+      "owner": "LIFE",
+      "obligation": "Rollback/recovery implementation and transaction receipt truth remain LIFE-owned; EXEC consumes typed identities/receipts."
+    },
+    {
+      "owner": "PRES",
+      "obligation": "Human/TUI/Desktop rendering of validation/reuse/explain/diff data remains presentation-owned."
+    },
+    {
+      "owner": "EXEC-G3",
+      "obligation": "Final seal proves mixed executed/reused/materialized provenance and late-failure selective reuse over a larger graph."
+    }
+  ]
+}

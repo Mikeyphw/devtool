@@ -1,0 +1,31 @@
+{
+  "overlay": "EXEC-G2",
+  "title": "One-graph validation proof gate",
+  "position": {
+    "gate_window": "2/2",
+    "exec_scope": "5/7",
+    "full_plan": "20/63"
+  },
+  "status": "implemented-gate-artifact",
+  "delivered_promises": [
+    "EXEC-P001", "EXEC-P002", "EXEC-P003", "EXEC-P004", "EXEC-P005",
+    "EXEC-P037", "EXEC-P038", "EXEC-P039", "EXEC-P040", "EXEC-P042",
+    "EXEC-P043", "EXEC-P044", "EXEC-P045", "EXEC-P046", "EXEC-P047",
+    "EXEC-P048", "EXEC-P049", "EXEC-P050", "EXEC-P051", "EXEC-P052",
+    "EXEC-P053", "EXEC-P054", "EXEC-P055", "EXEC-P056", "EXEC-P057",
+    "EXEC-P058", "EXEC-P062", "EXEC-P063", "EXEC-P064", "EXEC-P065",
+    "EXEC-P066", "EXEC-P071", "EXEC-P072", "EXEC-P073", "EXEC-P074", "EXEC-P075"
+  ],
+  "evidence": {
+    "direct_gate_tests": "8 passed",
+    "retained_x03_regression": "48 passed",
+    "construction_wrapper_workflow": "3 stages, 56 tests, 0 warnings, 0 errors"
+  },
+  "not_claimed": [
+    "EXEC-X04 operational reuse adoption",
+    "Cross-run selective reuse over real workflow histories",
+    "Federation/transaction/roadmap adoption",
+    "PRES explain/diff rendering",
+    "EXEC-G3 final mixed provenance and late-failure proof"
+  ]
+}
