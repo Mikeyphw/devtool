@@ -1,0 +1,27 @@
+{
+  "source_overlay": "EXEC-X03",
+  "exports": [
+    {
+      "owner": "EXEC-X04",
+      "reason": "EXEC-X03 only converges validation/session/checkpoint/control references; operational adoption and selective reuse controls are the next EXEC implementation boundary.",
+      "obligations": [
+        "apply generic EXEC contracts across local workflows/gates/seals and native runners",
+        "same-run interruption continuation",
+        "cross-run selective reuse",
+        "explicit --fresh/rerun/rerun-from semantics",
+        "federation and transaction adoption",
+        "why reuse / why rerun semantic data"
+      ]
+    },
+    {
+      "owner": "EXEC-G2",
+      "reason": "Gate-owned proof follows this implementation overlay.",
+      "obligations": [
+        "prove one executable graph/status/attempt/progress authority",
+        "prove one reuse/invalidation authority",
+        "prove one generic validation contract/evaluator",
+        "prove verdict reconstruction from contract plus canonical evidence"
+      ]
+    }
+  ]
+}

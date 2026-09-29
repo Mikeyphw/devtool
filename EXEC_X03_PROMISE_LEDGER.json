@@ -1,0 +1,66 @@
+{
+  "overlay": "EXEC-X03",
+  "full_plan_position": "19/63",
+  "scope_position": "EXEC 4/7",
+  "gate_window_position": "1/2",
+  "delivered_promises": {
+    "EXEC-P001": "EXO remains execution/status/progress authority; validation private state contains only references.",
+    "EXEC-P002": "RER remains reusable-result qualification/invalidation authority through ReusePlanner and RER fingerprints.",
+    "EXEC-P003": "Validation owns the resolved contract and single satisfaction evaluator, not process truth.",
+    "EXEC-P005": "No second execution-history database is introduced.",
+    "EXEC-P037": "Validation keeps a typed ValidationRunRequest/control reference.",
+    "EXEC-P039": "ResolvedValidationContract remains the single required-check evaluator.",
+    "EXEC-P040": "Each validation check is bound to stable check and node identities.",
+    "EXEC-P042": "Required/optional/applicability semantics remain separate from execution lifecycle.",
+    "EXEC-P043": "Generic skipped execution cannot satisfy a required check without applicability evidence.",
+    "EXEC-P044": "Optional-only and empty-required contracts remain satisfiable.",
+    "EXEC-P045": "ValidationOutcome remains distinct from EXO ExecutionStatus.",
+    "EXEC-P046": "ValidationVerdict remains distinct from execution and transaction state.",
+    "EXEC-P047": "Canonical validation state does not persist a duplicate mutable executable DAG.",
+    "EXEC-P048": "Canonical validation state does not own process attempts, heartbeat, progress, or event truth.",
+    "EXEC-P049": "Validation state references canonical run/node/transaction/evidence identities.",
+    "EXEC-P050": "Plan pinning is preserved on bound canonical specs.",
+    "EXEC-P052": "Revision-guarded controls remain stable.",
+    "EXEC-P053": "Control operations lower through stable semantic intent.",
+    "EXEC-P054": "Primary controls are next, finish/remaining, and until-checkpoint/through.",
+    "EXEC-P055": "Checkpoint is a policy boundary, not necessarily an executable phase.",
+    "EXEC-P057": "Resource/process grouping can change without changing validation proof semantics.",
+    "EXEC-P058": "Synthetic executable finalize is removed from canonical proof semantics.",
+    "EXEC-P062": "Validation invalidation consumes RER/node identity evidence rather than only local broad domains.",
+    "EXEC-P063": "Canonical state and attachments are private RUN-style state under Devtool state.",
+    "EXEC-P064": "Canonical bookkeeping is private; repo-local files remain explicit compatibility projections.",
+    "EXEC-P065": "Report/state evidence is represented as private reference attachments.",
+    "EXEC-P072": "Artifact validation requirements compile into generic validation execution by counting refs as checks.",
+    "EXEC-P075": "No fake validation proof is produced for --no-validate or execution-empty refs."
+  },
+  "folded_exports": [
+    {
+      "from": "ENV-G2",
+      "issue": "workflow-only validation.refs did not count as executed artifact validation",
+      "resolution": "artifact lifecycle now treats validation.refs as a validation surface and test coverage proves workflow-only refs execute"
+    }
+  ],
+  "exports": [
+    {
+      "owner": "EXEC-X04",
+      "items": [
+        "same-run and cross-run selective reuse adoption",
+        "fresh/rerun/rerun-from controls",
+        "transaction/federation/roadmap adoption",
+        "performance metrics for hashing versus avoided work"
+      ]
+    },
+    {
+      "owner": "EXEC-G2",
+      "items": [
+        "authoritative one-graph validation proof gate over canonical EXO/RER/Validation authorities"
+      ]
+    },
+    {
+      "owner": "ENV-X04/ENV-G3",
+      "items": [
+        "later native Gradle affected-project/adaptive-history/destination convergence remains ENV-owned"
+      ]
+    }
+  ]
+}

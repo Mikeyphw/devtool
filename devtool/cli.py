@@ -10621,10 +10621,11 @@ def _artifact_script_result(
     if getattr(args, "no_artifact_script", False):
         return None, ""
     validation_script = artifact_validation_policy(manifest).get("script")
-    from .artifacts import artifact_validation_tests
+    from .artifacts import artifact_validation_refs, artifact_validation_tests
     validation_tests = artifact_validation_tests(manifest)
+    validation_refs = artifact_validation_refs(manifest)
     finalize_phases = set(artifact_finalize_phases(manifest))
-    if not validation_script and not validation_tests and not ({"before_validation", "after_validation"} & finalize_phases):
+    if not validation_script and not validation_tests and not validation_refs and not ({"before_validation", "after_validation"} & finalize_phases):
         return None, ""
 
     raw_sections: list[str] = []

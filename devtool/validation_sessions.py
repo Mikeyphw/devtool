@@ -34,6 +34,13 @@ from .core.execution_semantics import (
     validation_outcome_from_operation,
 )
 
+from .validation_authority import (
+    bind_validation_specs_to_authority,
+    semantic_control_intent,
+    validation_reuse_plan,
+    write_private_state,
+)
+
 SESSION_SCHEMA_VERSION = 7
 DEFAULT_PHASE_ORDER = (
     "static",
@@ -867,6 +874,13 @@ def save_session(
     session.updated_at = _utc_now()
     payload = session.as_dict()
     _atomic_write_json(path, payload)
+    try:
+        private_refs = write_private_state(session)
+    except Exception as exc:
+        private_refs = {"error": f"{type(exc).__name__}: {exc}"}
+    session.apply_context = {**dict(session.apply_context or {}), "canonical_private_state": private_refs}
+    payload = session.as_dict()
+    _atomic_write_json(path, payload)
     plan_payload = {
         "schema_version": SESSION_SCHEMA_VERSION,
         "session_id": session.session_id,
@@ -888,6 +902,7 @@ def save_session(
         "required_checkpoint_satisfied": required_checkpoint_satisfied(session),
         "plan_fingerprint": session.plan_fingerprint,
         "plan_drift_status": session.plan_drift_status,
+        "canonical_private_state": private_refs,
         "phases": [
             {
                 "key": item.key,
@@ -1598,7 +1613,10 @@ def create_session(
         )
     session_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:10]
     annotated = annotate_specs(list(specs), session_id=session_id)
+    annotated = bind_validation_specs_to_authority(annotated, repo_root=config.repo_root)
+    reuse_plan = validation_reuse_plan(annotated, repo_root=config.repo_root)
     session_context = dict(apply_context or {})
+    session_context.setdefault("reuse_plan", reuse_plan.to_dict())
     federation_owner = federation_operational_owner_from_environment(config.repo_root)
     if federation_owner:
         existing_owner = session_context.get("federation_owner")
@@ -1770,6 +1788,8 @@ def sync_plan(
     """
 
     annotated = annotate_specs(list(specs), session_id=session.session_id)
+    annotated = bind_validation_specs_to_authority(annotated, repo_root=Path(session.repo_root))
+    session.apply_context = {**dict(session.apply_context or {}), "reuse_plan": validation_reuse_plan(annotated, repo_root=Path(session.repo_root)).to_dict()}
     fresh_records = phase_records(annotated)
     old_by_key = _phase_map(session)
     fresh_by_key = {item.key: item for item in fresh_records}
@@ -2238,6 +2258,51 @@ def select_phase_keys(
     if max_phases > 0:
         ordered = ordered[:max_phases]
     return ordered
+
+
+
+def select_phase_keys_for_control(
+    session: ValidationSession,
+    *,
+    action: str = "run",
+    scope: str = "next",
+    selected_checks: Sequence[str] = (),
+    through: str = "",
+    expected_revision: int | None = None,
+    compatibility_source: str = "semantic-control",
+) -> list[str]:
+    """Primary EXEC-X03 validation control model: next/finish/until-checkpoint.
+
+    Legacy phase/exact-phase selection remains available to compatibility CLI
+    flags, but ordinary controls are expressed against semantic checks and
+    checkpoints rather than executable phase names.
+    """
+
+    intent = semantic_control_intent(
+        action,
+        scope=scope,
+        selected_checks=selected_checks,
+        through=through,
+        expected_revision=expected_revision,
+        compatibility_source=compatibility_source,
+    )
+    if intent.scope == "next":
+        return select_phase_keys(session, next_only=True)
+    if intent.scope == "remaining":
+        return select_phase_keys(session, complete=True)
+    if intent.scope == "through":
+        target = intent.through or session.required_checkpoint_name or "finalize"
+        # A finalize checkpoint may be administrative. In that case run through
+        # every required checkpoint key instead of requiring a literal executable
+        # finalize phase.
+        if target == "finalize" and session.required_checkpoint_keys:
+            runnable = {item.key for item in session.phases if item.status in _RUNNABLE_PHASE_STATES}
+            selected = _dependency_closure(session, session.required_checkpoint_keys) & runnable
+            return [item.key for item in session.phases if item.key in selected]
+        return select_phase_keys(session, through=target)
+    if intent.scope == "selected":
+        return select_phase_keys(session, selected_phases=list(intent.selected_checks))
+    return select_phase_keys(session, next_only=True)
 
 def spec_map(specs: Sequence[CommandSpec]) -> dict[str, CommandSpec]:
     return {str(spec.metadata.get("validation_phase_key") or ""): spec for spec in specs}
@@ -2786,6 +2851,11 @@ def status_payload(session: ValidationSession) -> dict[str, Any]:
     payload["plan_fingerprint"] = session.plan_fingerprint
     payload["plan_drift_status"] = session.plan_drift_status
     payload["plan_drift_details"] = list(session.plan_drift_details)
+    payload["validation_authority"] = {
+        "state": "reference-projection",
+        "private_state": dict((session.apply_context or {}).get("canonical_private_state") or {}),
+        "reuse_plan": dict((session.apply_context or {}).get("reuse_plan") or {}),
+    }
     payload["recommended_retry_profile"] = str(session.options.get("recommended_retry_profile") or "")
     execution_kind = str(session.options.get("execution_environment") or session.options.get("environment") or "native-termux").strip().lower()
     if execution_kind in {"auto", "termux", "native"}:

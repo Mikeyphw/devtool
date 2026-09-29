@@ -52,6 +52,12 @@ description = "Run the ENV-G2 real Gradle policy/evidence milestone"
 workflow = "roadmap-env-g2"
 target = "devtool"
 
+# EXEC-X03 one-graph durable validation convergence.
+[wrapper.commands.exec-x03]
+description = "Run the EXEC-X03 one-graph validation convergence workflow"
+workflow = "roadmap-exec-x03"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -463,6 +469,12 @@ roadmap-env-g2 = [
   { id = "contracts", ref = "test:roadmap-env-g2-contracts", depends_on = ["syntax"] },
   { id = "caller-reconciliation", ref = "test:roadmap-env-g2-callers", depends_on = ["syntax"] },
   { id = "real-gradle", ref = "test:roadmap-env-g2-real-gradle", depends_on = ["contracts", "caller-reconciliation"] },
+]
+roadmap-exec-x03 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "authority", ref = "test:roadmap-exec-x03-authority", depends_on = ["syntax"] },
+  { id = "validation", ref = "test:roadmap-exec-x03-validation", depends_on = ["authority"] },
+  { id = "artifact", ref = "test:roadmap-exec-x03-artifact", depends_on = ["authority"] },
 ]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -1617,3 +1629,51 @@ name = "ENV-G2 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 360
 command = ["./devtoolw", "env-g2"]
+
+# EXEC-X03 one-graph validation convergence. The workflow is bounded and non-Gradle;
+# EXEC-G2 owns the separate authoritative one-graph gate.
+[[test]]
+id = "roadmap-exec-x03-authority"
+name = "EXEC-X03 validation authority and reuse-planner contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x03_validation_convergence.py",
+  "tests/test_exec_x01_execution_validation_foundation.py",
+  "tests/test_exec_x02_reuse_qualification.py",
+]
+
+[[test]]
+id = "roadmap-exec-x03-validation"
+name = "EXEC-X03 durable validation checkpoint/control convergence"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_validation_sessions.py",
+  "tests/test_validation_control_api.py",
+  "tests/test_validation_reports_phase32.py",
+  "tests/test_validation_resume_startup_regression.py",
+  "tests/test_phase31_1_validation_completion.py",
+]
+
+[[test]]
+id = "roadmap-exec-x03-artifact"
+name = "EXEC-X03 artifact workflow-ref accounting and compatibility"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_tsys04_artifact_test_protocol.py",
+  "tests/test_artifact_v2.py",
+  "tests/test_exec_g1_artifact_workflow_refs.py",
+  "tests/test_artifact_validation_fail_closed_hotfix.py",
+]
+
+[[test]]
+id = "roadmap-exec-x03-artifact-bootstrap"
+name = "EXEC-X03 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 420
+command = ["./devtoolw", "exec-x03"]
