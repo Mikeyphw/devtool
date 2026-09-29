@@ -1,0 +1,20 @@
+{
+  "overlay": "PRES-X03 cross-surface rendering adoption",
+  "position": {
+    "pres_scope": "3/?",
+    "full_plan": "25/63"
+  },
+  "delivered": [
+    "machine/terminal/TUI/desktop/HUD/IPC consumer adapters over PresentationView",
+    "schema-v3 PresentationBundle for cross-surface render sets",
+    "cross-surface parity key and parity matrix",
+    "HUD compact render without a second progress/status authority",
+    "IPC presentation-view payload preserving schema-v2 digest and refs",
+    "reference-only guardrails for renders and bundles"
+  ],
+  "validation": {
+    "direct": "PRES-X03 targeted tests plus retained PRES-X02 regression",
+    "wrapper": "./devtoolw pres-x03",
+    "artifact": "Artifact validation passed"
+  }
+}

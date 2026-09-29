@@ -96,6 +96,12 @@ description = "Run the PRES-X02 presentation layout and interaction workflow"
 workflow = "roadmap-pres-x02"
 target = "devtool"
 
+# PRES-X03 cross-surface rendering adoption.
+[wrapper.commands.pres-x03]
+description = "Run the PRES-X03 cross-surface rendering workflow"
+workflow = "roadmap-pres-x03"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -548,6 +554,12 @@ roadmap-pres-x02 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "layout-interactions", ref = "test:roadmap-pres-x02-layout-interactions", depends_on = ["syntax"] },
   { id = "x01-regression", ref = "test:roadmap-pres-x02-x01-regression", depends_on = ["layout-interactions"] },
+]
+
+roadmap-pres-x03 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "cross-surface-rendering", ref = "test:roadmap-pres-x03-cross-surface-rendering", depends_on = ["syntax"] },
+  { id = "x02-regression", ref = "test:roadmap-pres-x03-x02-regression", depends_on = ["cross-surface-rendering"] },
 ]
 
 roadmap-smoke = [
@@ -1922,3 +1934,31 @@ runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "pres-x02"]
 
+
+# PRES-X03 cross-surface rendering adapters over PRES-X01/X02 projection/view contracts.
+[[test]]
+id = "roadmap-pres-x03-cross-surface-rendering"
+name = "PRES-X03 cross-surface rendering contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x03_cross_surface_rendering.py",
+]
+
+[[test]]
+id = "roadmap-pres-x03-x02-regression"
+name = "PRES-X03 retained PRES-X02 layout regression"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x02_presentation_layouts.py",
+]
+
+[[test]]
+id = "roadmap-pres-x03-artifact-bootstrap"
+name = "PRES-X03 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 420
+command = ["./devtoolw", "pres-x03"]

@@ -526,3 +526,235 @@ def assert_view_is_reference_only(view: PresentationView) -> None:
         raise AssertionError(f"presentation view contains execution-owned truth: {leaked}")
     if machine.get("generated_truth") is not False:
         raise AssertionError("presentation view attempted to own generated truth")
+
+class PresentationConsumer(str, Enum):
+    MACHINE = "machine"
+    TERMINAL = "terminal"
+    TUI = "tui"
+    DESKTOP = "desktop"
+    HUD = "hud"
+    IPC = "ipc"
+
+
+@dataclass(frozen=True)
+class RenderedSurface:
+    consumer: PresentationConsumer
+    payload: Mapping[str, Any]
+    refs: tuple[CanonicalReference, ...]
+    actions: tuple[PresentationAction, ...]
+    parity_key: str
+    fidelity: str = "full"
+    generated_truth: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        data = {
+            "consumer": self.consumer.value,
+            "payload": dict(self.payload),
+            "refs": [ref.as_dict() for ref in self.refs],
+            "actions": [action.as_dict() for action in self.actions],
+            "parity_key": self.parity_key,
+            "fidelity": self.fidelity,
+            "generated_truth": self.generated_truth,
+        }
+        data["render_digest"] = projection_digest({k: v for k, v in data.items() if k != "render_digest"})
+        return data
+
+
+@dataclass(frozen=True)
+class PresentationBundle:
+    source_view: PresentationView
+    renders: tuple[RenderedSurface, ...]
+    parity: Mapping[str, Any]
+
+    def as_machine(self) -> dict[str, Any]:
+        payload = {
+            "schema_version": 3,
+            "source_view": self.source_view.as_machine(),
+            "renders": [render.as_dict() for render in self.renders],
+            "parity": dict(self.parity),
+            "refs": [ref.as_dict() for ref in self.refs],
+            "generated_truth": False,
+        }
+        payload["bundle_digest"] = projection_digest({k: v for k, v in payload.items() if k != "bundle_digest"})
+        return payload
+
+    @property
+    def refs(self) -> tuple[CanonicalReference, ...]:
+        unique: dict[tuple[str, str, str], CanonicalReference] = {}
+        for ref in self.source_view.refs:
+            unique.setdefault((ref.authority, ref.ref, ref.kind), ref)
+        for render in self.renders:
+            for ref in render.refs:
+                unique.setdefault((ref.authority, ref.ref, ref.kind), ref)
+        return tuple(unique.values())
+
+
+def normalize_consumer(value: PresentationConsumer | PresentationSurface | str) -> PresentationConsumer:
+    if isinstance(value, PresentationConsumer):
+        return value
+    if isinstance(value, PresentationSurface):
+        return PresentationConsumer(value.value)
+    text = str(value or PresentationConsumer.MACHINE.value).strip().lower().replace("android-hud", "hud")
+    if text not in {consumer.value for consumer in PresentationConsumer}:
+        raise ValueError(f"unknown presentation consumer: {value}")
+    return PresentationConsumer(text)
+
+
+def consumer_surface(consumer: PresentationConsumer | PresentationSurface | str) -> PresentationSurface:
+    consumer = normalize_consumer(consumer)
+    if consumer == PresentationConsumer.HUD:
+        return PresentationSurface.TERMINAL
+    if consumer == PresentationConsumer.IPC:
+        return PresentationSurface.MACHINE
+    return PresentationSurface(consumer.value)
+
+
+def parity_identity(view: PresentationView) -> dict[str, Any]:
+    refs = [ref.as_dict() for ref in view.refs]
+    actions = [action.intent for action in view.actions if action.enabled]
+    return {
+        "status": view.projection.status,
+        "severity": status_severity(view.projection.status),
+        "ref_digest": projection_digest(refs),
+        "action_intents": tuple(sorted(actions)),
+    }
+
+
+def _render_terminal_payload(view: PresentationView) -> dict[str, Any]:
+    return {
+        "format": "plain-text",
+        "text": view.terminal_text(),
+        "line_count": len(view.terminal_text().splitlines()),
+    }
+
+
+def _render_tui_payload(view: PresentationView) -> dict[str, Any]:
+    return {
+        "format": "structured-tui",
+        "title": view.projection.title,
+        "status": view.projection.status,
+        "panes": view.layout.panes,
+        "density": view.layout.density,
+        "sections": [section.as_dict() for section in view.sections],
+        "actions": [action.as_dict() for action in view.actions],
+        "cursor": view.projection.cursor,
+    }
+
+
+def _render_desktop_payload(view: PresentationView) -> dict[str, Any]:
+    severity = status_severity(view.projection.status)
+    return {
+        "format": "desktop-card",
+        "window_title": view.projection.title,
+        "status": view.projection.status,
+        "severity": severity,
+        "notification": severity in {"error", "active"},
+        "panels": [section.as_dict() for section in view.sections],
+        "actions": [action.as_dict() for action in view.actions],
+    }
+
+
+def _render_hud_payload(view: PresentationView) -> dict[str, Any]:
+    enabled_actions = [action.as_dict() for action in view.actions if action.enabled]
+    return {
+        "format": "android-live-hud",
+        "chip": f"{view.projection.title}: {view.projection.status}",
+        "severity": status_severity(view.projection.status),
+        "summary": view.projection.summary,
+        "primary_action": enabled_actions[0] if enabled_actions else None,
+        "refs": [ref.as_dict() for ref in view.refs[:3]],
+    }
+
+
+def _render_ipc_payload(view: PresentationView) -> dict[str, Any]:
+    machine = view.as_machine()
+    return {
+        "format": "presentation-view-v2",
+        "schema_version": machine["schema_version"],
+        "status": machine["projection"]["status"],
+        "view_digest": machine["view_digest"],
+        "refs": machine["refs"],
+        "actions": machine["actions"],
+    }
+
+
+def render_for_consumer(view: PresentationView, consumer: PresentationConsumer | PresentationSurface | str) -> RenderedSurface:
+    assert_view_is_reference_only(view)
+    consumer = normalize_consumer(consumer)
+    renderers = {
+        PresentationConsumer.MACHINE: lambda v: v.as_machine(),
+        PresentationConsumer.TERMINAL: _render_terminal_payload,
+        PresentationConsumer.TUI: _render_tui_payload,
+        PresentationConsumer.DESKTOP: _render_desktop_payload,
+        PresentationConsumer.HUD: _render_hud_payload,
+        PresentationConsumer.IPC: _render_ipc_payload,
+    }
+    payload = renderers[consumer](view)
+    identity = parity_identity(view)
+    parity_key = projection_digest(identity)
+    fidelity = "compact" if consumer == PresentationConsumer.HUD else "full"
+    render = RenderedSurface(consumer, payload, view.refs, view.actions, parity_key, fidelity)
+    assert_render_is_reference_only(render)
+    return render
+
+
+def build_presentation_bundle(
+    projection: PresentationProjection,
+    *,
+    consumers: Iterable[PresentationConsumer | PresentationSurface | str] = (
+        PresentationConsumer.MACHINE,
+        PresentationConsumer.TERMINAL,
+        PresentationConsumer.TUI,
+        PresentationConsumer.DESKTOP,
+        PresentationConsumer.HUD,
+        PresentationConsumer.IPC,
+    ),
+    width: int = 120,
+    profile: PresentationProfile | str = PresentationProfile.STANDARD,
+) -> PresentationBundle:
+    normalized = tuple(normalize_consumer(consumer) for consumer in consumers)
+    base_surface = consumer_surface(normalized[0]) if normalized else projection.surface
+    requested = {"refs", "sections", "actions", "cursor", "panes", "notifications"}
+    view = render_projection_view(projection, surface=base_surface, width=width, profile=profile, requested_capabilities=requested)
+    renders = tuple(render_for_consumer(view, consumer) for consumer in normalized)
+    parity = cross_surface_parity(renders)
+    bundle = PresentationBundle(view, renders, parity)
+    assert_bundle_is_reference_only(bundle)
+    return bundle
+
+
+def cross_surface_parity(renders: Sequence[RenderedSurface]) -> dict[str, Any]:
+    keys = {render.parity_key for render in renders}
+    actions = {render.consumer.value: [action.intent for action in render.actions if action.enabled] for render in renders}
+    refs = {render.consumer.value: [ref.as_dict() for ref in render.refs] for render in renders}
+    return {
+        "surface_count": len(renders),
+        "parity_key": next(iter(keys)) if len(keys) == 1 else None,
+        "consistent": len(keys) <= 1,
+        "consumers": [render.consumer.value for render in renders],
+        "action_intents_by_consumer": actions,
+        "refs_by_consumer": refs,
+    }
+
+
+def assert_render_is_reference_only(render: RenderedSurface) -> None:
+    encoded = _stable_json(render.as_dict())
+    forbidden = ("stdout", "stderr", "argv", "heartbeat_owner", "process_attempt")
+    leaked = [item for item in forbidden if item in encoded]
+    if leaked:
+        raise AssertionError(f"surface render contains execution-owned truth: {leaked}")
+    if render.generated_truth is not False:
+        raise AssertionError("surface render attempted to own generated truth")
+
+
+def assert_bundle_is_reference_only(bundle: PresentationBundle) -> None:
+    encoded = _stable_json(bundle.as_machine())
+    forbidden = ("stdout", "stderr", "argv", "heartbeat_owner", "process_attempt")
+    leaked = [item for item in forbidden if item in encoded]
+    if leaked:
+        raise AssertionError(f"presentation bundle contains execution-owned truth: {leaked}")
+    if bundle.as_machine().get("generated_truth") is not False:
+        raise AssertionError("presentation bundle attempted to own generated truth")
+    if not bundle.parity.get("consistent", False):
+        raise AssertionError("cross-surface renders do not preserve parity identity")
+
