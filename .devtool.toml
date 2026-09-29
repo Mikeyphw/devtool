@@ -121,6 +121,12 @@ description = "Run the PRES-X06 Textual default replacement workflow"
 workflow = "roadmap-pres-x06"
 target = "devtool"
 
+# PRES-X07 Textual replacement hardening.
+[wrapper.commands.pres-x07]
+description = "Run the PRES-X07 Textual replacement hardening workflow"
+workflow = "roadmap-pres-x07"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -598,6 +604,12 @@ roadmap-pres-x06 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "textual-default-replacement", ref = "test:roadmap-pres-x06-textual-default-replacement", depends_on = ["syntax"] },
   { id = "x05-regression", ref = "test:roadmap-pres-x06-x05-regression", depends_on = ["textual-default-replacement"] },
+]
+
+roadmap-pres-x07 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "textual-replacement-hardening", ref = "test:roadmap-pres-x07-textual-replacement-hardening", depends_on = ["syntax"] },
+  { id = "x06-regression", ref = "test:roadmap-pres-x07-x06-regression", depends_on = ["textual-replacement-hardening"] },
 ]
 
 roadmap-smoke = [
@@ -2089,3 +2101,33 @@ name = "PRES-X06 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "pres-x06"]
+
+# PRES-X07 Textual replacement hardening. Legacy remains fenced behind
+# explicit selection or missing-Textual fallback; explain-backend makes this auditable.
+[[test]]
+id = "roadmap-pres-x07-textual-replacement-hardening"
+name = "PRES-X07 Textual replacement hardening contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x07_textual_replacement_hardening.py",
+]
+
+[[test]]
+id = "roadmap-pres-x07-x06-regression"
+name = "PRES-X07 retained PRES-X06 default replacement regression"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x06_textual_default_replacement.py",
+]
+
+[[test]]
+id = "roadmap-pres-x07-artifact-bootstrap"
+name = "PRES-X07 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 420
+command = ["./devtoolw", "pres-x07"]
+

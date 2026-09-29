@@ -741,7 +741,7 @@ def normalize_tui_backend(value: str | None) -> str:
     normalized = (value or "auto").strip().lower().replace("_", "-")
     if normalized in {"", "default", "preferred"}:
         return "auto"
-    if normalized in {"rich", "classic", "old", "legacy-tui"}:
+    if normalized in {"legacy", "rich", "classic", "old", "legacy-tui"}:
         return "legacy"
     if normalized in {"textual", "new"}:
         return "textual"
@@ -880,6 +880,147 @@ def assert_tui_backend_selection_is_safe(selection: TuiBackendSelection) -> None
         raise AssertionError("PRES-X06 requires Textual to be the default TUI backend")
 
 
+
+# PRES-X07 Textual replacement hardening contracts.
+@dataclass(frozen=True)
+class TuiBackendHardeningNotice:
+    """Human/machine notice explaining TUI backend selection and fallback fencing."""
+
+    selection: TuiBackendSelection
+    severity: str
+    message: str
+    remediations: tuple[str, ...] = ()
+    fallback_explicit: bool = False
+    owns_truth: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "schema_version": 1,
+            "severity": self.severity,
+            "message": self.message,
+            "remediations": list(self.remediations),
+            "fallback_explicit": self.fallback_explicit,
+            "owns_truth": self.owns_truth,
+            "selection": self.selection.as_dict(),
+        }
+        payload["notice_digest"] = projection_digest({k: v for k, v in payload.items() if k != "notice_digest"})
+        return payload
+
+
+def textual_replacement_hardening_contract() -> dict[str, Any]:
+    """Durable PRES-X07 contract for replacing the legacy TUI safely."""
+
+    return {
+        "schema_version": 1,
+        "primary_backend": "textual",
+        "legacy_backend_status": "fallback-only",
+        "legacy_allowed_when": (
+            "--legacy-tui or --backend legacy is explicit",
+            "auto mode cannot import Textual and fallback is allowed",
+        ),
+        "legacy_not_allowed_when": (
+            "--backend textual was requested",
+            "--require-textual or --no-tui-fallback was requested",
+        ),
+        "explain_command": "devtool tui --explain-backend",
+        "machine_output_changed": False,
+        "textual_owns_truth": False,
+        "truth_authority": "RUN/EXO/RER/validation/ENV via presentation_surfaces",
+    }
+
+
+def build_tui_backend_notice(selection: TuiBackendSelection) -> TuiBackendHardeningNotice:
+    """Build a renderer-safe explanation for the chosen TUI backend."""
+
+    assert_tui_backend_selection_is_safe(selection)
+    if selection.effective_backend == "textual":
+        notice = TuiBackendHardeningNotice(
+            selection=selection,
+            severity="info",
+            message="Textual TUI selected as the primary backend.",
+            remediations=(),
+            fallback_explicit=False,
+        )
+    elif selection.effective_backend == "legacy" and selection.requested_backend == "auto":
+        notice = TuiBackendHardeningNotice(
+            selection=selection,
+            severity="warning",
+            message="Textual is the primary TUI, but it is not importable; using the legacy fallback for this launch.",
+            remediations=(
+                "Install the Textual extra with pip install -e .[textual]",
+                "Use devtool tui --require-textual to fail instead of falling back",
+                "Use devtool tui --explain-backend to inspect backend selection",
+            ),
+            fallback_explicit=False,
+        )
+    elif selection.effective_backend == "legacy":
+        notice = TuiBackendHardeningNotice(
+            selection=selection,
+            severity="notice",
+            message="Legacy TUI selected only because it was explicitly requested.",
+            remediations=("Remove --legacy-tui or use --backend auto to return to Textual-first selection",),
+            fallback_explicit=True,
+        )
+    else:
+        notice = TuiBackendHardeningNotice(
+            selection=selection,
+            severity="error",
+            message=selection.reason or "Textual TUI unavailable and fallback is disabled.",
+            remediations=(
+                "Install the Textual extra with pip install -e .[textual]",
+                "Use --legacy-tui only if you intentionally need the fallback",
+            ),
+            fallback_explicit=False,
+        )
+    assert_tui_backend_notice_is_safe(notice)
+    return notice
+
+
+def assert_tui_backend_notice_is_safe(notice: TuiBackendHardeningNotice) -> None:
+    encoded = str(notice.as_dict()).lower()
+    leaked = [field for field in _FORBIDDEN_TRUTH_FIELDS if field in encoded]
+    if leaked:
+        raise AssertionError(f"TUI backend notice contains execution-owned truth: {leaked}")
+    if notice.owns_truth is not False:
+        raise AssertionError("TUI backend notice attempted to own canonical truth")
+
+
+def assert_legacy_tui_is_fenced(selection: TuiBackendSelection) -> None:
+    """Ensure legacy can only be reached through explicit or auto-fallback paths."""
+
+    assert_tui_backend_selection_is_safe(selection)
+    if selection.default_backend != "textual":
+        raise AssertionError("legacy cannot become the default backend")
+    if selection.effective_backend != "legacy":
+        return
+    explicit = selection.requested_backend == "legacy" or selection.legacy_flag
+    auto_fallback = (
+        selection.requested_backend == "auto"
+        and not selection.availability.available
+        and selection.fallback_backend == "legacy"
+        and not selection.require_textual
+    )
+    if not (explicit or auto_fallback):
+        raise AssertionError("legacy TUI must be explicit or a permitted auto fallback")
+
+
+def summarize_legacy_cleanup_assumptions(selections: Sequence[TuiBackendSelection]) -> dict[str, Any]:
+    """Summarize remaining legacy paths without reading execution truth."""
+
+    for selection in selections:
+        assert_legacy_tui_is_fenced(selection)
+    legacy_paths = [selection for selection in selections if selection.effective_backend == "legacy"]
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "primary_backend": "textual",
+        "legacy_path_count": len(legacy_paths),
+        "legacy_reasons": sorted({selection.reason for selection in legacy_paths}),
+        "default_backend": "textual",
+        "owns_truth": False,
+    }
+    payload["cleanup_digest"] = projection_digest({k: v for k, v in payload.items() if k != "cleanup_digest"})
+    return payload
+
 def run_textual_tui_runtime(args: Any, *, repo_root: Any, console: Any | None = None) -> int:
     """Run the concrete Textual shell when Textual is installed.
 
@@ -963,14 +1104,25 @@ def run_tui_entrypoint(
         availability=availability,
         session_transport=getattr(args, "session_transport", "local"),
     )
+    notice = build_tui_backend_notice(selection)
+    if bool(getattr(args, "explain_backend", False)):
+        payload = {"selection": selection.as_dict(), "notice": notice.as_dict()}
+        if console is not None:
+            console.print(payload)
+        else:
+            print(payload)
+        return 0
     if selection.effective_backend == "unavailable":
-        message = selection.reason or "Textual TUI unavailable"
+        message = notice.message or selection.reason or "Textual TUI unavailable"
         if console is not None:
             console.print(f"Error: {message}")
         else:
             print(f"Error: {message}")
         return 2
     if selection.effective_backend == "legacy":
+        assert_legacy_tui_is_fenced(selection)
+        if selection.requested_backend == "auto" and console is not None:
+            console.print(f"Warning: {notice.message}")
         if legacy_runner is None:
             from .tui import run_tui as legacy_runner
         return int(legacy_runner(args, repo_root=repo_root, console=console))

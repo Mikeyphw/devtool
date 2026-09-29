@@ -1,0 +1,19 @@
+{
+  "overlay": "PRES-X07",
+  "title": "Textual replacement hardening and legacy fencing",
+  "full_plan_position": "29/63",
+  "delivered_promises": [
+    "Legacy TUI is fenced behind explicit selection or permitted auto fallback",
+    "Textual remains the primary/default TUI backend",
+    "No-fallback alias is available for fail-closed Textual launches",
+    "Backend selection can be explained without launching the UI",
+    "Auto fallback emits an explicit warning path",
+    "Hardening notices are reference-only and do not own canonical truth",
+    "PRES-X06 default replacement contracts remain green"
+  ],
+  "validation_refs": [
+    "roadmap-pres-x07-textual-replacement-hardening",
+    "roadmap-pres-x07-x06-regression",
+    "roadmap-pres-x07-artifact-bootstrap"
+  ]
+}

@@ -1012,6 +1012,8 @@ def build_parser() -> argparse.ArgumentParser:
     tui_cmd.add_argument("--backend", choices=["auto", "textual", "legacy"], default="auto", help="TUI backend; auto prefers Textual and falls back to legacy")
     tui_cmd.add_argument("--legacy-tui", action="store_true", help="Force the legacy Rich terminal TUI backend")
     tui_cmd.add_argument("--require-textual", action="store_true", help="Fail instead of falling back when Textual cannot be launched")
+    tui_cmd.add_argument("--no-tui-fallback", action="store_true", dest="require_textual", help="Alias for --require-textual; do not fall back to legacy TUI")
+    tui_cmd.add_argument("--explain-backend", action="store_true", help="Print the resolved TUI backend selection and exit")
 
     cleanup_cmd = subparsers.add_parser("cleanup", help="Archive historical repository backups and optionally prune old backup history")
     cleanup_cmd.add_argument("--dry-run", action="store_true", help="Show what would be archived or pruned without changing files")

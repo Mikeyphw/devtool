@@ -1,0 +1,15 @@
+{
+  "producer": "PRES-X07",
+  "exports": [
+    {
+      "id": "pres-g1-textual-replacement-proof-gate",
+      "owner": "PRES-G1",
+      "description": "Prove Textual is the primary/default TUI, legacy is fallback-only, machine output remains unchanged, and presentation surfaces still consume canonical refs without owning RUN/EXO/RER/validation truth."
+    },
+    {
+      "id": "future-pres-legacy-removal-window",
+      "owner": "Future PRES cleanup",
+      "description": "After the PRES-G1 proof gate, consider reducing the legacy TUI to a maintenance fallback or removing duplicate legacy-only assumptions from old renderer code."
+    }
+  ]
+}
