@@ -65,6 +65,13 @@ description = "Run the EXEC-G2 one-graph validation proof gate"
 workflow = "roadmap-exec-g2"
 target = "devtool"
 
+
+# EXEC-X04 operational reuse adoption.
+[wrapper.commands.exec-x04]
+description = "Run the EXEC-X04 operational reuse adoption workflow"
+workflow = "roadmap-exec-x04"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -489,6 +496,13 @@ roadmap-exec-g2 = [
   { id = "one-graph-proof", ref = "test:roadmap-exec-g2-one-graph-proof", depends_on = ["syntax"] },
   { id = "x03-regression", ref = "test:roadmap-exec-g2-x03-regression", depends_on = ["one-graph-proof"] },
 ]
+
+roadmap-exec-x04 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "operational-adoption", ref = "test:roadmap-exec-x04-operational-adoption", depends_on = ["syntax"] },
+  { id = "g2-regression", ref = "test:roadmap-exec-x04-g2-regression", depends_on = ["operational-adoption"] },
+]
+
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "workflow-exo", ref = "test:roadmap-workflow-exo-baseline", depends_on = ["syntax"] },
@@ -1722,3 +1736,36 @@ name = "EXEC-G2 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 360
 command = ["./devtoolw", "exec-g2"]
+
+
+# EXEC-X04 operational reuse adoption. This implementation overlay adopts the
+# generic EXEC/RER/EXO contracts across local, native-runner, transaction,
+# federation, remote/provider, device, selected-test and presentation projection
+# surfaces without taking over their owning transport/rendering/rollback logic.
+[[test]]
+id = "roadmap-exec-x04-operational-adoption"
+name = "EXEC-X04 operational reuse adoption contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x04_operational_adoption.py",
+]
+
+[[test]]
+id = "roadmap-exec-x04-g2-regression"
+name = "EXEC-X04 retained one-graph proof regression"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_g2_validation_proof_gate.py",
+  "tests/test_exec_x03_validation_convergence.py",
+]
+
+[[test]]
+id = "roadmap-exec-x04-artifact-bootstrap"
+name = "EXEC-X04 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 420
+command = ["./devtoolw", "exec-x04"]

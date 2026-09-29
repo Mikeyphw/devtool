@@ -1,0 +1,13 @@
+{
+  "overlay": "EXEC-X04",
+  "exports": [
+    {"owner": "PRES-X04", "obligation": "Render why-reuse, why-rerun and validation diff projections from EXEC semantic records without becoming proof authority."},
+    {"owner": "DIST-X04", "obligation": "Carry remote/federated execution event delivery using EXEC projection records; transport remains DIST-owned."},
+    {"owner": "LIFE-X04", "obligation": "Implement rollback/recovery and transaction-state equivalence using typed LIFE receipts; EXEC only references those receipts."},
+    {"owner": "TEST-X04", "obligation": "Own selected-test lane organization and testcase outcome semantics while preserving EXEC node-selection identity."},
+    {"owner": "ENV-X04", "obligation": "Provide runner/toolchain contribution semantics consumed by EXEC operational adoption."},
+    {"owner": "ANDROID-X04", "obligation": "Own device freshness, instrumentation and Android DEVICE proof details consumed by EXEC."},
+    {"owner": "RMP-X04/G3", "obligation": "Own roadmap promise policy and grand seal sequencing over EXEC graph projections."},
+    {"owner": "EXEC-G3", "obligation": "Prove a mixed executed/reused/materialized graph, late-failure selective reuse, same-run interruption continuation, and final closure disposition."}
+  ]
+}

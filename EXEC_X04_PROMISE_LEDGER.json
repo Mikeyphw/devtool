@@ -1,0 +1,15 @@
+{
+  "overlay": "EXEC-X04",
+  "full_plan_position": "21/63",
+  "scope_position": "EXEC 6/7",
+  "gate_window_position": "1/2 before EXEC-G3",
+  "satisfied_by_implementation": [
+    "EXEC-P028", "EXEC-P029", "EXEC-P030", "EXEC-P031", "EXEC-P032", "EXEC-P033", "EXEC-P034", "EXEC-P035", "EXEC-P036",
+    "EXEC-P060", "EXEC-P061", "EXEC-P062", "EXEC-P063", "EXEC-P064", "EXEC-P065", "EXEC-P066", "EXEC-P067", "EXEC-P068", "EXEC-P069", "EXEC-P070", "EXEC-P071", "EXEC-P072", "EXEC-P073", "EXEC-P074", "EXEC-P075", "EXEC-P076", "EXEC-P077", "EXEC-P078", "EXEC-P079", "EXEC-P080", "EXEC-P081"
+  ],
+  "retained_from_previous_gates": [
+    "EXEC-P001", "EXEC-P002", "EXEC-P003", "EXEC-P004", "EXEC-P005", "EXEC-P006", "EXEC-P007", "EXEC-P008", "EXEC-P009", "EXEC-P010", "EXEC-P011", "EXEC-P012", "EXEC-P013", "EXEC-P014", "EXEC-P015", "EXEC-P016", "EXEC-P017", "EXEC-P018", "EXEC-P019", "EXEC-P020", "EXEC-P021", "EXEC-P022", "EXEC-P023", "EXEC-P024", "EXEC-P025", "EXEC-P026", "EXEC-P027", "EXEC-P037", "EXEC-P038", "EXEC-P039", "EXEC-P040", "EXEC-P041", "EXEC-P042", "EXEC-P043", "EXEC-P044", "EXEC-P045", "EXEC-P046", "EXEC-P047", "EXEC-P048", "EXEC-P049", "EXEC-P050", "EXEC-P051", "EXEC-P052", "EXEC-P053", "EXEC-P054", "EXEC-P055", "EXEC-P056", "EXEC-P057", "EXEC-P058", "EXEC-P059"
+  ],
+  "gate_proof_pending": ["EXEC-G3 final mixed graph acceptance"],
+  "exported_owners": ["PRES-X04", "DIST-X04", "LIFE-X04", "TEST-X04", "ENV-X04", "ANDROID-X04", "RMP-X04", "RMP-G3"]
+}
