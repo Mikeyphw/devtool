@@ -72,7 +72,9 @@ def _git(root: Path, *args: str, check: bool = True, text: bool = True) -> subpr
 
 
 def _safe_relative(value: str) -> str:
-    text = value.replace("\\", "/").strip().lstrip("./")
+    text = value.replace("\\", "/").strip()
+    while text.startswith("./"):
+        text = text[2:]
     path = PurePosixPath(text)
     if not text or path.is_absolute() or ".." in path.parts or text in {".", ".."}:
         raise RepositoryPackError(f"Unsafe repository-pack member path: {value!r}")

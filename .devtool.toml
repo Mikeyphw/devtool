@@ -145,6 +145,12 @@ description = "Run the LIFE-X02 canonical artifact, trust, and repository-pack w
 workflow = "roadmap-life-x02"
 target = "devtool"
 
+# LIFE-G1 authoritative mutation/recovery proof gate.
+[wrapper.commands.life-g1]
+description = "Run the LIFE-G1 mutation and recovery proof gate"
+workflow = "roadmap-life-g1"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -650,6 +656,20 @@ roadmap-life-x02 = [
   { id = "canonical-model", ref = "test:roadmap-life-x02-canonical-artifact-trust-pack", depends_on = ["syntax"] },
   { id = "artifact-inspection-regression", ref = "test:roadmap-life-x02-artifact-inspection-regression", depends_on = ["canonical-model"] },
   { id = "artifact-apply-regression", ref = "test:roadmap-life-x02-artifact-apply-regression", depends_on = ["artifact-inspection-regression"] },
+]
+
+roadmap-life-g1 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "mutation-recovery-proof", ref = "test:roadmap-life-g1-mutation-recovery-proof", depends_on = ["syntax"] },
+  { id = "x01-immediate-regression", ref = "test:roadmap-life-x01-immediate-lifecycle-safety", depends_on = ["mutation-recovery-proof"] },
+  { id = "x01-recovery-regression", ref = "test:roadmap-life-x01-transaction-lifecycle-recovery", depends_on = ["x01-immediate-regression"] },
+  { id = "x01-transaction-regression", ref = "test:roadmap-life-x01-transaction-regression", depends_on = ["x01-recovery-regression"] },
+  { id = "x01-preflight-regression", ref = "test:roadmap-life-x01-artifact-preflight-regression", depends_on = ["x01-transaction-regression"] },
+  { id = "x01-dirty-tree-regression", ref = "test:roadmap-life-x01-git-frx13-regression", depends_on = ["x01-preflight-regression"] },
+  { id = "x02-canonical-regression", ref = "test:roadmap-life-x02-canonical-artifact-trust-pack", depends_on = ["x01-dirty-tree-regression"] },
+  { id = "x02-inspection-regression", ref = "test:roadmap-life-x02-artifact-inspection-regression", depends_on = ["x02-canonical-regression"] },
+  { id = "x02-apply-regression", ref = "test:roadmap-life-x02-artifact-apply-regression", depends_on = ["x02-inspection-regression"] },
+  { id = "bundle-rollback-regression", ref = "test:roadmap-life-g1-bundle-rollback-regression", depends_on = ["x02-apply-regression"] },
 ]
 
 roadmap-smoke = [
@@ -2291,3 +2311,32 @@ command = [
   "python", "-m", "pytest", "-q", "--tb=short",
   "tests/test_artifact_v2.py::ArtifactV2Tests::test_cli_ignore_checksum_applies_overlay_without_disabling_manifest_checks",
 ]
+
+
+# LIFE-G1 mutation/recovery authoritative proof gate.
+[[test]]
+id = "roadmap-life-g1-mutation-recovery-proof"
+name = "LIFE-G1 fresh-process mutation and recovery proof"
+runner = "pytest"
+timeout_seconds = 420
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_g1_mutation_recovery_proof_gate.py",
+]
+
+[[test]]
+id = "roadmap-life-g1-bundle-rollback-regression"
+name = "LIFE-G1 atomic bundle validation rollback regression"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_artifact_v2.py::ArtifactV2Tests::test_bundle_validator_failure_rolls_back_every_overlay",
+]
+
+[[test]]
+id = "roadmap-life-g1-artifact-bootstrap"
+name = "LIFE-G1 artifact bootstrap into authoritative gate workflow"
+runner = "command"
+timeout_seconds = 1200
+command = ["./devtoolw", "life-g1"]

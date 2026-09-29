@@ -5,7 +5,7 @@
     "gate_window": "implementation 1/2",
     "full_plan": "31/70"
   },
-  "status": "pending-qualified-host-direct-bootstrap",
+  "status": "qualified-host-applied",
   "delivered": [
     "Pre-mutation rollback failures retry without fabricated resume checkpoints while post-mutation drift remains fail-closed.",
     "CLI run-lock handles are released on covered exit paths with zero-warning regression enforcement.",
@@ -21,10 +21,17 @@
   ],
   "validation": {
     "qualified_v4_targeted": "79 passed, 0 failed",
-    "v5_bootstrap": "five canonical test refs required on apply",
+    "v5_bootstrap": "qualified on Termux: 5 artifact validation refs passed; 0 warnings; 0 errors",
     "maximum_warnings": 0
   },
   "next_overlay": "LIFE-X02 (32/70)",
   "next_gate": "LIFE-G1 (33/70)",
-  "next_major_scope": "GRADLE TAKEOVER / ENV-X05 (34/70)"
+  "next_major_scope": "GRADLE TAKEOVER / ENV-X05 (34/70)",
+  "qualified_host_result": {
+    "run": "0a5a5bd48a574c1b91b168918a9c919f",
+    "commit": "c14bfd5",
+    "tests": "5 passed, 0 failed, 0 skipped",
+    "warnings": 0,
+    "errors": 0
+  }
 }

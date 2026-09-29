@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .artifacts import artifact_validation_refs, artifact_validation_tests
-from .config import load_project_config
+from .config import SUPPORTED_RUNNERS, load_project_config
 from .models import CommandSpec
 from .runners import run_specs
 from .test_declarations import command_specs
@@ -91,6 +91,13 @@ def run_artifact_tests(repo_root, manifest, *, verbose=False, dry_run=False, log
         if "ref" in declaration:
             specs.extend(command_specs(config, [declaration["ref"]]))
             continue
+        runner = str(declaration.get("runner") or "").strip()
+        if runner not in SUPPORTED_RUNNERS or runner in {"auto", "unknown"}:
+            supported = ", ".join(sorted(item for item in SUPPORTED_RUNNERS if item not in {"auto", "unknown"}))
+            raise ValueError(
+                f"Artifact validation test {declaration.get('id')!r} declares unsupported runner "
+                f"{runner!r}. Supported runners: {supported}"
+            )
         cwd = declaration.get("cwd") or str(config.project_root or config.repo_root)
         test_metadata = {
             "test_spec_id": declaration["id"],

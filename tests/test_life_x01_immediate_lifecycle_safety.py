@@ -113,6 +113,10 @@ def test_life_x01_snapshot_records_post_apply_checkpoint(tmp_path: Path, monkeyp
     assert tx.get("applied_checkpoint_at")
     assert (repo / "payload.txt").read_bytes() == b"snapshot-result"
     rollback = rollback_transaction(result.metadata["transaction_path"], reason="fixture cleanup")
+    if rollback.returncode != 0:
+        receipt = rollback.metadata.get("rollback_receipt") or {}
+        assert receipt.get("resumable") is True, rollback.output
+        rollback = rollback_transaction(result.metadata["transaction_path"], reason="fixture cleanup resume")
     assert rollback.returncode == 0, rollback.output
 
 

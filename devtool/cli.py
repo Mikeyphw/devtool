@@ -240,6 +240,8 @@ from .transactions import (
     read_transaction_summary,
     register_transaction_paths,
     record_transaction_git_commit,
+    resumable_result_publication,
+    resume_transaction_result_publication,
     rollback_transaction,
     transaction_pending_validation,
     transaction_root,
@@ -9052,8 +9054,32 @@ def _single_run_reservation(config: ProjectConfig, args: argparse.Namespace) -> 
     # compatibility reservation before the requested command proceeds. This
     # preserves the historical auto-recovery behavior without racing a live
     # scoped operation.
+    stale_candidates = find_active_transactions(config.repo_root, include_live=False)
+
+    # LIFE-G1 / LIFE-P125: a validated isolated transaction whose result commit
+    # is durably recorded at the pre-publication checkpoint belongs to the next
+    # invocation for the sole purpose of completing publication.  Claim the
+    # exact transaction reservation here so SingleRunLock excludes that
+    # transaction while still checking every other live/stale reservation.
+    # This is deliberately narrower than --allow-pending-validation: ordinary
+    # pending validation remains protected and cannot be taken over implicitly.
+    publication_ready: list[str | Path] = []
+    for candidate in stale_candidates:
+        try:
+            if resumable_result_publication(candidate) is not None:
+                publication_ready.append(candidate)
+        except Exception:
+            pass
+    if len(publication_ready) == 1:
+        try:
+            return _reservation_from_transaction(publication_ready[0], fallback_target=target)
+        except Exception:
+            # A corrupt transaction cannot safely prove its reservation.  Fall
+            # through to the ordinary exclusive conflict behavior below.
+            pass
+
     stale_nonpending = []
-    for candidate in find_active_transactions(config.repo_root, include_live=False):
+    for candidate in stale_candidates:
         if not transaction_pending_validation(candidate):
             try:
                 stale_nonpending.append(read_transaction(candidate))
@@ -9065,7 +9091,7 @@ def _single_run_reservation(config: ProjectConfig, args: argparse.Namespace) -> 
     forced_pending_id = ""
     if bool(getattr(args, "allow_pending_validation", False)):
         pending = []
-        for candidate in find_active_transactions(config.repo_root, include_live=False):
+        for candidate in stale_candidates:
             if transaction_pending_validation(candidate):
                 try:
                     pending.append(read_transaction(candidate))
@@ -16633,6 +16659,20 @@ def _main_after_parse(
     stale_transaction = find_active_transaction(config.repo_root)
     stale_recovery_results: list[OperationResult] = []
     stale_recovery_raw = ""
+
+    # LIFE-G1 / LIFE-P125: a process may die after validation created and
+    # recorded the isolated result commit but before primary publication.  That
+    # is not pending validation anymore.  Resume the exact recorded result when
+    # the transaction is still at the pre-publication checkpoint; the integrator
+    # itself re-verifies primary HEAD/index/worktree identity before mutation.
+    if stale_transaction is not None:
+        publication_resume = resume_transaction_result_publication(stale_transaction)
+        if publication_resume is not None:
+            stale_recovery_results.append(publication_resume)
+            stale_recovery_raw = "$ " + " ".join(publication_resume.argv) + "\n" + publication_resume.output
+            if publication_resume.returncode == 0:
+                stale_transaction = None
+
     if stale_transaction is not None and transaction_pending_validation(stale_transaction):
         active_validation = load_active_session(config.repo_root)
         transaction_data = read_transaction(stale_transaction)

@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "gate": "LIFE-G1",
+  "position": {
+    "gate_window": "3/3",
+    "full_plan": "33/70"
+  },
+  "status": "pending-qualified-host-gate",
+  "audited_window": [
+    "LIFE-X01 31/70",
+    "LIFE-X02 32/70"
+  ],
+  "gate_owned_closures": [
+    "Atomic overlay bundles use rollback as the repository-mutation outcome on validator failure.",
+    "Validated-uncommitted isolated result commits are durably resumable and auto-published only when exact baseline preconditions still hold.",
+    "Unvalidated result commits are never auto-published.",
+    "Repository-pack dotfile names and last-known-good atomic publication are protected.",
+    "Unsupported inline artifact validation runners fail closed.",
+    "Missing rollback evidence is typed unavailable rather than verified.",
+    "Fresh-process gate fixtures isolate parent routing identity/user-global config and explicitly bind nested Devtool recovery probes to a canonical parent execution substrate."
+  ],
+  "incident_promises": {
+    "LIFE-P123": "proved-by-gate",
+    "LIFE-P124": "proved-by-gate",
+    "LIFE-P125": "proved-by-gate",
+    "LIFE-P126": "proved-by-gate",
+    "LIFE-P127": "proved-by-gate"
+  },
+  "qualified_inputs": {
+    "LIFE-X01": {
+      "run": "0a5a5bd48a574c1b91b168918a9c919f",
+      "commit": "c14bfd5"
+    },
+    "LIFE-X02": {
+      "run": "203140a095db4d2bbaed3d3f2fad7b3d",
+      "commit": "5a4dfca"
+    }
+  },
+  "local_validation": [
+    "15 LIFE-G1 gate tests passed",
+    "120 exact canonical LIFE-G1 workflow-equivalent tests passed with ResourceWarning as error",
+    "publication-drift assertion is terminal-width independent (box drawing stripped + whitespace normalized)",
+    "retained LIFE-X01 fixture cleanup resumes typed partial rollback after KeyboardInterrupt",
+    "nested recovery probes explicitly bind a canonical execution substrate; legacy host-android cannot become the requested child environment",
+    "source-state-aware artifact preflight PASS"
+  ],
+  "maximum_warnings": 0,
+  "next_overlay": "ENV-X05 (34/70)",
+  "remaining_in_life_after_gate": 0,
+  "next_major_scope": "GRADLE TAKEOVER",
+  "qualified_host_attempts": [
+    {
+      "version": "v1",
+      "run": "8740ef6a4de940cc85fdec5e340838a2",
+      "result": "failed-test-harness-global-routing-leak",
+      "rollback_verified": true
+    },
+    {
+      "version": "v2",
+      "run": "841eea0c889d40bc83e8251c9364167d",
+      "result": "failed-test-harness-core-execution-environment-leak",
+      "rollback_verified": true
+    },
+    {
+      "version": "v3",
+      "run": "95a97b89d9274fd3939611077d3d753c",
+      "result": "failed-test-harness-auto-host-detection-cross-scope",
+      "rollback_verified": true
+    },
+    {
+      "version": "v4",
+      "run": "171135b2574e4afd912a6abe259fb666",
+      "result": "failed-terminal-render-assertion-with-secondary-resumable-cleanup-interrupt",
+      "rollback_verified": true
+    }
+  ]
+}

@@ -2229,8 +2229,11 @@ def create_overlay_bundle(
         "validation": {
             "required": bool(validation_required),
             "strategy": validation_strategy,
+            # Bundle creation is atomic by default.  A validator failure must
+            # therefore restore repository mutation state; pause/keep semantics
+            # may retain evidence, never the partially applied bundle payload.
             "rollback_on_failure": True,
-            "failure_action": "pause",
+            "failure_action": "rollback",
         },
     }
     if validation_tasks_declared:

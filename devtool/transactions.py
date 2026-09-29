@@ -1548,6 +1548,85 @@ def _cleanup_transaction_dir(path: Path) -> None:
         pass
 
 
+def resumable_result_publication(transaction_path: str | Path | None) -> dict[str, Any] | None:
+    """Return durable pre-publication evidence for a safely resumable result commit.
+
+    LIFE-P125 is intentionally narrow: automatic publication is allowed only
+    after an isolated transaction has durably recorded its result commit while
+    the primary checkout has not yet crossed the integration checkpoint.  Once
+    integration begins, ordinary checkpointed recovery/rollback remains the
+    authority rather than guessing how far publication progressed.
+    """
+
+    if not transaction_path:
+        return None
+    path = Path(transaction_path)
+    if not path.exists():
+        return None
+    tx = _read_json(path)
+    if not isolated_transaction(tx):
+        return None
+    status = str(tx.get("status") or "")
+    # Publication recovery is authoritative only after validation has explicitly
+    # sealed the transaction as validated with a commit still pending. A mere
+    # recorded worktree commit is not enough proof to publish automatically.
+    if status != "validated-uncommitted":
+        return None
+    isolation = dict(tx.get("isolation") or {})
+    if str(isolation.get("state") or "") != "ready":
+        return None
+    result_commit = str(isolation.get("result_commit") or (tx.get("commit_policy") or {}).get("result_commit") or "").strip()
+    if not result_commit:
+        return None
+    execution_root = transaction_execution_root(tx)
+    if not execution_root.exists() or _current_git_head(execution_root) != result_commit:
+        return None
+    return {
+        "transaction": str(path),
+        "transaction_id": str(tx.get("transaction_id") or ""),
+        "status": status,
+        "result_commit": result_commit,
+        "isolation_state": "ready",
+        "repo_root": str(tx.get("repo_root") or ""),
+    }
+
+
+def resume_transaction_result_publication(transaction_path: str | Path | None) -> OperationResult | None:
+    """Idempotently publish a validated isolated result commit after interruption.
+
+    The normal integrator performs the authoritative primary-HEAD/index/worktree
+    preflight, so genuine user drift is still rejected before primary mutation.
+    On success the transaction is completed and its private worktree/backup is
+    cleaned exactly as on the uninterrupted path.
+    """
+
+    evidence = resumable_result_publication(transaction_path)
+    if evidence is None:
+        return None
+    start = time.perf_counter()
+    path = Path(str(evidence["transaction"]))
+    argv = ["transaction", "publish-result", str(path)]
+    try:
+        mark_transaction_completed(path)
+    except BaseException as exc:
+        return OperationResult(
+            "apply-publication-resume", argv, 1, time.perf_counter() - start,
+            "Validated transaction result publication could not resume safely.\n"
+            f"transaction: {path}\n"
+            f"result_commit: {evidence['result_commit']}\n"
+            f"reason: {type(exc).__name__}: {exc}",
+            [], failure_kind="result_publication_recovery", metadata={**evidence, "resumed": False},
+        )
+    return OperationResult(
+        "apply-publication-resume", argv, 0, time.perf_counter() - start,
+        "Resumed publication of a previously validated transaction result.\n"
+        f"transaction: {path}\n"
+        f"result_commit: {evidence['result_commit']}\n"
+        "publication_state: completed",
+        [], metadata={**evidence, "resumed": True, "publication_state": "completed"},
+    )
+
+
 def mark_transaction_completed(transaction_path: str | Path | None) -> None:
     if not transaction_path:
         return
