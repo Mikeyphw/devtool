@@ -127,6 +127,12 @@ description = "Run the PRES-X07 Textual replacement hardening workflow"
 workflow = "roadmap-pres-x07"
 target = "devtool"
 
+# PRES-G1 Textual replacement proof gate.
+[wrapper.commands.pres-g1]
+description = "Run the PRES-G1 Textual replacement proof gate"
+workflow = "roadmap-pres-g1"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -610,6 +616,12 @@ roadmap-pres-x07 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "textual-replacement-hardening", ref = "test:roadmap-pres-x07-textual-replacement-hardening", depends_on = ["syntax"] },
   { id = "x06-regression", ref = "test:roadmap-pres-x07-x06-regression", depends_on = ["textual-replacement-hardening"] },
+]
+
+roadmap-pres-g1 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "textual-replacement-proof", ref = "test:roadmap-pres-g1-textual-replacement-proof", depends_on = ["syntax"] },
+  { id = "x07-regression", ref = "test:roadmap-pres-g1-x07-regression", depends_on = ["textual-replacement-proof"] },
 ]
 
 roadmap-smoke = [
@@ -2130,4 +2142,33 @@ name = "PRES-X07 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "pres-x07"]
+
+# PRES-G1 Textual replacement proof gate. Verifies every PRES implementation layer,
+# Textual default selection, fallback fencing, feature parity, and renderer-only authority.
+[[test]]
+id = "roadmap-pres-g1-textual-replacement-proof"
+name = "PRES-G1 Textual replacement proof gate"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_g1_textual_replacement_proof_gate.py",
+]
+
+[[test]]
+id = "roadmap-pres-g1-x07-regression"
+name = "PRES-G1 retained PRES-X07 hardening regression"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x07_textual_replacement_hardening.py",
+]
+
+[[test]]
+id = "roadmap-pres-g1-artifact-bootstrap"
+name = "PRES-G1 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 480
+command = ["./devtoolw", "pres-g1"]
 

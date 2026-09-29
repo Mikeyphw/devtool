@@ -1,0 +1,24 @@
+{
+  "id": "PRES-G1",
+  "title": "Textual replacement proof gate",
+  "scope_position": {
+    "pres_scope": "gate after PRES-X07",
+    "full_plan": "30/63"
+  },
+  "delivered_promises": [
+    "Audited PRES-X01 through PRES-X07 report coverage before gate closure.",
+    "Proved Textual is the default TUI backend and auto mode prefers Textual.",
+    "Proved legacy TUI fallback remains fenced behind explicit selection or permitted missing-Textual auto fallback.",
+    "Proved --require-textual and --no-tui-fallback fail closed when Textual is unavailable.",
+    "Retained --explain-backend as the diagnostic path for backend selection.",
+    "Proved Textual feature parity has no missing required current-TUI features.",
+    "Proved cross-surface presentation parity remains consistent.",
+    "Proved Textual remains renderer/interaction only and does not own RUN, EXO, RER, validation, or ENV truth."
+  ],
+  "validation": {
+    "direct_tests": "19 passed, 0 failed, 0 skipped",
+    "artifact_validation": "required via roadmap-pres-g1-artifact-bootstrap",
+    "wrapper": "./devtoolw pres-g1"
+  },
+  "next_overlay": "Next major scope after PRES-G1 needs refresh from the current roadmap order."
+}

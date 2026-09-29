@@ -1,0 +1,17 @@
+{
+  "id": "PRES-G1",
+  "exports": [
+    {
+      "to": "future PRES or UI work",
+      "obligation": "Do not reintroduce legacy TUI as an implicit default; legacy must stay explicit or permitted auto fallback only."
+    },
+    {
+      "to": "future TUI runtime work",
+      "obligation": "Textual rendering must continue consuming PresentationView/PresentationBundle contracts and must not derive RUN/EXO/RER/validation truth directly."
+    },
+    {
+      "to": "future gate/seal work",
+      "obligation": "Retain backend-selection proof coverage for auto, textual, legacy, require-textual, no-fallback, and explain-backend paths."
+    }
+  ]
+}

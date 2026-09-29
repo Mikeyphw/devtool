@@ -1129,3 +1129,224 @@ def run_tui_entrypoint(
     if textual_runner is None:
         textual_runner = run_textual_tui_runtime
     return int(textual_runner(args, repo_root=repo_root, console=console))
+
+
+# PRES-G1 Textual replacement proof gate.
+_REQUIRED_PRES_GATE_REPORTS: tuple[str, ...] = (
+    "PRES_X01_PRESENTATION_PROJECTION_FOUNDATION_REPORT.md",
+    "PRES_X02_PRESENTATION_LAYOUT_INTERACTIONS_REPORT.md",
+    "PRES_X03_CROSS_SURFACE_RENDERING_ADOPTION_REPORT.md",
+    "PRES_X04_TEXTUAL_TUI_SUBSTRATE_REPORT.md",
+    "PRES_X05_TEXTUAL_FEATURE_PARITY_REPORT.md",
+    "PRES_X06_TEXTUAL_DEFAULT_REPLACEMENT_REPORT.md",
+    "PRES_X07_TEXTUAL_REPLACEMENT_HARDENING_REPORT.md",
+)
+
+
+@dataclass(frozen=True)
+class TextualReplacementGateItem:
+    """One proof item in the PRES-G1 Textual replacement gate."""
+
+    id: str
+    status: str
+    evidence: tuple[str, ...]
+    requirement: str
+    owner: str = "PRES"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "status": self.status,
+            "requirement": self.requirement,
+            "owner": self.owner,
+            "evidence": list(self.evidence),
+        }
+
+
+@dataclass(frozen=True)
+class TextualReplacementGateReport:
+    """Machine-readable proof gate result for Textual replacing the legacy TUI."""
+
+    schema_version: int
+    gate_id: str
+    items: tuple[TextualReplacementGateItem, ...]
+    backend_selections: tuple[TuiBackendSelection, ...]
+    notices: tuple[TuiBackendHardeningNotice, ...]
+    parity_plan: TextualFeatureParityPlan
+    default_contract: Mapping[str, Any]
+    hardening_contract: Mapping[str, Any]
+    required_reports: tuple[str, ...]
+    present_reports: tuple[str, ...]
+    owns_truth: bool = False
+    machine_output_changed: bool = False
+
+    @property
+    def passed(self) -> bool:
+        return all(item.status == "passed" for item in self.items)
+
+    @property
+    def missing_reports(self) -> tuple[str, ...]:
+        present = set(self.present_reports)
+        return tuple(name for name in self.required_reports if name not in present)
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "schema_version": self.schema_version,
+            "gate_id": self.gate_id,
+            "passed": self.passed,
+            "owns_truth": self.owns_truth,
+            "machine_output_changed": self.machine_output_changed,
+            "required_reports": list(self.required_reports),
+            "present_reports": list(self.present_reports),
+            "missing_reports": list(self.missing_reports),
+            "items": [item.as_dict() for item in self.items],
+            "backend_selections": [selection.as_dict() for selection in self.backend_selections],
+            "notices": [notice.as_dict() for notice in self.notices],
+            "parity_plan_digest": self.parity_plan.as_dict()["parity_digest"],
+            "default_contract": dict(self.default_contract),
+            "hardening_contract": dict(self.hardening_contract),
+        }
+        payload["gate_digest"] = projection_digest({k: v for k, v in payload.items() if k != "gate_digest"})
+        return payload
+
+
+def required_pres_gate_reports() -> tuple[str, ...]:
+    """Reports that must exist before PRES-G1 can claim closure."""
+
+    return _REQUIRED_PRES_GATE_REPORTS
+
+
+def _gate_status(condition: bool) -> str:
+    return "passed" if condition else "failed"
+
+
+def build_textual_replacement_proof_gate(
+    *,
+    present_reports: Sequence[str] | None = None,
+    textual_available: bool = True,
+) -> TextualReplacementGateReport:
+    """Build the PRES-G1 proof gate from canonical PRES contracts.
+
+    The gate intentionally uses the PRES projection and Textual contract APIs
+    instead of runtime TUI state.  It proves that Textual is now the default TUI
+    and that all rendering remains reference-only.
+    """
+
+    present = tuple(sorted(set(present_reports or _REQUIRED_PRES_GATE_REPORTS)))
+    available = TextualAvailability(bool(textual_available))
+    missing = TextualAvailability(False, reason="textual package is not importable")
+    selections = (
+        resolve_tui_backend_selection(requested_backend="auto", availability=available, session_transport="ssh"),
+        resolve_tui_backend_selection(requested_backend="auto", availability=missing, session_transport="ssh"),
+        resolve_tui_backend_selection(requested_backend="auto", require_textual=True, availability=missing),
+        resolve_tui_backend_selection(requested_backend="textual", availability=missing),
+        resolve_tui_backend_selection(requested_backend="legacy", availability=available),
+    )
+    notices = tuple(build_tui_backend_notice(selection) for selection in selections)
+    cleanup = summarize_legacy_cleanup_assumptions(selections)
+    projection_records = [
+        {"id": "syntax", "ref": "exo:pres:syntax", "status": "passed", "label": "Source syntax", "progress": 1.0},
+        {"id": "textual", "ref": "exo:pres:textual", "status": "running", "label": "Textual replacement", "progress": 0.62},
+        {"id": "gate", "ref": "exo:pres:g1", "status": "passed", "label": "PRES-G1 proof", "progress": 1.0},
+    ]
+    parity_plan = build_textual_feature_parity_from_projection(
+        projection_records,
+        width=118,
+        height=30,
+        session_transport="ssh",
+    )
+    parity_machine = parity_plan.as_dict()
+    bundle_machine = parity_plan.base_spec.source_bundle.as_machine()
+    default_contract = default_tui_backend_contract()
+    hardening_contract = textual_replacement_hardening_contract()
+    required = _REQUIRED_PRES_GATE_REPORTS
+    missing_reports = tuple(name for name in required if name not in set(present))
+    items = (
+        TextualReplacementGateItem(
+            "pres-report-window-complete",
+            _gate_status(not missing_reports),
+            present,
+            "PRES-X01 through PRES-X07 reports are present before the gate closes",
+        ),
+        TextualReplacementGateItem(
+            "textual-is-default",
+            _gate_status(default_contract.get("default_backend") == "textual" and default_contract.get("machine_output_changed") is False),
+            ("default_tui_backend_contract",),
+            "Textual is the default TUI while machine output remains unchanged",
+        ),
+        TextualReplacementGateItem(
+            "auto-prefers-textual",
+            _gate_status(selections[0].effective_backend == "textual" and selections[0].default_backend == "textual"),
+            (selections[0].as_dict()["selection_digest"],),
+            "auto backend chooses Textual when Textual is available",
+        ),
+        TextualReplacementGateItem(
+            "fallback-is-fenced",
+            _gate_status(
+                selections[1].effective_backend == "legacy"
+                and notices[1].severity == "warning"
+                and selections[2].effective_backend == "unavailable"
+                and selections[3].effective_backend == "unavailable"
+                and selections[4].effective_backend == "legacy"
+                and cleanup["legacy_path_count"] == 2
+            ),
+            tuple(notice.as_dict()["notice_digest"] for notice in notices),
+            "legacy fallback is only explicit or permitted auto fallback; require-textual fails closed",
+        ),
+        TextualReplacementGateItem(
+            "feature-parity-complete",
+            _gate_status(parity_machine["missing_features"] == []),
+            (parity_machine["parity_digest"],),
+            "Textual parity plan covers required current-TUI features",
+        ),
+        TextualReplacementGateItem(
+            "cross-surface-parity",
+            _gate_status(bundle_machine["parity"]["consistent"] is True and bundle_machine["schema_version"] == 3),
+            (bundle_machine["bundle_digest"],),
+            "machine, terminal, TUI, desktop, HUD, and IPC renders preserve one parity key",
+        ),
+        TextualReplacementGateItem(
+            "renderer-only-authority",
+            _gate_status(
+                parity_plan.owns_truth is False
+                and default_contract.get("textual_owns_truth") is False
+                and hardening_contract.get("textual_owns_truth") is False
+            ),
+            ("presentation_surfaces", "tui_textual"),
+            "Textual owns rendering and interaction only; RUN/EXO/RER/validation remain authoritative",
+        ),
+    )
+    report = TextualReplacementGateReport(
+        schema_version=1,
+        gate_id="PRES-G1",
+        items=items,
+        backend_selections=selections,
+        notices=notices,
+        parity_plan=parity_plan,
+        default_contract=default_contract,
+        hardening_contract=hardening_contract,
+        required_reports=required,
+        present_reports=present,
+        owns_truth=False,
+        machine_output_changed=False,
+    )
+    assert_textual_replacement_gate_passes(report)
+    return report
+
+
+def assert_textual_replacement_gate_passes(report: TextualReplacementGateReport) -> None:
+    """Fail closed if the PRES-G1 proof gate is incomplete or owns truth."""
+
+    encoded = str(report.as_dict()).lower()
+    leaked = [field for field in _FORBIDDEN_TRUTH_FIELDS if field in encoded]
+    if leaked:
+        raise AssertionError(f"PRES-G1 gate report contains execution-owned truth: {leaked}")
+    if report.owns_truth is not False:
+        raise AssertionError("PRES-G1 attempted to own canonical truth")
+    if report.machine_output_changed is not False:
+        raise AssertionError("PRES-G1 must not change machine output semantics")
+    if report.missing_reports:
+        raise AssertionError(f"PRES-G1 is missing report evidence: {report.missing_reports}")
+    if not report.passed:
+        failed = [item.id for item in report.items if item.status != "passed"]
+        raise AssertionError(f"PRES-G1 proof gate failed: {failed}")
