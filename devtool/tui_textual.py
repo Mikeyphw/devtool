@@ -411,3 +411,291 @@ def build_textual_spec_from_projection(
     profile = classify_terminal_profile(width=width, height=height, session_transport=session_transport)
     bundle = build_presentation_bundle(projection, consumers=consumers, width=width, profile=profile)
     return build_textual_app_spec(bundle, width=width, height=height, session_transport=session_transport)
+
+
+# PRES-X05 Textual feature parity contracts.
+@dataclass(frozen=True)
+class TextualCommandPaletteItem:
+    """Command palette row derived from canonical action intents or renderer bindings."""
+
+    id: str
+    title: str
+    action_id: str
+    intent: str
+    key: str | None = None
+    target_screen: str = "dashboard"
+    refs: tuple[Mapping[str, Any], ...] = ()
+    enabled: bool = True
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "action_id": self.action_id,
+            "intent": self.intent,
+            "key": self.key,
+            "target_screen": self.target_screen,
+            "refs": [dict(ref) for ref in self.refs],
+            "enabled": self.enabled,
+        }
+
+
+@dataclass(frozen=True)
+class TextualParityFeature:
+    """Feature parity requirement for replacing the legacy TUI."""
+
+    id: str
+    label: str
+    source: str
+    required_widgets: tuple[str, ...]
+    action_intents: tuple[str, ...] = ()
+    screens: tuple[str, ...] = ()
+    covered: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "label": self.label,
+            "source": self.source,
+            "required_widgets": list(self.required_widgets),
+            "action_intents": list(self.action_intents),
+            "screens": list(self.screens),
+            "covered": self.covered,
+        }
+
+
+@dataclass(frozen=True)
+class TextualFeatureParityPlan:
+    """Renderer-only Textual parity plan for current TUI replacement."""
+
+    schema_version: int
+    base_spec: TextualAppSpec
+    screens: tuple[TextualScreenSpec, ...]
+    command_palette: tuple[TextualCommandPaletteItem, ...]
+    features: tuple[TextualParityFeature, ...]
+    owns_truth: bool = False
+
+    @property
+    def missing_features(self) -> tuple[str, ...]:
+        return tuple(feature.id for feature in self.features if not feature.covered)
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "schema_version": self.schema_version,
+            "backend": "textual",
+            "base_spec_digest": self.base_spec.as_dict()["spec_digest"],
+            "base_bundle_digest": self.base_spec.source_bundle.as_machine()["bundle_digest"],
+            "screens": [screen.as_dict() for screen in self.screens],
+            "command_palette": [item.as_dict() for item in self.command_palette],
+            "features": [feature.as_dict() for feature in self.features],
+            "missing_features": list(self.missing_features),
+            "owns_truth": self.owns_truth,
+            "refs": [ref.as_dict() for ref in self.base_spec.source_bundle.refs],
+        }
+        payload["parity_digest"] = projection_digest({k: v for k, v in payload.items() if k != "parity_digest"})
+        return payload
+
+
+_ALLOWED_WIDGET_SOURCES = {
+    "presentation-view",
+    "presentation-events",
+    "presentation-sections",
+    "presentation-actions",
+    "presentation-refs",
+    "projection-digest",
+    "terminal-render",
+    "machine-render",
+    "textual-bindings",
+    "command-intents",
+    "surface-capabilities",
+}
+
+
+def _bundle_refs(spec: TextualAppSpec) -> tuple[Mapping[str, Any], ...]:
+    return tuple(ref.as_dict() for ref in spec.source_bundle.refs)
+
+
+def _all_bindings(spec: TextualAppSpec) -> tuple[TextualBinding, ...]:
+    seen: dict[str, TextualBinding] = {}
+    for screen in spec.screens:
+        for binding in screen.bindings:
+            seen.setdefault(binding.action_id, binding)
+    for binding in default_textual_bindings(spec.source_bundle):
+        seen.setdefault(binding.action_id, binding)
+    return tuple(seen.values())
+
+
+def build_textual_command_palette(spec: TextualAppSpec) -> tuple[TextualCommandPaletteItem, ...]:
+    """Build command palette entries from canonical action intents and bindings."""
+
+    refs = _bundle_refs(spec)
+    items: list[TextualCommandPaletteItem] = []
+    for binding in _all_bindings(spec):
+        target = "help" if binding.action_id == "help" else "evidence" if binding.action_id == "open-evidence" else "dashboard"
+        if binding.action_id == "rerun-failed":
+            target = "validation"
+        elif binding.action_id == "next-page":
+            target = "runs"
+        items.append(
+            TextualCommandPaletteItem(
+                id=f"cmd-{binding.action_id}",
+                title=binding.label,
+                action_id=binding.action_id,
+                intent=binding.intent,
+                key=binding.key,
+                target_screen=target,
+                refs=refs,
+                enabled=True,
+            )
+        )
+    unique: dict[str, TextualCommandPaletteItem] = {}
+    for item in items:
+        unique.setdefault(item.id, item)
+    return tuple(unique.values())
+
+
+def build_textual_feature_parity_screens(spec: TextualAppSpec) -> tuple[TextualScreenSpec, ...]:
+    """Return supplemental screens needed for current-TUI feature parity."""
+
+    refs = _bundle_refs(spec)
+    bindings = _all_bindings(spec)
+    action_ids = tuple(binding.action_id for binding in bindings)
+    profile = spec.screens[0].profile if spec.screens else "standard"
+    width = spec.screens[0].width if spec.screens else 100
+    height = spec.screens[0].height if spec.screens else 28
+    run_widgets = (
+        TextualWidgetSpec("run-list", "RunList", "Current runs", "presentation-events", refs=refs, actions=action_ids),
+        TextualWidgetSpec("progress", "ProgressTimeline", "Active progress", "presentation-events", refs=refs, actions=action_ids),
+        TextualWidgetSpec("node-tree", "NodeTree", "Workflow nodes", "presentation-events", refs=refs, actions=action_ids),
+    )
+    validation_widgets = (
+        TextualWidgetSpec("validation-session", "ValidationSession", "Validation session", "presentation-sections", refs=refs, actions=action_ids),
+        TextualWidgetSpec("validation-evidence", "ReferenceTable", "Validation evidence", "presentation-refs", refs=refs, actions=action_ids),
+    )
+    artifact_widgets = (
+        TextualWidgetSpec("artifact-lifecycle", "ArtifactLifecycle", "Artifact lifecycle", "presentation-events", refs=refs, actions=action_ids),
+        TextualWidgetSpec("apply-status", "ApplyStatus", "Apply status", "presentation-sections", refs=refs, actions=action_ids),
+        TextualWidgetSpec("rollback-hint", "RollbackHint", "Rollback / recovery", "presentation-refs", refs=refs, actions=action_ids),
+    )
+    command_widgets = (
+        TextualWidgetSpec("command-palette", "CommandPalette", "Command palette", "command-intents", refs=refs, actions=action_ids),
+        TextualWidgetSpec("shortcut-table", "ShortcutTable", "Keyboard shortcuts", "textual-bindings", refs=refs, actions=action_ids),
+    )
+    help_widgets = (
+        TextualWidgetSpec("capabilities", "CapabilityMatrix", "Surface capabilities", "surface-capabilities", refs=refs),
+        TextualWidgetSpec("copy-help", "CopyActions", "Copy and share", "presentation-actions", refs=refs, actions=action_ids),
+    )
+    return (
+        TextualScreenSpec("runs", "Runs", "/runs", run_widgets, bindings, profile, width, height),
+        TextualScreenSpec("validation", "Validation", "/validation", validation_widgets, bindings, profile, width, height),
+        TextualScreenSpec("artifacts", "Artifacts", "/artifacts", artifact_widgets, bindings, profile, width, height),
+        TextualScreenSpec("commands", "Commands", "/commands", command_widgets, bindings, profile, width, height),
+        TextualScreenSpec("help", "Help", "/help", help_widgets, bindings, profile, width, height),
+    )
+
+
+def textual_required_feature_contract() -> tuple[TextualParityFeature, ...]:
+    """Durable feature checklist for replacing the legacy TUI."""
+
+    return (
+        TextualParityFeature("run-list", "Current run list", "presentation-events", ("run-list",), ("open_refs",)),
+        TextualParityFeature("active-progress", "Active progress timeline", "presentation-events", ("progress",), ("follow_cursor",)),
+        TextualParityFeature("node-tree", "Workflow node tree", "presentation-events", ("node-tree",), ("open_refs",)),
+        TextualParityFeature("diagnostics", "Diagnostic sections", "presentation-sections", ("diagnostics",), ("open_refs",)),
+        TextualParityFeature("evidence", "Evidence/reference inspector", "presentation-refs", ("refs",), ("open_refs",)),
+        TextualParityFeature("validation-session", "Validation session panel", "presentation-sections", ("validation-session",), ()),
+        TextualParityFeature("artifact-lifecycle", "Artifact/apply lifecycle panel", "presentation-events", ("artifact-lifecycle", "apply-status"), ("open_refs",)),
+        TextualParityFeature("command-palette", "Command palette", "command-intents", ("command-palette",), ("open_refs",)),
+        TextualParityFeature("keyboard-shortcuts", "Keyboard shortcut parity", "textual-bindings", ("shortcut-table",), ("presentation:show_help",)),
+        TextualParityFeature("copy-share", "Copy/share summary actions", "presentation-actions", ("copy-help",), ()),
+        TextualParityFeature("responsive-layout", "Responsive layout profiles", "surface-capabilities", ("capabilities",), ()),
+    )
+
+
+def _screen_index(screens: Sequence[TextualScreenSpec]) -> tuple[set[str], set[str], dict[str, tuple[str, ...]]]:
+    widget_ids: set[str] = set()
+    action_intents: set[str] = set()
+    widget_screens: dict[str, list[str]] = {}
+    for screen in screens:
+        for binding in screen.bindings:
+            action_intents.add(binding.intent)
+        for widget in screen.widgets:
+            widget_ids.add(widget.id)
+            widget_screens.setdefault(widget.id, []).append(screen.id)
+            for action in widget.actions:
+                action_intents.add(action)
+    return widget_ids, action_intents, {k: tuple(v) for k, v in widget_screens.items()}
+
+
+def evaluate_textual_feature_coverage(
+    screens: Sequence[TextualScreenSpec],
+    features: Sequence[TextualParityFeature] | None = None,
+    command_palette: Sequence[TextualCommandPaletteItem] = (),
+) -> tuple[TextualParityFeature, ...]:
+    """Mark required TUI replacement features as covered by screens/actions."""
+
+    features = tuple(features or textual_required_feature_contract())
+    widget_ids, action_intents, widget_screens = _screen_index(screens)
+    action_intents.update(item.intent for item in command_palette if item.enabled)
+    covered: list[TextualParityFeature] = []
+    for feature in features:
+        widgets_ok = all(widget in widget_ids for widget in feature.required_widgets)
+        actions_ok = all(intent in action_intents for intent in feature.action_intents)
+        screens_for_feature: set[str] = set()
+        for widget in feature.required_widgets:
+            screens_for_feature.update(widget_screens.get(widget, ()))
+        covered.append(
+            TextualParityFeature(
+                feature.id,
+                feature.label,
+                feature.source,
+                feature.required_widgets,
+                feature.action_intents,
+                tuple(sorted(screens_for_feature)),
+                widgets_ok and actions_ok,
+            )
+        )
+    return tuple(covered)
+
+
+def build_textual_feature_parity_plan(spec: TextualAppSpec) -> TextualFeatureParityPlan:
+    """Build the PRES-X05 parity plan for making Textual feature-complete."""
+
+    assert_textual_spec_is_reference_only(spec)
+    parity_screens = build_textual_feature_parity_screens(spec)
+    screens = tuple(spec.screens) + parity_screens
+    command_palette = build_textual_command_palette(spec)
+    features = evaluate_textual_feature_coverage(screens, command_palette=command_palette)
+    plan = TextualFeatureParityPlan(1, spec, screens, command_palette, features, owns_truth=False)
+    assert_textual_feature_parity_is_reference_only(plan)
+    return plan
+
+
+def build_textual_feature_parity_from_projection(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    width: int = 100,
+    height: int = 28,
+    session_transport: str = "local",
+) -> TextualFeatureParityPlan:
+    """Convenience helper for callers/tests that begin from EXO/RUN records."""
+
+    spec = build_textual_spec_from_projection(records, width=width, height=height, session_transport=session_transport)
+    return build_textual_feature_parity_plan(spec)
+
+
+def assert_textual_feature_parity_is_reference_only(plan: TextualFeatureParityPlan) -> None:
+    encoded = str(plan.as_dict()).lower()
+    leaked = [field for field in _FORBIDDEN_TRUTH_FIELDS if field in encoded]
+    if leaked:
+        raise AssertionError(f"Textual feature parity plan contains execution-owned truth: {leaked}")
+    if plan.owns_truth is not False:
+        raise AssertionError("Textual feature parity attempted to own canonical truth")
+    invalid_sources = [
+        widget.source
+        for screen in plan.screens
+        for widget in screen.widgets
+        if widget.source not in _ALLOWED_WIDGET_SOURCES
+    ]
+    if invalid_sources:
+        raise AssertionError(f"Textual widgets use non-canonical sources: {sorted(set(invalid_sources))}")

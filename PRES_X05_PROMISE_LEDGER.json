@@ -1,0 +1,25 @@
+{
+  "overlay": "PRES-X05",
+  "title": "Textual TUI feature parity",
+  "position": {
+    "scope": "PRES",
+    "scope_position": "5/?",
+    "full_plan_position": "27/63"
+  },
+  "delivered_promises": [
+    "Textual feature parity plan over canonical presentation bundles",
+    "run list, active progress, node tree, diagnostics, evidence, validation, artifact lifecycle, command palette, shortcut, copy/share, and responsive layout coverage",
+    "command palette derived from canonical action intents and bindings",
+    "fails-closed feature coverage evaluator",
+    "reference-only guard for Textual parity plans",
+    "retained PRES-X04 substrate regression"
+  ],
+  "not_delivered_here": [
+    "Textual default entrypoint switch",
+    "legacy TUI removal/deprecation",
+    "real Textual runtime import requirement",
+    "PRES replacement proof gate"
+  ],
+  "next_overlay": "PRES-X06 Textual default replacement",
+  "next_gate": "PRES-G1 Textual replacement proof gate"
+}

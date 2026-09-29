@@ -1,0 +1,17 @@
+{
+  "overlay": "PRES-X05",
+  "exports": [
+    {
+      "owner": "PRES-X06",
+      "obligation": "Switch primary TUI entrypoints to Textual with legacy fallback and config-controlled backend selection."
+    },
+    {
+      "owner": "PRES-X07",
+      "obligation": "Remove or thin legacy TUI duplicated state/rendering after Textual becomes default."
+    },
+    {
+      "owner": "PRES-G1",
+      "obligation": "Prove Textual default replacement parity, fallback safety, SSH/Termux behavior, and canonical truth boundaries."
+    }
+  ]
+}

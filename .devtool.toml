@@ -109,6 +109,12 @@ description = "Run the PRES-X04 Textual TUI substrate workflow"
 workflow = "roadmap-pres-x04"
 target = "devtool"
 
+# PRES-X05 Textual TUI feature parity.
+[wrapper.commands.pres-x05]
+description = "Run the PRES-X05 Textual feature parity workflow"
+workflow = "roadmap-pres-x05"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -574,6 +580,12 @@ roadmap-pres-x04 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "textual-substrate", ref = "test:roadmap-pres-x04-textual-substrate", depends_on = ["syntax"] },
   { id = "x03-regression", ref = "test:roadmap-pres-x04-x03-regression", depends_on = ["textual-substrate"] },
+]
+
+roadmap-pres-x05 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "textual-feature-parity", ref = "test:roadmap-pres-x05-textual-feature-parity", depends_on = ["syntax"] },
+  { id = "x04-regression", ref = "test:roadmap-pres-x05-x04-regression", depends_on = ["textual-feature-parity"] },
 ]
 
 roadmap-smoke = [
@@ -2006,4 +2018,33 @@ name = "PRES-X04 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "pres-x04"]
+
+# PRES-X05 Textual TUI feature parity. Textual remains optional here; the
+# workflow proves feature parity contracts over renderer-neutral specs.
+[[test]]
+id = "roadmap-pres-x05-textual-feature-parity"
+name = "PRES-X05 Textual TUI feature parity contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x05_textual_feature_parity.py",
+]
+
+[[test]]
+id = "roadmap-pres-x05-x04-regression"
+name = "PRES-X05 retained PRES-X04 Textual substrate regression"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x04_textual_tui.py",
+]
+
+[[test]]
+id = "roadmap-pres-x05-artifact-bootstrap"
+name = "PRES-X05 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 420
+command = ["./devtoolw", "pres-x05"]
 
