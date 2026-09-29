@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import shutil
 import os
+import subprocess
 from typing import Any
 
 _BACKUP_FILE_MARKERS = (
@@ -61,9 +62,65 @@ def _is_backup_candidate(path: Path, repo_root: Path) -> bool:
     return False
 
 
+
+
+def _git_path_sets(repo_root: Path) -> tuple[bool, set[str], set[str]]:
+    try:
+        inside = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"], cwd=repo_root,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, set(), set()
+    if inside.returncode != 0:
+        return False, set(), set()
+    try:
+        tracked_proc = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False
+        )
+        ignored_proc = subprocess.run(
+            ["git", "ls-files", "-z", "--others", "--ignored", "--exclude-standard"],
+            cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True, set(), set()
+    decode = lambda payload: {
+        raw.decode("utf-8", "surrogateescape").replace("\\", "/")
+        for raw in bytes(payload or b"").split(b"\0") if raw
+    }
+    tracked = decode(tracked_proc.stdout) if tracked_proc.returncode == 0 else set()
+    ignored = decode(ignored_proc.stdout) if ignored_proc.returncode == 0 else set()
+    return True, tracked, ignored
+
+
+def _path_or_descendant_in(rel: str, paths: set[str]) -> bool:
+    if rel in paths:
+        return True
+    prefix = rel.rstrip("/") + "/"
+    return any(item.startswith(prefix) for item in paths)
+
+
+def _known_devtool_backup(path: Path) -> bool:
+    return path.is_dir() and any(path.name.startswith(prefix) for prefix in _BACKUP_DIR_PREFIXES)
+
+
+def _candidate_cleanup_safe(path: Path, repo_root: Path, *, is_git: bool, tracked: set[str], ignored: set[str]) -> bool:
+    try:
+        rel = path.relative_to(repo_root).as_posix()
+    except ValueError:
+        return False
+    if _path_or_descendant_in(rel, tracked):
+        return False
+    if _known_devtool_backup(path):
+        return True
+    # Generic .bak/.orig/.before-* naming is only a heuristic.  In Git repos,
+    # require explicit ignore ownership; outside Git, preserve unknown data.
+    return is_git and _path_or_descendant_in(rel, ignored)
+
 def discover_backup_candidates(repo_root: Path) -> list[Path]:
     repo_root = repo_root.expanduser().resolve()
     candidates: list[Path] = []
+    is_git, tracked, ignored = _git_path_sets(repo_root)
     for current, dirnames, filenames in os.walk(repo_root, topdown=True, followlinks=False):
         current_path = Path(current)
         if current_path == repo_root:
@@ -71,7 +128,7 @@ def discover_backup_candidates(repo_root: Path) -> list[Path]:
         selected_dirs: list[str] = []
         for name in list(dirnames):
             path = current_path / name
-            if _is_backup_candidate(path, repo_root):
+            if _is_backup_candidate(path, repo_root) and _candidate_cleanup_safe(path, repo_root, is_git=is_git, tracked=tracked, ignored=ignored):
                 candidates.append(path)
                 selected_dirs.append(name)
         # Do not descend into a directory that will be archived as one unit.
@@ -79,7 +136,7 @@ def discover_backup_candidates(repo_root: Path) -> list[Path]:
             dirnames[:] = [name for name in dirnames if name not in selected_dirs]
         for name in filenames:
             path = current_path / name
-            if _is_backup_candidate(path, repo_root):
+            if _is_backup_candidate(path, repo_root) and _candidate_cleanup_safe(path, repo_root, is_git=is_git, tracked=tracked, ignored=ignored):
                 candidates.append(path)
     return sorted(candidates, key=lambda item: str(item.relative_to(repo_root)))
 
@@ -136,6 +193,13 @@ def prune_backup_history(repo_root: Path, *, older_than_days: float, dry_run: bo
 
 def cleanup_repository(repo_root: Path, *, dry_run: bool = False, prune_history_days: float = 0.0) -> dict[str, Any]:
     repo_root = repo_root.expanduser().resolve()
+    if not dry_run:
+        # Cleanup must never race an artifact transaction or consume recovery
+        # material while rollback/validation still owns repository state.
+        from .transactions import find_active_transactions
+        active = find_active_transactions(repo_root, include_live=True)
+        if active:
+            raise RuntimeError(f"Refusing repository cleanup while an artifact transaction is active: {active[0]}")
     moves = archive_backup_candidates(repo_root, dry_run=dry_run)
     pruned = prune_backup_history(repo_root, older_than_days=prune_history_days, dry_run=dry_run)
     return {

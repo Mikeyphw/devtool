@@ -796,12 +796,14 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "status":
             cmd.add_argument("--json", action="store_true", help="Emit structured project, execution, repository identity, and federation boundary status")
         if name == "clean":
-            cmd.add_argument("--caches", action="store_true", help="Also prune repository-scoped devtool-managed caches and transient state")
-            cmd.add_argument("--space", action="store_true", help="Prune safe global Android/toolchain caches managed by Devtool")
+            cmd.add_argument("--project-clean", "--project-outputs", dest="project_clean", action="store_true", help="Clean project-owned outputs through the selected project runner; this is the default when no cleanup scope flag is given")
+            cmd.add_argument("--caches", action="store_true", help="Prune repository-scoped Devtool-managed caches and transient state without implicitly running project clean")
+            cmd.add_argument("--space", action="store_true", help="Prune Devtool-managed Android/toolchain caches without touching user-global caches")
+            cmd.add_argument("--global-caches", action="store_true", help="Explicitly include user-global Android download cache cleanup")
             cmd.add_argument(
                 "--gradle-user-cache",
                 action="store_true",
-                help="With --space, also prune old version-specific ~/.gradle caches and build-cache-1; modules/wrapper caches are preserved",
+                help="Explicitly include old version-specific ~/.gradle caches and build-cache-1; modules/wrapper caches are preserved",
             )
             cmd.add_argument(
                 "--space-target-free-mb",
@@ -4509,6 +4511,7 @@ def _required_artifact_validation_execution_guard(
     validation_requested: bool,
     validation_results: list[OperationResult],
     artifact_validation_result: OperationResult | None,
+    minimum_phase: str = "",
 ) -> OperationResult | None:
     """Fail closed when required artifact validation executed no checks.
 
@@ -4528,6 +4531,42 @@ def _required_artifact_validation_execution_guard(
     )
     artifact_check_ran = artifact_validation_result is not None and not artifact_validation_result.skipped
     if repository_check_ran or artifact_check_ran:
+        minimum_phase = str(minimum_phase or policy.get("minimum_phase") or "finalize").strip().lower().replace("_", "-")
+        if minimum_phase == "final":
+            minimum_phase = "finalize"
+        if minimum_phase != "finalize":
+            aliases = {
+                "restore": "preflight", "dependencies": "dependencies", "build": "package",
+                "test": "unit-test", "tests": "unit-test", "unit-tests": "unit-test",
+                "artifact validation": "static",
+            }
+            reached: set[str] = set()
+            for result in validation_results:
+                if result.skipped and not bool(result.metadata.get("shared_validation")):
+                    continue
+                raw_phase = str(result.metadata.get("validation_phase_name") or result.name or "").strip().lower().replace("_", "-")
+                phase = aliases.get(raw_phase, raw_phase)
+                if phase.startswith("android validation "):
+                    phase = phase.removeprefix("android validation ").strip()
+                reached.add(phase)
+            if artifact_check_ran:
+                reached.add("static")
+            if minimum_phase not in reached:
+                message = (
+                    f"Required artifact validation minimum phase {minimum_phase!r} was not reached. "
+                    f"Executed phases: {', '.join(sorted(reached)) or '<none>'}. "
+                    "The artifact will not be committed."
+                )
+                return OperationResult(
+                    "artifact-validation-minimum-phase", ["artifact-validation-minimum-phase"], 2, 0.0, message,
+                    [Issue("error", "artifact-validation-minimum-phase", "validation", "VALIDATION_MINIMUM_PHASE_NOT_REACHED", message)],
+                    failure_kind="required_validation_minimum_phase_not_reached",
+                    metadata={
+                        "validation_required": True, "validation_minimum_phase": minimum_phase,
+                        "validation_reached_phases": sorted(reached),
+                        "validation_phase_name": "Required artifact validation",
+                    },
+                )
         return None
 
     message = (
@@ -6766,7 +6805,25 @@ def _finalize_validation_session(
     primary_root_text = str(getattr(final_args, "_devtool_transaction_primary_repo_root", "") or "").strip()
     history_root = Path(primary_root_text).resolve() if primary_root_text else Path(session.repo_root).resolve()
     if session.transaction_path:
-        mark_transaction_completed(session.transaction_path)
+        finalize_results, finalize_raw = _complete_apply_transaction(
+            session.transaction_path,
+            tasker_progress=tasker_progress,
+            log_path=log_path,
+            reason="validation finalization transaction integration failed",
+        )
+        if finalize_results:
+            results.extend(finalize_results)
+            if finalize_raw:
+                raw_output += ("\n\n" if raw_output else "") + finalize_raw
+            rollback_result = next((item for item in reversed(finalize_results) if item.name == "apply-rollback"), None)
+            mark_validation_failure_terminal(
+                session,
+                "transaction finalization failed after validation; automatic rollback "
+                + ("completed" if rollback_result is not None and rollback_result.returncode == 0 else "failed"),
+                rollback_attempted=True,
+                rollback_succeeded=rollback_result is not None and rollback_result.returncode == 0,
+            )
+            return results, raw_output
 
     if not bool(getattr(final_args, "dry_run", False)) and not final_args.keep_artifact:
         cleanup = _delete_original_artifact_after_apply(
@@ -8150,9 +8207,18 @@ def _rollback(config: ProjectConfig, args: argparse.Namespace) -> int:
             return 0
         rows = []
         for item in records:
+            recovery = dict(item.get("recovery_diagnostics") or {})
+            checkpoints = list(recovery.get("checkpoint_paths") or [])
+            blocker = str(recovery.get("blocker") or "").strip()
             rows.append((
                 str(item.get("transaction_id") or "-"),
-                f"{item.get('status') or '-'} target={item.get('target') or '-'} paths={len(item.get('reserved_paths') or item.get('affected_paths') or [])} {item.get('path') or ''}",
+                f"{item.get('status') or '-'} target={item.get('target') or '-'} "
+                f"phase={recovery.get('phase') or '-'} "
+                f"checkpoints={','.join(checkpoints[:4]) or '-'} "
+                f"blocker={blocker or '-'} "
+                f"action={recovery.get('action') or '-'} "
+                f"paths={len(item.get('reserved_paths') or item.get('affected_paths') or [])} "
+                f"{item.get('path') or ''}",
             ))
         render_status_table(rows)
         return 0
@@ -11168,6 +11234,7 @@ def _run_sequential_overlays(
                     validation_requested=True,
                     validation_results=group_results,
                     artifact_validation_result=artifact_validation_result,
+                    minimum_phase="finalize" if _exclusive_validation_task_values(entry_args) else "",
                 )
                 if required_guard is not None:
                     group_results.append(required_guard)
@@ -11381,7 +11448,16 @@ def _run_sequential_overlays(
                     all_results.append(retain_result)
                     raw_sections.append(retain_raw)
             else:
-                mark_transaction_completed(transaction_path)
+                finalize_results, finalize_raw = _complete_apply_transaction(
+                    transaction_path,
+                    tasker_progress=tasker_progress,
+                    log_path=log_path,
+                    reason="post-bundle transaction finalization failed",
+                )
+                if finalize_results:
+                    all_results.extend(finalize_results)
+                    if finalize_raw:
+                        raw_sections.append(finalize_raw)
 
         if not getattr(args, "_devtool_history_recorded", False):
             _record_apply_history(config, args, all_results)
@@ -11645,7 +11721,7 @@ def _run_transaction_keep_changes(
 
     start = time.perf_counter()
     path = Path(transaction_path)
-    abandon_transaction(path, reason=reason)
+    receipt = abandon_transaction(path, reason=reason)
     output = (
         "Applied changes retained after failure; rollback was disabled.\n"
         f"transaction: {path}\n"
@@ -11661,7 +11737,15 @@ def _run_transaction_keep_changes(
         output,
         [],
         failure_kind="changes_retained",
-        metadata={"transaction_path": str(path), "kept_changes": True},
+        metadata={
+            "transaction_path": str(path),
+            "kept_changes": True,
+            **({
+                "rollback_receipt": receipt.to_dict(),
+                "rollback_state": receipt.state,
+                "rollback_verified": receipt.verified,
+            } if receipt is not None else {}),
+        },
     )
     if log_path is not None:
         try:
@@ -11671,6 +11755,72 @@ def _run_transaction_keep_changes(
             pass
     raw = "$ " + " ".join(result.argv) + "\n" + result.output
     return result, raw
+
+
+def _complete_apply_transaction(
+    transaction_path: str | Path,
+    *,
+    tasker_progress: TaskerProgressSink | None = None,
+    log_path: Path | str | None = None,
+    reason: str = "transaction finalization failed after successful apply/validation",
+) -> tuple[list[OperationResult], str]:
+    """Complete an apply without leaking finalization faults as internal errors.
+
+    Integration/finalization is part of the artifact lifecycle. A conflict found
+    here becomes a classified operation failure and immediately attempts durable
+    rollback while the transaction still owns its recovery evidence.
+    """
+
+    started = time.monotonic()
+    try:
+        mark_transaction_completed(transaction_path)
+        return [], ""
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        failure = OperationResult(
+            "apply-finalize",
+            ["transaction", "complete", str(transaction_path)],
+            1,
+            time.monotonic() - started,
+            "Transaction finalization failed: " + detail,
+            [Issue("error", "apply-finalize", "", "TransactionFinalizationError", detail)],
+            failure_kind="transaction_finalization",
+        )
+        if log_path is not None:
+            try:
+                from .logstore import write_log
+                failure.log_path = str(write_log(
+                    "$ transaction complete " + str(transaction_path) + "\n" + failure.output,
+                    log_path,
+                    append=True,
+                ))
+            except Exception:
+                pass
+        results = [failure]
+        raw_sections = ["$ transaction complete " + str(transaction_path) + "\n" + failure.output]
+        try:
+            rollback_result, rollback_raw = _run_transaction_rollback(
+                transaction_path,
+                reason=reason + ": " + detail,
+                tasker_progress=tasker_progress,
+                log_path=log_path,
+                failure_kind="transaction_finalization_rollback",
+            )
+        except Exception as rollback_exc:
+            rollback_detail = f"{type(rollback_exc).__name__}: {rollback_exc}"
+            rollback_result = OperationResult(
+                "apply-rollback",
+                ["transaction", "rollback", str(transaction_path)],
+                1,
+                0.0,
+                "Automatic rollback after transaction finalization failure also failed: " + rollback_detail,
+                [Issue("error", "apply-rollback", "", "TransactionRollbackError", rollback_detail)],
+                failure_kind="transaction_finalization_rollback",
+            )
+            rollback_raw = "$ transaction rollback " + str(transaction_path) + "\n" + rollback_result.output
+        results.append(rollback_result)
+        raw_sections.append(rollback_raw)
+        return results, "\n\n".join(raw_sections)
 
 
 def _run_transaction_rollback(
@@ -13332,11 +13482,11 @@ def _print_chroot_indicator_once(args: argparse.Namespace) -> None:
 
 def _build_cache_cleanup_result(config: ProjectConfig, args: argparse.Namespace, *, dry_run: bool) -> OperationResult:
     started = datetime.now(timezone.utc)
-    active_transaction = find_active_transaction(config.repo_root)
-    if active_transaction is not None:
+    active_transactions = find_active_transactions(config.repo_root, include_live=True)
+    if active_transactions:
         raise SystemExit(
             "Refusing cache cleanup while this repository has an active artifact transaction: "
-            f"{active_transaction}"
+            f"{active_transactions[0]}"
         )
     plan = _execution_plan_for_args(config, args)
     extra_paths: list[Path] = []
@@ -13384,12 +13534,14 @@ def _build_space_cleanup_result(config: ProjectConfig, args: argparse.Namespace,
         target_free_bytes=target_bytes,
         dry_run=dry_run,
         managed_gradle_retention=max(0, int(getattr(args, "managed_gradle_retention", 2) or 0)),
+        include_toolchain_cache=bool(getattr(args, "space", False)),
+        include_android_user_cache=bool(getattr(args, "global_caches", False)),
         include_gradle_user_cache=bool(getattr(args, "gradle_user_cache", False)),
         gradle_user_home=Path.home() / ".gradle",
     )
     duration = max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
     lines = [
-        "Android/toolchain space cleanup:",
+        "Android/toolchain/global cleanup:",
         f"- Free before: {android_build.format_transfer_size(report.free_before) if report.free_before is not None else 'unknown'}",
     ]
     if report.removed:
@@ -13925,11 +14077,14 @@ def _main_impl(argv: list[str] | None = None) -> int:
             args.json = True
         command = str(getattr(args, "command", "") or "devtool")
         repo = str(getattr(args, "repo", "") or Path.cwd())
-        return run_json_invocation(
-            lambda: _invoke(),
-            command=command,
-            repo=repo,
-        )
+        try:
+            return run_json_invocation(
+                lambda: _invoke(),
+                command=command,
+                repo=repo,
+            )
+        finally:
+            _release_single_run_lock(args)
     try:
         return _invoke()
     except SystemExit as exc:
@@ -13946,6 +14101,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
         print(f"Internal devtool error: {exc}", file=sys.stderr)
         print("Run again with --verbose or DEVTOOL_TRACEBACK=1 for a full traceback; --trace also enables traceback logging.", file=sys.stderr)
         return 1
+    finally:
+        _release_single_run_lock(args)
 
 
 def _tracebacks_enabled() -> bool:
@@ -16308,10 +16465,21 @@ def _main_after_parse(
 
     cache_cleanup_result: OperationResult | None = None
     space_cleanup_result: OperationResult | None = None
-    if args.command in {"clean", "cl"} and bool(getattr(args, "caches", False)):
-        cache_cleanup_result = _build_cache_cleanup_result(config, args, dry_run=bool(getattr(args, "dry_run", False)))
-    if args.command in {"clean", "cl"} and bool(getattr(args, "space", False)):
-        space_cleanup_result = _build_space_cleanup_result(config, args, dry_run=bool(getattr(args, "dry_run", False)))
+    if args.command in {"clean", "cl"}:
+        active_cleanup_transactions = find_active_transactions(config.repo_root, include_live=True)
+        if active_cleanup_transactions and not bool(getattr(args, "dry_run", False)):
+            raise SystemExit(
+                "Refusing cleanup while this repository has an active artifact transaction: "
+                f"{active_cleanup_transactions[0]}"
+            )
+        if bool(getattr(args, "caches", False)):
+            cache_cleanup_result = _build_cache_cleanup_result(config, args, dry_run=bool(getattr(args, "dry_run", False)))
+        if any((
+            bool(getattr(args, "space", False)),
+            bool(getattr(args, "global_caches", False)),
+            bool(getattr(args, "gradle_user_cache", False)),
+        )):
+            space_cleanup_result = _build_space_cleanup_result(config, args, dry_run=bool(getattr(args, "dry_run", False)))
 
     stale_transaction = find_active_transaction(config.repo_root)
     stale_recovery_results: list[OperationResult] = []
@@ -16585,6 +16753,7 @@ def _main_after_parse(
                         validation_requested=True,
                         validation_results=validation_results,
                         artifact_validation_result=artifact_validation_result,
+                        minimum_phase="finalize" if _exclusive_validation_task_values(args) else "",
                     )
                     if required_guard is not None:
                         results.append(required_guard)
@@ -16667,7 +16836,15 @@ def _main_after_parse(
                             results.append(retain_result)
                             raw_output += "\n\n" + retain_raw
                     else:
-                        mark_transaction_completed(transaction_path)
+                        finalize_results, finalize_raw = _complete_apply_transaction(
+                            transaction_path,
+                            tasker_progress=tasker_progress,
+                            log_path=log_path,
+                        )
+                        if finalize_results:
+                            results.extend(finalize_results)
+                            if finalize_raw:
+                                raw_output += "\n\n" + finalize_raw
                 delete_on_failure = bool(getattr(args, "delete_artifact_on_failure", False))
                 if (
                     not getattr(args, "dry_run", False)
@@ -16764,8 +16941,22 @@ def _main_after_parse(
             results = [OperationResult("android-release", ["devtool", "release"], 1, 0.0, str(exc), [], failure_kind="android_release")]
             raw_output = str(exc)
     elif args.command in {"clean", "cl"}:
-        specs = build_specs(config, args.command)
-        results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
+        explicit_scope = any((
+            bool(getattr(args, "project_clean", False)),
+            bool(getattr(args, "caches", False)),
+            bool(getattr(args, "space", False)),
+            bool(getattr(args, "global_caches", False)),
+            bool(getattr(args, "gradle_user_cache", False)),
+        ))
+        run_project_clean = bool(getattr(args, "project_clean", False)) or not explicit_scope
+        specs = build_specs(config, args.command) if run_project_clean else []
+        if specs:
+            results, raw_output = _run_specs_for_args(
+                config, specs, args, continue_on_error=continue_on_error,
+                log_path=log_path, tasker_progress=tasker_progress,
+            )
+        else:
+            results, raw_output = [], ""
         cleanup_prefix: list[OperationResult] = []
         cleanup_outputs: list[str] = []
         if space_cleanup_result is not None:

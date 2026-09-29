@@ -2204,6 +2204,39 @@ def dependency_snapshot(plan: PythonEnvironmentPlan, root: Path) -> dict[str, An
     return payload
 
 
+def _git_cleanup_status(root: Path, path: Path) -> tuple[bool, bool, bool]:
+    """Return (is_git_repo, tracked, ignored) for a cleanup candidate."""
+    try:
+        rel = path.resolve(strict=False).relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return False, True, False
+    try:
+        inside = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False, False, False
+    if inside.returncode != 0:
+        return False, False, False
+    tracked_proc = subprocess.run(["git", "ls-files", "--error-unmatch", "--", rel], cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    if tracked_proc.returncode == 0:
+        return True, True, False
+    # A tracked descendant makes a generated-looking directory user/source owned.
+    if path.is_dir():
+        desc = subprocess.run(["git", "ls-files", "-z", "--", rel + "/"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+        if desc.returncode == 0 and bool(desc.stdout):
+            return True, True, False
+    ignored_proc = subprocess.run(["git", "check-ignore", "-q", "--", rel], cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    return True, False, ignored_proc.returncode == 0
+
+
+def _python_cleanup_candidate_safe(root: Path, path: Path, *, heuristic_artifact: bool) -> bool:
+    is_git, tracked, ignored = _git_cleanup_status(root, path)
+    if tracked:
+        return False
+    if heuristic_artifact and is_git and not ignored:
+        return False
+    return True
+
+
 def clean_python(root: Path, *, categories: Sequence[str] = ("artifacts", "caches")) -> list[str]:
     root = root.resolve()
     selected = set(categories)
@@ -2224,6 +2257,9 @@ def clean_python(root: Path, *, categories: Sequence[str] = ("artifacts", "cache
             continue
         if path.name not in names:
             continue
+        heuristic_artifact = path.name in {"build", "dist"}
+        if not _python_cleanup_candidate_safe(root, path, heuristic_artifact=heuristic_artifact):
+            continue
         # Never cross into nested projects unless they are the selected root.
         if any((parent / "pyproject.toml").is_file() for parent in path.parents if parent not in {root, path.parent} and root in parent.parents):
             continue
@@ -2237,7 +2273,7 @@ def clean_python(root: Path, *, categories: Sequence[str] = ("artifacts", "cache
             continue
     if "artifacts" in selected or "all" in selected:
         for path in root.glob("*.egg-info"):
-            if path.is_dir():
+            if path.is_dir() and _python_cleanup_candidate_safe(root, path, heuristic_artifact=True):
                 shutil.rmtree(path, ignore_errors=True)
                 removed.append(str(path))
     if "environments" in selected or "all" in selected:

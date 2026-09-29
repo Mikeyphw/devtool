@@ -24,6 +24,7 @@ from .android.devices import AndroidDeviceManager
 from .host_context import detect_host_context
 from .privilege import PrivilegeRequest, load_global_privilege_policy, qualify_privilege_providers
 from .environment_qualification import CapabilityRequirements, qualify_environment
+from .transactions import list_active_transaction_records
 
 @dataclass(slots=True)
 class DoctorCheck:
@@ -323,6 +324,15 @@ def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
         CapabilityRequirements(), host=host, policy=policy,
         requested="auto", chroot_name=config.chroot_name, probe_privilege=False,
     )
+    transaction_recovery = [
+        {
+            "transaction_id": str(item.get("transaction_id") or ""),
+            "status": str(item.get("status") or ""),
+            "path": str(item.get("path") or ""),
+            **dict(item.get("recovery_diagnostics") or {}),
+        }
+        for item in list_active_transaction_records(config.repo_root)
+    ]
     return {
         "schema_version": 1,
         "repository": str(config.repo_root),
@@ -337,6 +347,7 @@ def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
             "providers": [item.to_dict() for item in privilege],
         },
         "environment_qualification": environment.to_dict(),
+        "transaction_recovery": transaction_recovery,
         "jobs": sorted(config.jobs),
         "target_jobs": {
             target_name: sorted(target.jobs)

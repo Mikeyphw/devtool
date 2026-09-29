@@ -77,6 +77,9 @@ def run_artifact_validation_script(
             # outputs. Enforce write boundaries only when the manifest explicitly opts
             # into write_paths; otherwise preserve the established validator behavior.
             enforce_write_boundary=bool(artifact_validation_write_paths(manifest)),
+            # Bounded validators must restore undeclared writes before returning
+            # a boundary failure. The transaction only owns declared paths.
+            restore_on_write_violation=bool(artifact_validation_write_paths(manifest)),
             extra_env={"DEVTOOL_VALIDATION_PHASE": "validate"},
             payload_context=payload_context,
         )
@@ -142,7 +145,10 @@ def run_artifact_finalize_script(
             declared_writes=effective_writes,
             requested_capabilities=artifact_hook_capabilities(manifest, "finalize"),
             enforce_write_boundary=True,
-            restore_on_write_violation=phase == "after_commit",
+            # Every bounded finalize phase contains undeclared writes locally.
+            # after_commit remains observational, while earlier phases avoid
+            # leaking rejected hook mutations outside transaction ownership.
+            restore_on_write_violation=True,
             extra_env={"DEVTOOL_FINALIZE_PHASE": phase},
             payload_context={
                 "validation": {
@@ -216,6 +222,9 @@ def run_artifact_preflight_script(
             declared_writes=declared_writes,
             requested_capabilities=artifact_hook_capabilities(manifest, "preflight"),
             enforce_write_boundary=True,
+            # Detection is not containment: restore undeclared hook mutations
+            # from the hook-time baseline before surfacing the failure.
+            restore_on_write_violation=True,
             # Legacy variables are intentionally retained indefinitely.
             extra_env={"DEVTOOL_PREFLIGHT_PHASE": phase},
             payload_context={"execution": {"boundary": "extract"}},

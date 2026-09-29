@@ -1,0 +1,21 @@
+{
+  "id": "LIFE-X01",
+  "exports": [
+    {
+      "to": "LIFE-X02",
+      "obligation": "The canonical ArtifactEnvelope/Qualification/ResolvedArtifactPlan/generation/trust/RepositoryPack model must consume or supersede LIFE-X01 safety primitives without weakening fail-closed qualification, strict validation typing, private state, rollback evidence, or safe isolation defaults."
+    },
+    {
+      "to": "LIFE-X03",
+      "obligation": "Canonical cleanup ownership/retention objects must preserve LIFE-X01 tracked-path, backup-shaped-data, build/dist heuristic, active-transaction and explicit cleanup-scope protections."
+    },
+    {
+      "to": "LIFE-G1",
+      "obligation": "Prove LIFE-P117 from fresh qualified processes: early preflight/index repair retries without fabricated checkpoints or self-deadlock; partial rollback resumes only from persisted checkpoints; verification failure remains resumable and final success is evidence-backed across overlay, bundle and snapshot lifecycles."
+    },
+    {
+      "to": "LIFE-G1",
+      "obligation": "Authoritatively prove public-runner qualification failure, undeclared-write containment, private/redacted state and typed rollback scope truth on the qualified Termux host."
+    }
+  ]
+}

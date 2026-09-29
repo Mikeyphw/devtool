@@ -133,6 +133,12 @@ description = "Run the PRES-G1 Textual replacement proof gate"
 workflow = "roadmap-pres-g1"
 target = "devtool"
 
+# LIFE-X01 immediate lifecycle safety boundary.
+[wrapper.commands.life-x01]
+description = "Run the LIFE-X01 immediate lifecycle safety workflow"
+workflow = "roadmap-life-x01"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -622,6 +628,15 @@ roadmap-pres-g1 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "textual-replacement-proof", ref = "test:roadmap-pres-g1-textual-replacement-proof", depends_on = ["syntax"] },
   { id = "x07-regression", ref = "test:roadmap-pres-g1-x07-regression", depends_on = ["textual-replacement-proof"] },
+]
+
+roadmap-life-x01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "immediate-safety", ref = "test:roadmap-life-x01-immediate-lifecycle-safety", depends_on = ["syntax"] },
+  { id = "transaction-recovery", ref = "test:roadmap-life-x01-transaction-lifecycle-recovery", depends_on = ["immediate-safety"] },
+  { id = "transaction-regression", ref = "test:roadmap-life-x01-transaction-regression", depends_on = ["transaction-recovery"] },
+  { id = "preflight-regression", ref = "test:roadmap-life-x01-artifact-preflight-regression", depends_on = ["transaction-regression"] },
+  { id = "git-dirty-state-regression", ref = "test:roadmap-life-x01-git-frx13-regression", depends_on = ["preflight-regression"] },
 ]
 
 roadmap-smoke = [
@@ -2172,3 +2187,62 @@ runner = "command"
 timeout_seconds = 480
 command = ["./devtoolw", "pres-g1"]
 
+
+# LIFE-X01 immediate lifecycle safety. LIFE-X02 owns the complete canonical
+# artifact/trust/repository-pack object model and remains a separate overlay.
+[[test]]
+id = "roadmap-life-x01-immediate-lifecycle-safety"
+name = "LIFE-X01 immediate lifecycle safety contracts"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_x01_immediate_lifecycle_safety.py",
+]
+
+[[test]]
+id = "roadmap-life-x01-transaction-lifecycle-recovery"
+name = "LIFE-X01 transaction lifecycle recovery contracts"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_x01_transaction_lifecycle_recovery.py",
+]
+
+[[test]]
+id = "roadmap-life-x01-transaction-regression"
+name = "LIFE-X01 transaction lock/recovery regression"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_transactions.py",
+]
+
+[[test]]
+id = "roadmap-life-x01-artifact-preflight-regression"
+name = "LIFE-X01 artifact hook containment regression"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_artifact_preflight.py",
+]
+
+[[test]]
+id = "roadmap-life-x01-git-frx13-regression"
+name = "LIFE-X01 retained GIT-FRX-13 dirty-tree regression"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_git_frx13_transactional_dirty_tree_preservation.py",
+]
+
+[[test]]
+id = "roadmap-life-x01-artifact-bootstrap"
+name = "LIFE-X01 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 900
+command = ["./devtoolw", "life-x01"]

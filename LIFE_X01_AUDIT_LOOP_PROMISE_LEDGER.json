@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "overlay": "LIFE-X01-audit-loop-remediation-v5-direct-bootstrap",
+  "campaign_position": {
+    "gate_window": "implementation 1/2",
+    "full_plan": "31/70"
+  },
+  "status": "pending-qualified-host-direct-bootstrap",
+  "delivered": [
+    "Pre-mutation rollback failures retry without fabricated resume checkpoints while post-mutation drift remains fail-closed.",
+    "CLI run-lock handles are released on covered exit paths with zero-warning regression enforcement.",
+    "Dirty tracked-path convergence uses byte identity plus Git executable-bit semantics rather than raw host POSIX mode.",
+    "Untracked-to-tracked convergence is allowed only for byte-identical, Git-mode-compatible results; real collisions remain fail-closed.",
+    "Transaction integration/finalization failures are classified as operation failures and trigger automatic durable rollback instead of escaping as raw internal errors.",
+    "A real finalization-conflict regression verifies rollback, original HEAD/content preservation, and no stranded transaction journal.",
+    "One-time direct bootstrap bypasses the old isolated-worktree integrator while retaining Devtool transaction backup/rollback; artifact validation directly selects canonical LIFE-X01 tests without nested reservation."
+  ],
+  "historical_untracked_evidence": [
+    "LIFE_X01_IMMEDIATE_LIFECYCLE_SAFETY_REPORT.md",
+    "LIFE_X01_PROMISE_LEDGER.json"
+  ],
+  "validation": {
+    "qualified_v4_targeted": "79 passed, 0 failed",
+    "v5_bootstrap": "five canonical test refs required on apply",
+    "maximum_warnings": 0
+  },
+  "next_overlay": "LIFE-X02 (32/70)",
+  "next_gate": "LIFE-G1 (33/70)",
+  "next_major_scope": "GRADLE TAKEOVER / ENV-X05 (34/70)"
+}

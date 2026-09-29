@@ -1361,9 +1361,11 @@ _devtool() {
           ;;
         clean|cl)
           _arguments \
-            '--caches[also prune repository-scoped devtool-managed caches and transient state]' \
-            '--space[prune safe global Android/toolchain caches managed by Devtool]' \
-            '--gradle-user-cache[with --space, also prune old version-specific Gradle caches and build-cache-1]' \
+            '--project-clean[clean project-owned outputs through the selected runner]' \
+            '--caches[prune repository-scoped Devtool-managed caches without project clean]' \
+            '--space[prune Devtool-managed Android/toolchain caches]' \
+            '--global-caches[include user-global Android download cache cleanup]' \
+            '--gradle-user-cache[include old version-specific Gradle caches and build-cache-1]' \
             '--space-target-free-mb[stop space cleanup after reaching this much free space]:MiB:' \
             '--managed-gradle-retention[keep this many newest Devtool-managed Gradle distributions]:count:'
           ;;

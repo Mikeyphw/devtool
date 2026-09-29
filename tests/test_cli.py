@@ -241,10 +241,12 @@ class CliTests(unittest.TestCase):
         ])
         self.assertTrue(args.space)
         self.assertTrue(args.gradle_user_cache)
+        self.assertFalse(args.global_caches)
+        self.assertFalse(args.project_clean)
         self.assertEqual(args.space_target_free_mb, 8192)
         self.assertEqual(args.managed_gradle_retention, 1)
 
-    def test_clean_space_invokes_global_toolchain_prune_before_runner_clean(self) -> None:
+    def test_clean_space_does_not_implicitly_run_project_clean(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as home:
             root = Path(tmp)
             (root / ".git").mkdir()
@@ -263,9 +265,9 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         space_mock.assert_called_once()
-        run_specs.assert_called_once()
+        run_specs.assert_not_called()
 
-    def test_clean_caches_invokes_cache_prune_before_runner_clean(self) -> None:
+    def test_clean_caches_does_not_implicitly_run_project_clean(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as home:
             root = Path(tmp)
             (root / ".git").mkdir()
@@ -288,6 +290,24 @@ class CliTests(unittest.TestCase):
         self.assertEqual(cleanup_kwargs["backend"], "desktop-linux")
         self.assertFalse(cleanup_kwargs["dry_run"])
         self.assertTrue(cleanup_kwargs["extra_cache_paths"])
+        run_specs.assert_not_called()
+
+    def test_clean_project_can_be_combined_with_cache_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as home:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            clean_result = __import__("devtool.models").models.OperationResult("clean", ["dotnet", "clean"], 0, 0.0, "ok", [])
+            with (
+                patch.dict("os.environ", {"HOME": home, "XDG_RUNTIME_DIR": ""}),
+                patch("devtool.cli.cleanup_devtool_caches", return_value=[]) as cleanup_mock,
+                patch("devtool.cli._run_specs_for_args", return_value=([clean_result], "clean output")) as run_specs,
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "clean", "--project-clean", "--caches"])
+
+        self.assertEqual(rc, 0)
+        cleanup_mock.assert_called_once()
         run_specs.assert_called_once()
 
     def test_logstore_honors_devtool_xdg_dir(self) -> None:

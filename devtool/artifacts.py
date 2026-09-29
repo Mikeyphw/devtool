@@ -692,11 +692,17 @@ def artifact_validation_policy(manifest: dict[str, Any]) -> dict[str, Any]:
         policy["required"] = mode == "required"
         if mode == "disabled":
             policy.update({"restore": False, "build": False, "test": False})
-    policy.setdefault("rollback_on_failure", True)
-    if "failure_action" not in policy:
-        policy["failure_action"] = (
-            "rollback" if raw.get("rollback_on_failure") is True else "pause"
-        )
+    # ``failure_action`` is the canonical failure/recovery authority. Preserve
+    # the legacy boolean as a compatibility projection, never as a second
+    # independent decision that can contradict the selected action.
+    if "failure_action" in raw:
+        action = str(raw.get("failure_action") or "").strip().lower()
+        policy["failure_action"] = action
+        policy["rollback_on_failure"] = action == "rollback"
+    else:
+        rollback = raw.get("rollback_on_failure") is True
+        policy["rollback_on_failure"] = rollback
+        policy["failure_action"] = "rollback" if rollback else "pause"
     policy.setdefault("allow_deferred", True)
     policy.setdefault("minimum_phase", "finalize")
     minimum_phase = str(policy.get("minimum_phase") or "finalize").strip().lower().replace("_", "-")
@@ -3280,8 +3286,12 @@ def artifact_validation_tests(manifest: dict[str, Any]) -> list[dict[str, Any]]:
             # the same GradleInvocationRequest/planner path as declared tests,
             # validation, workflow and CLI callers instead of re-baking
             # ``./gradlew`` into artifact-local validation.
-            out.append({"id":tid,"name":str(item.get("name") or tid),"runner":runner,"task":task,"cwd":str(item.get("cwd") or ""),"required":bool(item.get("required",True))})
+            required=item.get("required", True)
+            if not isinstance(required, bool): raise ValueError(f"validation.tests {tid!r} required must be a boolean.")
+            out.append({"id":tid,"name":str(item.get("name") or tid),"runner":runner,"task":task,"cwd":str(item.get("cwd") or ""),"required":required})
             continue
         if not isinstance(command,list) or not command or not all(isinstance(x,str) for x in command): raise ValueError(f"validation.tests {tid!r} requires a command or task.")
-        out.append({"id":tid,"name":str(item.get("name") or tid),"runner":runner,"command":list(command),"cwd":str(item.get("cwd") or ""),"required":bool(item.get("required",True))})
+        required=item.get("required", True)
+        if not isinstance(required, bool): raise ValueError(f"validation.tests {tid!r} required must be a boolean.")
+        out.append({"id":tid,"name":str(item.get("name") or tid),"runner":runner,"command":list(command),"cwd":str(item.get("cwd") or ""),"required":required})
     return out

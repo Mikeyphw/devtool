@@ -71,26 +71,27 @@ def test_cleanup_archives_backups_but_preserves_regular_files(tmp_path: Path) ->
     regular.write_text("current\n", encoding="utf-8")
 
     candidates = {path.relative_to(tmp_path).as_posix() for path in discover_backup_candidates(tmp_path)}
-    assert "devtool/cli.py.before-termux-fix" in candidates
+    assert "devtool/cli.py.before-termux-fix" not in candidates
     assert ".warning-fix-backup-20260825" in candidates
     assert "devtool/cli.py" not in candidates
 
     payload = cleanup_repository(tmp_path)
-    assert payload["archived_count"] == 2
-    assert not backup.exists()
+    assert payload["archived_count"] == 1
+    assert backup.exists(), "unknown backup-shaped data must be preserved unless ownership is proven"
     assert not backup_dir.exists()
     assert regular.read_text(encoding="utf-8") == "current\n"
     archived = list((tmp_path / ".devtool" / "history" / "backups").rglob("cli.py.before-termux-fix"))
-    assert len(archived) == 1
+    assert archived == []
 
 
 def test_cleanup_dry_run_does_not_move_files(tmp_path: Path) -> None:
     _init_repo(tmp_path)
-    backup = tmp_path / "module.py.bak"
-    backup.write_text("old\n", encoding="utf-8")
+    backup = tmp_path / ".warning-fix-backup-dry-run"
+    backup.mkdir()
+    (backup / "state.txt").write_text("old\n", encoding="utf-8")
     payload = cleanup_repository(tmp_path, dry_run=True)
     assert payload["archived_count"] == 1
-    assert backup.is_file()
+    assert backup.is_dir()
 
 
 def test_cli_exposes_tui_and_cleanup_commands() -> None:

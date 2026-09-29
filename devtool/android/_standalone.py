@@ -6736,6 +6736,8 @@ def collect_android_space_candidates(
     cache_root: Path,
     *,
     managed_gradle_retention: int = DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION,
+    include_toolchain_cache: bool = True,
+    include_android_user_cache: bool = False,
     include_gradle_user_cache: bool = False,
     gradle_user_home: Path | None = None,
 ) -> list[SpaceReclaimCandidate]:
@@ -6838,6 +6840,17 @@ def collect_android_space_candidates(
                 add(old, "gradle-user-version-cache", "old Gradle version cache (explicit opt-in)", 60)
             add(caches / "build-cache-1", "gradle-build-cache", "Gradle local build cache (explicit opt-in)", 70)
 
+    # Scope is explicit: Devtool-managed toolchain cache and user-global caches
+    # are independent cleanup intents. Automatic cleanup never reaches into the
+    # user's ~/.android or ~/.gradle caches.
+    if not include_toolchain_cache:
+        candidates = [
+            item for item in candidates
+            if item.category in {"android-download-cache", "gradle-user-version-cache", "gradle-build-cache"}
+        ]
+    if not include_android_user_cache:
+        candidates = [item for item in candidates if item.category != "android-download-cache"]
+
     # Parent candidates subsume children. Keep only the highest-priority parent
     # so dry-run totals do not double-count storage.
     candidates.sort(key=lambda item: (item.priority, -item.size_bytes, str(item.path)))
@@ -6883,6 +6896,8 @@ def _cleanup_android_space_locked(
     target_free_bytes: int | None = None,
     dry_run: bool = False,
     managed_gradle_retention: int = DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION,
+    include_toolchain_cache: bool = True,
+    include_android_user_cache: bool = False,
     include_gradle_user_cache: bool = False,
     gradle_user_home: Path | None = None,
 ) -> SpaceCleanupReport:
@@ -6898,6 +6913,8 @@ def _cleanup_android_space_locked(
     candidates = collect_android_space_candidates(
         cache_root,
         managed_gradle_retention=managed_gradle_retention,
+        include_toolchain_cache=include_toolchain_cache,
+        include_android_user_cache=include_android_user_cache,
         include_gradle_user_cache=include_gradle_user_cache,
         gradle_user_home=gradle_user_home,
     )
@@ -6946,6 +6963,8 @@ def cleanup_android_space(
     target_free_bytes: int | None = None,
     dry_run: bool = False,
     managed_gradle_retention: int = DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION,
+    include_toolchain_cache: bool = True,
+    include_android_user_cache: bool = False,
     include_gradle_user_cache: bool = False,
     gradle_user_home: Path | None = None,
 ) -> SpaceCleanupReport:
@@ -6968,6 +6987,8 @@ def cleanup_android_space(
             target_free_bytes=target_free_bytes,
             dry_run=dry_run,
             managed_gradle_retention=managed_gradle_retention,
+            include_toolchain_cache=include_toolchain_cache,
+            include_android_user_cache=include_android_user_cache,
             include_gradle_user_cache=include_gradle_user_cache,
             gradle_user_home=gradle_user_home,
         )

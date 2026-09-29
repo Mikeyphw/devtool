@@ -271,6 +271,107 @@ def _result_tracks_path(root: Path, revision: str, rel: str) -> bool:
     return proc.returncode == 0
 
 
+def _snapshot_entry_by_path(payload: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    entries: dict[str, Mapping[str, Any]] = {}
+    for raw in payload.get("entries", []) if isinstance(payload.get("entries"), list) else []:
+        if not isinstance(raw, Mapping):
+            continue
+        rel = _safe_rel(str(raw.get("path") or "")).as_posix()
+        entries[rel] = raw
+    return entries
+
+
+def _result_path_identity(root: Path, revision: str, rel: str) -> dict[str, Any]:
+    """Return a Git-commit path identity compatible with snapshot conflict checks.
+
+    LIFE-X01 uses content identity, not a broad path-level diff alone, when
+    deciding whether a transaction result truly conflicts with preserved user
+    dirty work.  Git stores files and symlinks as blobs; directories are reduced
+    to a deterministic tree digest for conflict evidence.
+    """
+
+    listing = _git(root, "ls-tree", "-z", revision, "--", rel)
+    if listing.returncode != 0:
+        detail = (listing.stderr or listing.stdout or "git ls-tree failed").strip()
+        raise GitDirtyStateError(f"Unable to inspect result path {rel!r}: {detail}")
+    raw = (listing.stdout or "").split("\0", 1)[0]
+    if not raw:
+        return {"kind": "missing", "mode": None, "sha256": "", "target": ""}
+    meta, _sep, _path = raw.partition("\t")
+    parts = meta.split()
+    if len(parts) < 3:
+        raise GitDirtyStateError(f"Unable to parse result path identity for {rel!r}")
+    mode_text, object_kind, object_id = parts[0], parts[1], parts[2]
+    if object_kind == "tree":
+        tree = _git(root, "ls-tree", "-r", "-z", revision, "--", rel)
+        if tree.returncode != 0:
+            detail = (tree.stderr or tree.stdout or "git ls-tree failed").strip()
+            raise GitDirtyStateError(f"Unable to inspect result tree {rel!r}: {detail}")
+        digest = hashlib.sha256()
+        for entry in (tree.stdout or "").split("\0"):
+            if not entry:
+                continue
+            digest.update(entry.encode("utf-8", "surrogateescape")); digest.update(b"\0")
+        return {"kind": "directory", "mode": int(mode_text[-3:], 8) if mode_text[-3:].isdigit() else None, "sha256": digest.hexdigest(), "target": ""}
+    try:
+        blob = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "blob", object_id],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=12,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GitDirtyStateError(f"Unable to read result path {rel!r}: {exc}") from exc
+    if blob.returncode != 0:
+        detail = bytes(blob.stderr or blob.stdout or b"git cat-file failed").decode("utf-8", "replace").strip()
+        raise GitDirtyStateError(f"Unable to read result path {rel!r}: {detail}")
+    data = bytes(blob.stdout or b"")
+    if mode_text == "120000":
+        target = data.decode("utf-8", "surrogateescape")
+        return {
+            "kind": "symlink",
+            "mode": 0o777,
+            "sha256": hashlib.sha256(target.encode("utf-8", "surrogatepass")).hexdigest(),
+            "target": target,
+        }
+    return {
+        "kind": "file",
+        "mode": 0o755 if mode_text == "100755" else 0o644,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "target": "",
+    }
+
+
+def _result_matches_preserved_entry(root: Path, revision: str, rel: str, entry: Mapping[str, Any] | None) -> bool:
+    if not isinstance(entry, Mapping):
+        return False
+    expected_kind = str(entry.get("kind") or "")
+    if expected_kind not in {"file", "symlink", "missing"}:
+        return False
+    actual = _result_path_identity(root, revision, rel)
+    if actual.get("kind") != expected_kind:
+        return False
+    if str(actual.get("sha256") or "") != str(entry.get("sha256") or ""):
+        return False
+    if expected_kind == "symlink" and str(actual.get("target") or "") != str(entry.get("target") or ""):
+        return False
+    # Git tracks only the owner executable bit for regular files.  Snapshot
+    # modes intentionally preserve the exact host mode (Termux commonly uses
+    # 0600/0660 rather than 0644), so comparing the full POSIX mode against
+    # Git's normalized 100644/100755 identity creates false conflicts.
+    expected_mode = entry.get("mode")
+    if expected_kind == "file" and expected_mode is not None:
+        try:
+            expected_executable = bool(int(expected_mode) & stat.S_IXUSR)
+        except (TypeError, ValueError):
+            return False
+        actual_executable = actual.get("mode") == 0o755
+        if expected_executable != actual_executable:
+            return False
+    return True
+
+
 def validate_dirty_tree_rebase(snapshot_root: str | Path, *, result_commit: str) -> None:
     snapshot_dir = Path(snapshot_root).resolve()
     payload = load_dirty_tree_snapshot(snapshot_dir)
@@ -278,19 +379,30 @@ def validate_dirty_tree_rebase(snapshot_root: str | Path, *, result_commit: str)
     original_head = str(payload.get("head") or "").strip()
     if payload.get("unmerged"):
         raise GitDirtyStateError("Cannot transplant an unmerged/conflicted index across a transaction HEAD change")
+    entries_by_path = _snapshot_entry_by_path(payload)
     for raw in payload.get("untracked", []) if isinstance(payload.get("untracked"), list) else []:
         rel = _safe_rel(str(raw)).as_posix()
         if _result_tracks_path(root, result_commit, rel):
+            # Convergent add: if the transaction begins tracking a path the user
+            # already had untracked, no user bytes are lost when the resulting
+            # Git object is identical to the preserved entry.  Treat it the same
+            # as the tracked dirty-path convergence rule below.  Real content,
+            # symlink-target, or executable-bit differences remain fail-closed.
+            if _result_matches_preserved_entry(root, result_commit, rel, entries_by_path.get(rel)):
+                continue
             raise GitDirtyStateError(
-                f"Cannot preserve untracked path {rel!r}: transaction result commit starts tracking that path"
+                f"Cannot preserve untracked path {rel!r}: transaction result commit starts tracking that path with different content or Git mode"
             )
     if original_head and result_commit and original_head != result_commit:
+        untracked_paths = set(str(item) for item in payload.get("untracked", []) if str(item))
         for raw in payload.get("paths", []) if isinstance(payload.get("paths"), list) else []:
             rel = _safe_rel(str(raw)).as_posix()
-            if rel in set(str(item) for item in payload.get("untracked", []) if str(item)):
+            if rel in untracked_paths:
                 continue
             proc = _git(root, "diff", "--quiet", original_head, result_commit, "--", rel)
             if proc.returncode == 1:
+                if _result_matches_preserved_entry(root, result_commit, rel, entries_by_path.get(rel)):
+                    continue
                 raise GitDirtyStateError(
                     f"Cannot preserve dirty path {rel!r}: transaction result also changed that path"
                 )

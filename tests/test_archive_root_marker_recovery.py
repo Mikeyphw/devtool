@@ -101,11 +101,14 @@ def test_empty_non_directory_archive_member_still_fails_closed(tmp_path: Path) -
         raise AssertionError("empty non-directory member must be rejected")
 
 
-def test_missing_transaction_json_rollback_is_idempotent(tmp_path: Path) -> None:
+def test_missing_transaction_json_rollback_is_unavailable_evidence(tmp_path: Path) -> None:
     missing = tmp_path / "transactions" / "repo-key" / "tx-id" / "transaction.json"
 
     result = rollback_transaction(missing, reason="repeat recovery after cleanup")
 
-    assert result.returncode == 0
+    assert result.returncode == 2
+    assert result.failure_kind == "rollback_unavailable"
+    assert result.metadata["rollback_receipt"]["state"] == "unavailable"
+    assert result.metadata["rollback_receipt"]["verified"] is False
     assert "No rollback metadata found" in result.output
     assert "restored: 0" in result.output

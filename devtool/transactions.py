@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .artifacts import preview_artifact, read_delete_manifest
 from .models import OperationResult
@@ -34,6 +34,87 @@ from .transaction_worktree import (
     transaction_execution_root,
     worktree_changed_paths,
 )
+
+
+
+
+RollbackState = Literal["verified", "partial", "unavailable", "failed", "not-needed", "abandoned"]
+
+
+@dataclass(frozen=True)
+class RollbackReceipt:
+    """Typed rollback outcome carried by every rollback operation result."""
+
+    state: RollbackState
+    verified: bool
+    phase: str
+    transaction: str
+    reason: str
+    resumable: bool = False
+    partial: bool = False
+    restored_paths: int = 0
+    removed_added_paths: int = 0
+    error: str = ""
+    repository_scope: RollbackState = "not-needed"
+    git_scope: RollbackState = "not-needed"
+    hook_scope: RollbackState = "not-needed"
+    external_scope: RollbackState = "not-needed"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "state": self.state,
+            "verified": self.verified,
+            "phase": self.phase,
+            "transaction": self.transaction,
+            "reason": self.reason,
+            "resumable": self.resumable,
+            "partial": self.partial,
+            "restored_paths": self.restored_paths,
+            "removed_added_paths": self.removed_added_paths,
+            "error": self.error,
+            "scopes": {
+                "repository": self.repository_scope,
+                "git": self.git_scope,
+                "hook": self.hook_scope,
+                "external": self.external_scope,
+            },
+        }
+
+
+def _rollback_receipt_metadata(receipt: RollbackReceipt) -> dict[str, Any]:
+    return {"rollback_receipt": receipt.to_dict(), "rollback_state": receipt.state, "rollback_verified": receipt.verified}
+
+
+def _rollback_failure_receipt(tx: dict[str, Any], *, path: Path, reason: str, error: BaseException) -> RollbackReceipt:
+    entries = [item for item in tx.get("affected_paths", []) or [] if isinstance(item, dict)]
+    states = {str(item.get("restore_state") or "pending") for item in entries}
+    mutated_states = {"target-displaced", "restored", "verified", "removing", "removed"}
+    partial = bool(states.intersection(mutated_states))
+    status = str(tx.get("status") or "")
+    if partial:
+        phase = "verification" if status == "rollback-verifying" or states == {"verified"} else "restore"
+        state = "partial"
+    elif status in {"rollback-requested", "rollback-staging"}:
+        phase = "staging"
+        state = "failed"
+    else:
+        phase = "preflight"
+        state = "failed"
+    error_text = f"{type(error).__name__}: {error}"
+    repository_scope: RollbackState
+    if partial and states == {"verified"}:
+        repository_scope = "verified"
+    elif partial:
+        repository_scope = "partial"
+    else:
+        repository_scope = "failed"
+    git_scope: RollbackState = "failed" if phase == "verification" and "git" in error_text.lower() else "not-needed"
+    return RollbackReceipt(
+        state=state, verified=False, phase=phase, transaction=str(path), reason=reason,
+        resumable=bool(tx), partial=partial, error=error_text,
+        repository_scope=repository_scope, git_scope=git_scope,
+    )
 
 
 def devtool_xdg_dir() -> Path:
@@ -103,14 +184,29 @@ def _relative_to_repo(repo_root: Path, path: Path) -> str:
 
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "posix":
+        try:
+            path.parent.chmod(0o700)
+        except OSError:
+            pass
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         with tmp.open("w", encoding="utf-8") as handle:
+            if os.name == "posix":
+                try:
+                    tmp.chmod(0o600)
+                except OSError:
+                    pass
             handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, path)
+        if os.name == "posix":
+            try:
+                path.chmod(0o600)
+            except OSError:
+                pass
         if os.name == "posix":
             flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
             directory_fd = os.open(path.parent, flags)
@@ -374,16 +470,47 @@ def _resolve_git_index_path(repo_root: Path) -> Path:
     return index_path if index_path.is_absolute() else (repo_root / index_path).resolve()
 
 
-def _git_index_identity(index_path: Path) -> dict[str, Any]:
-    """Return the exact on-disk identity used to guard transactional Git rollback."""
+def _git_index_identity(index_path: Path, repo_root: Path | None = None) -> dict[str, Any]:
+    """Return durable raw + semantic identity for a Git index.
+
+    Git may rewrite index stat/cache metadata while preserving the exact staged
+    tree. Raw bytes remain useful evidence, but rollback eligibility must accept
+    a deliberately repaired index whose staged entries are semantically
+    identical to the durable checkpoint.
+    """
     if not index_path.exists():
-        return {"exists": False, "sha256": "", "mode": None}
+        return {"exists": False, "sha256": "", "mode": None, "entries_sha256": ""}
     try:
         mode = stat.S_IMODE(index_path.stat().st_mode)
         digest = hashlib.sha256(index_path.read_bytes()).hexdigest()
     except OSError as exc:
         raise RuntimeError(f"Unable to inspect Git index before rollback: {index_path}: {exc}") from exc
-    return {"exists": True, "sha256": digest, "mode": mode}
+    entries_digest = ""
+    if repo_root is not None:
+        env = os.environ.copy()
+        env["GIT_INDEX_FILE"] = str(index_path)
+        proc = subprocess.run(
+            ["git", "ls-files", "--stage", "-z"], cwd=repo_root,
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or b"").decode("utf-8", "replace").strip()
+            raise RuntimeError(f"Unable to inspect staged Git index entries: {detail or 'git command failed'}")
+        entries_digest = hashlib.sha256(bytes(proc.stdout or b"")).hexdigest()
+    return {"exists": True, "sha256": digest, "mode": mode, "entries_sha256": entries_digest}
+
+
+def _git_index_identity_matches(current: dict[str, Any], expected: dict[str, Any]) -> bool:
+    """Compare new semantic checkpoints while preserving legacy raw-byte guards."""
+    expected_entries = str(expected.get("entries_sha256") or "")
+    current_entries = str(current.get("entries_sha256") or "")
+    if expected_entries and current_entries:
+        return bool(current.get("exists")) == bool(expected.get("exists")) and current_entries == expected_entries
+    return (
+        bool(current.get("exists")) == bool(expected.get("exists"))
+        and str(current.get("sha256") or "") == str(expected.get("sha256") or "")
+        and current.get("mode") == expected.get("mode")
+    )
 
 
 def _has_other_repository_reservations(repo_root: Path, tx: dict[str, Any]) -> bool:
@@ -460,8 +587,8 @@ def _preflight_git_restore(repo_root: Path, tx: dict[str, Any]) -> str:
         raise RuntimeError(
             "Refusing Git rollback because the transaction lacks a current-index safety checkpoint"
         )
-    current_index_identity = _git_index_identity(current_index)
-    if current_index_identity != expected_index:
+    current_index_identity = _git_index_identity(current_index, repo_root)
+    if not _git_index_identity_matches(current_index_identity, expected_index):
         raise RuntimeError(
             "Refusing Git rollback because the repository index changed after the transaction checkpoint; "
             "staged user work would otherwise be overwritten"
@@ -497,29 +624,49 @@ def _verify_git_state_restored(repo_root: Path, tx: dict[str, Any]) -> None:
     expected_initial_index = git_state.get("initial_index_identity")
     if not isinstance(expected_initial_index, dict):
         raise RuntimeError("Git rollback verification failed because the initial index checkpoint is missing")
-    current_index_identity = _git_index_identity(index_path)
-    if current_index_identity != expected_initial_index:
+    current_index_identity = _git_index_identity(index_path, repo_root)
+    if not _git_index_identity_matches(current_index_identity, expected_initial_index):
         raise RuntimeError("Git rollback verification failed because the index does not match its transaction backup")
 
 
-def _preflight_resume_guards(repo_root: Path, entries: list[dict[str, Any]]) -> None:
+def _preflight_retry_guards(repo_root: Path, entries: list[dict[str, Any]]) -> None:
+    """Validate a rollback retry without inventing recovery evidence.
+
+    Early preflight/staging failures have not mutated the target and therefore
+    retry against the durable post-apply identity.  Once a target mutation was
+    checkpointed, the persisted resume identity is mandatory and authoritative.
+    """
+
     conflicts: list[str] = []
+    checkpoint_states = {"target-displaced", "restored", "removed"}
+    pre_mutation_states = {"pending", "staging", "staged", "rollback-failed", ""}
     for entry in entries:
         if bool(entry.get("verified")):
             continue
-        expected = entry.get("resume_target_identity")
-        if not isinstance(expected, dict):
-            conflicts.append(str(_safe_rel(str(entry.get("path") or ""))) + " (missing rollback checkpoint)")
-            continue
         rel = _safe_rel(str(entry.get("path") or ""))
-        current = _path_identity(repo_root / rel)
-        if current != expected:
-            conflicts.append(str(rel))
+        state = str(entry.get("restore_state") or "pending")
+        resume_identity = entry.get("resume_target_identity")
+        if state in checkpoint_states:
+            if not isinstance(resume_identity, dict):
+                conflicts.append(f"{rel.as_posix()} (missing persisted rollback checkpoint)")
+                continue
+            expected = resume_identity
+        elif state in pre_mutation_states:
+            expected = entry.get("applied_identity")
+            if not isinstance(expected, dict):
+                conflicts.append(f"{rel.as_posix()} (missing applied checkpoint)")
+                continue
+        else:
+            conflicts.append(f"{rel.as_posix()} (unknown rollback state {state!r})")
+            continue
+        if _path_identity(repo_root / rel) != expected:
+            conflicts.append(rel.as_posix())
     if conflicts:
         raise RuntimeError(
-            "Refusing resumed rollback because target changed after the previous rollback attempt: "
+            "Refusing resumed rollback because target state no longer matches its durable checkpoint: "
             + ", ".join(conflicts[:20])
         )
+
 def _copy_path(source: Path, destination: Path) -> None:
     _delete_path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -537,11 +684,23 @@ def _history_dir(repo_root: Path) -> Path:
     return transaction_root(repo_root) / "history"
 
 
+_PRIVATE_STATE_KEY_FRAGMENTS = ("secret", "password", "token", "authorization", "cookie", "credential")
+
+def _redact_private_state(value: Any, *, key: str = "") -> Any:
+    if key and any(fragment in key.lower() for fragment in _PRIVATE_STATE_KEY_FRAGMENTS):
+        return "<redacted>"
+    if isinstance(value, dict):
+        return {str(k): _redact_private_state(v, key=str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_private_state(item) for item in value]
+    return value
+
+
 def _archive_transaction_summary(path: Path, tx: dict[str, Any]) -> None:
     repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
     history = _history_dir(repo_root)
     history.mkdir(parents=True, exist_ok=True)
-    payload = json.loads(json.dumps(tx))
+    payload = _redact_private_state(json.loads(json.dumps(tx)))
     payload.pop("backup_dir", None)
     git_state = payload.get("git_state")
     if isinstance(git_state, dict):
@@ -608,7 +767,7 @@ def _capture_git_state(repo_root: Path, tx_dir: Path) -> dict[str, Any]:
     index_path = _resolve_git_index_path(repo_root)
     backup_path = tx_dir / "git-index.backup"
     index_existed = index_path.exists()
-    initial_index_identity = _git_index_identity(index_path)
+    initial_index_identity = _git_index_identity(index_path, repo_root)
     if index_existed:
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(index_path, backup_path)
@@ -664,6 +823,7 @@ def record_transaction_git_commit(
     if not path.exists():
         return
     tx = _read_json(path)
+    repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
     git_state = tx.get("git_state")
     if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
         return
@@ -698,7 +858,7 @@ def record_transaction_git_commit(
         index_path = Path(str(git_state.get("index_path") or ""))
         if not str(index_path):
             raise RuntimeError("Apply transaction is missing its Git index path")
-        git_state["post_apply_index_identity"] = _git_index_identity(index_path)
+        git_state["post_apply_index_identity"] = _git_index_identity(index_path, repo_root)
         git_state["recorded_at"] = _utc_now()
         tx["git_state"] = git_state
         update_git_transaction_journal(tx, recovery_state="commit-recorded", result_commit=commit)
@@ -736,7 +896,7 @@ def _verify_primary_checkout_unchanged_for_integration(repo_root: Path, tx: dict
         )
     expected_index = git_state.get("initial_index_identity")
     index_path = Path(str(git_state.get("index_path") or ""))
-    if isinstance(expected_index, dict) and _git_index_identity(index_path) != expected_index:
+    if isinstance(expected_index, dict) and not _git_index_identity_matches(_git_index_identity(index_path, repo_root), expected_index):
         raise RuntimeError(
             "Primary checkout index changed while the isolated transaction was running; refusing integration"
         )
@@ -835,7 +995,7 @@ def integrate_transaction_worktree(transaction_path: str | Path | None) -> dict[
             git_state["dirty_tree_restored"] = True
             git_state["dirty_tree_restore_evidence"] = restored_dirty
         git_state["applied_commit"] = result_commit
-        git_state["post_apply_index_identity"] = _git_index_identity(Path(str(git_state.get("index_path") or "")))
+        git_state["post_apply_index_identity"] = _git_index_identity(Path(str(git_state.get("index_path") or "")), repo_root)
         git_state["recorded_at"] = _utc_now()
         tx["git_state"] = git_state
         update_git_transaction_journal(tx, recovery_state="primary-commit-integrated", result_commit=result_commit)
@@ -989,8 +1149,11 @@ def create_apply_transaction(
     transaction_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
     tx_dir = _transaction_dir(repo_root, transaction_id)
     backup_dir = tx_dir / "backup"
-    tx_dir.mkdir(parents=True, exist_ok=False)
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    tx_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
+    backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "posix":
+        tx_dir.chmod(0o700)
+        backup_dir.chmod(0o700)
 
     entries: list[dict[str, Any]] = []
     existing: list[str] = []
@@ -1266,9 +1429,67 @@ def list_active_transaction_records(repo_root: Path) -> list[dict[str, Any]]:
             for item in tx.get("affected_paths", []) or []
             if isinstance(item, dict) and str(item.get("path") or "")
         ])
+        tx["recovery_diagnostics"] = transaction_recovery_diagnostics(tx)
         records.append(tx)
     records.sort(key=lambda item: str(item.get("updated_at") or item.get("started_at") or ""))
     return records
+
+
+def transaction_recovery_diagnostics(tx: dict[str, Any]) -> dict[str, Any]:
+    """Explain durable rollback state without manufacturing recovery evidence.
+
+    The diagnostic intentionally reports only checkpoints already persisted in
+    the transaction journal.  This keeps ``doctor``/``rollback --list`` aligned
+    with the same evidence used by the rollback retry guards.
+    """
+
+    entries = [item for item in tx.get("affected_paths", []) or [] if isinstance(item, dict)]
+    states = {str(item.get("restore_state") or "pending") for item in entries}
+    status = str(tx.get("status") or "")
+    checkpoint_paths = [
+        str(item.get("path") or "")
+        for item in entries
+        if isinstance(item.get("resume_target_identity"), dict)
+    ]
+    missing_checkpoint_paths = [
+        str(item.get("path") or "")
+        for item in entries
+        if str(item.get("restore_state") or "") in {"target-displaced", "restored", "removed"}
+        and not isinstance(item.get("resume_target_identity"), dict)
+    ]
+    if status == "rollback-verifying" or (status == "rollback-failed" and states == {"verified"}):
+        phase = "verification"
+    elif states.intersection({"target-displaced", "restored", "removed", "verified"}):
+        phase = "restore"
+    elif status in {"rollback-requested", "rollback-staging"}:
+        phase = "staging"
+    elif status == "rollback-failed":
+        phase = "preflight"
+    else:
+        phase = "apply"
+
+    blocker = str(tx.get("rollback_error") or "")
+    if not blocker and missing_checkpoint_paths:
+        blocker = "missing persisted rollback checkpoint: " + ", ".join(missing_checkpoint_paths[:20])
+    transaction_id = str(tx.get("transaction_id") or "")
+    if status == "rollback-failed":
+        selector = transaction_id or str(tx.get("path") or "")
+        action = f"devtool rollback --transaction {selector}" if selector else "devtool rollback --failed"
+    elif status.startswith("rollback-"):
+        action = "allow the active rollback to finish; if interrupted, rerun it from its persisted checkpoint"
+    else:
+        action = "no rollback action required unless this transaction becomes stale or validation requests recovery"
+
+    return {
+        "phase": phase,
+        "reserved_paths": list(tx.get("reserved_paths") or [
+            str(item.get("path") or "") for item in entries if str(item.get("path") or "")
+        ]),
+        "checkpoint_paths": checkpoint_paths,
+        "missing_checkpoint_paths": missing_checkpoint_paths,
+        "blocker": blocker,
+        "action": action,
+    }
 
 
 def resolve_active_transaction(
@@ -1338,6 +1559,11 @@ def mark_transaction_completed(transaction_path: str | Path | None) -> None:
         integrate_transaction_worktree(path)
         tx = _read_json(path)
     tx["status"] = "completed"
+    receipt = RollbackReceipt(
+        state="not-needed", verified=False, phase="complete", transaction=str(path),
+        reason="apply transaction completed without rollback",
+    )
+    tx["rollback_receipt"] = receipt.to_dict()
     update_git_transaction_journal(tx, recovery_state="completed", finalization_state="completed")
     tx["completed_at"] = _utc_now()
     tx["updated_at"] = _utc_now()
@@ -1353,18 +1579,22 @@ def abandon_transaction(
     transaction_path: str | Path | None,
     *,
     reason: str = "validation session discarded while retaining applied changes",
-) -> None:
+) -> RollbackReceipt | None:
     """Close a transaction while deliberately keeping the applied working tree."""
 
     if not transaction_path:
-        return
+        return None
     path = Path(transaction_path)
     if not path.exists():
-        return
+        return None
     tx = _read_json(path)
     if isolated_transaction(tx):
         integrate_transaction_worktree(path)
         tx = _read_json(path)
+    receipt = RollbackReceipt(
+        state="abandoned", verified=False, phase="finalization", transaction=str(path), reason=reason,
+        repository_scope="abandoned", git_scope="abandoned", hook_scope="abandoned", external_scope="abandoned",
+    )
     tx.update({
         "status": "abandoned-kept-changes",
         "abandon_reason": reason,
@@ -1373,6 +1603,7 @@ def abandon_transaction(
         "pid": 0,
         "process_start": "",
         "run_id": "",
+        "rollback_receipt": receipt.to_dict(),
     })
     update_git_transaction_journal(tx, recovery_state="abandoned", finalization_state="abandoned")
     _atomic_write_json(path, tx)
@@ -1380,6 +1611,7 @@ def abandon_transaction(
     _archive_transaction_summary(path, tx)
     _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
     _cleanup_transaction_dir(path)
+    return receipt
 
 def _delete_path(path: Path) -> None:
     if path.is_dir() and not path.is_symlink():
@@ -1416,7 +1648,16 @@ def rollback_transaction(
             "restored: 0\n"
             "removed_added_paths: 0"
         )
-        return OperationResult("apply-rollback", argv, 0, time.perf_counter() - start, output, [], failure_kind="rollback")
+        receipt = RollbackReceipt(
+            state="unavailable", verified=False, phase="evidence", transaction=str(path), reason=reason,
+            resumable=False, partial=False, error="rollback metadata is unavailable",
+            repository_scope="unavailable", git_scope="unavailable", hook_scope="unavailable", external_scope="unavailable",
+        )
+        output += "\nrollback_state: unavailable\nrollback_verified: false"
+        return OperationResult(
+            "apply-rollback", argv, 2, time.perf_counter() - start, output, [],
+            failure_kind="rollback_unavailable", metadata=_rollback_receipt_metadata(receipt),
+        )
     tx: dict[str, Any] = {}
 
     def persist() -> None:
@@ -1447,16 +1688,10 @@ def rollback_transaction(
 
         # All refusal checks happen before any target/index/HEAD mutation.
         _preflight_git_restore(repo_root, tx)
-        if previous_status != "rollback-failed":
-            _preflight_live_target_guards(repo_root, entries)
         if previous_status == "rollback-failed":
-            _preflight_resume_guards(repo_root, entries)
+            _preflight_retry_guards(repo_root, entries)
         else:
-            for entry in entries:
-                if bool(entry.get("verified")):
-                    continue
-                rel = _safe_rel(str(entry.get("path") or ""))
-                entry["resume_target_identity"] = _path_identity(repo_root / rel)
+            _preflight_live_target_guards(repo_root, entries)
 
         tx["schema_version"] = max(2, int(tx.get("schema_version") or 0))
         tx["status"] = "rollback-requested"
@@ -1470,12 +1705,19 @@ def rollback_transaction(
 
         if not entries:
             git_restore_status = _restore_git_state(repo_root, tx)
+            receipt = RollbackReceipt(
+                state="verified", verified=True, phase="complete", transaction=str(path), reason=reason,
+                restored_paths=0, removed_added_paths=0,
+                repository_scope="not-needed",
+                git_scope="verified" if bool((tx.get("git_state") or {}).get("is_git_repo")) else "not-needed",
+            )
             tx.update({
                 "status": "rolled-back",
                 "rolled_back_at": _utc_now(),
                 "pid": 0,
                 "process_start": "",
                 "run_id": "",
+                "rollback_receipt": receipt.to_dict(),
             })
             _atomic_write_json(path, tx)
             _archive_transaction_summary(path, tx)
@@ -1490,7 +1732,11 @@ def rollback_transaction(
                 "note: transaction had no affected paths recorded."
             )
             _cleanup_transaction_dir(path)
-            return OperationResult("apply-rollback", argv, 0, time.perf_counter() - start, output, [], failure_kind="rollback")
+            output += "\nrollback_state: verified\nrollback_verified: true"
+            return OperationResult(
+                "apply-rollback", argv, 0, time.perf_counter() - start, output, [],
+                failure_kind="rollback", metadata=_rollback_receipt_metadata(receipt),
+            )
 
         transaction_id = str(tx.get("transaction_id") or path.parent.name)
         token = transaction_id.replace("-", "")[-12:] or uuid.uuid4().hex[:12]
@@ -1624,12 +1870,19 @@ def rollback_transaction(
         git_restore_status = _restore_git_state(repo_root, tx)
         persist()
 
+        receipt = RollbackReceipt(
+            state="verified", verified=True, phase="complete", transaction=str(path), reason=reason,
+            restored_paths=len(restored), removed_added_paths=len(removed),
+            repository_scope="verified",
+            git_scope="verified" if bool((tx.get("git_state") or {}).get("is_git_repo")) else "not-needed",
+        )
         tx.update({
             "status": "rolled-back",
             "rolled_back_at": _utc_now(),
             "pid": 0,
             "process_start": "",
             "run_id": "",
+            "rollback_receipt": receipt.to_dict(),
         })
         update_git_transaction_journal(tx, recovery_state="rolled-back", finalization_state="rolled-back")
         _atomic_write_json(path, tx)
@@ -1651,8 +1904,12 @@ def rollback_transaction(
             output += "\nrestored_paths:\n" + "\n".join(f"  {item}" for item in restored[:80])
         if removed:
             output += "\nremoved_paths:\n" + "\n".join(f"  {item}" for item in removed[:80])
+        output += "\nrollback_state: verified\nrollback_verified: true"
         _cleanup_transaction_dir(path)
-        return OperationResult("apply-rollback", argv, 0, time.perf_counter() - start, output, [], failure_kind="rollback")
+        return OperationResult(
+            "apply-rollback", argv, 0, time.perf_counter() - start, output, [],
+            failure_kind="rollback", metadata=_rollback_receipt_metadata(receipt),
+        )
     except BaseException as exc:
         if tx:
             try:
@@ -1678,15 +1935,30 @@ def rollback_transaction(
             except Exception:
                 pass
         emit_progress("rollback-failed", total=len(tx.get("affected_paths", []) or []) if tx else 0, error=f"{type(exc).__name__}: {exc}")
+        receipt = _rollback_failure_receipt(tx, path=path, reason=reason, error=exc)
+        if tx:
+            try:
+                tx["rollback_receipt"] = receipt.to_dict()
+                _atomic_write_json(path, tx)
+                _write_transaction_active_marker(path, tx)
+            except Exception:
+                pass
         output = (
             "Rollback failed and remains resumable.\n"
             f"transaction: {path}\n"
             f"reason: {reason}\n"
             f"error_type: {type(exc).__name__}\n"
             f"error: {exc}\n"
+            f"rollback_state: {receipt.state}\n"
+            f"rollback_phase: {receipt.phase}\n"
+            f"rollback_partial: {'true' if receipt.partial else 'false'}\n"
+            "rollback_verified: false\n"
             "Run the rollback/recovery command again after correcting the reported problem."
         )
-        return OperationResult("apply-rollback", argv, 1, time.perf_counter() - start, output, [], failure_kind="rollback_failure")
+        return OperationResult(
+            "apply-rollback", argv, 1, time.perf_counter() - start, output, [],
+            failure_kind="rollback_failure", metadata=_rollback_receipt_metadata(receipt),
+        )
 
 def read_transaction(transaction_path: str | Path) -> dict[str, Any]:
     """Read a transaction JSON path or active marker."""

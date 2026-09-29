@@ -582,7 +582,10 @@ class DotnetRunner(ProjectRunner):
             ]
             return [apply_dotnet_variant_to_spec(config, spec) for spec in specs]
         if action == "clean":
-            return [apply_dotnet_variant_to_spec(config, CommandSpec("clean", ["dotnet", "clean", build_target], env=env))]
+            return [apply_dotnet_variant_to_spec(config, CommandSpec(
+                "clean", ["dotnet", "clean", build_target], env=env, destructive=True,
+                metadata=_tool_metadata(self.kind, config.repo_root, cleanup_scope="project"),
+            ))]
         if action == "package":
             if config.package_command:
                 spec = CommandSpec(
@@ -2845,7 +2848,10 @@ class PythonRunner(ProjectRunner):
             argv = [*self._python_support_prefix(config), "clean", str(root)]
             for category in categories:
                 argv.extend(["--category", category])
-            return [CommandSpec("clean", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root))]
+            return [CommandSpec(
+                "clean", argv, env=self._env(config), cwd=str(root), destructive=True,
+                metadata=_tool_metadata(self.kind, root, cleanup_scope="project"),
+            )]
         if action == "run":
             if config.run_command:
                 return [CommandSpec("run", _shell_split_option(config.run_command, name="config.run_command"), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
@@ -3137,7 +3143,12 @@ class NodeRunner(ProjectRunner):
                     raise SystemExit(f"package.json has no '{selected_script}' script.")
                 spec = CommandSpec(
                     action.replace("wine-", ""), self._script_argv(config, selected_script), env=env, cwd=str(root),
-                    metadata=self._metadata(config, root, node_script=selected_script, test_framework="node" if action in {"test", "wine-test"} else ""),
+                    destructive=action == "clean",
+                    metadata=self._metadata(
+                        config, root, node_script=selected_script,
+                        test_framework="node" if action in {"test", "wine-test"} else "",
+                        **({"cleanup_scope": "project"} if action == "clean" else {}),
+                    ),
                 )
                 if action in {"test", "wine-test"}:
                     spec = apply_test_selection(config, spec)
@@ -3236,6 +3247,7 @@ class RustRunner(ProjectRunner):
                 self.kind, root,
                 collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package",
                 test_framework="cargo" if action in {"test", "wine-test"} else "",
+                **({"cleanup_scope": "project"} if action == "clean" else {}),
             ),
         )
         if action in {"test", "wine-test"}:
@@ -3704,7 +3716,11 @@ done < "$plan"
             target = str(self._options(config).get("run_target") or config.run_target or ".")
             argv = ["go", "run", "-v", target]
         elif action == "clean":
-            argv = ["go", "clean", "-cache", "-testcache"]
+            # Project clean must not mutate the process-wide Go build/test caches.
+            # Remove Devtool-owned project outputs and let ``go clean`` handle
+            # package-local build residue only. Global cache GC belongs to an
+            # explicit global cleanup scope.
+            argv = ["go", "clean", "./..."]
         else:
             raise SystemExit(f"Unsupported Go action: {action}")
         metadata = _tool_metadata(
@@ -3717,6 +3733,7 @@ done < "$plan"
             go_environment=resolved_go.to_dict(),
             go_environment_identity=resolved_go.identity,
             environment_domains={"go": resolved_go.identity},
+            **({"cleanup_scope": "project", "global_cache_mutation": False} if action == "clean" else {}),
         )
         if artifact_action:
             destination_out = destination_go_output_dir(action, config.execution_environment)
@@ -3825,6 +3842,7 @@ class MavenRunner(ProjectRunner):
                 test_framework="maven" if test_action else "",
                 report_parser="maven-surefire" if test_action else "",
                 report_parsers=["maven-surefire"] if test_action else [],
+                **({"cleanup_scope": "project"} if action == "clean" else {}),
             ),
         )
         if action in {"test", "wine-test", "verify"}:
@@ -4016,7 +4034,7 @@ class CMakeRunner(ProjectRunner):
             ))
             return specs
         if action == "clean":
-            return [CommandSpec("clean", [self._cmake_command(config), "--build", str(build_dir), "--target", "clean", "--parallel", str(workers)], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+            return [CommandSpec("clean", [self._cmake_command(config), "--build", str(build_dir), "--target", "clean", "--parallel", str(workers)], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir), cleanup_scope="project"))]
         raise SystemExit(f"Unsupported CMake action: {action}")
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
@@ -4120,7 +4138,7 @@ class MesonRunner(ProjectRunner):
             ))
             return specs
         if action == "clean":
-            return [CommandSpec("clean", ["meson", "compile", "-C", str(build_dir), "--clean"], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+            return [CommandSpec("clean", ["meson", "compile", "-C", str(build_dir), "--clean"], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir), cleanup_scope="project"))]
         raise SystemExit(f"Unsupported Meson action: {action}")
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
@@ -4216,7 +4234,7 @@ class MakeRunner(ProjectRunner):
         if target and target not in targets and action != "build":
             raise SystemExit(f"Makefile has no '{target}' target.")
         argv = ["make", "-j", str(workers), *( [target] if target else [])]
-        return [CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root, make_target=target))]
+        return [CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root, make_target=target, **({"cleanup_scope": "project"} if action == "clean" else {})))]
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
         specs: list[CommandSpec] = []

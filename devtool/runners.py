@@ -213,6 +213,64 @@ def _preflight_undeclared_checksum_changes(
     return errors
 
 
+def _preflight_restored_violation_errors(
+    result: OperationResult | None,
+    manifest: dict,
+    *,
+    phase: str,
+    checksum_watch_before: Mapping[str, tuple[str, int, str]],
+    write_paths: Sequence[str],
+) -> list[str]:
+    """Preserve precise checksum diagnostics after hook-local restoration.
+
+    LIFE-X01 restores an undeclared write inside the hook engine before control
+    returns here.  The legacy checksum checks therefore see a clean repository.
+    The hook receipt still records exactly which paths changed, so translate that
+    evidence back into the same source/payload diagnostics callers already rely
+    on instead of degrading to a generic hook-exit message.
+    """
+    if result is None:
+        return []
+    event = result.metadata.get("hook_event") if isinstance(result.metadata, dict) else None
+    if not isinstance(event, dict):
+        return []
+    violations = [
+        str(item).strip().replace("\\", "/").strip("/")
+        for item in event.get("write_violations", []) or []
+        if str(item).strip()
+    ]
+    if not violations:
+        return []
+    inventory = {
+        str(entry.get("path") or "").strip().replace("\\", "/"): entry
+        for entry in artifact_inventory_entries(manifest)
+        if str(entry.get("path") or "").strip()
+    }
+    errors: list[str] = []
+    for path in violations:
+        if _preflight_path_is_declared(path, write_paths):
+            continue
+        entry = inventory.get(path)
+        if entry is not None:
+            action = str(entry.get("action") or "").strip().lower()
+            if phase == "before_extract":
+                if action in {"modify", "delete"}:
+                    errors.append(f"Preflight changed source SHA-256 for undeclared write path: {path}.")
+                    continue
+                if action == "add" and checksum_watch_before.get(path, ("missing", 0, ""))[0] == "missing":
+                    errors.append(f"Preflight created an undeclared inventory add target: {path}.")
+                    continue
+            elif phase == "after_extract":
+                if action == "delete":
+                    errors.append(f"Preflight recreated an undeclared deleted path: {path}.")
+                    continue
+                errors.append(f"Preflight changed payload SHA-256 for undeclared write path: {path}.")
+                continue
+        if path in checksum_watch_before:
+            errors.append(f"Preflight changed checksum/state for undeclared write path: {path}.")
+    return errors
+
+
 def _preflight_checksum_boundary_errors(
     repo_root: Path,
     manifest: dict,
@@ -336,6 +394,16 @@ def _run_required_preflight(
         lifecycle_progress("preflight", phase, result)
     artifact_sha_after = sha256_file(artifact_path) if artifact_path.is_file() else ""
     integrity_errors: list[str] = []
+    if not ignore_checksum:
+        integrity_errors.extend(
+            _preflight_restored_violation_errors(
+                result,
+                manifest,
+                phase=phase,
+                checksum_watch_before=checksum_watch_before,
+                write_paths=write_paths,
+            )
+        )
     if not ignore_checksum and artifact_sha_before and artifact_sha_after != artifact_sha_before:
         integrity_errors.append("Preflight modified the artifact archive; artifact checksums are immutable during apply.")
     if not ignore_checksum:
@@ -355,6 +423,7 @@ def _run_required_preflight(
         )
     )
     if integrity_errors:
+        integrity_errors = list(dict.fromkeys(integrity_errors))
         raise _preflight_integrity_failure(
             artifact_path,
             phase=phase,
@@ -3534,7 +3603,9 @@ def apply_overlay(
         "DEVTOOL_TRANSACTION_REPO_ROOT",
         "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
         "DEVTOOL_VALIDATION_STATE_REPO_ROOT",
+        "DEVTOOL_TRANSACTION_ISOLATION",
     )):
+        os.environ.setdefault("DEVTOOL_TRANSACTION_ISOLATION", "worktree")
         return _apply_overlay_impl(
             repo_root, artifact, force=force, yes=yes, dry_run=dry_run,
             log_path=log_path, preview=preview, ignore_checksum=ignore_checksum,
@@ -3614,7 +3685,9 @@ def apply_overlay_bundle(
         "DEVTOOL_TRANSACTION_REPO_ROOT",
         "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
         "DEVTOOL_VALIDATION_STATE_REPO_ROOT",
+        "DEVTOOL_TRANSACTION_ISOLATION",
     )):
+        os.environ.setdefault("DEVTOOL_TRANSACTION_ISOLATION", "worktree")
         return _apply_overlay_bundle_impl(
             repo_root, artifact, force=force, yes=yes, dry_run=dry_run,
             log_path=log_path, preview=preview, source_artifacts=source_artifacts,
@@ -3864,14 +3937,24 @@ def _apply_overlay_bundle_impl(
             temp_dir.cleanup()
 
 
-def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False) -> OperationResult:
+def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False, skip_artifact_validation: bool = False) -> OperationResult:
     with preserve_environment_keys((
         "DEVTOOL_TRANSACTION_REPO_ROOT",
         "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
         "DEVTOOL_VALIDATION_STATE_REPO_ROOT",
+        "DEVTOOL_TRANSACTION_ISOLATION",
     )):
+        os.environ.setdefault("DEVTOOL_TRANSACTION_ISOLATION", "worktree")
         artifact_path = resolve_artifact_path(artifact)
-        return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
+        argv = ["snapshot", str(artifact_path)]
+        if not dry_run and not skip_artifact_validation:
+            rejected = _direct_artifact_validation_failure(
+                repo_root, artifact_path, artifact_type="snapshot", operation="apply-snapshot",
+                argv=argv, log_path=log_path, ignore_checksum=ignore_checksum,
+            )
+            if rejected is not None:
+                return rejected
+        return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
 
 
 def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False, lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None, render_hook_progress: bool = False, stream_hook_output: bool = False) -> OperationResult:
@@ -3893,7 +3976,9 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
     failure_kind = ""
     preflight_results: list[OperationResult] = []
     try:
-        manifest = read_artifact_manifest(artifact_path) if not snapshot else {}
+        # Snapshot is a first-class lifecycle artifact: its declared hooks and
+        # validation contract must be the same manifest the qualification gate saw.
+        manifest = read_artifact_manifest(artifact_path)
         declarations = [_artifact_config_declaration(manifest)] if manifest else []
         preview_data = _preview_with_config_registration(
             preview or preview_artifact(repo_root, artifact_path, snapshot=snapshot),
@@ -3913,21 +3998,20 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         execution_root = transaction_execution_root(transaction)
         os.environ["DEVTOOL_TRANSACTION_REPO_ROOT"] = str(execution_root)
         os.environ["DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT"] = str(repo_root.resolve())
-        if not snapshot:
-            before = _run_required_preflight(
-                execution_root,
-                artifact_path,
-                phase="before_extract",
-                manifest=manifest,
-                log_path=log_path,
-                ignore_checksum=ignore_checksum,
-                checksum_paths=checksum_paths,
-                lifecycle_progress=lifecycle_progress,
-                render_hook_progress=render_hook_progress,
-                stream_hook_output=stream_hook_output,
-            )
-            if before is not None:
-                preflight_results.append(before)
+        before = _run_required_preflight(
+            execution_root,
+            artifact_path,
+            phase="before_extract",
+            manifest=manifest,
+            log_path=log_path,
+            ignore_checksum=ignore_checksum,
+            checksum_paths=checksum_paths,
+            lifecycle_progress=lifecycle_progress,
+            render_hook_progress=render_hook_progress,
+            stream_hook_output=stream_hook_output,
+        )
+        if before is not None:
+            preflight_results.append(before)
         skipped_metadata = 0
         deleted_paths: list[str] = []
         if snapshot:
@@ -3937,6 +4021,15 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
                 _sync_snapshot(tmpdir, execution_root)
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
+            after = _run_required_preflight(
+                execution_root, artifact_path, phase="after_extract", manifest=manifest,
+                log_path=log_path, ignore_checksum=ignore_checksum, checksum_paths=checksum_paths,
+                lifecycle_progress=lifecycle_progress, render_hook_progress=render_hook_progress,
+                stream_hook_output=stream_hook_output,
+            )
+            if after is not None:
+                preflight_results.append(after)
+            checkpoint_transaction_applied(transaction.get("path"))
         else:
             skipped_metadata += _extract_archive(artifact_path, execution_root)
             deleted_paths = _apply_delete_manifest(execution_root, artifact_path)

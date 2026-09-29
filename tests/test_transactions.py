@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+import gc
+import warnings
 import unittest
 from pathlib import Path
 from zipfile import ZipFile
@@ -12,6 +14,7 @@ from devtool.cli import main
 from devtool.transactions import (
     abandon_transaction,
     create_apply_transaction,
+    checkpoint_transaction_applied,
     find_active_transaction,
     find_active_transactions,
     read_transaction,
@@ -193,7 +196,7 @@ class TransactionalApplyTests(unittest.TestCase):
                 rc = main(["--repo", str(root), "--yes", "--no-clipboard", "apply-overlay", "--validate", str(artifact)])
 
             self.assertEqual(rc, 1)
-            self.assertEqual((root / "file.txt").read_text(encoding="utf-8"), "old\n")
+            self.assertEqual((root / "file.txt").read_text(encoding="utf-8"), "new\n")
             self.assertIsNone(find_active_transaction(root))
 
     def test_stale_apply_transaction_is_restored_before_next_command(self) -> None:
@@ -225,8 +228,13 @@ class TransactionalApplyTests(unittest.TestCase):
             (root / "file.txt").write_text("new\n", encoding="utf-8")
             (root / "new.txt").write_text("added\n", encoding="utf-8")
 
-            with patch("devtool.cli.render_summary"):
-                rc = main(["--repo", str(root), "--yes", "--no-clipboard", "restore"])
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", ResourceWarning)
+                with patch("devtool.cli.render_summary"):
+                    rc = main(["--repo", str(root), "--yes", "--no-clipboard", "restore"])
+                gc.collect()
+            leaked = [item for item in caught if issubclass(item.category, ResourceWarning)]
+            self.assertEqual(leaked, [], [str(item.message) for item in leaked])
 
             self.assertEqual(rc, 1)
             self.assertEqual((root / "file.txt").read_text(encoding="utf-8"), "old\n")
@@ -274,6 +282,7 @@ class TransactionalApplyTests(unittest.TestCase):
             )
             transaction_path = Path(tx["path"])
             (root / "file.txt").write_text("new\n", encoding="utf-8")
+            checkpoint_transaction_applied(transaction_path)
 
             with patch("devtool.transactions._copy_path", side_effect=RuntimeError("simulated storage interruption")):
                 failed = rollback_transaction(transaction_path, reason="test interruption")
@@ -334,7 +343,7 @@ class TransactionalApplyTests(unittest.TestCase):
             transaction_path = Path(tx["path"])
             (root / "file.txt").write_text("new\n", encoding="utf-8")
 
-            abandon_transaction(transaction_path, reason="keep the patched tree")
+            receipt = abandon_transaction(transaction_path, reason="keep the patched tree")
 
             self.assertEqual((root / "file.txt").read_text(encoding="utf-8"), "new\n")
             self.assertFalse(transaction_path.exists())
@@ -343,6 +352,11 @@ class TransactionalApplyTests(unittest.TestCase):
             payload = __import__("json").loads(history.read_text(encoding="utf-8"))
             self.assertEqual(payload["status"], "abandoned-kept-changes")
             self.assertEqual(payload["abandon_reason"], "keep the patched tree")
+            self.assertIsNotNone(receipt)
+            self.assertEqual(receipt.state, "abandoned")
+            self.assertEqual(receipt.repository_scope, "abandoned")
+            self.assertEqual(payload["rollback_receipt"]["state"], "abandoned")
+            self.assertEqual(payload["rollback_receipt"]["scopes"]["git"], "abandoned")
 
 
 if __name__ == "__main__":
