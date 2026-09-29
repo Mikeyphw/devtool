@@ -1587,29 +1587,39 @@ def plan_gradle_invocation(
     rendered = (*clean, *_managed_args(policy))
 
     base_barriers = list(request.barriers)
-    normal_roots: list[str] = []
     invocations: list[GradlePhysicalInvocation] = []
+    normal_roots: list[str] = []
+
+    def flush_normal_roots() -> None:
+        if not normal_roots:
+            return
+        invocations.append(GradlePhysicalInvocation(
+            roots=tuple(normal_roots), args=tuple(rendered), barriers=tuple(base_barriers),
+        ))
+        normal_roots.clear()
+
+    # Preserve semantic root ordering while still coalescing each contiguous
+    # barrier-free region into the minimum number of Gradle processes.  In
+    # particular, ``clean build`` must never be rewritten as ``build`` then
+    # ``clean`` merely because clean is isolated as a destructive barrier.
     for root in optimized:
         leaf = root.lstrip(":").rsplit(":", 1)[-1].lower()
+        barrier: GradleInvocationBarrier | None = None
         if leaf == "clean":
-            invocations.append(GradlePhysicalInvocation(
-                roots=(root,), args=tuple(rendered),
-                barriers=tuple((*base_barriers, GradleInvocationBarrier("clean", "explicit destructive Gradle clean intent"))),
-            ))
+            barrier = GradleInvocationBarrier("clean", "explicit destructive Gradle clean intent")
         elif leaf == "release" or leaf.startswith(("publish", "upload", "deploy", "sign")):
-            invocations.append(GradlePhysicalInvocation(
-                roots=(root,), args=tuple(rendered),
-                barriers=tuple((*base_barriers, GradleInvocationBarrier("effect", f"effectful Gradle root {root}"))),
-            ))
+            barrier = GradleInvocationBarrier("effect", f"effectful Gradle root {root}")
         elif "connected" in leaf or "device" in leaf or "instrumentation" in leaf:
-            invocations.append(GradlePhysicalInvocation(
-                roots=(root,), args=tuple(rendered),
-                barriers=tuple((*base_barriers, GradleInvocationBarrier("device", f"device-bound Gradle root {root}"))),
-            ))
-        else:
+            barrier = GradleInvocationBarrier("device", f"device-bound Gradle root {root}")
+
+        if barrier is None:
             normal_roots.append(root)
-    if normal_roots:
-        invocations.insert(0, GradlePhysicalInvocation(roots=tuple(normal_roots), args=tuple(rendered), barriers=tuple(base_barriers)))
+            continue
+        flush_normal_roots()
+        invocations.append(GradlePhysicalInvocation(
+            roots=(root,), args=tuple(rendered), barriers=tuple((*base_barriers, barrier)),
+        ))
+    flush_normal_roots()
     if request.action in {"publish", "release", "sign"} and invocations:
         invocations = [
             GradlePhysicalInvocation(

@@ -80,3 +80,11 @@ The v4 targeted validation reached the real native-Termux workflow and exposed f
 The warning repair from v4 remains effective: native validation reported zero warnings. The bounded repair adds no new roadmap scope and does not weaken `maximum_warnings = 0`.
 
 Qualification after the repair: focused reproductions 5/5 passed; canonical `./devtoolw env-x03` workflow 5 stages / 270 tests passed with zero warnings and zero errors in the disposable qualification mirror. Native-Termux remains the shipped execution environment; ENV-G2 still owns real-Gradle process proof.
+## ENV-G2 reconciliation amendment
+
+The later ENV-G2 promise-by-promise reconciliation found one ENV-X03-owned semantic defect that the original bounded audit missed: the planner isolated destructive/effectful roots but collected every non-barrier root into one group and inserted that group before barriers. A request such as `clean, assemble, check` could therefore be rewritten as `assemble+check` followed by `clean`, preserving membership but changing semantics.
+
+ENV-G2 folds the repair into the owning gate candidate. The planner now coalesces only **contiguous barrier-free regions**, flushes them before each typed barrier, and therefore minimizes physical Gradle process count without reordering requested semantic roots. The gate adds both a deterministic planner regression and an authoritative real-process proof (`clean` process followed by a coalesced normal process).
+
+This amendment supersedes the earlier pass-3 statement only with respect to that missed ordering defect; the rest of the ENV-X03 bounded-audit disposition remains unchanged.
+

@@ -29,7 +29,7 @@
     {
       "id": "ENV-P077",
       "status": "SATISFIED_BY_IMPLEMENTATION",
-      "evidence": "Planner owns root coalescing, aggregate substitution and typed semantic barriers; legacy split_gradle is represented as explicit-isolation intent rather than an implicit phase-name rule."
+      "evidence": "Planner owns root coalescing, aggregate substitution and typed semantic barriers; legacy split_gradle is represented as explicit-isolation intent rather than an implicit phase-name rule. ENV-G2 reconciliation additionally fixes and proves that coalescing preserves original semantic root order across typed barriers."
     },
     {
       "id": "ENV-P078",
@@ -74,7 +74,7 @@
     {
       "id": "ENV-P086",
       "status": "SATISFIED_BY_IMPLEMENTATION",
-      "evidence": "Clean/effect/device and explicit caller isolation are typed barriers; validation phase labels alone do not create process barriers."
+      "evidence": "Clean/effect/device and explicit caller isolation are typed barriers; validation phase labels alone do not create process barriers. ENV-G2 reconciliation additionally fixes and proves that coalescing preserves original semantic root order across typed barriers."
     },
     {
       "id": "ENV-P087",
@@ -94,5 +94,11 @@
     "ENV-P092"
   ],
   "bounded_audit": "ENV_X03_BOUNDED_PROMISE_AUDIT_20260929.md",
-  "audit_result": "ZERO_ENV_X03_OWNED_PROMISE_GAPS_AFTER_PASS_3"
+  "audit_result": "ENV_X03_IMPLEMENTATION_RECONCILED_BY_ENV_G2_ONE_ORDERING_FIX",
+  "gate_reconciliation": {
+    "owner": "ENV-G2",
+    "full_plan_position": "18/63",
+    "finding": "typed barriers were isolated but non-barrier roots could be moved ahead of earlier barriers",
+    "disposition": "folded into ENV-G2; contiguous normal regions coalesce without semantic reordering"
+  }
 }

@@ -1,0 +1,23 @@
+{
+  "overlay": "ENV-G2",
+  "exports": [
+    {
+      "owner": "ENV-X04 / ENV-G3",
+      "reason": "later destination/adaptive/advanced and final cross-substrate ENV scope",
+      "obligations": [
+        "qualified affected Gradle project graph and release widening (ENV-P089)",
+        "destination-resolved remote/federated Gradle request and receipt convergence (ENV-P090)",
+        "opt-in qualification for Isolated Projects, parallel Configuration Cache and remote build cache (ENV-P091)",
+        "canonical Gradle plan/explain/doctor/benchmark projections plus bounded adaptive history (ENV-P092)",
+        "repeat the real Gradle fixture under chroot and desktop/CI contexts before the final ENV-G3 cross-substrate seal; do not infer those executions from the native-Termux gate run"
+      ]
+    },
+    {
+      "owner": "EXEC-X03",
+      "reason": "artifact-validation executable-ref accounting is execution/validation ownership",
+      "obligations": [
+        "workflow-only validation.refs are schema-valid but current artifact apply accounting can resolve them to zero counted checks; converge workflow/invoke refs into the authoritative validation graph/accounting so required validation recognizes executed workflow nodes without a bootstrap TestSpec"
+      ]
+    }
+  ]
+}

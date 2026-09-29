@@ -46,6 +46,12 @@ description = "Run the ENV-X03 canonical Gradle planner and receipt workflow"
 workflow = "roadmap-env-x03"
 target = "devtool"
 
+# ENV-G2 authoritative real-process Gradle milestone.
+[wrapper.commands.env-g2]
+description = "Run the ENV-G2 real Gradle policy/evidence milestone"
+workflow = "roadmap-env-g2"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -451,6 +457,12 @@ roadmap-env-x03 = [
   { id = "callers", ref = "test:roadmap-env-x03-callers", depends_on = ["syntax"] },
   { id = "receipts", ref = "test:roadmap-env-x03-receipts", depends_on = ["planner", "callers"] },
   { id = "regression", ref = "test:roadmap-env-x03-regression", depends_on = ["receipts"] },
+]
+roadmap-env-g2 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "contracts", ref = "test:roadmap-env-g2-contracts", depends_on = ["syntax"] },
+  { id = "caller-reconciliation", ref = "test:roadmap-env-g2-callers", depends_on = ["syntax"] },
+  { id = "real-gradle", ref = "test:roadmap-env-g2-real-gradle", depends_on = ["contracts", "caller-reconciliation"] },
 ]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -1556,3 +1568,52 @@ name = "ENV-X03 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 300
 command = ["./devtoolw", "env-x03"]
+
+# ENV-G2 milestone contracts are intentionally bounded. The real Gradle stage
+# below is the authoritative process proof; these tests reconcile X03 promises
+# without replaying the full implementation suite.
+[[test]]
+id = "roadmap-env-g2-contracts"
+name = "ENV-G2 Gradle policy and barrier milestone contracts"
+runner = "pytest"
+timeout_seconds = 120
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_g2_gradle_gate.py",
+  "tests/test_env_x03_gradle_planner.py::test_unqualified_aggregate_is_rejected_and_exact_context_qualification_is_accepted",
+  "tests/test_env_x03_gradle_planner.py::test_configuration_cache_required_accepts_modern_standard_telemetry_but_rejects_legacy_full",
+  "tests/test_env_x03_gradle_planner.py::test_auto_resource_profile_is_evidence_driven_and_explicit_profile_is_stable",
+  "tests/test_env_x03_gradle_planner.py::test_configuration_cache_required_fails_closed_on_shared_android_storage",
+  "tests/test_env_x03_gradle_planner.py::test_build_logic_identity_overflow_fails_closed_for_cc_and_aggregate_qualification",
+  "tests/test_env_x03_gradle_planner.py::test_semantic_barriers_preserve_requested_root_order_and_minimal_contiguous_groups",
+  "tests/test_env_x03_gradle_receipts.py::test_receipt_captures_requested_optimized_observed_and_existing_run_refs",
+  "tests/test_env_x03_gradle_receipts.py::test_standard_telemetry_uses_cc_compatible_build_events_service_and_full_detail_is_bounded",
+]
+
+[[test]]
+id = "roadmap-env-g2-callers"
+name = "ENV-G2 canonical Gradle caller reconciliation"
+runner = "pytest"
+timeout_seconds = 120
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x03_gradle_callers.py::test_jvm_cli_workflow_and_test_declaration_share_canonical_plan_shape",
+  "tests/test_env_x03_gradle_callers.py::test_android_balanced_validation_uses_same_policy_without_legacy_constrained_mode",
+  "tests/test_env_x03_gradle_callers.py::test_inline_artifact_gradle_task_lowers_through_canonical_planner",
+  "tests/test_env_x03_gradle_callers.py::test_android_instrumentation_cli_build_is_canonical_and_device_orchestrator_skips_build",
+]
+
+[[test]]
+id = "roadmap-env-g2-real-gradle"
+name = "ENV-G2 authoritative real Gradle miss-hit and receipt proof"
+runner = "command"
+timeout_seconds = 240
+required_tools = ["gradle", "java"]
+command = ["python", "-m", "devtool.env_g2_gradle_gate"]
+
+[[test]]
+id = "roadmap-env-g2-artifact"
+name = "ENV-G2 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 360
+command = ["./devtoolw", "env-g2"]

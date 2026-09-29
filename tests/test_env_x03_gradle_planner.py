@@ -569,3 +569,18 @@ def test_build_logic_identity_overflow_fails_closed_for_cc_and_aggregate_qualifi
     assert plan.policy.configuration_cache.effective == "off"
     assert plan.policy.configuration_cache.reason == "build-logic-identity-incomplete"
     assert plan.rejected_aggregates == ("validation",)
+
+
+def test_semantic_barriers_preserve_requested_root_order_and_minimal_contiguous_groups(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    plan = plan_gradle_invocation(
+        config=config,
+        request=_request(tmp_path, "clean", "assemble", "check", "publishBundle", "test", "lint"),
+        launcher=_launcher(), cpu_count=4, memory_mb=4096,
+    )
+    assert [item.roots for item in plan.invocations] == [
+        ("clean",), ("assemble", "check"), ("publishBundle",), ("test", "lint"),
+    ]
+    assert [[b.kind for b in item.barriers] for item in plan.invocations] == [
+        ["clean"], [], ["effect"], [],
+    ]

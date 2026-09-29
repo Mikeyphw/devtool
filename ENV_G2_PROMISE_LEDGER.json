@@ -1,0 +1,121 @@
+{
+  "overlay": "ENV-G2",
+  "full_plan_position": "18/63",
+  "env_scope_position": "5/7",
+  "gate_window_position": "2/2",
+  "audited_live_base_commit": "5b1175b",
+  "next_overlay": "EXEC-X03",
+  "next_full_plan_position": "19/63",
+  "remaining_before_next_major_scope": 0,
+  "next_major_scope": "EXEC",
+  "acceptance_criteria": [
+    "all Gradle callers resolve the same canonical context/policy/planner",
+    "unqualified aliases cannot drop required work",
+    "heap/resource clamp reasons are truthful",
+    "Configuration Cache miss/store -> reused works with qualified standard telemetry",
+    "CC/VFS/daemon/cache/parallel/worker requested/effective truth is recorded",
+    "large build telemetry is bounded and test-event bounds remain contract-covered",
+    "balanced native-Termux retains safe reuse layers",
+    "semantic barriers minimize physical process count without changing required order/outcomes",
+    "receipt preserves requested roots and observed outcomes independently"
+  ],
+  "promises": [
+    {
+      "id": "ENV-P073",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    },
+    {
+      "id": "ENV-P074",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    },
+    {
+      "id": "ENV-P075",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    },
+    {
+      "id": "ENV-P076",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    },
+    {
+      "id": "ENV-P077",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "Planner ordering defect found by gate and folded: only contiguous normal roots coalesce; typed barriers preserve original semantic order; real process proof required."
+    },
+    {
+      "id": "ENV-P078",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    },
+    {
+      "id": "ENV-P079",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    },
+    {
+      "id": "ENV-P080",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    },
+    {
+      "id": "ENV-P081",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    },
+    {
+      "id": "ENV-P082",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "Required real Gradle process proves CC miss/store -> reused with stable qualification identity and standard telemetry."
+    },
+    {
+      "id": "ENV-P083",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "Required 51-task real Gradle fixture proves bounded standard structured telemetry; detailed/test-event bounds remain contract-covered."
+    },
+    {
+      "id": "ENV-P084",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "Required real Termux balanced fixture proves requested/effective daemon/VFS/cache/parallel/worker policy remains truthful and enabled where qualified."
+    },
+    {
+      "id": "ENV-P085",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    },
+    {
+      "id": "ENV-P086",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    },
+    {
+      "id": "ENV-P087",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "Required real process receipts prove requested roots remain distinct from observed dependency outcomes and carry launcher/JDK/RUN evidence."
+    },
+    {
+      "id": "ENV-P088",
+      "status": "GATE_ACCEPTED_BY_REQUIRED_WORKFLOW",
+      "evidence": "ENV-X03 implementation reconciled by ENV-G2; successful gate commit requires bounded contracts/callers and authoritative real-Gradle stage."
+    }
+  ],
+  "construction_evidence": {
+    "kind": "non-authoritative protocol check",
+    "stages": 4,
+    "tests": 16,
+    "warnings": 0,
+    "errors": 0,
+    "gradle": "explicit fake allowed only with DEVTOOL_ENV_G2_ALLOW_TEST_GRADLE=1"
+  },
+  "authoritative_evidence": "required artifact workflow workflow:roadmap-env-g2 on live apply with real gradle/java",
+  "later_owned": [
+    "ENV-P089",
+    "ENV-P090",
+    "ENV-P091",
+    "ENV-P092"
+  ],
+  "artifact_validation_bootstrap": "roadmap-env-g2-artifact -> ./devtoolw env-g2 -> invoke roadmap-env-g2",
+  "exported_execution_gap": "EXEC-X03: workflow-only validation.refs currently fail required-validation accounting with zero counted checks"
+}
