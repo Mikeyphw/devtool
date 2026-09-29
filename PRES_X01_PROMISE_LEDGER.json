@@ -1,0 +1,31 @@
+{
+  "overlay": "PRES-X01",
+  "title": "Presentation Projection Foundation",
+  "position": {
+    "scope": "PRES",
+    "scope_position": "1/?",
+    "full_plan_position": "23/63"
+  },
+  "delivered": [
+    "Projection-only rendering layer over RUN/EXO/RER/validation/ENV references",
+    "Bounded EXO/RUN status projection with cursor support",
+    "Validation verdict projection from contract and canonical evidence",
+    "RER why-reuse/why-rerun projection without authority transfer",
+    "ENV doctor/explain projection with secret redaction",
+    "Machine/terminal/TUI/Desktop surface model",
+    "Reference-only guard against copied process/heartbeat/stdout truth",
+    "Targeted pres-x01 wrapper workflow"
+  ],
+  "validation": {
+    "workflow": "roadmap-pres-x01",
+    "wrapper": "./devtoolw pres-x01",
+    "tests": 52,
+    "warnings": 0,
+    "errors": 0
+  },
+  "next": {
+    "overlay": "PRES-X02",
+    "full_plan_position": "24/63",
+    "remaining_before_next_major_scope": "needs refresh from implementation order"
+  }
+}

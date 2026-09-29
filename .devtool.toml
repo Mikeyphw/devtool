@@ -78,6 +78,12 @@ description = "Run the ENV-X04 environment lifecycle adoption workflow"
 workflow = "roadmap-env-x04"
 target = "devtool"
 
+# PRES-X01 presentation projection foundation.
+[wrapper.commands.pres-x01]
+description = "Run the PRES-X01 presentation projection workflow"
+workflow = "roadmap-pres-x01"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -513,6 +519,12 @@ roadmap-env-x04 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "environment-lifecycle", ref = "test:roadmap-env-x04-environment-lifecycle", depends_on = ["syntax"] },
   { id = "exec-adoption-regression", ref = "test:roadmap-env-x04-exec-adoption-regression", depends_on = ["environment-lifecycle"] },
+]
+
+roadmap-pres-x01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "presentation-projections", ref = "test:roadmap-pres-x01-presentation-projections", depends_on = ["syntax"] },
+  { id = "env-explain-regression", ref = "test:roadmap-pres-x01-env-explain-regression", depends_on = ["presentation-projections"] },
 ]
 
 roadmap-smoke = [
@@ -1814,3 +1826,34 @@ name = "ENV-X04 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "env-x04"]
+
+# PRES-X01 presentation projection foundation. This overlay keeps rendering
+# surfaces as projections over RUN/EXO/RER/validation/ENV references; it does
+# not create a second status/progress/verdict authority.
+[[test]]
+id = "roadmap-pres-x01-presentation-projections"
+name = "PRES-X01 presentation projection contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x01_presentation_surfaces.py",
+]
+
+[[test]]
+id = "roadmap-pres-x01-env-explain-regression"
+name = "PRES-X01 retained ENV-X04 explain projection regression"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x04_environment_lifecycle.py",
+]
+
+[[test]]
+id = "roadmap-pres-x01-artifact-bootstrap"
+name = "PRES-X01 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 420
+command = ["./devtoolw", "pres-x01"]
+

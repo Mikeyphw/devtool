@@ -1,0 +1,13 @@
+{
+  "overlay": "PRES-X01",
+  "exports": [
+    {
+      "owner": "PRES-X02",
+      "obligation": "Adopt projection records into richer human rendering surfaces without creating presentation-owned execution truth."
+    },
+    {
+      "owner": "PRES-G1",
+      "obligation": "Gate machine, terminal, TUI, and desktop parity against canonical RUN/EXO/RER/validation references."
+    }
+  ]
+}
