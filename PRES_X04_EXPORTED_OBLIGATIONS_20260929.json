@@ -1,0 +1,17 @@
+{
+  "from": "PRES-X04",
+  "exports": [
+    {
+      "owner": "PRES-X05",
+      "obligation": "Implement Textual feature parity for current run list, workflow progress, diagnostics, evidence refs, and control actions."
+    },
+    {
+      "owner": "PRES-X06",
+      "obligation": "Make Textual the default TUI entrypoint with legacy fallback and config migration."
+    },
+    {
+      "owner": "PRES-G1",
+      "obligation": "Prove Textual default replacement preserves machine output, action intents, reference-only rendering, SSH Termux behavior, and fallback behavior."
+    }
+  ]
+}

@@ -102,6 +102,13 @@ description = "Run the PRES-X03 cross-surface rendering workflow"
 workflow = "roadmap-pres-x03"
 target = "devtool"
 
+
+# PRES-X04 Textual TUI substrate foundation.
+[wrapper.commands.pres-x04]
+description = "Run the PRES-X04 Textual TUI substrate workflow"
+workflow = "roadmap-pres-x04"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -560,6 +567,13 @@ roadmap-pres-x03 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "cross-surface-rendering", ref = "test:roadmap-pres-x03-cross-surface-rendering", depends_on = ["syntax"] },
   { id = "x02-regression", ref = "test:roadmap-pres-x03-x02-regression", depends_on = ["cross-surface-rendering"] },
+]
+
+
+roadmap-pres-x04 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "textual-substrate", ref = "test:roadmap-pres-x04-textual-substrate", depends_on = ["syntax"] },
+  { id = "x03-regression", ref = "test:roadmap-pres-x04-x03-regression", depends_on = ["textual-substrate"] },
 ]
 
 roadmap-smoke = [
@@ -1962,3 +1976,34 @@ name = "PRES-X03 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "pres-x03"]
+
+# PRES-X04 Textual TUI substrate foundation. Textual is optional here: validation
+# proves the reference-only contract and lazy dependency probing without
+# requiring the framework to be installed in bootstrap/Termux validation hosts.
+[[test]]
+id = "roadmap-pres-x04-textual-substrate"
+name = "PRES-X04 Textual TUI substrate contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x04_textual_tui.py",
+]
+
+[[test]]
+id = "roadmap-pres-x04-x03-regression"
+name = "PRES-X04 retained PRES-X03 cross-surface rendering regression"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x03_cross_surface_rendering.py",
+]
+
+[[test]]
+id = "roadmap-pres-x04-artifact-bootstrap"
+name = "PRES-X04 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 420
+command = ["./devtoolw", "pres-x04"]
+

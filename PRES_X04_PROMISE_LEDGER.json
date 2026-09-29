@@ -1,0 +1,21 @@
+{
+  "id": "PRES-X04",
+  "title": "Textual TUI substrate foundation",
+  "full_plan_position": "26/63",
+  "scope_position": "PRES 4/?",
+  "delivered": [
+    "Textual is established as the intended primary TUI substrate",
+    "Textual dependency is optional and lazily probed",
+    "Textual screen/widget/binding specs consume PresentationBundle only",
+    "Textual launch plans choose textual when available and fall back safely when missing",
+    "SSH/mobile/tablet terminal profiles are represented without changing canonical truth",
+    "Textual specs reject copied stdout/stderr/argv/heartbeat/process-attempt truth"
+  ],
+  "not_delivered_by_design": [
+    "default TUI entrypoint replacement",
+    "full current TUI feature parity",
+    "legacy TUI removal",
+    "PRES parity gate"
+  ],
+  "next": "PRES-X05 Textual feature parity"
+}
