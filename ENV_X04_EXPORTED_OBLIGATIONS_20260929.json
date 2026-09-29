@@ -1,0 +1,21 @@
+{
+  "overlay": "ENV-X04",
+  "exports": [
+    {
+      "owner": "ENV-G3",
+      "obligation": "Authoritatively replay and seal the cross-substrate provider matrix, including asdf, pyenv, Gradle advanced features, remote/federated destinations and native-runner contributions."
+    },
+    {
+      "owner": "PRES-X01/PRES-X02",
+      "obligation": "Render ENV explain/doctor/benchmark projections for human/TUI/Desktop surfaces without changing provider authority."
+    },
+    {
+      "owner": "ANDROID-X04",
+      "obligation": "Integrate Android DEVICE freshness/proof with the ENV native-runner contribution model."
+    },
+    {
+      "owner": "DIST-X04",
+      "obligation": "Carry destination/remote provider evidence through transport/event boundaries."
+    }
+  ]
+}

@@ -72,6 +72,12 @@ description = "Run the EXEC-X04 operational reuse adoption workflow"
 workflow = "roadmap-exec-x04"
 target = "devtool"
 
+# ENV-X04 provider destination/lifecycle adoption.
+[wrapper.commands.env-x04]
+description = "Run the ENV-X04 environment lifecycle adoption workflow"
+workflow = "roadmap-env-x04"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -501,6 +507,12 @@ roadmap-exec-x04 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "operational-adoption", ref = "test:roadmap-exec-x04-operational-adoption", depends_on = ["syntax"] },
   { id = "g2-regression", ref = "test:roadmap-exec-x04-g2-regression", depends_on = ["operational-adoption"] },
+]
+
+roadmap-env-x04 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "environment-lifecycle", ref = "test:roadmap-env-x04-environment-lifecycle", depends_on = ["syntax"] },
+  { id = "exec-adoption-regression", ref = "test:roadmap-env-x04-exec-adoption-regression", depends_on = ["environment-lifecycle"] },
 ]
 
 roadmap-smoke = [
@@ -1769,3 +1781,36 @@ name = "EXEC-X04 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "exec-x04"]
+
+
+# ENV-X04 environment lifecycle and native-runner contribution adoption. This
+# implementation closes later-owned destination-returned snapshots, provider
+# cache/source/lock ownership, asdf/pyenv destination root convergence, and
+# Gradle opt-in/adaptive explain projections without absorbing ENV-G3's final
+# cross-substrate seal.
+[[test]]
+id = "roadmap-env-x04-environment-lifecycle"
+name = "ENV-X04 environment lifecycle adoption contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x04_environment_lifecycle.py",
+]
+
+[[test]]
+id = "roadmap-env-x04-exec-adoption-regression"
+name = "ENV-X04 retained EXEC operational adoption regression"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x04_operational_adoption.py",
+]
+
+[[test]]
+id = "roadmap-env-x04-artifact-bootstrap"
+name = "ENV-X04 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 420
+command = ["./devtoolw", "env-x04"]

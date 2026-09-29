@@ -1,0 +1,62 @@
+{
+  "schema_version": 2,
+  "program": "M004 ENV",
+  "overlay": "ENV-X04",
+  "gate_window_position": "1/1 before dependency order leaves ENV",
+  "major_scope_position": "6/7",
+  "full_plan_position": "22/63",
+  "delivered": [
+    "ENV-P043",
+    "ENV-P051",
+    "ENV-P052",
+    "ENV-P053",
+    "ENV-P054",
+    "ENV-P055",
+    "ENV-P056",
+    "ENV-P065",
+    "ENV-P066",
+    "ENV-P067",
+    "ENV-P068",
+    "ENV-P069",
+    "ENV-P070",
+    "ENV-P071",
+    "ENV-P072",
+    "ENV-P089",
+    "ENV-P090",
+    "ENV-P091",
+    "ENV-P092",
+    "ENV-P113",
+    "ENV-P125"
+  ],
+  "delivered_summary": {
+    "ENV-P043": "Destination-returned Python execution snapshots are typed and identity-bearing.",
+    "ENV-P051..ENV-P056": "Python recursive source, lock, cache, ownership and explain lifecycle is represented by LifecyclePlan and qualification evidence.",
+    "ENV-P065..ENV-P072": "Go provider cross-target, CGO, module-security, cache, destination snapshot and qualified action lifecycle is represented and fail-closed.",
+    "ENV-P089": "Qualified affected Gradle project/release widening is represented as ENV-owned Gradle plan/explain data.",
+    "ENV-P090": "Destination-resolved remote/federated Gradle request and receipt convergence is enforced.",
+    "ENV-P091": "Isolated Projects, parallel Configuration Cache and remote build cache are explicit opt-ins requiring evidence.",
+    "ENV-P092": "Gradle plan/explain/doctor/benchmark projections and bounded adaptive history are represented.",
+    "ENV-P113": "asdf destination state, ASDF_DATA_DIR ownership and legacy-version-file qualification are represented.",
+    "ENV-P125": "pyenv destination snapshots and PYENV_ROOT ownership are represented."
+  },
+  "preserved_later_owner_obligations": {
+    "ENV-G3": "Cross-substrate provider matrix/final disposition for asdf, pyenv, Gradle and native runners.",
+    "PRES-X01/PRES-X02": "Human/TUI/Desktop rendering of ENV explain/doctor data.",
+    "ANDROID-X04": "Device-specific proof/freshness integration.",
+    "DIST-X04": "Remote transport/event delivery mechanics."
+  },
+  "validation": {
+    "kind": "devtool-first-class-test",
+    "test_id": "roadmap-env-x04-artifact-bootstrap",
+    "expected_tests": "pass",
+    "maximum_warnings": 0,
+    "construction_direct_passed": 40
+  },
+  "next": {
+    "overlay": "PRES-X01",
+    "full_plan_position": "23/63",
+    "remaining_before_next_major_scope": 0,
+    "next_major_scope": "PRES",
+    "later_env_final_seal": "ENV-G3"
+  }
+}
