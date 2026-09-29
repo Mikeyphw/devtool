@@ -139,6 +139,12 @@ description = "Run the LIFE-X01 immediate lifecycle safety workflow"
 workflow = "roadmap-life-x01"
 target = "devtool"
 
+# LIFE-X02 canonical artifact / trust / repository-pack model.
+[wrapper.commands.life-x02]
+description = "Run the LIFE-X02 canonical artifact, trust, and repository-pack workflow"
+workflow = "roadmap-life-x02"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -637,6 +643,13 @@ roadmap-life-x01 = [
   { id = "transaction-regression", ref = "test:roadmap-life-x01-transaction-regression", depends_on = ["transaction-recovery"] },
   { id = "preflight-regression", ref = "test:roadmap-life-x01-artifact-preflight-regression", depends_on = ["transaction-regression"] },
   { id = "git-dirty-state-regression", ref = "test:roadmap-life-x01-git-frx13-regression", depends_on = ["preflight-regression"] },
+]
+
+roadmap-life-x02 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "canonical-model", ref = "test:roadmap-life-x02-canonical-artifact-trust-pack", depends_on = ["syntax"] },
+  { id = "artifact-inspection-regression", ref = "test:roadmap-life-x02-artifact-inspection-regression", depends_on = ["canonical-model"] },
+  { id = "artifact-apply-regression", ref = "test:roadmap-life-x02-artifact-apply-regression", depends_on = ["artifact-inspection-regression"] },
 ]
 
 roadmap-smoke = [
@@ -2246,3 +2259,35 @@ name = "LIFE-X01 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 900
 command = ["./devtoolw", "life-x01"]
+
+
+# LIFE-X02 canonical artifact/trust/repository-pack model.
+[[test]]
+id = "roadmap-life-x02-canonical-artifact-trust-pack"
+name = "LIFE-X02 canonical artifact, trust, and repository-pack contracts"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_x02_canonical_artifact_trust_pack.py",
+]
+
+[[test]]
+id = "roadmap-life-x02-artifact-inspection-regression"
+name = "LIFE-X02 artifact inspection canonical projection regression"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_artifact_inspection.py",
+]
+
+[[test]]
+id = "roadmap-life-x02-artifact-apply-regression"
+name = "LIFE-X02 canonical apply compatibility regression"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_artifact_v2.py::ArtifactV2Tests::test_cli_ignore_checksum_applies_overlay_without_disabling_manifest_checks",
+]

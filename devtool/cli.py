@@ -73,6 +73,12 @@ from .artifact_validation import run_artifact_finalize_script, run_artifact_vali
 from .hooks.history import collect_hook_events
 from .artifact_inspection import inspect_artifact
 from .artifact_registry import load_registry, find_record, verify_record, prune_registry
+from .artifact_lifecycle import ArtifactEnvelopeResolver, UnsafeAuthorization
+from .artifact_trust import SecretProviderRef, SigningIdentityRegistry
+from .repository_pack import (
+    RepositoryPackCompression, RepositoryPackMode, RepositoryPackRequest,
+    create_repository_pack, plan_repository_pack,
+)
 from .api_output import extract_universal_json_flag, run_json_invocation
 from .core import configure_logging, finalize_execution_run
 from .core.events import BuildStarted, OverlayApplied, configure_event_console, publish_event
@@ -1005,6 +1011,46 @@ def build_parser() -> argparse.ArgumentParser:
     artifact_prune.add_argument("--older-than", default="30d", help="Age threshold such as 30d, 12h, or an integer day count")
     artifact_prune.add_argument("--delete-files", action="store_true", help="Also delete matching files inside .devtool/build-artifacts only")
     artifact_prune.add_argument("--json", action="store_true", help="Emit prune result JSON")
+
+    delivery_cmd = subparsers.add_parser("delivery", help="Resolve and qualify canonical delivery artifacts")
+    delivery_sub = delivery_cmd.add_subparsers(dest="delivery_command", required=True)
+    delivery_plan = delivery_sub.add_parser("plan", help="Resolve one artifact into the canonical LIFE delivery plan")
+    delivery_plan.add_argument("artifact")
+    delivery_plan.add_argument("--public-runner", action="store_true", help="Enforce public-runner fail-closed assurance")
+    delivery_plan.add_argument("--isolation", choices=["worktree", "direct", "none"], default="worktree")
+    delivery_plan.add_argument("--unsafe-authorize", action="append", default=[], metavar="CODE[:REASON]")
+    delivery_plan.add_argument("--json", action="store_true", help="Emit canonical plan JSON")
+
+    repo_pack_cmd = subparsers.add_parser("repo-pack", help="Plan and atomically publish canonical repository packs")
+    repo_pack_sub = repo_pack_cmd.add_subparsers(dest="repo_pack_command", required=True)
+    repo_pack_plan = repo_pack_sub.add_parser("plan", help="Plan a repository pack without writing it")
+    repo_pack_create = repo_pack_sub.add_parser("create", help="Create, verify, and atomically publish a repository pack")
+    for pack_parser in (repo_pack_plan, repo_pack_create):
+        pack_parser.add_argument("repositories", nargs="*", help="Repository roots; defaults to --repo/current repository")
+        pack_parser.add_argument("-o", "--output", required=True)
+        pack_parser.add_argument("--mode", choices=[item.value for item in RepositoryPackMode], default=RepositoryPackMode.WORKTREE.value)
+        pack_parser.add_argument("--compression", choices=[item.value for item in RepositoryPackCompression], default=RepositoryPackCompression.TAR_GZ.value)
+        pack_parser.add_argument("--commit", default="")
+        pack_parser.add_argument("--git-bundle", action="store_true")
+        pack_parser.add_argument("--pin", action="store_true")
+        pack_parser.add_argument("--retention", default="policy")
+        pack_parser.add_argument("--json", action="store_true")
+
+    signing_cmd = subparsers.add_parser("signing-identity", help="Manage private non-secret signing identity references")
+    signing_sub = signing_cmd.add_subparsers(dest="signing_identity_command", required=True)
+    signing_list = signing_sub.add_parser("list", aliases=["ls"])
+    signing_list.add_argument("--json", action="store_true")
+    signing_register = signing_sub.add_parser("register")
+    signing_register.add_argument("identity_id")
+    signing_register.add_argument("--provider", required=True)
+    signing_register.add_argument("--key-reference", required=True)
+    signing_register.add_argument("--alias", default="")
+    signing_register.add_argument("--certificate-sha256", default="")
+    signing_register.add_argument("--purpose", action="append", default=[])
+    signing_register.add_argument("--variant", action="append", default=[])
+    signing_register.add_argument("--secret-provider", choices=["local", "keyring", "private-file", "fd", "stdin", "external-command"], default="")
+    signing_register.add_argument("--secret-reference", default="")
+    signing_register.add_argument("--json", action="store_true")
 
     tui_cmd = subparsers.add_parser("tui", help="Open the responsive terminal dashboard")
     tui_cmd.add_argument("--page", choices=["dashboard", "build", "overlays", "workers"], default="dashboard", help="Initial terminal dashboard page")
@@ -10008,6 +10054,26 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
         )
         args._devtool_artifact_manifest = validation.manifest
+        # LIFE-X02: compile every local apply through the canonical delivery model
+        # before mutation. Compatibility artifacts are not rejected solely for
+        # legacy assurance here; their assurance remains explicit in the plan.
+        resolver = ArtifactEnvelopeResolver()
+        envelope = resolver.resolve(artifact_path, repo_root=config.repo_root)
+        qualification = resolver.qualify(
+            envelope, repo_root=config.repo_root, public_runner=False,
+            isolation=str(getattr(args, "isolation", "worktree") or "worktree"),
+            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+        )
+        resolved_plan = resolver.plan(
+            envelope, qualification, isolation=str(getattr(args, "isolation", "worktree") or "worktree")
+        )
+        args._devtool_resolved_artifact_plan = resolved_plan.as_dict()
+        args._devtool_artifact_semantic_sha = envelope.identities.semantic_sha256
+        args._devtool_artifact_content_sha = envelope.identities.content_sha256
+        args._devtool_artifact_trust_identity = envelope.identities.trust_identity
+        if not qualification.qualified:
+            detail = "; ".join(f"{item.code}: {item.message}" for item in qualification.blockers)
+            raise RuntimeError("Canonical artifact qualification failed: " + detail)
         args._devtool_bundle_targets = overlay_bundle_targets(artifact_path) if artifact_type == "overlay_bundle" else []
         args._devtool_workspace_validations = artifact_workspaces(validation.manifest) if artifact_type == "overlay" else []
         if tasker_progress is not None:
@@ -16049,6 +16115,89 @@ def _main_after_parse(
             return 2
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0 if bool(payload.get("validation", {}).get("ok", False)) else 1
+
+    if args.command == "delivery":
+        repo = Path(args.repo or Path.cwd()).resolve()
+        resolver = ArtifactEnvelopeResolver()
+        auths = []
+        for raw in list(getattr(args, "unsafe_authorize", []) or []):
+            code, sep, reason = str(raw).partition(":")
+            auths.append(UnsafeAuthorization(code.strip(), reason.strip() if sep else "explicit CLI authorization", "cli"))
+        try:
+            plan = resolver.resolve_qualified_plan(
+                args.artifact, repo_root=repo, public_runner=bool(args.public_runner),
+                isolation=str(args.isolation), unsafe_authorizations=auths,
+            )
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 2
+        payload = plan.as_dict()
+        if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            q = payload["qualification"]
+            render_status_table([
+                ("artifact", str(payload["artifact"]["artifact_id"])),
+                ("subtype", str(payload["artifact"]["subtype"])),
+                ("qualified", str(q["qualified"]).lower()),
+                ("mutations", str(len(payload["mutations"]["mutations"]))),
+                ("validation", str(payload["validation"]["contract_id"])),
+                ("plan", str(payload["plan_id"])),
+            ])
+            for issue in q["blockers"]:
+                console.print(f"[red]blocker[/red] {issue['code']}: {issue['message']}")
+        return 0 if plan.executable else 1
+
+    if args.command == "repo-pack":
+        roots = tuple(str(Path(item).expanduser().resolve()) for item in (args.repositories or [args.repo or Path.cwd()]))
+        request = RepositoryPackRequest(
+            repositories=roots, output=str(args.output), mode=RepositoryPackMode(str(args.mode)),
+            compression=RepositoryPackCompression(str(args.compression)), include_git_bundle=bool(args.git_bundle),
+            commit=str(args.commit or ""), pin=bool(args.pin), retention=str(args.retention or "policy"),
+        )
+        try:
+            plan = plan_repository_pack(request)
+            payload = plan.as_dict() if args.repo_pack_command == "plan" else create_repository_pack(plan).as_dict()
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 2
+        if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            render_status_table([(str(k), str(v)) for k, v in payload.items() if k in {"request_id", "plan_id", "pack_id", "receipt_id", "output", "sha256", "size", "verified", "published"}])
+        return 0
+
+    if args.command == "signing-identity":
+        registry = SigningIdentityRegistry()
+        command = str(args.signing_identity_command)
+        if command in {"list", "ls"}:
+            payload = [item.as_dict() for item in registry.list()]
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([(item["identity_id"], f"{item['provider']} | {item['certificate_sha256'] or 'no-certificate'}") for item in payload] or [("identities", "none")])
+            return 0
+        secret_ref = None
+        if args.secret_provider:
+            if not args.secret_reference:
+                parser.error("--secret-reference is required with --secret-provider")
+            secret_ref = SecretProviderRef(args.secret_provider, args.secret_reference)
+        try:
+            record = registry.create_reference(
+                identity_id=str(args.identity_id), provider=str(args.provider), key_reference=str(args.key_reference),
+                alias=str(args.alias or ""), certificate_sha256=str(args.certificate_sha256 or ""),
+                purposes=tuple(str(x) for x in args.purpose), variants=tuple(str(x) for x in args.variant),
+                secret_provider=secret_ref,
+            )
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 2
+        payload = record.as_dict()
+        if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            render_status_table([(str(k), str(v)) for k, v in payload.items() if k in {"identity_id", "provider", "key_reference", "alias", "certificate_sha256", "lifecycle"}])
+        return 0
 
     if _is_artifact_validation_args(args):
         config = _load_command_config(args)

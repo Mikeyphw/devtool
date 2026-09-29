@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "producer": "LIFE-X02",
+  "consumer": "LIFE-G1",
+  "full_plan_position": "32/70",
+  "required_gate_proofs": [
+    "resolve/qualify/plan/apply use the canonical artifact model in a fresh process",
+    "validation contracts remain explicit and fail closed where required",
+    "LIFE-X01 recovery semantics and LIFE-X02 artifact planning coexist under normal worktree isolation",
+    "bundle validation failure rollback/pause semantics are audited and reconciled",
+    "trust/signing identity evidence contains no secrets and policy merge remains monotonic",
+    "repository packs verify source stability and atomic publication across supported modes"
+  ],
+  "known_baseline_findings": [
+    {
+      "id": "bundle-validator-rollback",
+      "owner": "LIFE-G1"
+    },
+    {
+      "id": "gradle-init-script-baseline",
+      "owner": "ENV-X05/EXEC-X05"
+    }
+  ]
+}

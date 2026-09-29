@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .artifact_lifecycle import ArtifactEnvelopeResolver
 from .artifacts import (
     artifact_commit_policy,
     artifact_finalize_phases,
@@ -237,6 +238,23 @@ def inspect_artifact(
         key = action if action in counts else "other"
         counts[key] += 1
 
+    canonical: dict[str, Any] = {}
+    try:
+        resolver = ArtifactEnvelopeResolver()
+        envelope = resolver.resolve(path, repo_root=repo if repo_root is not None else None)
+        if repo_root is not None:
+            qualification = resolver.qualify(envelope, repo_root=repo, public_runner=False)
+            plan = resolver.plan(envelope, qualification)
+            canonical = {
+                "envelope": envelope.as_dict(),
+                "qualification": qualification.as_dict(),
+                "plan": plan.as_dict(),
+            }
+        else:
+            canonical = {"envelope": envelope.as_dict()}
+    except Exception as exc:
+        canonical = {"error": str(exc)}
+
     return {
         "artifact": str(path),
         "filename": path.name,
@@ -280,4 +298,5 @@ def inspect_artifact(
         "diff": diff_text,
         "manifest": manifest,
         "manifest_json": json.dumps(manifest, indent=2, ensure_ascii=False),
+        "canonical": canonical,
     }
