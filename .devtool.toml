@@ -90,6 +90,12 @@ description = "Run the Termux SSH native preflight hotfix workflow"
 workflow = "hotfix-termux-ssh-preflight"
 target = "devtool"
 
+# PRES-X02 presentation layout and interaction semantics.
+[wrapper.commands.pres-x02]
+description = "Run the PRES-X02 presentation layout and interaction workflow"
+workflow = "roadmap-pres-x02"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -536,6 +542,12 @@ roadmap-pres-x01 = [
 hotfix-termux-ssh-preflight = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "termux-ssh", ref = "test:hotfix-termux-ssh-preflight", depends_on = ["syntax"] },
+]
+
+roadmap-pres-x02 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "layout-interactions", ref = "test:roadmap-pres-x02-layout-interactions", depends_on = ["syntax"] },
+  { id = "x01-regression", ref = "test:roadmap-pres-x02-x01-regression", depends_on = ["layout-interactions"] },
 ]
 
 roadmap-smoke = [
@@ -1881,4 +1893,32 @@ command = [
   "tests/test_env_x01_host_privilege_foundation.py::test_native_termux_preflight_accepts_ssh_login_session",
   "tests/test_env_x01_host_privilege_foundation.py::test_remote_provider_identity_does_not_replace_ssh_substrate",
 ]
+
+# PRES-X02 layout, capabilities, sections, and action semantics over PRES-X01 projections.
+[[test]]
+id = "roadmap-pres-x02-layout-interactions"
+name = "PRES-X02 presentation layout and interaction contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x02_presentation_layouts.py",
+]
+
+[[test]]
+id = "roadmap-pres-x02-x01-regression"
+name = "PRES-X02 retained PRES-X01 projection regression"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x01_presentation_surfaces.py",
+]
+
+[[test]]
+id = "roadmap-pres-x02-artifact-bootstrap"
+name = "PRES-X02 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 420
+command = ["./devtoolw", "pres-x02"]
 

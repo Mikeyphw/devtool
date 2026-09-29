@@ -1,0 +1,12 @@
+{
+  "exported": [
+    {
+      "owner": "PRES-X03",
+      "obligation": "Wire layout/action projections into richer TUI/desktop/HUD rendering surfaces while preserving PRES-X02 reference-only view contracts."
+    },
+    {
+      "owner": "PRES-G1",
+      "obligation": "Gate cross-surface parity across machine, terminal, TUI, desktop, HUD, and IPC consumers."
+    }
+  ]
+}
