@@ -1,0 +1,19 @@
+{
+  "overlay": "PRES-X06",
+  "title": "Textual TUI default replacement",
+  "full_plan_position": "28/63",
+  "delivered_promises": [
+    "Textual is the default preferred TUI backend",
+    "Legacy TUI remains available behind explicit --legacy-tui / --backend legacy",
+    "Auto mode falls back to legacy only when Textual is missing",
+    "Explicit Textual requests fail closed when unavailable",
+    "CLI entrypoint dispatches through the Textual backend resolver",
+    "Textual remains renderer-only and does not own canonical truth",
+    "PRES-X05 feature parity contracts remain green"
+  ],
+  "validation_refs": [
+    "roadmap-pres-x06-textual-default-replacement",
+    "roadmap-pres-x06-x05-regression",
+    "roadmap-pres-x06-artifact-bootstrap"
+  ]
+}

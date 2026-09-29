@@ -699,3 +699,281 @@ def assert_textual_feature_parity_is_reference_only(plan: TextualFeatureParityPl
     ]
     if invalid_sources:
         raise AssertionError(f"Textual widgets use non-canonical sources: {sorted(set(invalid_sources))}")
+
+
+
+# PRES-X06 Textual default-replacement contracts.
+@dataclass(frozen=True)
+class TuiBackendSelection:
+    """Resolved TUI backend decision for the ``devtool tui`` entrypoint."""
+
+    requested_backend: str
+    effective_backend: str
+    default_backend: str
+    fallback_backend: str | None
+    availability: TextualAvailability
+    reason: str
+    command: tuple[str, ...]
+    session_transport: str = "local"
+    legacy_flag: bool = False
+    require_textual: bool = False
+    owns_truth: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "requested_backend": self.requested_backend,
+            "effective_backend": self.effective_backend,
+            "default_backend": self.default_backend,
+            "fallback_backend": self.fallback_backend,
+            "availability": self.availability.as_dict(),
+            "reason": self.reason,
+            "command": list(self.command),
+            "session_transport": self.session_transport,
+            "legacy_flag": self.legacy_flag,
+            "require_textual": self.require_textual,
+            "owns_truth": self.owns_truth,
+        }
+        payload["selection_digest"] = projection_digest({k: v for k, v in payload.items() if k != "selection_digest"})
+        return payload
+
+
+def normalize_tui_backend(value: str | None) -> str:
+    normalized = (value or "auto").strip().lower().replace("_", "-")
+    if normalized in {"", "default", "preferred"}:
+        return "auto"
+    if normalized in {"rich", "classic", "old", "legacy-tui"}:
+        return "legacy"
+    if normalized in {"textual", "new"}:
+        return "textual"
+    if normalized == "auto":
+        return normalized
+    raise ValueError(f"Unsupported TUI backend: {value}")
+
+
+def default_tui_backend_contract() -> dict[str, Any]:
+    """Contract for the PRES-X06 TUI default replacement."""
+
+    return {
+        "schema_version": 1,
+        "default_backend": "textual",
+        "command_default": "auto",
+        "auto_policy": "prefer-textual-fallback-legacy",
+        "legacy_override": "--legacy-tui or --backend legacy",
+        "explicit_textual_failure_mode": "fail-closed-when-unavailable",
+        "textual_owns_truth": False,
+        "truth_authority": "RUN/EXO/RER/validation/ENV via presentation_surfaces",
+        "machine_output_changed": False,
+    }
+
+
+def resolve_tui_backend_selection(
+    *,
+    requested_backend: str | None = "auto",
+    legacy_tui: bool = False,
+    require_textual: bool = False,
+    availability: TextualAvailability | None = None,
+    session_transport: str = "local",
+) -> TuiBackendSelection:
+    """Resolve the backend used by ``devtool tui``.
+
+    ``auto`` is now the command default and means "prefer Textual".  Missing
+    Textual falls back to the legacy TUI only for auto mode; an explicit
+    ``--backend textual`` request fails closed so users do not unknowingly get
+    the old UI when they asked to test the replacement.
+    """
+
+    availability = availability or probe_textual_availability()
+    transport = normalize_session_transport(session_transport)
+    requested = "legacy" if legacy_tui else normalize_tui_backend(requested_backend)
+    if requested == "legacy":
+        selection = TuiBackendSelection(
+            requested_backend=requested,
+            effective_backend="legacy",
+            default_backend="textual",
+            fallback_backend=None,
+            availability=availability,
+            reason="legacy TUI explicitly requested",
+            command=("devtool", "tui", "--backend", "legacy"),
+            session_transport=transport,
+            legacy_flag=legacy_tui,
+            require_textual=require_textual,
+        )
+        assert_tui_backend_selection_is_safe(selection)
+        return selection
+    if requested == "textual":
+        if availability.available:
+            selection = TuiBackendSelection(
+                requested_backend=requested,
+                effective_backend="textual",
+                default_backend="textual",
+                fallback_backend=None,
+                availability=availability,
+                reason="explicit Textual backend requested and available",
+                command=("python", "-m", "devtool.tui_textual_runtime"),
+                session_transport=transport,
+                require_textual=require_textual,
+            )
+        else:
+            selection = TuiBackendSelection(
+                requested_backend=requested,
+                effective_backend="unavailable",
+                default_backend="textual",
+                fallback_backend=None,
+                availability=availability,
+                reason=availability.reason or "explicit Textual backend requested but unavailable",
+                command=(),
+                session_transport=transport,
+                require_textual=True,
+            )
+        assert_tui_backend_selection_is_safe(selection)
+        return selection
+    if requested != "auto":
+        raise ValueError(f"Unsupported TUI backend: {requested_backend}")
+    if availability.available:
+        selection = TuiBackendSelection(
+            requested_backend="auto",
+            effective_backend="textual",
+            default_backend="textual",
+            fallback_backend="legacy",
+            availability=availability,
+            reason="auto mode selected default Textual backend",
+            command=("python", "-m", "devtool.tui_textual_runtime"),
+            session_transport=transport,
+            require_textual=require_textual,
+        )
+    elif require_textual:
+        selection = TuiBackendSelection(
+            requested_backend="auto",
+            effective_backend="unavailable",
+            default_backend="textual",
+            fallback_backend=None,
+            availability=availability,
+            reason=availability.reason or "Textual required but unavailable",
+            command=(),
+            session_transport=transport,
+            require_textual=True,
+        )
+    else:
+        selection = TuiBackendSelection(
+            requested_backend="auto",
+            effective_backend="legacy",
+            default_backend="textual",
+            fallback_backend="legacy",
+            availability=availability,
+            reason="auto mode prefers Textual, but Textual is unavailable; using legacy fallback",
+            command=("devtool", "tui", "--backend", "legacy"),
+            session_transport=transport,
+            require_textual=False,
+        )
+    assert_tui_backend_selection_is_safe(selection)
+    return selection
+
+
+def assert_tui_backend_selection_is_safe(selection: TuiBackendSelection) -> None:
+    encoded = str(selection.as_dict()).lower()
+    leaked = [field for field in _FORBIDDEN_TRUTH_FIELDS if field in encoded]
+    if leaked:
+        raise AssertionError(f"TUI backend selection contains execution-owned truth: {leaked}")
+    if selection.owns_truth is not False:
+        raise AssertionError("TUI backend selection attempted to own canonical truth")
+    if selection.default_backend != "textual":
+        raise AssertionError("PRES-X06 requires Textual to be the default TUI backend")
+
+
+def run_textual_tui_runtime(args: Any, *, repo_root: Any, console: Any | None = None) -> int:
+    """Run the concrete Textual shell when Textual is installed.
+
+    This import remains lazy so bootstrap hosts without Textual can still run
+    normal Devtool validations.  The first replacement shell is intentionally
+    thin: it owns rendering and interaction, while data still flows through the
+    presentation contracts built by PRES-X01..PRES-X05.
+    """
+
+    availability = probe_textual_availability()
+    if not availability.available:
+        message = "Textual TUI requested, but the textual package is not importable. Install devtool[textual] or use --legacy-tui."
+        if console is not None:
+            console.print(f"Error: {message}")
+        else:
+            print(f"Error: {message}")
+        return 2
+    try:
+        from textual.app import App, ComposeResult  # type: ignore
+        from textual.widgets import Footer, Header, Static  # type: ignore
+    except Exception as exc:  # pragma: no cover - only exercised when Textual is installed but broken
+        message = f"Textual TUI requested, but Textual failed to import: {exc}"
+        if console is not None:
+            console.print(f"Error: {message}")
+        else:
+            print(f"Error: {message}")
+        return 2
+
+    once = bool(getattr(args, "once", False))
+    page = str(getattr(args, "page", "dashboard") or "dashboard")
+    width = int(getattr(args, "width", 0) or 0)
+    if once:
+        payload = {
+            "backend": "textual",
+            "repo_root": str(repo_root),
+            "page": page,
+            "profile": classify_terminal_profile(width=width or 100, height=28).value,
+            "owns_truth": False,
+        }
+        if console is not None:
+            console.print(payload)
+        else:
+            print(payload)
+        return 0
+
+    class DevtoolTextualShell(App):  # type: ignore[misc]
+        TITLE = "Devtool"
+        SUB_TITLE = "Textual TUI"
+        BINDINGS = [("q", "quit", "Quit"), ("?", "help", "Help")]
+
+        def compose(self) -> ComposeResult:  # type: ignore[override]
+            yield Header()
+            yield Static(
+                "Devtool Textual TUI\n\n"
+                f"Repository: {repo_root}\n"
+                f"Initial page: {page}\n\n"
+                "Rendering is Textual-owned; RUN/EXO/RER/validation truth remains canonical.",
+                id="devtool-textual-dashboard",
+            )
+            yield Footer()
+
+    DevtoolTextualShell().run()
+    return 0
+
+
+def run_tui_entrypoint(
+    args: Any,
+    *,
+    repo_root: Any,
+    console: Any | None = None,
+    availability: TextualAvailability | None = None,
+    legacy_runner: Any | None = None,
+    textual_runner: Any | None = None,
+) -> int:
+    """Entrypoint used by ``devtool tui`` after PRES-X06."""
+
+    selection = resolve_tui_backend_selection(
+        requested_backend=getattr(args, "backend", "auto"),
+        legacy_tui=bool(getattr(args, "legacy_tui", False)),
+        require_textual=bool(getattr(args, "require_textual", False)),
+        availability=availability,
+        session_transport=getattr(args, "session_transport", "local"),
+    )
+    if selection.effective_backend == "unavailable":
+        message = selection.reason or "Textual TUI unavailable"
+        if console is not None:
+            console.print(f"Error: {message}")
+        else:
+            print(f"Error: {message}")
+        return 2
+    if selection.effective_backend == "legacy":
+        if legacy_runner is None:
+            from .tui import run_tui as legacy_runner
+        return int(legacy_runner(args, repo_root=repo_root, console=console))
+    if textual_runner is None:
+        textual_runner = run_textual_tui_runtime
+    return int(textual_runner(args, repo_root=repo_root, console=console))

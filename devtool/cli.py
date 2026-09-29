@@ -1009,6 +1009,9 @@ def build_parser() -> argparse.ArgumentParser:
     tui_cmd.add_argument("--artifact", default="", help="Overlay artifact to preflight on the overlays page")
     tui_cmd.add_argument("--once", action="store_true", help="Render one frame and exit")
     tui_cmd.add_argument("--width", type=int, default=0, help="Override terminal width for rendering/debugging")
+    tui_cmd.add_argument("--backend", choices=["auto", "textual", "legacy"], default="auto", help="TUI backend; auto prefers Textual and falls back to legacy")
+    tui_cmd.add_argument("--legacy-tui", action="store_true", help="Force the legacy Rich terminal TUI backend")
+    tui_cmd.add_argument("--require-textual", action="store_true", help="Fail instead of falling back when Textual cannot be launched")
 
     cleanup_cmd = subparsers.add_parser("cleanup", help="Archive historical repository backups and optionally prune old backup history")
     cleanup_cmd.add_argument("--dry-run", action="store_true", help="Show what would be archived or pruned without changing files")
@@ -16082,10 +16085,10 @@ def _main_after_parse(
         return run_hud(hud_args)
 
     if args.command == "tui":
-        from .tui import run_tui
+        from .tui_textual import run_tui_entrypoint
 
         config = _load_command_config(args)
-        return run_tui(args, repo_root=config.repo_root, console=console)
+        return run_tui_entrypoint(args, repo_root=config.repo_root, console=console)
 
     if args.command == "cleanup":
         from .repository_cleanup import cleanup_repository

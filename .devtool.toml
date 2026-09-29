@@ -115,6 +115,12 @@ description = "Run the PRES-X05 Textual feature parity workflow"
 workflow = "roadmap-pres-x05"
 target = "devtool"
 
+# PRES-X06 Textual TUI default replacement.
+[wrapper.commands.pres-x06]
+description = "Run the PRES-X06 Textual default replacement workflow"
+workflow = "roadmap-pres-x06"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -586,6 +592,12 @@ roadmap-pres-x05 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "textual-feature-parity", ref = "test:roadmap-pres-x05-textual-feature-parity", depends_on = ["syntax"] },
   { id = "x04-regression", ref = "test:roadmap-pres-x05-x04-regression", depends_on = ["textual-feature-parity"] },
+]
+
+roadmap-pres-x06 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "textual-default-replacement", ref = "test:roadmap-pres-x06-textual-default-replacement", depends_on = ["syntax"] },
+  { id = "x05-regression", ref = "test:roadmap-pres-x06-x05-regression", depends_on = ["textual-default-replacement"] },
 ]
 
 roadmap-smoke = [
@@ -2048,3 +2060,32 @@ runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "pres-x05"]
 
+
+# PRES-X06 Textual default replacement. Textual becomes the preferred/default
+# TUI backend while legacy remains an explicit fallback for bootstrap hosts.
+[[test]]
+id = "roadmap-pres-x06-textual-default-replacement"
+name = "PRES-X06 Textual default replacement contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x06_textual_default_replacement.py",
+]
+
+[[test]]
+id = "roadmap-pres-x06-x05-regression"
+name = "PRES-X06 retained PRES-X05 Textual feature parity regression"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x05_textual_feature_parity.py",
+]
+
+[[test]]
+id = "roadmap-pres-x06-artifact-bootstrap"
+name = "PRES-X06 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 420
+command = ["./devtoolw", "pres-x06"]

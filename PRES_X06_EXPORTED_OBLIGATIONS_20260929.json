@@ -1,0 +1,15 @@
+{
+  "producer": "PRES-X06",
+  "exports": [
+    {
+      "id": "pres-x07-default-replacement-hardening",
+      "owner": "PRES-X07",
+      "description": "Replace remaining legacy-only assumptions, add stronger headless Textual smoke coverage when Textual is installed, and prepare the PRES gate proof."
+    },
+    {
+      "id": "pres-g1-textual-proof-gate",
+      "owner": "PRES-G1",
+      "description": "Prove Textual is the default TUI without changing machine output or transferring canonical truth ownership."
+    }
+  ]
+}
