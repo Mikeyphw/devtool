@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "EXEC-G1",
+  "status": "gate-implementation-ready-for-live-replay",
+  "position": {
+    "gate_window": "3/3",
+    "exec_scope": "3/7",
+    "full_plan": "16/63"
+  },
+  "merge_window": {
+    "inspected": [
+      "EXEC-G1",
+      "ENV-X03",
+      "EXEC-X03"
+    ],
+    "decision": "do-not-merge",
+    "reason": "separate gate, environment ownership, and durable validation/control ownership are distinct boundaries"
+  },
+  "gate_acceptance_verified": [
+    "stable-node-identity-across-run-ids",
+    "semantic-definition-change-invalidates",
+    "isolated-input-change-preserves-independent-branch",
+    "relevant-environment-toolchain-secret-change-invalidates",
+    "presentation-state-does-not-invalidate",
+    "missing-mutated-output-never-silently-reuses-pass",
+    "legacy-incomplete-corrupt-metadata-fails-safe-to-run",
+    "reuse-materialize-run-distinct",
+    "verified-materialization-provenance",
+    "fresh-execution-shadow-qualification-matches",
+    "reuse-qualification-does-not-fabricate-process-execution",
+    "exo-remains-execution-history-authority",
+    "termux-chroot-desktop-ssh-provider-portability-axes"
+  ],
+  "owned_fixes": [
+    "single-spec-terminal-fingerprint-preserves-preexecution-semantic-components",
+    "artifact-validation-first-class-test-workflow-invoke-refs",
+    "artifact-validation-workflow-refs-lower-through-canonical-workflow-scheduler-and-exo",
+    "exec-g1-artifact-self-hosts-through-first-class-testspec-wrapper-invoke-workflow"
+  ],
+  "verified_promises": [
+    "EXEC-P001..EXEC-P005",
+    "EXEC-P006..EXEC-P013",
+    "EXEC-P014..EXEC-P027",
+    "EXEC-P032",
+    "EXEC-P034..EXEC-P036",
+    "VAL-P081"
+  ],
+  "deferred": {
+    "EXEC-X03": [
+      "core ReusePlanner",
+      "one-graph durable validation convergence",
+      "validation checkpoint/control convergence"
+    ],
+    "EXEC-X04": [
+      "authoritative selective skipping",
+      "fresh/rerun controls",
+      "same-run/cross-run continuation",
+      "transaction/federation adoption"
+    ],
+    "LIFE": [
+      "hook-engine-file-handle-warning",
+      "source-proof-retention-pinning"
+    ],
+    "TEST/PRES": [
+      "multi-suite-artifact-result-projection"
+    ],
+    "TEST/RMP": [
+      "roadmap-identity-allowlist-drift"
+    ]
+  },
+  "construction_validation": {
+    "command": "./devtoolw exec-g1",
+    "environment": "desktop-linux construction mirror; source remains native-termux",
+    "workflow_stages_passed": 5,
+    "tests_passed": 65,
+    "tests_failed": 0,
+    "tests_skipped": 0,
+    "devtool_warnings": 0,
+    "devtool_errors": 0,
+    "artifact_replay": {
+      "basis": "exact pre-G1 checkout; construction twin changes only targets.devtool.execution_environment native-termux -> desktop-linux",
+      "lifecycle_stages_passed": 8,
+      "nested_workflow_stages_passed": 5,
+      "tests_passed": 65,
+      "tests_failed": 0,
+      "tests_skipped": 0,
+      "devtool_warnings": 0,
+      "devtool_errors": 0,
+      "disposable_commit": "7b57861"
+    }
+  },
+  "artifact_validation": {
+    "bootstrap_test_ref": "roadmap-exec-g1-artifact",
+    "wrapper_command": "exec-g1",
+    "workflow": "roadmap-exec-g1",
+    "raw_pytest_argv_duplicated_in_manifest": false,
+    "post_gate_native_ref_surface": "validation.refs = [\"workflow:<action>\"]"
+  },
+  "next": {
+    "overlay": "ENV-X03",
+    "full_plan": "17/63",
+    "remaining_before_gate_window_exit": 0,
+    "next_major_scope": "ENV"
+  }
+}

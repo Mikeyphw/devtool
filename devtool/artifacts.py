@@ -1013,11 +1013,13 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
     required = mode == "required" if mode else (raw.get("required", False) if isinstance(raw.get("required", False), bool) else False)
     raw_tests = raw.get("tests")
     has_declared_validation_tests = isinstance(raw_tests, list) and bool(raw_tests)
-    if required and not any(phases) and not script and not (tasks_declared and declared_tasks) and not has_declared_validation_tests:
+    raw_refs = raw.get("refs")
+    has_declared_validation_refs = isinstance(raw_refs, list) and bool(raw_refs)
+    if required and not any(phases) and not script and not (tasks_declared and declared_tasks) and not has_declared_validation_tests and not has_declared_validation_refs:
         ok = False
         messages.append(
             "Required validation must enable restore, build, test, explicit validation tasks, "
-            "validation.tests, or an artifact script."
+            "validation.tests, validation.refs, or an artifact script."
         )
 
     pytest_selection_declared = any(
@@ -1109,6 +1111,7 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
             messages.append("validation.script.protocol must be one of: legacy-env, json-v1.")
     try:
         artifact_validation_tests(manifest)
+        artifact_validation_refs(manifest)
     except ValueError as exc:
         ok = False
         messages.append(str(exc))
@@ -3212,6 +3215,45 @@ def latest_commit_hash(repo_root: Path) -> str:
 
     proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     return proc.stdout.strip() if proc.returncode == 0 else ""
+
+def artifact_validation_refs(manifest: dict[str, Any]) -> list[dict[str, str]]:
+    """Normalize first-class artifact validation references.
+
+    ``validation.refs`` is intentionally separate from ``validation.tests``:
+    the latter preserves the artifact-v2 test protocol, while refs can name a
+    first-class TestSpec or a configured workflow/invoke action.  Workflow refs
+    are lowered through the canonical workflow scheduler/EXO path rather than
+    spawning a second ad-hoc validation script.
+    """
+    raw = manifest.get("validation")
+    if not isinstance(raw, dict):
+        return []
+    refs = raw.get("refs", [])
+    if refs is None:
+        return []
+    if not isinstance(refs, list):
+        raise ValueError("validation.refs must be a list.")
+    out: list[dict[str, str]] = []
+    for index, item in enumerate(refs, 1):
+        if isinstance(item, str):
+            ref = item.strip()
+        elif isinstance(item, dict):
+            if set(item) != {"ref"}:
+                raise ValueError(f"validation.refs entry {index} may only contain ref.")
+            ref = str(item.get("ref") or "").strip()
+        else:
+            raise ValueError(f"validation.refs entry {index} must be a string or ref object.")
+        if not ref or ":" not in ref:
+            raise ValueError(f"validation.refs entry {index} must use test:<id>, workflow:<action>, or invoke:<action>.")
+        kind, name = ref.split(":", 1)
+        kind = kind.strip().lower()
+        name = name.strip()
+        if kind not in {"test", "workflow", "invoke"} or not name:
+            raise ValueError(f"validation.refs entry {index} must use test:<id>, workflow:<action>, or invoke:<action>.")
+        canonical_kind = "workflow" if kind == "invoke" else kind
+        out.append({"ref": f"{canonical_kind}:{name}", "kind": canonical_kind, "name": name})
+    return out
+
 
 def artifact_validation_tests(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize artifact-v2 validation.tests without conflating them with lifecycle scripts."""

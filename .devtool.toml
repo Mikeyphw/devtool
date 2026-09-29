@@ -30,6 +30,15 @@ description = "Run Devtool's canonical Python build action"
 devtool = "build"
 target = "devtool"
 allow_passthrough = true
+
+# EXEC-G1 bootstrap-safe self-hosting entrypoint. The artifact validator can
+# resolve a first-class TestSpec with the pre-G1 runtime, while this wrapper
+# command re-enters the transaction checkout through canonical invoke/workflow.
+[wrapper.commands.exec-g1]
+description = "Run the EXEC-G1 reuse correctness milestone workflow"
+workflow = "roadmap-exec-g1"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -421,6 +430,13 @@ roadmap-exec-x01 = [
 roadmap-exec-x02 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "exec-x02", ref = "test:roadmap-exec-x02", depends_on = ["syntax"] },
+]
+roadmap-exec-g1 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "foundation", ref = "test:roadmap-exec-g1-foundation", depends_on = ["syntax"] },
+  { id = "identity", ref = "test:roadmap-exec-g1-identity", depends_on = ["syntax"] },
+  { id = "evidence", ref = "test:roadmap-exec-g1-evidence", depends_on = ["syntax"] },
+  { id = "artifact-refs", ref = "test:roadmap-exec-g1-artifact-refs", depends_on = ["foundation", "identity", "evidence"] },
 ]
 roadmap-smoke = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -1414,3 +1430,55 @@ command = [
   "tests/test_mp03_mp04_workflow_graph_runtime.py",
   "tests/test_rem04_execution_scheduler.py",
 ]
+
+# EXEC-G1 bounded milestone identities. The artifact applies through the
+# roadmap-exec-g1-artifact TestSpec below, which invokes the wrapper workflow
+# rather than duplicating these pytest commands in the artifact manifest.
+[[test]]
+id = "roadmap-exec-g1-foundation"
+name = "EXEC-G1 X01/X02 promise regression slice"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x01_execution_validation_foundation.py",
+  "tests/test_exec_x02_reuse_qualification.py",
+]
+
+[[test]]
+id = "roadmap-exec-g1-identity"
+name = "EXEC-G1 stable identity and portability gate"
+runner = "pytest"
+timeout_seconds = 120
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_g1_reuse_identity_gate.py",
+]
+
+[[test]]
+id = "roadmap-exec-g1-evidence"
+name = "EXEC-G1 EXO history and reusable proof gate"
+runner = "pytest"
+timeout_seconds = 120
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_g1_reuse_evidence_gate.py",
+]
+
+[[test]]
+id = "roadmap-exec-g1-artifact-refs"
+name = "EXEC-G1 artifact workflow-ref self-hosting contracts"
+runner = "pytest"
+timeout_seconds = 120
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_g1_artifact_workflow_refs.py",
+  "tests/test_tsys04_artifact_test_protocol.py",
+]
+
+[[test]]
+id = "roadmap-exec-g1-artifact"
+name = "EXEC-G1 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 300
+command = ["./devtoolw", "exec-g1"]

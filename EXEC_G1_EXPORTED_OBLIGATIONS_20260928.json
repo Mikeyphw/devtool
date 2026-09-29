@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "EXEC-G1",
+  "exports": [
+    {
+      "id": "LIFE-HOOK-HANDLE-LEAK",
+      "owner": "LIFE",
+      "summary": "Existing hooks/engine.py ResourceWarning remains outside EXEC-G1."
+    },
+    {
+      "id": "MULTI-SUITE-RESULT-PROJECTION",
+      "owner": "TEST/PRES",
+      "summary": "Artifact/apply aggregate test count can project only the final suite; previously reproduced."
+    },
+    {
+      "id": "ROADMAP-IDENTITY-ALLOWLIST-DRIFT",
+      "owner": "TEST/RMP",
+      "summary": "Hard-coded roadmap test/workflow identity allowlists remain a later owned obligation."
+    },
+    {
+      "id": "EXEC-LATER-AUTHORITATIVE-REUSE",
+      "owner": "EXEC-X03/EXEC-X04",
+      "summary": "EXEC-G1 proves qualification correctness only; authoritative scheduler skipping and continuation remain at their planned boundaries."
+    }
+  ]
+}

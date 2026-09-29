@@ -1,4 +1,4 @@
-from devtool.artifacts import artifact_validation_tests
+from devtool.artifacts import artifact_validation_refs, artifact_validation_tests
 from devtool.test_protocol import EventAccumulator, parse_line
 from devtool.test_model import TestStatus as Status
 
@@ -20,3 +20,20 @@ def test_event_fd_crosses_real_subprocess_boundary(tmp_path):
     code="from devtool.testing import suite;\nwith suite(\"wire\") as t: t.pass_(\"case\")"
     rc,out,tracker,events=_run_live_with_events([sys.executable,"-c",code],cwd=tmp_path,env={**dict(__import__("os").environ),"PYTHONPATH":str(Path(__file__).parents[1])},timeout_seconds=5,activity_label="test",script_label="test",stdin_text=None)
     assert rc==0 and any(e.get("type")=="case" and e.get("id")=="case" for e in events)
+
+
+def test_validation_refs_normalize_test_workflow_and_invoke():
+    refs = artifact_validation_refs({"validation":{"refs":["test:unit", {"ref":"workflow:gate"}, "invoke:seal"]}})
+    assert refs == [
+        {"ref":"test:unit", "kind":"test", "name":"unit"},
+        {"ref":"workflow:gate", "kind":"workflow", "name":"gate"},
+        {"ref":"workflow:seal", "kind":"workflow", "name":"seal"},
+    ]
+
+
+def test_validation_refs_reject_ambiguous_or_unknown_refs():
+    import pytest
+    with pytest.raises(ValueError, match="test:<id>"):
+        artifact_validation_refs({"validation":{"refs":["unit"]}})
+    with pytest.raises(ValueError, match="test:<id>"):
+        artifact_validation_refs({"validation":{"refs":["federation:gate"]}})

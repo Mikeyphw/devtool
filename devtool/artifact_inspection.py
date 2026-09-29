@@ -22,6 +22,7 @@ from .artifacts import (
     artifact_validation_policy,
     artifact_validation_script,
     artifact_validation_tests,
+    artifact_validation_refs,
     artifact_validation_write_paths,
     artifact_workspaces,
     diff_artifact,
@@ -163,7 +164,7 @@ def _hook_inspection(manifest: dict[str, Any]) -> dict[str, Any]:
         "validation": {**describe(
             "validation", validation_policy, validation_script, ["validate"] if validation_script else [],
             artifact_validation_write_paths(manifest), "legacy-env"
-        ), "tests": artifact_validation_tests(manifest)},
+        ), "tests": artifact_validation_tests(manifest), "refs": artifact_validation_refs(manifest)},
         "finalize": describe(
             "finalize", artifact_finalize_policy(manifest), artifact_finalize_script(manifest),
             artifact_finalize_phases(manifest), artifact_finalize_write_paths(manifest), "json-v1"

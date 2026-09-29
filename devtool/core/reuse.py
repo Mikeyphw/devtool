@@ -717,18 +717,39 @@ def finalize_spec_reuse_metadata(spec: Any, *, evidence_refs: Iterable[str] = ()
 
 
 def aggregate_fingerprints(node_definition_id: str, fingerprints: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Aggregate ordered command-part fingerprints into one workflow-node identity."""
+    """Aggregate ordered command-part fingerprints into one workflow-node identity.
+
+    A one-spec workflow node must retain the exact semantic fingerprint that was
+    qualified before execution.  Re-hashing each component as a one-item list
+    creates a different terminal identity and makes an unchanged fresh result
+    immediately fail shadow re-qualification.  Multi-spec nodes still need an
+    ordered aggregate because no individual command-part fingerprint represents
+    the whole canonical workflow node.
+    """
     rows = [dict(v) for v in fingerprints if isinstance(v, Mapping)]
-    payload = {
-        "node_definition_id": str(node_definition_id),
-        "invocation_digest": stable_digest([str(v.get("invocation_digest") or "") for v in rows]),
-        "input_manifest_digest": stable_digest([str(v.get("input_manifest_digest") or "") for v in rows]),
-        "dependency_digest": stable_digest([str(v.get("dependency_digest") or "") for v in rows]),
-        "environment_digest": stable_digest([str(v.get("environment_digest") or "") for v in rows]),
-        "reusable": bool(rows) and all(bool(v.get("reusable", True)) for v in rows),
-        "reason": ";".join(dict.fromkeys(str(v.get("reason") or "") for v in rows if str(v.get("reason") or ""))),
-        "spec_digests": [str(v.get("digest") or "") for v in rows],
-    }
+    if len(rows) == 1:
+        row = rows[0]
+        payload = {
+            "node_definition_id": str(node_definition_id or row.get("node_definition_id") or ""),
+            "invocation_digest": str(row.get("invocation_digest") or ""),
+            "input_manifest_digest": str(row.get("input_manifest_digest") or ""),
+            "dependency_digest": str(row.get("dependency_digest") or ""),
+            "environment_digest": str(row.get("environment_digest") or ""),
+            "reusable": bool(row.get("reusable", True)),
+            "reason": str(row.get("reason") or ""),
+            "spec_digests": [str(row.get("digest") or "")],
+        }
+    else:
+        payload = {
+            "node_definition_id": str(node_definition_id),
+            "invocation_digest": stable_digest([str(v.get("invocation_digest") or "") for v in rows]),
+            "input_manifest_digest": stable_digest([str(v.get("input_manifest_digest") or "") for v in rows]),
+            "dependency_digest": stable_digest([str(v.get("dependency_digest") or "") for v in rows]),
+            "environment_digest": stable_digest([str(v.get("environment_digest") or "") for v in rows]),
+            "reusable": bool(rows) and all(bool(v.get("reusable", True)) for v in rows),
+            "reason": ";".join(dict.fromkeys(str(v.get("reason") or "") for v in rows if str(v.get("reason") or ""))),
+            "spec_digests": [str(v.get("digest") or "") for v in rows],
+        }
     payload["digest"] = stable_digest({k: payload[k] for k in ("node_definition_id", "invocation_digest", "input_manifest_digest", "dependency_digest", "environment_digest")})
     return payload
 
