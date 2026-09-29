@@ -1611,7 +1611,10 @@ def _oci_rewrite_runtime_argv(argv: list[str], metadata: dict[str, Any]) -> list
         metadata.pop("android_builder", None)
         metadata["oci_embedded_android_runtime"] = True
 
-    events_sha = "621ce78be0c05cd5e5e43668461795ae0ed81de89acf40e0e8843d52248995a4"
+    event_runtime_paths = {
+        "9e0a0aa733ffeb41ce76e4b51b5bda4eadfcf52d01d49b3faf1dd4f33b2e72d8": "/usr/local/lib/devtool/devtool-events.init.gradle",
+        "48529c7e3b7a2a4409aacbf102ffb47048165cd4badf3d73ba82e2b309c05788": "/usr/local/lib/devtool/devtool-events-full.init.gradle",
+    }
     for index, token in enumerate(result[:-1]):
         if token != "--init-script":
             continue
@@ -1622,9 +1625,11 @@ def _oci_rewrite_runtime_argv(argv: list[str], metadata: dict[str, Any]) -> list
             digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
         except OSError:
             continue
-        if digest == events_sha:
-            result[index + 1] = "/usr/local/lib/devtool/devtool-events.init.gradle"
+        embedded_path = event_runtime_paths.get(digest)
+        if embedded_path:
+            result[index + 1] = embedded_path
             metadata["oci_embedded_gradle_events"] = True
+            metadata["oci_embedded_gradle_events_level"] = ("full" if "-full." in embedded_path else "standard")
 
     if metadata.get("oci_embedded_android_runtime"):
         # The image is the single owner of standard Android toolchain selection.

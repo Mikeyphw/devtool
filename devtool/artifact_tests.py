@@ -92,19 +92,39 @@ def run_artifact_tests(repo_root, manifest, *, verbose=False, dry_run=False, log
             specs.extend(command_specs(config, [declaration["ref"]]))
             continue
         cwd = declaration.get("cwd") or str(config.project_root or config.repo_root)
+        test_metadata = {
+            "test_spec_id": declaration["id"],
+            "test_runner": declaration["runner"],
+            "runner": declaration["runner"],
+            "canonical_test": True,
+            "artifact_validation_test": True,
+            "required": declaration["required"],
+        }
+        task = str(declaration.get("task") or "").strip()
+        if task:
+            from .project_runners import build_gradle_task_specs
+            planned = build_gradle_task_specs(
+                config, declaration["runner"], [task],
+                name=f"artifact-test:{declaration['id']}",
+                action="test",
+                env_override=dict(config.env),
+                root_override=cwd,
+            )
+            for spec in planned:
+                spec.metadata = {
+                    **dict(spec.metadata or {}),
+                    **test_metadata,
+                    "gradle_semantic_request": True,
+                    "artifact_gradle_task": task,
+                }
+                specs.append(spec)
+            continue
         specs.append(CommandSpec(
             name=f"artifact-test:{declaration['id']}",
             argv=list(declaration["command"]),
             cwd=cwd,
             env=dict(config.env),
-            metadata={
-                "test_spec_id": declaration["id"],
-                "test_runner": declaration["runner"],
-                "runner": declaration["runner"],
-                "canonical_test": True,
-                "artifact_validation_test": True,
-                "required": declaration["required"],
-            },
+            metadata=test_metadata,
         ))
     if specs:
         local_results, raw = _run_specs(

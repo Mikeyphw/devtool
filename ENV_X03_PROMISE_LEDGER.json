@@ -1,0 +1,98 @@
+{
+  "overlay": "ENV-X03",
+  "full_plan_position": "17/63",
+  "env_scope_position": "4/7",
+  "gate_window_position": "1/2",
+  "next_overlay": "ENV-G2",
+  "authority": "M004 ENV merged program",
+  "promises": [
+    {
+      "id": "ENV-P073",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "One canonical Gradle request/planner path is used by JVM/Android build/test/validation, typed workflow/TLJ/TestSpec lowering, artifact Gradle validation, project-runner instrumentation, and dedicated android instrumentation CLI prebuild; roadmap/federation consume the resulting canonical specs."
+    },
+    {
+      "id": "ENV-P074",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "LauncherIdentity binds executable/source/version plus executable realpath+digest and wrapper distribution/properties/JAR/SHA identities."
+    },
+    {
+      "id": "ENV-P075",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "ExecutionContext binds launcher, JDK executable+digest, substrate, project root, Gradle user home/cache domain, semantic environment digest, trusted context inputs, and bounded fail-closed build-logic identity."
+    },
+    {
+      "id": "ENV-P076",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "ExecutionPolicy records requested/effective/provenance/reason for CC, build cache, daemon, VFS, parallelism, workers, heap, telemetry and failure policy, plus evidence-driven resource profile."
+    },
+    {
+      "id": "ENV-P077",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "Planner owns root coalescing, aggregate substitution and typed semantic barriers; legacy split_gradle is represented as explicit-isolation intent rather than an implicit phase-name rule."
+    },
+    {
+      "id": "ENV-P078",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "Protected context/JVM/init-script arguments fail closed; managed/raw and property-form switches converge once; real argv values affect opaque identity while serialized property evidence remains redacted."
+    },
+    {
+      "id": "ENV-P079",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "Aggregate aliases require a self-consistent process-executed receipt and qualification binding exact roots/replacement/context/build-logic/request identities; booleans/hashes alone cannot self-authorize."
+    },
+    {
+      "id": "ENV-P080",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "Aggregate/CC qualification changes with launcher/JDK/context/build-logic/root identity, and bounded build-logic overflow is explicitly incomplete and fails closed rather than silently truncating."
+    },
+    {
+      "id": "ENV-P081",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "Heap policy separates default, phase recommendation, explicit request, host-safe ceiling, effective value and reason; host/resource profile evidence is retained."
+    },
+    {
+      "id": "ENV-P082",
+      "status": "SATISFIED_BY_IMPLEMENTATION_GATE_PROOF_PENDING",
+      "evidence": "ConfigurationCacheQualification records requested/effective, context/launcher/JDK/build-logic/argument/telemetry adapter identity and fallback; required mode fails closed. ENV-G2 owns real miss/store/hit proof."
+    },
+    {
+      "id": "ENV-P083",
+      "status": "SATISFIED_BY_IMPLEMENTATION_GATE_PROOF_PENDING",
+      "evidence": "Standard structured telemetry uses a bounded public BuildEvents shared-service adapter compatible by construction with CC; full detail uses a bounded legacy adapter and disables CC. Producer artifact scans are declared-producer scoped; receipts retain artifact/report refs. ENV-G2 owns real large-build proof."
+    },
+    {
+      "id": "ENV-P084",
+      "status": "SATISFIED_BY_IMPLEMENTATION_GATE_PROOF_PENDING",
+      "evidence": "Daemon/VFS/cache/parallel/workers are one canonical requested/effective policy derived from capabilities and host evidence rather than a phone-vs-desktop hardcode; OCI/local adapter identities are exact. ENV-G2 owns real host proof."
+    },
+    {
+      "id": "ENV-P085",
+      "status": "SATISFIED_BY_IMPLEMENTATION_FOUNDATION",
+      "evidence": "Balanced/constrained/emergency profiles are evidence-driven canonical policy states with provenance/reason/evidence; historical adaptive promotion/demotion remains ENV-X04."
+    },
+    {
+      "id": "ENV-P086",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "Clean/effect/device and explicit caller isolation are typed barriers; validation phase labels alone do not create process barriers."
+    },
+    {
+      "id": "ENV-P087",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "GradleExecutionReceipt binds requested/optimized/observed tasks/outcomes, selection, launcher/JDK/substrate, resource-profile evidence, reuse-layer policy, producer artifacts, reports, diagnostics and process/EXO/RER/RUN refs."
+    },
+    {
+      "id": "ENV-P088",
+      "status": "SATISFIED_BY_IMPLEMENTATION",
+      "evidence": "run_specs projects receipt identity/payload through existing TaskFinished execution metadata; ENV adds no scheduler/reuse/history truth store."
+    }
+  ],
+  "later_owned": [
+    "ENV-P089",
+    "ENV-P090",
+    "ENV-P091",
+    "ENV-P092"
+  ],
+  "bounded_audit": "ENV_X03_BOUNDED_PROMISE_AUDIT_20260929.md",
+  "audit_result": "ZERO_ENV_X03_OWNED_PROMISE_GAPS_AFTER_PASS_3"
+}

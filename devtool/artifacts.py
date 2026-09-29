@@ -3276,7 +3276,12 @@ def artifact_validation_tests(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         if task:
             if command: raise ValueError(f"validation.tests {tid!r} cannot declare both command and task.")
             if runner not in {"gradle","android"}: raise ValueError(f"validation.tests {tid!r} task requires gradle/android runner.")
-            command=["./gradlew",task]
+            # Keep Gradle roots semantic.  artifact_tests lowers this through
+            # the same GradleInvocationRequest/planner path as declared tests,
+            # validation, workflow and CLI callers instead of re-baking
+            # ``./gradlew`` into artifact-local validation.
+            out.append({"id":tid,"name":str(item.get("name") or tid),"runner":runner,"task":task,"cwd":str(item.get("cwd") or ""),"required":bool(item.get("required",True))})
+            continue
         if not isinstance(command,list) or not command or not all(isinstance(x,str) for x in command): raise ValueError(f"validation.tests {tid!r} requires a command or task.")
         out.append({"id":tid,"name":str(item.get("name") or tid),"runner":runner,"command":list(command),"cwd":str(item.get("cwd") or ""),"required":bool(item.get("required",True))})
     return out

@@ -1,0 +1,185 @@
+import groovy.json.JsonOutput
+import java.util.concurrent.atomic.AtomicLong
+
+// Machine-readable Gradle lifecycle events for devtool. Every line is prefixed
+// so normal Gradle output remains readable and parsers can ignore everything
+// else. The listener uses public Gradle APIs available across Gradle 7/8/9.
+def devtoolSequence = new AtomicLong(0L)
+def devtoolTaskTotal = new AtomicLong(0L)
+def devtoolTaskCompleted = new AtomicLong(0L)
+def devtoolTestsPassed = new AtomicLong(0L)
+def devtoolTestsFailed = new AtomicLong(0L)
+def devtoolTestsSkipped = new AtomicLong(0L)
+def devtoolRunId = System.getenv('DEVTOOL_RUN_ID') ?: ''
+def devtoolTestDetailLimit = Math.max(0L, Math.min(10000L, (System.getenv('DEVTOOL_GRADLE_TEST_EVENT_LIMIT') ?: '1000') as long))
+def devtoolArtifactProducers = ((System.getenv('DEVTOOL_GRADLE_ARTIFACT_PRODUCERS') ?: '')
+    .split(',')
+    .collect { it.trim() }
+    .findAll { !it.isEmpty() } as Set<String>)
+
+def devtoolArtifactSuffixes = ['.apk', '.aab', '.aar', '.jar', '.war', '.ear', '.zip', '.tar', '.tar.gz', '.tar.xz', '.tgz', '.deb', '.rpm']
+def devtoolArtifactOutputs = { Task task ->
+    // Producer-specific evidence only: output-tree inspection is bounded and
+    // never runs for unrelated tasks. Empty producer declaration means no scan.
+    if (devtoolArtifactProducers.isEmpty() ||
+        !(devtoolArtifactProducers.contains(task.path) || devtoolArtifactProducers.contains(task.name))) {
+        return []
+    }
+    def found = new LinkedHashSet<String>()
+    def visited = 0
+    def visitLimit = 2000
+    try {
+        task.outputs.files.files.each { File output ->
+            if (found.size() >= 200 || visited >= visitLimit) {
+                return
+            }
+            visited++
+            if (output.isFile()) {
+                def lower = output.name.toLowerCase(Locale.ROOT)
+                if (devtoolArtifactSuffixes.any { lower.endsWith(it) }) {
+                    found.add(output.absolutePath)
+                }
+            } else if (output.isDirectory()) {
+                def queue = new ArrayDeque<File>()
+                queue.add(output)
+                while (!queue.isEmpty() && found.size() < 200 && visited < visitLimit) {
+                    def current = queue.removeFirst()
+                    def children = current.listFiles()
+                    if (children == null) continue
+                    for (File candidate : children) {
+                        if (visited++ >= visitLimit) break
+                        if (candidate.isDirectory()) {
+                            queue.addLast(candidate)
+                        } else if (candidate.isFile()) {
+                        def lower = candidate.name.toLowerCase(Locale.ROOT)
+                        if (devtoolArtifactSuffixes.any { lower.endsWith(it) }) {
+                            found.add(candidate.absolutePath)
+                        }
+                    }
+                    }
+                }
+            }
+        }
+    } catch (Throwable ignored) {
+        // Artifact discovery is advisory; never make a successful Gradle task
+        // fail because an output provider cannot be inspected.
+    }
+    return found as List
+}
+
+def devtoolEmit = { String kind, Map payload = [:] ->
+    def event = [
+        sequence: devtoolSequence.incrementAndGet(),
+        timestamp: new Date().format("yyyy-MM-dd'T'HH:mm:ss.SSSXXX"),
+        kind: kind,
+        run_id: devtoolRunId,
+    ]
+    event.putAll(payload)
+    println("DEVTOOL_EVENT " + JsonOutput.toJson(event))
+}
+
+gradle.taskGraph.whenReady { graph ->
+    devtoolTaskTotal.set(graph.allTasks.size() as long)
+    devtoolEmit('task-graph', [total: devtoolTaskTotal.get(), tasks: graph.allTasks.collect { it.path }])
+}
+
+gradle.addListener(new TaskExecutionListener() {
+    void beforeExecute(Task task) {
+        devtoolEmit('task-start', [
+            task: task.path,
+            current: Math.min(devtoolTaskCompleted.get() + 1L, Math.max(devtoolTaskTotal.get(), 1L)),
+            completed: devtoolTaskCompleted.get(),
+            total: devtoolTaskTotal.get(),
+        ])
+    }
+
+    void afterExecute(Task task, TaskState state) {
+        def completed = devtoolTaskCompleted.incrementAndGet()
+        def skipMessage = state.skipMessage?.toString()?.trim()?.toUpperCase()
+        def outcome = state.failure != null ? 'failed' : (skipMessage == 'FROM-CACHE' ? 'from-cache' : (state.noSource ? 'no-source' : (state.upToDate ? 'up-to-date' : (state.skipped ? 'skipped' : 'success'))))
+        devtoolEmit('task-finish', [
+            task: task.path,
+            completed: completed,
+            total: devtoolTaskTotal.get(),
+            outcome: outcome,
+            didWork: state.didWork,
+            failure: state.failure?.message,
+            artifactOutputs: devtoolArtifactOutputs(task),
+        ])
+    }
+})
+
+gradle.addListener(new TestListener() {
+    void beforeSuite(TestDescriptor suite) {
+        if (suite.parent == null) {
+            devtoolEmit('test-suite-start', [suite: suite.displayName ?: suite.name])
+        }
+    }
+
+    void afterSuite(TestDescriptor suite, TestResult result) {
+        if (suite.parent == null) {
+            devtoolEmit('test-suite-finish', [
+                suite: suite.displayName ?: suite.name,
+                passed: result.successfulTestCount,
+                failed: result.failedTestCount,
+                skipped: result.skippedTestCount,
+                total: result.testCount,
+                invocationPassed: devtoolTestsPassed.get(),
+                invocationFailed: devtoolTestsFailed.get(),
+                invocationSkipped: devtoolTestsSkipped.get(),
+                invocationTotal: devtoolTestsPassed.get() + devtoolTestsFailed.get() + devtoolTestsSkipped.get(),
+                result: result.resultType?.toString()?.toLowerCase(),
+            ])
+        }
+    }
+
+    void beforeTest(TestDescriptor descriptor) {
+        def completed = devtoolTestsPassed.get() + devtoolTestsFailed.get() + devtoolTestsSkipped.get()
+        if (completed < devtoolTestDetailLimit) {
+            devtoolEmit('test-start', [
+                test: descriptor.className ? descriptor.className + '.' + descriptor.name : descriptor.name,
+                passed: devtoolTestsPassed.get(),
+                failed: devtoolTestsFailed.get(),
+                skipped: devtoolTestsSkipped.get(),
+                detailLimit: devtoolTestDetailLimit,
+            ])
+        }
+    }
+
+    void afterTest(TestDescriptor descriptor, TestResult result) {
+        def resultType = result.resultType?.toString()
+        if (resultType == 'SUCCESS') {
+            devtoolTestsPassed.incrementAndGet()
+        } else if (resultType == 'SKIPPED') {
+            devtoolTestsSkipped.incrementAndGet()
+        } else {
+            devtoolTestsFailed.incrementAndGet()
+        }
+        def completed = devtoolTestsPassed.get() + devtoolTestsFailed.get() + devtoolTestsSkipped.get()
+        if (completed <= devtoolTestDetailLimit) {
+            devtoolEmit('test-finish', [
+                test: descriptor.className ? descriptor.className + '.' + descriptor.name : descriptor.name,
+                outcome: resultType?.toLowerCase(),
+                passed: devtoolTestsPassed.get(),
+                failed: devtoolTestsFailed.get(),
+                skipped: devtoolTestsSkipped.get(),
+                total: completed,
+                durationMs: Math.max(0L, result.endTime - result.startTime),
+                detailLimit: devtoolTestDetailLimit,
+            ])
+        }
+    }
+})
+
+gradle.buildFinished { result ->
+    devtoolEmit('build-finish', [
+        success: result.failure == null,
+        failure: result.failure?.message,
+        completed: devtoolTaskCompleted.get(),
+        total: devtoolTaskTotal.get(),
+        passed: devtoolTestsPassed.get(),
+        failed: devtoolTestsFailed.get(),
+        skipped: devtoolTestsSkipped.get(),
+        testsTotal: devtoolTestsPassed.get() + devtoolTestsFailed.get() + devtoolTestsSkipped.get(),
+    ])
+}

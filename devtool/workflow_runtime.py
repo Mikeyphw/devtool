@@ -421,6 +421,19 @@ def _job_specs(config: ProjectConfig, job: JobConfig) -> list[CommandSpec]:
     )
     if job.action:
         return _runner_action_specs(job_config, job.runner, job.action)
+    if job.gradle_tasks:
+        from .project_runners import build_gradle_task_specs
+        specs = build_gradle_task_specs(
+            job_config, job.runner, job.gradle_tasks, name=f"job:{job.name}",
+            action="workflow", env_override=effective_env, root_override=root,
+        )
+        common = _structured_job_metadata(job)
+        for spec in specs:
+            metadata = dict(spec.metadata)
+            metadata.update(common)
+            metadata["gradle_semantic_request"] = True
+            spec.metadata = metadata
+        return specs
     if job.command:
         return [
             CommandSpec(

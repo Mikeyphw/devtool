@@ -146,8 +146,8 @@ def load_jobs(
                 f"Job '{name}' in [{context_prefix}] uses gradle_tasks but declares runner '{runner}'. "
                 "Use runner = \"gradle\" or runner = \"android\"."
             )
-        if gradle_tasks:
-            command = ("./gradlew", *gradle_tasks)
+        # ENV-X03: keep Gradle roots typed. Workflow runtime will lower these
+        # through the same canonical Gradle planner as CLI/validation.
         if action and not _WORKFLOW_ACTION_RE.fullmatch(action):
             raise SystemExit(f"Job '{name}' in [{context_prefix}] has invalid runner action {action!r}.")
 
@@ -187,6 +187,7 @@ def load_jobs(
             root=_resolve_optional_path(repo_root, raw_value.get("root", "")),
             action=action,
             command=command,
+            gradle_tasks=gradle_tasks,
             shell_command=shell_command,
             env=env,
             execution_environment=execution_environment,

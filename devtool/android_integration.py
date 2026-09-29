@@ -264,16 +264,21 @@ def refresh_android_builders_for_specs(specs: Iterable[Any]) -> None:
             )
 
 
-def _state_gradle_init_path() -> Path:
-    explicit = os.environ.get("DEVTOOL_GRADLE_INIT_SCRIPT", "").strip()
+def _state_gradle_init_path(*, telemetry_level: str = "standard") -> Path:
+    full = str(telemetry_level or "standard").strip().lower() == "full"
+    env_key = "DEVTOOL_GRADLE_FULL_INIT_SCRIPT" if full else "DEVTOOL_GRADLE_INIT_SCRIPT"
+    explicit = os.environ.get(env_key, "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
-    return _android_runtime_dir() / "gradle" / "devtool-events.init.gradle"
+    filename = "devtool-events-full.init.gradle" if full else "devtool-events.init.gradle"
+    return _android_runtime_dir() / "gradle" / filename
 
 
-def stage_gradle_init_script(*, destination: Path | None = None) -> Path:
-    source = Path(__file__).resolve().parent / "resources" / "gradle" / "devtool-events.init.gradle"
-    target = (destination or _state_gradle_init_path()).expanduser().resolve()
+def stage_gradle_init_script(*, destination: Path | None = None, telemetry_level: str = "standard") -> Path:
+    full = str(telemetry_level or "standard").strip().lower() == "full"
+    filename = "devtool-events-full.init.gradle" if full else "devtool-events.init.gradle"
+    source = Path(__file__).resolve().parent / "resources" / "gradle" / filename
+    target = (destination or _state_gradle_init_path(telemetry_level=telemetry_level)).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     if not source.is_file():
         raise RuntimeError(f"Bundled Gradle event init script is missing: {source}")
@@ -439,23 +444,122 @@ def android_gradle_task_execution_plan(
     validation: bool = False,
     validation_phase: str = "",
 ) -> AndroidGradleTaskExecutionPlan:
+    """Return Android-owned conservative component pruning only.
+
+    ENV-X03 moved aggregate/lifecycle replacement into the canonical Gradle
+    planner where qualification receipts can be enforced consistently across
+    Android, JVM, workflow, roadmap and federation callers.
+    """
     base = android_build.plan_gradle_task_list(list(tasks))
-    planned = list(base.optimized)
-    aliases: list[GradleTaskAliasApplication] = []
-    # Explicit --task means the caller asked for the native task identities; keep
-    # those exact identities after the existing conservative component pruning.
-    if validation and validation_phase != "explicit-tasks":
-        planned, aliases = _apply_configured_gradle_task_aliases(
-            config,
-            planned,
-            validation_phase=validation_phase,
-        )
     return AndroidGradleTaskExecutionPlan(
         requested=tuple(base.requested),
         planned=tuple(base.optimized),
-        optimized=tuple(planned),
+        optimized=tuple(base.optimized),
         component_removed=tuple(entry.__dict__ for entry in base.removed),
-        alias_applications=tuple(aliases),
+        alias_applications=(),
+    )
+
+
+def android_gradle_invocation_plan(
+    config: ProjectConfig,
+    tasks: Iterable[str],
+    *,
+    caller: str,
+    action: str,
+    validation: bool = False,
+    validation_phase: str = "",
+    barriers=(),
+):
+    """Build the shared ENV-X03 Gradle plan with Android context contribution."""
+    from .gradle_planning import GradleInvocationRequest, GradleLauncherIdentity, gradle_selection_identity, plan_gradle_invocation
+
+    root = android_project_root(config)
+    component = android_gradle_task_execution_plan(
+        config, tasks, validation=validation, validation_phase=validation_phase,
+    )
+    gradle = _dict_option(config, "gradle")
+    android = _dict_option(config, "android")
+    nested = android.get("gradle", {}) if isinstance(android.get("gradle", {}), dict) else {}
+    command = str(gradle.get("command") or nested.get("command") or "").strip()
+    provider = str(gradle.get("provider") or nested.get("provider") or "auto").strip() or "auto"
+    required_version = str(gradle.get("version") or android_build.wrapper_distribution_version(root) or "")
+    wrapper = root / ("gradlew.bat" if os.name == "nt" else "gradlew")
+    executable = command or (str(wrapper) if wrapper.is_file() else "gradle")
+    source = "explicit" if command else "wrapper" if wrapper.is_file() else provider
+    wrapper_distribution = ""
+    props = root / "gradle" / "wrapper" / "gradle-wrapper.properties"
+    if props.is_file():
+        try:
+            for line in props.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.strip().startswith("distributionUrl="):
+                    wrapper_distribution = line.split("=", 1)[1].strip()
+                    break
+        except OSError:
+            pass
+    launcher = GradleLauncherIdentity.create(
+        executable=executable, source=source, required_version=required_version,
+        effective_version=required_version, wrapper_distribution=wrapper_distribution,
+        project_root=root,
+    )
+    java_options = android.get("java", {}) if isinstance(android.get("java", {}), dict) else {}
+    java_home = str(android.get("java_home") or java_options.get("home") or gradle.get("java_home") or "")
+    try:
+        requirement = android_build.infer_java_requirement(inspect_android_project(config))
+        java_requirement = str(requirement.exact) if requirement.exact else f">={requirement.minimum}" if requirement.minimum else ""
+    except Exception:
+        java_requirement = ""
+    gradle_user_home = str(gradle.get("user_home") or android.get("gradle_user_home") or "")
+    raw_args = gradle.get("args", ())
+    if isinstance(raw_args, str):
+        import shlex
+        raw_args = shlex.split(raw_args)
+    elif not isinstance(raw_args, (list, tuple)):
+        raw_args = ()
+    trusted_context_inputs: list[str] = []
+    # Devtool-owned task-scoped init scripts are not user raw argv, but they
+    # still change Gradle configuration semantics and therefore must bind the
+    # canonical context/CC qualification identity.
+    from .android.signing import stage_gradle_signing_init_script
+    signing_script = stage_gradle_signing_init_script(
+        config, list(component.workload_tasks), env=os.environ,
+    )
+    if signing_script is not None:
+        try:
+            signing_digest = hashlib.sha256(signing_script.read_bytes()).hexdigest()
+        except OSError:
+            signing_digest = "<unreadable>"
+        trusted_context_inputs.append(f"android-signing-init:{signing_digest}")
+    request = GradleInvocationRequest(
+        caller=caller, action=action, project_root=str(root),
+        requested_roots=tuple(component.requested), preoptimized_roots=tuple(component.optimized),
+        validation=validation, validation_phase=validation_phase,
+        raw_args=tuple(str(item) for item in raw_args if str(item).strip()),
+        barriers=tuple(barriers),
+        selection_identity=gradle_selection_identity(config),
+        expected_artifact_producers=tuple(component.requested if action in {"build", "package"} else ()),
+        expected_report_producers=tuple(
+            task for task in component.requested
+            if action in {"test", "lint"}
+            or "test" in task.lstrip(":").rsplit(":", 1)[-1].lower()
+            or "lint" in task.lstrip(":").rsplit(":", 1)[-1].lower()
+        ),
+        trusted_context_inputs=tuple(trusted_context_inputs),
+    )
+    worker_ceiling = None
+    if validation:
+        resource = (
+            resolve_android_validation_phase_policy(config, validation_phase)
+            if validation_phase
+            else resolve_android_validation_policy(config)
+        )
+        # Android owns host/process pressure detection; the canonical Gradle
+        # planner owns the resulting Gradle worker policy. Feed the effective
+        # mobile host ceiling as capability input instead of re-rendering an
+        # Android-only --max-workers decision later.
+        worker_ceiling = resource.max_workers
+    return component, plan_gradle_invocation(
+        config=config, request=request, launcher=launcher, java_requirement=java_requirement,
+        jdk_home=java_home, gradle_user_home=gradle_user_home, cpu_count=worker_ceiling,
     )
 
 
@@ -866,6 +970,9 @@ def android_builder_arguments_for_tasks(
     scan_artifacts: bool,
     validation: bool = False,
     validation_phase: str = "",
+    canonical_plan: object | None = None,
+    component_plan: AndroidGradleTaskExecutionPlan | None = None,
+    physical_roots: Iterable[str] | None = None,
 ) -> list[str]:
     root = android_project_root(config)
     android = _dict_option(config, "android")
@@ -885,14 +992,23 @@ def android_builder_arguments_for_tasks(
             project_info = None
 
     argv = [str(root), "--no-chroot"]
-    task_plan = android_gradle_task_execution_plan(
-        config,
-        list(tasks),
-        validation=validation,
-        validation_phase=validation_phase,
-    )
-    seen_tasks: set[str] = set(task_plan.workload_tasks)
-    for task in task_plan.optimized:
+    if canonical_plan is None or component_plan is None:
+        task_plan, gradle_plan = android_gradle_invocation_plan(
+            config, list(tasks), caller="android-builder", action=("validation" if validation else "build"),
+            validation=validation, validation_phase=validation_phase,
+        )
+    else:
+        task_plan, gradle_plan = component_plan, canonical_plan
+    selected_roots = tuple(str(item) for item in (physical_roots or ()) if str(item).strip())
+    if not selected_roots:
+        if len(gradle_plan.invocations) != 1:
+            raise SystemExit(
+                "Android Gradle request crosses a typed invocation barrier and must be split by the caller; "
+                f"planned invocations={len(gradle_plan.invocations)}"
+            )
+        selected_roots = tuple(gradle_plan.invocations[0].roots)
+    seen_tasks: set[str] = set((*task_plan.workload_tasks, *gradle_plan.requested_roots, *gradle_plan.optimized_roots))
+    for task in selected_roots:
         argv.extend(["--task", task])
 
     _append_option(argv, "--java-home", android.get("java_home") or java_options.get("home") or gradle.get("java_home"))
@@ -967,11 +1083,9 @@ def android_builder_arguments_for_tasks(
         if validation
         else None
     )
-    max_workers = (
-        validation_policy.max_workers
-        if validation_policy is not None
-        else gradle.get("max_workers") or android.get("max_workers") or resolve_build_policy(config, config.kind).max_workers
-    )
+    # Core Gradle resource semantics come from the canonical ENV-X03 policy.
+    # Android validation still owns process-level memory guard/cpu/priority.
+    max_workers = int(gradle_plan.policy.max_workers.effective)
     _append_option(argv, "--max-workers", max_workers)
     _append_option(argv, "--system-deps", android.get("system_deps", "auto"))
     _append_option(argv, "--daemon-idle-timeout-ms", gradle.get("daemon_idle_timeout_ms", 900_000))
@@ -986,7 +1100,7 @@ def android_builder_arguments_for_tasks(
     if validation_policy is not None and validation_policy.enabled:
         validation_options = _dict_option(config, "validation")
         packaging_workload = _is_android_packaging_workload(seen_tasks)
-        heap_mb = validation_policy.gradle_heap_mb
+        heap_mb = int(gradle_plan.policy.heap.effective_mb)
         cli_resource_overrides = validation_options.get("_cli_resource_overrides")
         cli_heap_explicit = (
             isinstance(cli_resource_overrides, dict)
@@ -1059,7 +1173,8 @@ def android_builder_arguments_for_tasks(
                         f"gradle_metaspace_mb: {flag} requested={metaspace_record.get('value')} -> effective={metaspace_mb} (applied)",
                     )
         _append_option(argv, "--cpu-limit", validation_policy.cpu_limit)
-        argv.append("--constrained")
+        if gradle_plan.policy.resource_profile in {"constrained", "emergency"}:
+            argv.append("--constrained")
         if validation_policy.low_priority:
             argv.append("--low-priority")
 
@@ -1086,17 +1201,16 @@ def android_builder_arguments_for_tasks(
         if heap_record is not None:
             _append_option(argv, "--gradle-jvm-heap-mb", int(heap_record.get("value") or 0))
 
-    no_daemon = _bool_option(gradle.get("no_daemon"), False)
-    parallel = _bool_option(gradle.get("parallel"), config.kind == "android")
-    if validation_policy is not None and validation_policy.enabled:
-        validation_options = _dict_option(config, "validation")
-        no_daemon = validation_policy.no_daemon
-        parallel = bool(validation_options.get("parallel", False))
+    if validation_policy is None or not validation_policy.enabled:
+        _append_option(argv, "--gradle-jvm-heap-mb", int(gradle_plan.policy.heap.effective_mb))
+
+    no_daemon = not bool(gradle_plan.policy.daemon.effective)
+    parallel = bool(gradle_plan.policy.parallel.effective)
     if no_daemon:
         argv.append("--no-daemon")
     if parallel:
         argv.append("--parallel")
-    if _bool_option(gradle.get("build_cache"), True):
+    if bool(gradle_plan.policy.build_cache.effective):
         argv.append("--build-cache")
     if validation_policy is not None:
         resolution_phase = validation_phase or "validation"
@@ -1115,22 +1229,9 @@ def android_builder_arguments_for_tasks(
         )
         for note in android_validation_cli_resolution_notes(config, resolution_phase):
             _append_option(argv, "--resource-resolution", note)
-    # Validation should collect as many independent Gradle/task diagnostics as
-    # possible by default. Explicit configuration, DEVTOOL_GRADLE_FAIL_FAST, or
-    # the top-level --fail-fast flag can still opt back into fail-fast mode.
-    fail_fast_default = False
-    fail_fast_value: Any = None
-    env_fail_fast = os.environ.get("DEVTOOL_GRADLE_FAIL_FAST", "").strip()
-    if env_fail_fast:
-        fail_fast_value = env_fail_fast
-    elif validation:
-        validation_options = _dict_option(config, "validation")
-        if "fail_fast" in validation_options:
-            fail_fast_value = validation_options.get("fail_fast")
-    if fail_fast_value is None and "fail_fast" in gradle:
-        fail_fast_value = gradle.get("fail_fast")
-    fail_fast = _bool_setting(fail_fast_value, fail_fast_default)
-    if fail_fast:
+    # Failure semantics are planner-owned. The Android builder only lowers the
+    # canonical policy into its own switch vocabulary.
+    if gradle_plan.policy.failure_policy.effective == "fail-fast":
         argv.append("--fail-fast")
 
     if not scan_artifacts:
@@ -1157,31 +1258,38 @@ def android_builder_arguments_for_tasks(
     signing_env = dict(os.environ)
     signing_env.update({str(k): str(v) for k, v in config.env.items()})
     gradle_args.extend(signing_gradle_args_for_tasks(config, list(seen_tasks), env=signing_env))
-    structured_events = _bool_option(gradle.get("structured_events"), True)
-    if structured_events:
+    telemetry_level = str(gradle_plan.policy.telemetry_level.effective)
+    if telemetry_level in {"standard", "full"}:
         gradle_args.extend([
             "--init-script",
-            str(stage_gradle_init_script()),
+            str(stage_gradle_init_script(telemetry_level=telemetry_level)),
         ])
 
-    configured_gradle_args = _list_option(gradle.get("args"))
-    disable_configuration_cache = _bool_option(validation, False) or structured_events
-    if disable_configuration_cache:
-        # Android validation may provision or repair the managed SDK immediately
-        # before Gradle starts. A configuration-cache entry that fingerprints
-        # that mutable SDK can therefore be invalidated for reasons unrelated to
-        # repository inputs. Validation already has its own durable phase cache,
-        # so force Gradle configuration-cache off here. Keep this independent of
-        # structured events and make the explicit Devtool policy win over a
-        # user-provided --configuration-cache switch.
-        configured_gradle_args = [
-            item for item in configured_gradle_args
-            if item not in {"--configuration-cache", "--no-configuration-cache"}
-        ]
-
+    # Managed Gradle switches are rendered from the same canonical policy as
+    # direct JVM execution. Raw conflicting switches were already rejected by
+    # the planner, so only non-managed raw args survive here.
+    managed_names = {
+        "--configuration-cache", "--no-configuration-cache",
+        "--build-cache", "--no-build-cache", "--daemon", "--no-daemon",
+        "--parallel", "--no-parallel",
+    }
+    configured_gradle_args = [
+        item for item in _list_option(gradle.get("args"))
+        if item not in managed_names
+        and not item.startswith("--max-workers=")
+        and not item.startswith("-Dorg.gradle.vfs.watch=")
+        and not item.startswith("-Dorg.gradle.jvmargs=")
+    ]
     gradle_args.extend(configured_gradle_args)
-    if disable_configuration_cache:
-        gradle_args.append("--no-configuration-cache")
+    gradle_args.append(
+        "--configuration-cache" if gradle_plan.policy.configuration_cache.effective == "on"
+        else "--no-configuration-cache"
+    )
+    if not bool(gradle_plan.policy.build_cache.effective):
+        gradle_args.append("--no-build-cache")
+    gradle_args.append(
+        f"-Dorg.gradle.vfs.watch={'true' if gradle_plan.policy.vfs_watch.effective else 'false'}"
+    )
     if gradle_args:
         argv.append("--")
         argv.extend(gradle_args)

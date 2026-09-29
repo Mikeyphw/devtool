@@ -16,8 +16,9 @@ _SOURCE_RUNTIME = {
     "build-apk": _PACKAGE_ROOT.joinpath("android").joinpath("_standalone.py"),
     "termux_toolchains.py": _PACKAGE_ROOT.joinpath("termux_toolchains.py"),
     "devtool-events.init.gradle": _PACKAGE_ROOT.joinpath("resources").joinpath("gradle").joinpath("devtool-events.init.gradle"),
+    "devtool-events-full.init.gradle": _PACKAGE_ROOT.joinpath("resources").joinpath("gradle").joinpath("devtool-events-full.init.gradle"),
 }
-_REQUIRED = ("Dockerfile", "build-apk", "devtool-events.init.gradle", "image-manifest.json", "termux_toolchains.py", "validate-image.sh")
+_REQUIRED = ("Dockerfile", "build-apk", "devtool-events.init.gradle", "devtool-events-full.init.gradle", "image-manifest.json", "termux_toolchains.py", "validate-image.sh")
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,11 +139,13 @@ def _validate_contract(value: dict[str, Any]) -> dict[str, Any]:
     embedded = runtime.get("embedded_android_builder", {}) if isinstance(runtime, dict) else {}
     expected_embedded = {
         "path": "/usr/local/lib/devtool/build-apk",
-        "sha256": "c35521e80c7f05b734e23c444922fa7b02820d9318c17494d9f0076fc23f70fc",
+        "sha256": "101dfabeddd2e04bc01d9cad02b37f14883ce4cc26f1e4b1b96b49e8a56e36c4",
         "toolchains_path": "/usr/local/lib/devtool/termux_toolchains.py",
         "toolchains_sha256": "46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe",
         "gradle_events_init_path": "/usr/local/lib/devtool/devtool-events.init.gradle",
-        "gradle_events_init_sha256": "621ce78be0c05cd5e5e43668461795ae0ed81de89acf40e0e8843d52248995a4",
+        "gradle_events_init_sha256": "9e0a0aa733ffeb41ce76e4b51b5bda4eadfcf52d01d49b3faf1dd4f33b2e72d8",
+        "gradle_events_full_init_path": "/usr/local/lib/devtool/devtool-events-full.init.gradle",
+        "gradle_events_full_init_sha256": "48529c7e3b7a2a4409aacbf102ffb47048165cd4badf3d73ba82e2b309c05788",
     }
     if embedded != expected_embedded:
         raise ValueError("OCI-05 embedded Devtool Android runtime contract changed unexpectedly")
@@ -150,6 +153,7 @@ def _validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         ("Android builder", "build-apk", expected_embedded["sha256"]),
         ("toolchain companion", "termux_toolchains.py", expected_embedded["toolchains_sha256"]),
         ("Gradle telemetry init", "devtool-events.init.gradle", expected_embedded["gradle_events_init_sha256"]),
+        ("Gradle full telemetry init", "devtool-events-full.init.gradle", expected_embedded["gradle_events_full_init_sha256"]),
     ):
         payload = _resource_bytes(resource)
         if hashlib.sha256(payload).hexdigest() != digest:

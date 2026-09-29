@@ -780,6 +780,74 @@ class AndroidGradleRunner(ProjectRunner):
         from .android_integration import android_doctor_rows
         return android_doctor_rows(config)
 
+    def build_task_specs(
+        self,
+        config: ProjectConfig,
+        tasks: Iterable[str],
+        *,
+        name: str = "android-gradle-tasks",
+        action: str = "workflow",
+        validation: bool = False,
+        validation_phase: str = "",
+        barriers=(),
+        env_override: dict[str, str] | None = None,
+        root_override: str | None = None,
+    ) -> list[CommandSpec]:
+        from .android_integration import (
+            android_builder_arguments_for_tasks, android_gradle_invocation_plan,
+            android_project_root, plan_android_command,
+        )
+        from .gradle_planning import plan_metadata
+
+        roots = tuple(dict.fromkeys(str(task).strip() for task in tasks if str(task).strip()))
+        if not roots:
+            return []
+        component, gradle_plan = android_gradle_invocation_plan(
+            config, roots, caller=action or name, action=action or "workflow",
+            validation=validation, validation_phase=validation_phase, barriers=barriers,
+        )
+        project_root = Path(root_override).expanduser().resolve(strict=False) if root_override else android_project_root(config)
+        plan_action = "build" if action in {"workflow", "build", "package"} else action if action in {"test", "lint", "clean", "restore"} else "build"
+        android_plan = plan_android_command(config, plan_action)
+        env = dict(env_override) if env_override is not None else _android_env_for_tasks(config, list(component.workload_tasks), validation=validation)
+        if gradle_plan.request.expected_artifact_producers:
+            env["DEVTOOL_GRADLE_ARTIFACT_PRODUCERS"] = ",".join(gradle_plan.request.expected_artifact_producers)
+        else:
+            env.pop("DEVTOOL_GRADLE_ARTIFACT_PRODUCERS", None)
+        specs: list[CommandSpec] = []
+        for index, physical in enumerate(gradle_plan.invocations, start=1):
+            metadata: dict[str, object] = {
+                "runner": self.kind, "project_type": self.kind,
+                "gradle_tasks": list(physical.roots),
+                "requested_gradle_tasks": list(gradle_plan.requested_roots),
+                "gradle_workload_tasks": list(component.workload_tasks),
+                "gradle_task_optimization": component.as_dict(),
+                "android_builder": str(android_plan.builder), "project_root": str(project_root),
+                "collect_artifacts": action in {"build", "package"},
+                "verify_artifacts": action in {"build", "package"},
+                "artifact_required": action == "package", "progress_parser": "gradle",
+                "report_parser": "gradle-junit" if action == "test" else "android-lint" if action == "lint" else "",
+                "gradle_invocation_index": index, "gradle_invocation_total": len(gradle_plan.invocations),
+                "gradle_invocation_barriers": [barrier.as_dict() for barrier in physical.barriers],
+                "validation_phase_name": validation_phase if validation else "",
+            }
+            metadata.update(plan_metadata(gradle_plan))
+            metadata.update(_android_signing_metadata(config, list(component.workload_tasks)))
+            argv = [
+                *android_plan.argv_prefix,
+                *android_builder_arguments_for_tasks(
+                    config, roots, scan_artifacts=action in {"build", "package"},
+                    validation=validation, validation_phase=validation_phase,
+                    canonical_plan=gradle_plan, component_plan=component, physical_roots=physical.roots,
+                ),
+            ]
+            specs.append(CommandSpec(
+                name if len(gradle_plan.invocations) == 1 else f"{name}-{index}",
+                argv, env=env, cwd=str(project_root),
+                destructive=any(barrier.kind == "clean" for barrier in physical.barriers), metadata=metadata,
+            ))
+        return specs
+
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
         from .android_integration import android_builder_arguments, android_builder_arguments_for_tasks, android_project_root, configured_tasks, plan_android_command
         from .test_selection import apply_test_selection, resolve_test_selection
@@ -853,6 +921,16 @@ class AndroidGradleRunner(ProjectRunner):
                 config,
                 instrumentation_build_tasks,
             )
+            # ENV-X03: the canonical Devtool path owns the Gradle build. The
+            # device orchestrator is invoked with --skip-build so it cannot
+            # bypass the shared Gradle planner with a second raw launcher.
+            instrumentation_build_specs = self.build_task_specs(
+                config,
+                instrumentation_build_tasks,
+                name="instrumentation-build",
+                action="build",
+                env_override=instrumentation_env,
+            )
             argv = [
                 sys.executable, "-m", "devtool.android_instrumentation", str(root),
                 "--variant", variant_name,
@@ -860,6 +938,7 @@ class AndroidGradleRunner(ProjectRunner):
                 "--install-command", str(android.get("install_command") or "sudo pm install -r -t"),
                 "--am-command", str(android.get("am_command") or "sudo am instrument"),
                 "--canonical",
+                "--skip-build",
             ]
             from .android.instrumentation import instrumentation_config, resolve_instrumentation_policy
             ins_cfg = instrumentation_config(config)
@@ -878,21 +957,8 @@ class AndroidGradleRunner(ProjectRunner):
             if configured_aapt2:
                 argv.extend(["--aapt2", configured_aapt2])
             argv.extend(["--aapt2-provider", aapt2_provider])
-            gradle_options = config.runner_options.get("gradle", {})
-            gradle_options = dict(gradle_options) if isinstance(gradle_options, dict) else {}
-            configured_gradle_args = gradle_options.get("args", [])
-            if isinstance(configured_gradle_args, str):
-                configured_gradle_args = [configured_gradle_args]
-            if isinstance(configured_gradle_args, (list, tuple)):
-                for value in configured_gradle_args:
-                    item = str(value).strip()
-                    if item:
-                        argv.append(f"--gradle-arg={item}")
-            # The generated init script contains only non-secret signing
-            # configuration and reads passwords from the child environment.
-            from .android.signing import signing_gradle_args_for_tasks
-            for value in signing_gradle_args_for_tasks(config, instrumentation_build_tasks, env={**os.environ, **instrumentation_env}):
-                argv.append(f"--gradle-arg={value}")
+            # Gradle args/signing setup are consumed by instrumentation_build_specs
+            # above. Do not duplicate them into the device subprocess.
             runner = str(ins_cfg.get("test_runner") or "").strip()
             target_package = str(ins_cfg.get("target_package") or "").strip()
             if runner:
@@ -938,12 +1004,14 @@ class AndroidGradleRunner(ProjectRunner):
                 "report_parser": "android-instrumentation",
                 "execution_environment": "android-device",
                 "instrumentation_uses_canonical_build": True,
+                "instrumentation_build_owned_by_gradle_planner": True,
+                "instrumentation_skip_build": True,
             }
             metadata.update(_android_signing_metadata(config, instrumentation_build_tasks))
             spec = CommandSpec(
                 "instrumentation", argv, env=instrumentation_env, cwd=str(root), metadata=metadata
             )
-            return [apply_test_selection(config, spec)]
+            return [*instrumentation_build_specs, apply_test_selection(config, spec)]
 
         explicit = {
             "restore": config.restore_command,
@@ -975,43 +1043,7 @@ class AndroidGradleRunner(ProjectRunner):
             raise SystemExit(
                 "No Gradle lint task was discovered. Configure [tasks].lint for this target."
             )
-        plan_action = "build" if action == "package" else action
-        plan = plan_android_command(config, plan_action)
-        if action == "package":
-            argv = [
-                *plan.argv_prefix,
-                *android_builder_arguments_for_tasks(config, tasks, scan_artifacts=True),
-            ]
-        else:
-            argv = [*plan.argv_prefix, *android_builder_arguments(config, action)]
-        report_parser = ""
-        if action == "test":
-            report_parser = "gradle-junit"
-        elif action == "lint":
-            report_parser = "android-lint"
-        specs = [
-            CommandSpec(
-                action,
-                argv,
-                env=_android_env_for_tasks(config, list(tasks if action == "package" else plan.default_tasks)),
-                cwd=str(plan.project_root),
-                metadata={
-                    "runner": self.kind,
-                    "project_type": self.kind,
-                    "gradle_tasks": list(tasks if action == "package" else plan.default_tasks),
-                    "android_builder": str(plan.builder),
-                    "project_root": str(plan.project_root),
-                    "collect_artifacts": action in {"build", "package"},
-                    "verify_artifacts": action in {"build", "package"},
-                    "artifact_required": action == "package",
-                    "progress_parser": "gradle",
-                    "report_parser": report_parser,
-                },
-            )
-        ]
-        for spec in specs:
-            planned_tasks = [str(item) for item in spec.metadata.get("gradle_tasks", []) or []]
-            spec.metadata.update(_android_signing_metadata(config, planned_tasks))
+        specs = self.build_task_specs(config, tasks, name=action, action=action)
         if action == "test":
             specs = [apply_test_selection(config, spec) for spec in specs]
         return specs
@@ -1099,56 +1131,45 @@ class AndroidGradleRunner(ProjectRunner):
             *,
             report_parsers: list[str] | None = None,
             scan_artifacts: bool = False,
-        ) -> CommandSpec:
+        ) -> list[CommandSpec]:
             unique_tasks = list(dict.fromkeys(item for item in tasks if item))
             plan_action = "build" if phase in {"compile", "resources", "package"} else "test" if phase == "unit-test" else "lint" if phase == "lint" else "restore"
-            plan = plan_android_command(config, plan_action)
             policy = resolve_android_validation_phase_policy(config, phase)
             parsers = list(report_parsers or [])
-            metadata = {
-                "runner": self.kind,
-                "project_type": self.kind,
-                "gradle_tasks": unique_tasks,
-                "android_builder": str(plan.builder),
-                "project_root": str(project_root),
-                "collect_artifacts": phase == "package",
-                "verify_artifacts": phase == "package",
-                "artifact_required": phase == "package",
-                "progress_parser": "gradle",
-                "report_parser": parsers[0] if parsers else "",
-                "report_parsers": parsers,
-                "validation_components": [phase],
-                "validation_phase_name": phase,
-                "validation_resumable": True,
-                "validation_resource_profile": f"android-{phase}",
-                "validation_max_workers": policy.max_workers,
-                "validation_cpu_limit": policy.cpu_limit,
-                "validation_gradle_heap_mb": policy.gradle_heap_mb,
-                "validation_memory_guard_mb": policy.memory_guard_mb,
-                "validation_low_priority": policy.low_priority,
-                "lint_scope": lint_scope if phase == "lint" else "not-applicable",
-                "lint_modules": list(lint_modules) if phase == "lint" else [],
-                "validation_change_scope": change_scope,
-            }
-            spec = CommandSpec(
-                f"{self.kind}-validation-{phase}",
-                [
-                    *plan.argv_prefix,
-                    *android_builder_arguments_for_tasks(
-                        config,
-                        unique_tasks,
-                        scan_artifacts=scan_artifacts,
-                        validation=True,
-                        validation_phase=phase,
-                    ),
-                ],
-                env=_android_env_for_tasks(config, unique_tasks, validation=True),
-                cwd=str(plan.project_root),
-                metadata=metadata,
+            planned = self.build_task_specs(
+                config, unique_tasks, name=f"{self.kind}-validation-{phase}",
+                action=plan_action, validation=True, validation_phase=phase,
             )
-            if phase == "unit-test":
-                spec = apply_test_selection(config, spec)
-            return spec
+            result: list[CommandSpec] = []
+            for spec in planned:
+                gradle_plan = dict(spec.metadata.get("gradle_execution_plan") or {})
+                gradle_policy = dict(gradle_plan.get("policy") or {})
+                workers = dict(gradle_policy.get("max_workers") or {}).get("effective", policy.max_workers)
+                heap = dict(gradle_policy.get("heap") or {}).get("effective_mb", policy.gradle_heap_mb)
+                profile = str(gradle_policy.get("resource_profile") or "balanced")
+                spec.metadata.update({
+                    "collect_artifacts": phase == "package",
+                    "verify_artifacts": phase == "package",
+                    "artifact_required": phase == "package",
+                    "report_parser": parsers[0] if parsers else "",
+                    "report_parsers": parsers,
+                    "validation_components": [phase],
+                    "validation_phase_name": phase,
+                    "validation_resumable": True,
+                    "validation_resource_profile": f"gradle-{profile}",
+                    "validation_max_workers": workers,
+                    "validation_cpu_limit": policy.cpu_limit,
+                    "validation_gradle_heap_mb": heap,
+                    "validation_memory_guard_mb": policy.memory_guard_mb,
+                    "validation_low_priority": policy.low_priority,
+                    "lint_scope": lint_scope if phase == "lint" else "not-applicable",
+                    "lint_modules": list(lint_modules) if phase == "lint" else [],
+                    "validation_change_scope": change_scope,
+                })
+                if phase == "unit-test":
+                    spec = apply_test_selection(config, spec)
+                result.append(spec)
+            return result
 
         def internal_phase(phase: str, message: str) -> CommandSpec:
             policy = resolve_android_validation_phase_policy(config, phase)
@@ -1182,21 +1203,21 @@ class AndroidGradleRunner(ProjectRunner):
 
         specs: list[CommandSpec] = []
         if not skip_restore and phase_enabled("preflight"):
-            specs.append(gradle_phase("preflight", phase_tasks("preflight", ["help"])))
+            specs.extend(gradle_phase("preflight", phase_tasks("preflight", ["help"])))
         if not skip_restore and phase_enabled("dependencies"):
-            specs.append(gradle_phase("dependencies", phase_tasks("dependencies", ["dependencies"])))
+            specs.extend(gradle_phase("dependencies", phase_tasks("dependencies", ["dependencies"])))
         if not skip_build and phase_enabled("compile"):
             compile_defaults = [f"{module_prefix}compile{variant_title}Sources"] if project.android else ["classes"]
-            specs.append(gradle_phase("compile", phase_tasks("compile", compile_defaults)))
+            specs.extend(gradle_phase("compile", phase_tasks("compile", compile_defaults)))
         if not skip_build and project.android and phase_enabled("resources"):
-            specs.append(gradle_phase("resources", phase_tasks("resources", [f"{module_prefix}process{variant_title}Resources"])))
+            specs.extend(gradle_phase("resources", phase_tasks("resources", [f"{module_prefix}process{variant_title}Resources"])))
         if not skip_test and phase_enabled("unit-test"):
-            specs.append(gradle_phase("unit-test", phase_tasks("unit-test", configured_tasks(config, "test")), report_parsers=["gradle-junit"]))
+            specs.extend(gradle_phase("unit-test", phase_tasks("unit-test", configured_tasks(config, "test")), report_parsers=["gradle-junit"]))
         if not skip_build and phase_enabled("package"):
             package_tasks = phase_tasks("package", configured_tasks(config, "build"))
-            specs.append(gradle_phase("package", package_tasks, scan_artifacts=True))
+            specs.extend(gradle_phase("package", package_tasks, scan_artifacts=True))
         if lint_tasks and phase_enabled("lint"):
-            specs.append(gradle_phase("lint", phase_tasks("lint", lint_tasks), report_parsers=["android-lint"]))
+            specs.extend(gradle_phase("lint", phase_tasks("lint", lint_tasks), report_parsers=["android-lint"]))
 
         from .android.instrumentation import resolve_instrumentation_policy
         instrumentation_policy = resolve_instrumentation_policy(config)
@@ -1405,17 +1426,15 @@ class AndroidGradleRunner(ProjectRunner):
                 unique_tasks = list(dict.fromkeys(task for task in tasks if task))
                 if not unique_tasks:
                     continue
-                task_execution = android_gradle_task_execution_plan(
-                    config,
-                    unique_tasks,
-                    validation=True,
-                    validation_phase=validation_phase,
-                )
-                execution_tasks = list(task_execution.optimized)
-                if not execution_tasks:
-                    continue
-                plan_action = "build" if "build" in components else components[0]
-                plan = plan_android_command(config, plan_action)
+                barriers = ()
+                if resource.split_gradle:
+                    from .gradle_planning import GradleInvocationBarrier
+                    barriers = (
+                        GradleInvocationBarrier(
+                            "explicit-isolation",
+                            "validation.split_gradle=true compatibility isolation",
+                        ),
+                    )
                 phase_policy = (
                     resolve_android_validation_phase_policy(config, validation_phase)
                     if validation_phase
@@ -1426,96 +1445,41 @@ class AndroidGradleRunner(ProjectRunner):
                     report_parsers.append("gradle-junit")
                 if "lint" in components:
                     report_parsers.append("android-lint")
-                validation_components = list(components)
-                if validation_phase:
-                    validation_components = [validation_phase]
-                metadata = {
-                    "runner": self.kind,
-                    "project_type": self.kind,
-                    "gradle_tasks": execution_tasks,
-                    "requested_gradle_tasks": unique_tasks,
-                    "gradle_workload_tasks": list(task_execution.workload_tasks),
-                    "gradle_task_optimization": task_execution.as_dict(),
-                    "android_builder": str(plan.builder),
-                    "project_root": str(android_project_root(config)),
-                    "collect_artifacts": "build" in components or validation_phase == "package",
-                    "verify_artifacts": "build" in components or validation_phase == "package",
-                    "artifact_required": validation_phase == "package",
-                    "progress_parser": "gradle",
-                    "report_parser": report_parsers[0] if report_parsers else "",
-                    "report_parsers": report_parsers,
-                    "validation_components": validation_components,
-                    "validation_phase_name": validation_phase or "validation",
-                    "contains_tests": "test" in components,
-                    "coalesced_gradle_validation": not resource.split_gradle,
-                    "validation_resource_profile": (
-                        f"android-{validation_phase}"
-                        if validation_phase and phase_policy.enabled
-                        else "android-safe" if phase_policy.enabled else "standard"
-                    ),
-                    "validation_max_workers": phase_policy.max_workers,
-                    "validation_cpu_limit": phase_policy.cpu_limit,
-                    "validation_gradle_heap_mb": phase_policy.gradle_heap_mb,
-                    "validation_memory_guard_mb": phase_policy.memory_guard_mb,
-                    "validation_low_priority": phase_policy.low_priority,
-                    "lint_scope": lint_scope if "lint" in components else "not-applicable",
-                    "lint_modules": list(lint_modules) if "lint" in components else [],
-                }
+                validation_components = [validation_phase] if validation_phase else list(components)
                 name = (
                     ("android-validation" if self.kind == "android" else "gradle-validation")
                     if action == "validation"
                     else f"{self.kind}-validation-{action}"
                 )
-                spec = CommandSpec(
-                    name,
-                    [
-                        *plan.argv_prefix,
-                        *android_builder_arguments_for_tasks(
-                            config,
-                            unique_tasks,
-                            scan_artifacts=("build" in components or validation_phase == "package"),
-                            validation=True,
-                            validation_phase=validation_phase,
-                        ),
-                    ],
-                    env=_android_env_for_tasks(config, unique_tasks, validation=True),
-                    cwd=str(plan.project_root),
-                    metadata=metadata,
+                phase_specs = self.build_task_specs(
+                    config, unique_tasks, name=name, action=action, validation=True,
+                    validation_phase=validation_phase or "validation", barriers=barriers,
                 )
-                if "test" in components:
-                    spec = apply_test_selection(config, spec)
-                specs.append(spec)
-
-        android_options = config.runner_options.get("android", {})
-        android_options = dict(android_options) if isinstance(android_options, dict) else {}
-        from .android.instrumentation import resolve_instrumentation_policy
-        instrumentation_policy = resolve_instrumentation_policy(config)
-        if not skip_test and instrumentation_policy == "required":
-            selection_options = dict(config.runner_options.get("test_selection", {}) or {})
-            selection_options["instrumented"] = True
-            original = config.runner_options.get("test_selection")
-            config.runner_options["test_selection"] = selection_options
-            try:
-                specs.extend(self.build_specs(config, "instrumentation"))
-            finally:
-                if original is None:
-                    config.runner_options.pop("test_selection", None)
-                else:
-                    config.runner_options["test_selection"] = original
-        elif not skip_test and instrumentation_policy == "when-device-present":
-            # The orchestrator owns device availability. It emits a documented
-            # skip when no usable target is present instead of planning based on PATH.
-            selection_options = dict(config.runner_options.get("test_selection", {}) or {})
-            selection_options["instrumented"] = True
-            original = config.runner_options.get("test_selection")
-            config.runner_options["test_selection"] = selection_options
-            try:
-                specs.extend(self.build_specs(config, "instrumentation"))
-            finally:
-                if original is None:
-                    config.runner_options.pop("test_selection", None)
-                else:
-                    config.runner_options["test_selection"] = original
+                for spec in phase_specs:
+                    gradle_plan = dict(spec.metadata.get("gradle_execution_plan") or {})
+                    gradle_policy = dict(gradle_plan.get("policy") or {})
+                    workers = dict(gradle_policy.get("max_workers") or {}).get("effective", phase_policy.max_workers)
+                    heap = dict(gradle_policy.get("heap") or {}).get("effective_mb", phase_policy.gradle_heap_mb)
+                    resource_profile = str(gradle_policy.get("resource_profile") or "balanced")
+                    spec.metadata.update({
+                        "report_parser": report_parsers[0] if report_parsers else "",
+                        "report_parsers": report_parsers,
+                        "validation_components": validation_components,
+                        "validation_phase_name": validation_phase or "validation",
+                        "contains_tests": "test" in components,
+                        "coalesced_gradle_validation": not resource.split_gradle,
+                        "validation_resource_profile": f"gradle-{resource_profile}",
+                        "validation_max_workers": workers,
+                        "validation_cpu_limit": phase_policy.cpu_limit,
+                        "validation_gradle_heap_mb": heap,
+                        "validation_memory_guard_mb": phase_policy.memory_guard_mb,
+                        "validation_low_priority": phase_policy.low_priority,
+                        "lint_scope": lint_scope if "lint" in components else "not-applicable",
+                        "lint_modules": list(lint_modules) if "lint" in components else [],
+                    })
+                    if "test" in components:
+                        spec = apply_test_selection(config, spec)
+                    specs.append(spec)
 
         _append_final_seal_contract_spec(config, specs, kind=self.kind, root=android_project_root(config))
         if not specs:
@@ -1555,7 +1519,7 @@ def _jvm_gradle_launcher(
     root: Path,
     *,
     options: dict[str, object] | None = None,
-) -> tuple[str, str, str | None]:
+) -> tuple[str, str, str | None, str]:
     """Resolve a Gradle/JVM launcher without blindly preferring ``gradlew``.
 
     Generic Gradle targets historically selected the project wrapper whenever
@@ -1565,7 +1529,7 @@ def _jvm_gradle_launcher(
     bootstrap.  Keep the wrapper authoritative for the required version, but
     allow an installed Gradle with the *same* version to execute it.
 
-    Returns ``(launcher, source, required_version)``.  Auto mode never downloads
+    Returns ``(launcher, source, required_version, effective_version)``. Auto mode never downloads
     during planning: a mismatching/unavailable local Gradle falls back to the
     wrapper exactly as before.  Only an explicit ``provider=download`` delegates
     to the canonical managed resolver.  Explicit ``provider=termux|system`` is
@@ -1602,12 +1566,12 @@ def _jvm_gradle_launcher(
                 f"Configured Gradle command {candidate} reports {actual_version or 'an unknown version'}, "
                 f"but {required_version} is required."
             )
-        return str(candidate), "explicit", required_version
+        return str(candidate), "explicit", required_version, actual_version or required_version or ""
 
     if provider == "wrapper":
         if not wrapper.is_file():
             raise SystemExit(f"Gradle provider wrapper requested, but no wrapper exists at {wrapper}.")
-        return str(wrapper), "wrapper", required_version
+        return str(wrapper), "wrapper", required_version, required_version or wrapper_version or ""
 
     # ``download`` is an explicit request for the managed provider.  Delegate
     # to the existing canonical resolver so its cache/offline semantics stay
@@ -1629,7 +1593,7 @@ def _jvm_gradle_launcher(
             provider="download",
             project=None,
         )
-        return str(selected), "download", required_version
+        return str(selected), "download", required_version, required_version or configured_version or ""
 
     local = shutil.which("gradle")
     if local:
@@ -1651,7 +1615,7 @@ def _jvm_gradle_launcher(
         # executable only when it is an exact version substitute.  For a
         # wrapperless/unpinned project, preserve the historical PATH behavior.
         if provider_matches and version_matches:
-            return local_launcher, local_provider, required_version
+            return local_launcher, local_provider, required_version, actual_version or required_version or ""
 
         if provider in {"termux", "system"}:
             if not provider_matches:
@@ -1666,10 +1630,10 @@ def _jvm_gradle_launcher(
         raise SystemExit(f"Gradle provider {provider} requested, but no gradle executable was found on PATH.")
 
     if wrapper.is_file():
-        return str(wrapper), "wrapper", required_version
+        return str(wrapper), "wrapper", required_version, required_version or wrapper_version or ""
     if local:
-        return str(Path(local).expanduser()), "path", required_version
-    return "gradle", "path", required_version
+        return str(Path(local).expanduser()), "path", required_version, actual_version or required_version or ""
+    return "gradle", "path", required_version, required_version or ""
 
 
 def _configured_gradle_cli_args(options: dict[str, object]) -> list[str]:
@@ -1704,7 +1668,7 @@ def _configured_gradle_cli_args(options: dict[str, object]) -> list[str]:
 
 
 class JvmGradleRunner(ProjectRunner):
-    """Plain JVM Gradle runner with no Android capability inheritance."""
+    """Plain JVM Gradle runner using ENV-X03's canonical semantic planner."""
 
     kind = "gradle"
     display_name = "Gradle/JVM"
@@ -1731,8 +1695,118 @@ class JvmGradleRunner(ProjectRunner):
             values = []
         if values:
             return values
-        defaults = {"restore": ["help"], "build": ["build"], "test": ["test"], "package": ["assemble"], "clean": ["clean"]}
+        # ENV-X03: generic Gradle restore is intentionally empty by default.
+        # Gradle resolves dependencies as part of the first real requested root;
+        # a synthetic `help` process adds no proof and defeats reuse layers.
+        defaults = {"restore": [], "build": ["build"], "test": ["test"], "package": ["assemble"], "clean": ["clean"]}
         return list(defaults.get(action, []))
+
+    @staticmethod
+    def _raw_gradle_args(options: dict[str, object]) -> tuple[str, ...]:
+        values: list[str] = []
+        if _bool_option(options.get("offline"), False):
+            values.append("--offline")
+        raw = options.get("args", [])
+        if isinstance(raw, str):
+            values.extend(shlex.split(raw))
+        elif isinstance(raw, (list, tuple)):
+            values.extend(str(item).strip() for item in raw if str(item).strip())
+        return tuple(values)
+
+    def build_task_specs(
+        self,
+        config: ProjectConfig,
+        tasks: Iterable[str],
+        *,
+        name: str = "gradle-tasks",
+        action: str = "workflow",
+        validation: bool = False,
+        validation_phase: str = "",
+        barriers=(),
+        env_override: dict[str, str] | None = None,
+        root_override: str | None = None,
+    ) -> list[CommandSpec]:
+        from . import android_build
+        from .gradle_planning import (
+            GradleInvocationRequest, GradleLauncherIdentity, gradle_selection_identity, plan_gradle_invocation, plan_metadata,
+        )
+
+        roots = tuple(dict.fromkeys(str(task).strip() for task in tasks if str(task).strip()))
+        if not roots:
+            return []
+        root = Path(root_override).expanduser().resolve(strict=False) if root_override else self._root(config)
+        options = _jvm_gradle_options(config)
+        env = dict(env_override) if env_override is not None else _optimized_env(config, self.kind)
+        gradle_user_home = str(options.get("user_home") or "").strip()
+        execution = str(config.execution_environment or "auto").strip().lower().replace("_", "-")
+        if (
+            gradle_user_home and execution == "native-termux" and detect_current_environment() == NATIVE_TERMUX
+            and (gradle_user_home == "/root" or gradle_user_home.startswith(("/root/", "/home/")))
+        ):
+            gradle_user_home = str(Path.home() / ".gradle")
+        if gradle_user_home:
+            env["GRADLE_USER_HOME"] = str(Path(gradle_user_home).expanduser())
+
+        gradle, launcher_source, required_version, actual_version = _jvm_gradle_launcher(config, root, options=options)
+        wrapper_distribution = ""
+        props = root / "gradle" / "wrapper" / "gradle-wrapper.properties"
+        if props.is_file():
+            try:
+                for line in props.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.strip().startswith("distributionUrl="):
+                        wrapper_distribution = line.split("=", 1)[1].strip()
+                        break
+            except OSError:
+                pass
+        launcher = GradleLauncherIdentity.create(
+            executable=gradle, source=launcher_source, required_version=required_version or "",
+            effective_version=actual_version or required_version or "", wrapper_distribution=wrapper_distribution,
+            project_root=root,
+        )
+        java_requirement = android_build.infer_java_requirement(android_build.inspect_project(root))
+        java_home = str(options.get("java_home") or env.get("JAVA_HOME") or "")
+        request = GradleInvocationRequest(
+            caller=str(action or name), action=str(action or "workflow"), project_root=str(root),
+            requested_roots=roots, validation=validation, validation_phase=validation_phase,
+            raw_args=self._raw_gradle_args(options),
+            barriers=tuple(barriers),
+            selection_identity=gradle_selection_identity(config),
+            expected_artifact_producers=tuple(roots if action in {"build", "package"} else ()),
+            expected_report_producers=tuple(roots if action in {"test", "lint"} else ()),
+        )
+        plan = plan_gradle_invocation(
+            config=config, request=request, launcher=launcher,
+            java_requirement=(str(java_requirement.exact) if java_requirement.exact else f">={java_requirement.minimum}" if java_requirement.minimum else ""),
+            jdk_home=java_home, gradle_user_home=gradle_user_home,
+        )
+        telemetry = str(plan.policy.telemetry_level.effective)
+        if plan.request.expected_artifact_producers:
+            env["DEVTOOL_GRADLE_ARTIFACT_PRODUCERS"] = ",".join(plan.request.expected_artifact_producers)
+        else:
+            env.pop("DEVTOOL_GRADLE_ARTIFACT_PRODUCERS", None)
+        specs: list[CommandSpec] = []
+        for index, invocation in enumerate(plan.invocations, start=1):
+            argv = [gradle, *invocation.roots, *invocation.args]
+            if telemetry in {"standard", "full"}:
+                from .android_integration import stage_gradle_init_script
+                argv.extend(["--init-script", str(stage_gradle_init_script(telemetry_level=telemetry))])
+            metadata = _tool_metadata(
+                self.kind, root, gradle_tasks=list(invocation.roots), gradle_requested_roots=list(plan.requested_roots),
+                gradle_direct=True, gradle_launcher=gradle, gradle_launcher_source=launcher_source,
+                gradle_required_version=required_version or "", java_requirement_min=java_requirement.minimum,
+                java_requirement_exact=java_requirement.exact or 0, progress_parser="gradle",
+                report_parser="gradle-junit" if action == "test" else "",
+                collect_artifacts=action in {"build", "package"}, verify_artifacts=action in {"build", "package"},
+                artifact_required=action == "package", test_framework="gradle" if action == "test" else "",
+                gradle_invocation_index=index, gradle_invocation_total=len(plan.invocations),
+                gradle_invocation_barriers=[barrier.as_dict() for barrier in invocation.barriers],
+            )
+            metadata.update(plan_metadata(plan))
+            specs.append(CommandSpec(
+                name if len(plan.invocations) == 1 else f"{name}-{index}", argv=argv, env=env, cwd=str(root),
+                destructive=any(barrier.kind == "clean" for barrier in invocation.barriers), metadata=metadata,
+            ))
+        return specs
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
         from .test_selection import apply_test_selection
@@ -1748,56 +1822,12 @@ class JvmGradleRunner(ProjectRunner):
                 raise SystemExit(f"Unsupported JVM/Gradle action: {action}")
             tasks = self._tasks(config, action)
             if not tasks:
+                if action == "restore":
+                    return []
                 raise SystemExit(f"No Gradle {action} task is configured for this JVM project.")
-            root = self._root(config)
-            gradle_options = _jvm_gradle_options(config)
-            gradle_user_home = str(gradle_options.get("user_home") or "").strip()
-            # A global config is commonly shared between a Termux host and its
-            # Linux chroot. Do not pass a guest-only Gradle cache to native
-            # Termux: it may contain incompatible Linux/glibc native libraries.
-            execution = str(config.execution_environment or "auto").strip().lower().replace("_", "-")
-            if (
-                gradle_user_home
-                and execution == "native-termux"
-                and detect_current_environment() == NATIVE_TERMUX
-                and (gradle_user_home == "/root" or gradle_user_home.startswith(("/root/", "/home/")))
-            ):
-                gradle_user_home = str(Path.home() / ".gradle")
-            if gradle_user_home:
-                env["GRADLE_USER_HOME"] = str(Path(gradle_user_home).expanduser())
-            gradle, launcher_source, required_version = _jvm_gradle_launcher(
-                config, root, options=gradle_options
+            specs = self.build_task_specs(
+                config, tasks, name=action, action=action, validation=False, env_override=env,
             )
-            argv = [gradle, *tasks, *_configured_gradle_cli_args(gradle_options)]
-            # Carry the repository-declared Java contract across execution
-            # boundaries so an SSH worker can provision the correct JDK rather
-            # than inheriting the phone's PATH/toolchain by accident.
-            from . import android_build
-            java_requirement = android_build.infer_java_requirement(android_build.inspect_project(root))
-            structured_events = _bool_option(gradle_options.get("structured_events"), True)
-            if structured_events:
-                # Plain JVM Gradle participates in the same exact-output
-                # provenance contract as Android builds.  The generic Gradle
-                # init script reports task outputs and UP-TO-DATE state.
-                from .android_integration import stage_gradle_init_script
-                argv.extend(["--init-script", str(stage_gradle_init_script())])
-                if "--configuration-cache" not in argv and "--no-configuration-cache" not in argv:
-                    argv.append("--no-configuration-cache")
-            specs = [CommandSpec(
-                action, argv, env=env, cwd=str(root),
-                metadata=_tool_metadata(
-                    self.kind, root, gradle_tasks=list(tasks), gradle_direct=True,
-                    gradle_launcher=gradle, gradle_launcher_source=launcher_source,
-                    gradle_required_version=required_version or "",
-                    java_requirement_min=java_requirement.minimum,
-                    java_requirement_exact=java_requirement.exact or 0,
-                    progress_parser="gradle" if structured_events else "generic",
-                    report_parser="gradle-junit" if action == "test" else "",
-                    collect_artifacts=action in {"build", "package"}, verify_artifacts=action in {"build", "package"},
-                    artifact_required=action == "package",
-                    test_framework="gradle" if action == "test" else "",
-                ),
-            )]
         for spec in specs:
             spec.metadata.update({
                 "runner": self.kind, "project_type": "gradle", "gradle_direct": True,
@@ -4292,3 +4322,31 @@ DEFAULT_RUNNER_REGISTRY = RunnerRegistry(
 
 def get_project_runner(config_or_kind: ProjectConfig | str) -> ProjectRunner:
     return DEFAULT_RUNNER_REGISTRY.resolve(config_or_kind)
+
+
+def build_gradle_task_specs(
+    config: ProjectConfig,
+    runner_name: str,
+    tasks: Iterable[str],
+    *,
+    name: str,
+    action: str = "workflow",
+    validation: bool = False,
+    validation_phase: str = "",
+    env_override: dict[str, str] | None = None,
+    root_override: str | None = None,
+) -> list[CommandSpec]:
+    """Lower typed Gradle roots through the one canonical planner path."""
+    normalized = str(runner_name or config.runner or config.kind or "gradle").strip().lower()
+    if normalized == "android":
+        runner = AndroidGradleRunner()
+    elif normalized in {"gradle", "jvm", "jvm-gradle"}:
+        runner = JvmGradleRunner()
+    else:
+        raise SystemExit(
+            f"Typed Gradle tasks require runner='gradle' or runner='android', got {runner_name!r}."
+        )
+    return runner.build_task_specs(
+        config, tasks, name=name, action=action, validation=validation,
+        validation_phase=validation_phase, env_override=env_override, root_override=root_override,
+    )

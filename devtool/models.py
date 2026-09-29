@@ -106,6 +106,8 @@ class JobConfig:
     root: str = ""
     action: str = ""
     command: tuple[str, ...] = ()
+    # ENV-X03 keeps Gradle roots typed until the canonical planner lowers them.
+    gradle_tasks: tuple[str, ...] = ()
     shell_command: str = ""
     env: dict[str, str] = field(default_factory=dict)
     execution_environment: str = "auto"
@@ -119,6 +121,8 @@ class JobConfig:
 
     @property
     def command_mode(self) -> str:
+        if self.gradle_tasks:
+            return "gradle-tasks"
         if self.command:
             return "argv"
         if self.shell_command:

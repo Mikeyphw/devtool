@@ -94,6 +94,7 @@ COPY validate-image.sh /usr/local/lib/devtool/validate-android-oci.sh
 COPY build-apk /usr/local/lib/devtool/build-apk
 COPY termux_toolchains.py /usr/local/lib/devtool/termux_toolchains.py
 COPY devtool-events.init.gradle /usr/local/lib/devtool/devtool-events.init.gradle
+COPY devtool-events-full.init.gradle /usr/local/lib/devtool/devtool-events-full.init.gradle
 RUN chmod 0555 /usr/local/lib/devtool/validate-android-oci.sh /usr/local/lib/devtool/build-apk \
  && : > /usr/local/lib/devtool/oci-immutable-toolchain \
  && mkdir -p /root/.gradle \

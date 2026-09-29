@@ -134,7 +134,11 @@ class ExoTargetLocalJobsExecutionAffinityTests(unittest.TestCase):
             plan = build_execution_plan_from_specs(cfg, specs, parallel_requested=True)
 
         self.assertEqual(Path(specs[0].cwd), target_root)
-        self.assertEqual(specs[0].argv, ["./gradlew", ":app:testDebugUnitTest"])
+        self.assertIn(":app:testDebugUnitTest", specs[0].argv)
+        self.assertTrue(specs[0].metadata["gradle_semantic_request"])
+        self.assertIn("gradle_execution_plan", specs[0].metadata)
+        self.assertEqual(specs[0].metadata["gradle_execution_plan"]["requested_roots"], [":app:testDebugUnitTest"])
+        self.assertIn("--build-cache", specs[0].argv)
         self.assertEqual(specs[0].metadata["workflow_job_scope"], "target")
         self.assertEqual(specs[0].metadata["gradle_tasks"], [":app:testDebugUnitTest"])
         self.assertIsNotNone(plan)

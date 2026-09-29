@@ -253,7 +253,7 @@ def _alias_config(root: Path) -> ProjectConfig:
     )
 
 
-def test_configured_gradle_task_alias_coalesces_validation_graph(tmp_path: Path) -> None:
+def test_unqualified_configured_gradle_task_alias_does_not_coalesce_validation_graph(tmp_path: Path) -> None:
     config = _alias_config(tmp_path)
     plan = android_gradle_task_execution_plan(
         config,
@@ -261,28 +261,19 @@ def test_configured_gradle_task_alias_coalesces_validation_graph(tmp_path: Path)
         validation=True,
     )
 
-    assert list(plan.planned) == [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"]
-    assert list(plan.optimized) == ["devtoolDebugValidation"]
-    assert list(plan.workload_tasks) == [
-        ":app:assembleDebug",
-        ":app:testDebugUnitTest",
-        ":app:lintDebug",
-        "devtoolDebugValidation",
-    ]
-    assert [item.as_dict() for item in plan.alias_applications] == [{
-        "name": "debug_validation",
-        "replacement": "devtoolDebugValidation",
-        "removed": [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
-    }]
+    expected = [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"]
+    assert list(plan.planned) == expected
+    assert list(plan.optimized) == expected
+    assert list(plan.workload_tasks) == expected
+    assert plan.alias_applications == ()
 
     argv = android_builder_arguments_for_tasks(
         config,
-        [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
+        expected,
         scan_artifacts=True,
         validation=True,
     )
-    assert _task_values_from_argv(argv) == ["devtoolDebugValidation"]
-
+    assert _task_values_from_argv(argv) == expected
 
 def test_explicit_gradle_tasks_do_not_use_configured_alias(tmp_path: Path) -> None:
     config = _alias_config(tmp_path)
@@ -297,7 +288,7 @@ def test_explicit_gradle_tasks_do_not_use_configured_alias(tmp_path: Path) -> No
     assert _task_values_from_argv(argv) == [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"]
 
 
-def test_android_hud_target_uses_single_debug_validation_task_for_seal() -> None:
+def test_android_hud_explicit_seal_alias_remains_available_but_is_not_implicitly_qualified() -> None:
     config = load_project_config(str(ROOT), None, target_name="android_hud")
     seal_tasks = config.runner_options.get("tasks", {}).get("seal")
     assert seal_tasks == ["devtoolDebugValidation"]
@@ -307,23 +298,17 @@ def test_android_hud_target_uses_single_debug_validation_task_for_seal() -> None
         [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
         validation=True,
     )
-    assert list(plan.optimized) == ["devtoolDebugValidation"]
+    assert list(plan.optimized) == [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"]
 
-
-def test_android_hud_normal_validation_metadata_reports_executed_aggregate_task() -> None:
+def test_android_hud_normal_validation_metadata_reports_rejected_unqualified_aggregate() -> None:
     config = load_project_config(str(ROOT), None, target_name="android_hud")
     specs = build_validation_specs(config)
     coalesced = next(spec for spec in specs if spec.name == "android-validation")
 
-    assert coalesced.metadata["gradle_tasks"] == ["devtoolDebugValidation"]
-    assert coalesced.metadata["requested_gradle_tasks"] == [
-        ":app:assembleDebug",
-        ":app:testDebugUnitTest",
-        ":app:lintDebug",
-    ]
-    assert coalesced.metadata["gradle_task_optimization"]["alias_applications"] == [{
-        "name": "debug_validation",
-        "replacement": "devtoolDebugValidation",
-        "removed": [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"],
-    }]
-    assert _task_values_from_argv(coalesced.argv) == ["devtoolDebugValidation"]
+    expected = [":app:assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug"]
+    assert coalesced.metadata["gradle_tasks"] == expected
+    assert coalesced.metadata["requested_gradle_tasks"] == expected
+    assert coalesced.metadata["gradle_task_optimization"]["alias_applications"] == []
+    assert coalesced.metadata["gradle_execution_plan"]["rejected_aggregates"] == ["debug_validation"]
+    assert coalesced.metadata["gradle_execution_plan"]["aggregate_qualifications"] == []
+    assert _task_values_from_argv(coalesced.argv) == expected

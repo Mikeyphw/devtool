@@ -1651,9 +1651,15 @@ def _run_process_live(
         return go_test_stream.feed(raw_line)
 
     def _finalize_structured_state() -> None:
-        if structured_state is None or go_test_stream is None:
+        if structured_state is None:
             return
-        structured_state["go_test_report"] = go_test_stream.report()
+        if go_test_stream is not None:
+            structured_state["go_test_report"] = go_test_stream.report()
+        if isinstance(tracker, GradleProgressTracker):
+            try:
+                structured_state["gradle_progress"] = dict(tracker.snapshot())
+            except Exception:
+                pass
 
     assert proc.stdout is not None
     if isinstance(tracker, GradleProgressTracker):
@@ -3253,6 +3259,7 @@ def run_specs(
 
         result_metadata["execution_process_id"] = execution_adapter.active_process_id if execution_adapter is not None else ""
         result_metadata["execution_diagnostic_ids"] = list(diagnostic_ids)
+
         if isinstance(spec.metadata.get("reuse_fingerprint"), dict):
             from .core.reuse import finalize_spec_reuse_metadata
             result_metadata.update(finalize_spec_reuse_metadata(
@@ -3260,6 +3267,52 @@ def run_specs(
                 evidence_refs=((log_file,) if log_file else ()),
                 execution_status=("cancelled" if returncode == 130 else "succeeded" if returncode == 0 else "failed"),
             ))
+        gradle_plan_payload = result_metadata.get("gradle_execution_plan")
+        if isinstance(gradle_plan_payload, dict):
+            from .gradle_planning import GradleExecutionReceipt
+
+            artifact_refs: list[str] = []
+            producer_artifact_refs: dict[str, list[str]] = {}
+            artifacts_payload = result_metadata.get("artifacts")
+            if isinstance(artifacts_payload, dict):
+                for item in artifacts_payload.get("items", []) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    ref = str(item.get("attachment_id") or item.get("ref_id") or item.get("path") or "").strip()
+                    if ref and ref not in artifact_refs:
+                        artifact_refs.append(ref)
+                    producer = str(item.get("producer_task") or "").strip()
+                    if producer and ref:
+                        bucket = producer_artifact_refs.setdefault(producer, [])
+                        if ref not in bucket:
+                            bucket.append(ref)
+            report_refs: list[str] = []
+            for report_key in ("tests", "lint", "coverage", "packages", "python_audit"):
+                report_payload = result_metadata.get(report_key)
+                if not isinstance(report_payload, dict):
+                    continue
+                for value in report_payload.get("report_files", []) or []:
+                    ref = str(value or "").strip()
+                    if ref and ref not in report_refs:
+                        report_refs.append(ref)
+            progress_payload = structured_process_state.get("gradle_progress")
+            if not isinstance(progress_payload, dict):
+                progress_payload = last_progress_snapshot if isinstance(last_progress_snapshot, dict) else {}
+            receipt = GradleExecutionReceipt.from_plan_metadata(
+                gradle_plan_payload,
+                progress=progress_payload,
+                success=returncode == 0,
+                process_executed=not bool(result_metadata.get("reuse_decision") == "reuse" or result_metadata.get("reused")),
+                artifact_refs=artifact_refs, producer_artifact_refs=producer_artifact_refs,
+                report_refs=report_refs, diagnostic_ids=diagnostic_ids,
+                duration_seconds=duration,
+                exo_run_ref=(execution_adapter.active_process_id if execution_adapter is not None else ""),
+                rer_ref=str(result_metadata.get("reuse_result_identity") or result_metadata.get("reuse_fingerprint_digest") or ""),
+                run_ref=str(event_run_id or ""),
+            )
+            result_metadata["gradle_execution_receipt"] = receipt.as_dict()
+            result_metadata["gradle_receipt_id"] = receipt.receipt_id
+
         result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind, metadata=result_metadata)
         results.append(result)
         command_status = "cancelled" if returncode == 130 else "succeeded" if returncode == 0 else "failed"
@@ -3299,6 +3352,7 @@ def run_specs(
                 **({key: result_metadata[key] for key in (
                     "reuse_fingerprint", "reuse_output_manifest", "reuse_result_identity",
                     "reuse_evidence_refs", "reuse_portability_class",
+                    "gradle_execution_receipt", "gradle_receipt_id",
                 ) if key in result_metadata}),
             },
         ))

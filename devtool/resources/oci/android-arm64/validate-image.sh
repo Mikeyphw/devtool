@@ -11,9 +11,11 @@ case "$(uname -m)" in aarch64|arm64) ;; *) fail architecture "expected aarch64/a
 [ -x /usr/local/lib/devtool/build-apk ] || fail devtool-runtime 'embedded Android builder is missing or not executable' 66
 [ -f /usr/local/lib/devtool/termux_toolchains.py ] || fail devtool-runtime 'embedded toolchain companion is missing' 66
 [ -f /usr/local/lib/devtool/devtool-events.init.gradle ] || fail devtool-runtime 'embedded Gradle telemetry init script is missing' 66
-echo 'c35521e80c7f05b734e23c444922fa7b02820d9318c17494d9f0076fc23f70fc  /usr/local/lib/devtool/build-apk' | sha256sum -c - >/dev/null || fail devtool-runtime 'embedded Android builder digest mismatch' 65
+[ -f /usr/local/lib/devtool/devtool-events-full.init.gradle ] || fail devtool-runtime 'embedded Gradle full telemetry init script is missing' 66
+echo '101dfabeddd2e04bc01d9cad02b37f14883ce4cc26f1e4b1b96b49e8a56e36c4  /usr/local/lib/devtool/build-apk' | sha256sum -c - >/dev/null || fail devtool-runtime 'embedded Android builder digest mismatch' 65
 echo '46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe  /usr/local/lib/devtool/termux_toolchains.py' | sha256sum -c - >/dev/null || fail devtool-runtime 'embedded toolchain companion digest mismatch' 65
-echo '621ce78be0c05cd5e5e43668461795ae0ed81de89acf40e0e8843d52248995a4  /usr/local/lib/devtool/devtool-events.init.gradle' | sha256sum -c - >/dev/null || fail devtool-runtime 'embedded Gradle telemetry init digest mismatch' 65
+echo '9e0a0aa733ffeb41ce76e4b51b5bda4eadfcf52d01d49b3faf1dd4f33b2e72d8  /usr/local/lib/devtool/devtool-events.init.gradle' | sha256sum -c - >/dev/null || fail devtool-runtime 'embedded Gradle telemetry init digest mismatch' 65
+echo '48529c7e3b7a2a4409aacbf102ffb47048165cd4badf3d73ba82e2b309c05788  /usr/local/lib/devtool/devtool-events-full.init.gradle' | sha256sum -c - >/dev/null || fail devtool-runtime 'embedded Gradle full telemetry init digest mismatch' 65
 python3 -m py_compile /usr/local/lib/devtool/build-apk /usr/local/lib/devtool/termux_toolchains.py || fail devtool-runtime 'embedded Python runtime resources do not compile' 65
 for c in bash git rsync ssh tmux python3 java node npm cmake ninja clang file sha256sum; do command -v "$c" >/dev/null 2>&1 || fail "command:$c" "$c is missing" 127; done
 py="$(python3 -c 'import platform; print(platform.python_version())')"

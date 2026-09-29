@@ -41,7 +41,7 @@ GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
     "project", "workspace", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
-    "go", "maven", "cmake", "meson", "make", "test_profiles", "variants", "wrapper", "federation",
+    "go", "maven", "cmake", "meson", "make", "test_profiles", "test_selection", "variants", "wrapper", "federation",
 }
 GLOBAL_COMMAND_SCOPED_CLI_KEYS = {
     ("validation", "skip_restore"), ("validation", "skip_build"), ("validation", "skip_test"),
@@ -471,7 +471,7 @@ SUPPORTED_RUNNERS = SUPPORTED_PROJECT_KINDS
 RUNNER_OPTION_SECTIONS = (
     "android", "gradle", "python", "dotnet", "node", "rust", "go",
     "maven", "cmake", "meson", "make", "build", "tasks", "artifacts",
-    "test_profiles", "validation", "termux_chroot", "termux", "proot", "ssh", "bootstrap", "chroots", "features",
+    "test_profiles", "test_selection", "validation", "termux_chroot", "termux", "proot", "ssh", "bootstrap", "chroots", "features",
 )
 PROJECT_ENV_PREFIX = "DEVTOOL_PROJECT_"
 RUNTIME_ENV_PREFIX = "DEVTOOL_ENV_"
@@ -696,11 +696,12 @@ def _parse_test_specs(loaded: dict[str, Any], source: object) -> dict[str, Any]:
         task = str(item.get("task") or "").strip()
         if task and command:
             raise SystemExit(f"Invalid config {source}: test {test_id!r} cannot declare both command and task.")
+        gradle_tasks: tuple[str, ...] = ()
         if task:
             if runner not in {"gradle", "android"}:
                 raise SystemExit(f"Invalid config {source}: test {test_id!r} task is only valid for Gradle/Android runners.")
-            command = ["./gradlew", task]
-        if not command:
+            gradle_tasks = (task,)
+        if not command and not gradle_tasks:
             raise SystemExit(f"Invalid config {source}: test {test_id!r} requires command or task.")
         env=item.get("env", {}) or {}
         if not isinstance(env, dict): raise SystemExit(f"Invalid config {source}: test {test_id!r} env must be a table.")
@@ -712,7 +713,7 @@ def _parse_test_specs(loaded: dict[str, Any], source: object) -> dict[str, Any]:
                 raise SystemExit(f"Invalid config {source}: test {test_id!r} {name} must be a string array.")
             return tuple(dict.fromkeys(str(part).strip() for part in value if str(part).strip()))
 
-        out[test_id] = TestSpec(id=test_id, name=str(item.get("name") or test_id), runner=runner, command=tuple(command),
+        out[test_id] = TestSpec(id=test_id, name=str(item.get("name") or test_id), runner=runner, command=tuple(command), gradle_tasks=gradle_tasks,
             cwd=str(item.get("cwd") or "") or None, env={str(k):str(v) for k,v in env.items()},
             timeout_seconds=float(item["timeout_seconds"]) if item.get("timeout_seconds") is not None else None,
             required=bool(item.get("required", True)), requires_device=bool(item.get("requires_device", False)),

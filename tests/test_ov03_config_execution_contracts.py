@@ -354,7 +354,7 @@ class Ov03ConfigExecutionContracts(unittest.TestCase):
             finally:
                 os.chdir(old)
 
-    def test_android_phase_overrides_cannot_raise_worker_cpu_or_heap_caps(self) -> None:
+    def test_android_phase_overrides_cannot_raise_worker_cpu_caps_but_may_raise_heap_to_host_safe_floor(self) -> None:
         config = ProjectConfig(
             repo_root=Path.cwd(),
             kind="android",
@@ -373,7 +373,8 @@ class Ov03ConfigExecutionContracts(unittest.TestCase):
             lint = resolve_android_validation_phase_policy(config, "lint")
         self.assertLessEqual(lint.max_workers, 2)
         self.assertLessEqual(lint.cpu_limit, 2)
-        self.assertLessEqual(lint.gradle_heap_mb, 1024)
+        self.assertGreaterEqual(lint.gradle_heap_mb, 1536)
+        self.assertLessEqual(lint.gradle_heap_mb, int(4096 * 0.45))
 
     def test_makeflags_preserves_unrelated_user_flags(self) -> None:
         value = _bounded_makeflags("-k --warn-undefined-variables -j8 --output-sync", 2)

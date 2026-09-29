@@ -51,7 +51,8 @@ class ExoTargetLocalJobsSchemaTests(unittest.TestCase):
         self.assertEqual(config.jobs["dustui_android.contracts"].metadata["target"], "dustui_android")
         self.assertEqual(config.jobs["dustui_android.contracts"].metadata["local_name"], "contracts")
         self.assertEqual(config.jobs["dustui_android.android_test"].runner, "gradle")
-        self.assertEqual(config.jobs["dustui_android.android_test"].command, ("./gradlew", ":app:testDebugUnitTest"))
+        self.assertEqual(config.jobs["dustui_android.android_test"].command, ())
+        self.assertEqual(config.jobs["dustui_android.android_test"].gradle_tasks, (":app:testDebugUnitTest",))
 
         graph = plan_selected_workflow(config, "fast")
         self.assertEqual([node.ref.raw for node in graph.nodes], ["job:contracts", "job:android_test"])
@@ -62,7 +63,10 @@ class ExoTargetLocalJobsSchemaTests(unittest.TestCase):
         self.assertEqual(specs[0].argv, ["python3", "scripts/validate_ov01_contract.py", "--audit-loop"])
         self.assertEqual(Path(specs[0].cwd), root / "android" / "DustUI")
         self.assertEqual(specs[0].metadata["workflow_job"], "dustui_android.contracts")
-        self.assertEqual(specs[1].argv, ["./gradlew", ":app:testDebugUnitTest"])
+        self.assertIn(":app:testDebugUnitTest", specs[1].argv)
+        self.assertTrue(specs[1].metadata["gradle_semantic_request"])
+        self.assertIn("gradle_execution_plan", specs[1].metadata)
+        self.assertEqual(specs[1].metadata["gradle_execution_plan"]["requested_roots"], [":app:testDebugUnitTest"])
 
     def test_target_local_job_wins_for_that_target_without_leaking_to_other_targets(self) -> None:
         temp, root = self._repo(

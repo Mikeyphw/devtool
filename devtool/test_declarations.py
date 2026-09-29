@@ -31,34 +31,42 @@ def command_specs(config: ProjectConfig, names=(), *, all_tests=False):
             )
             argv.extend(selection.resolved_pytest_nodes)
             selection_payload=selection.to_dict()
-        specs.append(CommandSpec(
-            name=f"test:{t.id}",
-            argv=argv,
-            cwd=cwd,
-            env=env,
-            metadata={
-                "test_spec_id": t.id,
-                "test_runner": t.runner,
-                "runner": t.runner,
-                "canonical_test": True,
-                "required": t.required,
-                "timeout_seconds": t.timeout_seconds,
-                "requires_device": t.requires_device,
-                "requires_network": t.requires_network,
-                "test_selector": t.selector,
-                "test_aliases": list(t.aliases),
-                "test_behavior": t.behavior,
-                "test_lanes": list(t.lanes),
-                "test_resources": list(t.resources),
-                "test_parallel_safety": t.parallel_safety,
-                "test_required_tools": list(t.required_tools),
-                "test_required_capabilities": list(t.required_capabilities),
-                "test_budget_class": t.budget_class,
-                "test_contract_level": t.contract_level,
-                "test_groups": list(t.groups),
-                "test_dependencies": list(t.dependencies),
-                "test_selection_groups": list(t.selection_groups),
-                "test_selection": selection_payload,
-            },
-        ))
+        test_metadata={
+            "test_spec_id": t.id,
+            "test_runner": t.runner,
+            "runner": t.runner,
+            "canonical_test": True,
+            "required": t.required,
+            "timeout_seconds": t.timeout_seconds,
+            "requires_device": t.requires_device,
+            "requires_network": t.requires_network,
+            "test_selector": t.selector,
+            "test_aliases": list(t.aliases),
+            "test_behavior": t.behavior,
+            "test_lanes": list(t.lanes),
+            "test_resources": list(t.resources),
+            "test_parallel_safety": t.parallel_safety,
+            "test_required_tools": list(t.required_tools),
+            "test_required_capabilities": list(t.required_capabilities),
+            "test_budget_class": t.budget_class,
+            "test_contract_level": t.contract_level,
+            "test_groups": list(t.groups),
+            "test_dependencies": list(t.dependencies),
+            "test_selection_groups": list(t.selection_groups),
+            "test_selection": selection_payload,
+        }
+        if t.gradle_tasks:
+            from .project_runners import build_gradle_task_specs
+            planned=build_gradle_task_specs(
+                config, t.runner, t.gradle_tasks, name=f"test:{t.id}", action="test",
+                env_override=env, root_override=cwd,
+            )
+            for spec in planned:
+                metadata=dict(spec.metadata); metadata.update(test_metadata); metadata["gradle_semantic_request"]=True
+                spec.metadata=metadata
+                specs.append(spec)
+        else:
+            specs.append(CommandSpec(
+                name=f"test:{t.id}", argv=argv, cwd=cwd, env=env, metadata=test_metadata,
+            ))
     return specs

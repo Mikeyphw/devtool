@@ -77,9 +77,10 @@ def test_oci05_v2_image_embeds_exact_standard_runtime_bytes() -> None:
     assert definition.contract["definition_id"] == "android-arm64-api36-v2"
     assert definition.reference == "devtool/android-build:arm64-api36-v2"
     expected = {
-        "build-apk": "c35521e80c7f05b734e23c444922fa7b02820d9318c17494d9f0076fc23f70fc",
+        "build-apk": "101dfabeddd2e04bc01d9cad02b37f14883ce4cc26f1e4b1b96b49e8a56e36c4",
         "termux_toolchains.py": "46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe",
-        "devtool-events.init.gradle": "621ce78be0c05cd5e5e43668461795ae0ed81de89acf40e0e8843d52248995a4",
+        "devtool-events.init.gradle": "9e0a0aa733ffeb41ce76e4b51b5bda4eadfcf52d01d49b3faf1dd4f33b2e72d8",
+        "devtool-events-full.init.gradle": "48529c7e3b7a2a4409aacbf102ffb47048165cd4badf3d73ba82e2b309c05788",
     }
     with tarfile.open(fileobj=io.BytesIO(definition.context_bytes), mode="r:") as archive:
         for name, digest in expected.items():

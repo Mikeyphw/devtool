@@ -179,7 +179,11 @@ def _run_live_with_events(
                     proc.kill()
                 with contextlib.suppress(Exception):
                     proc.wait(timeout=1.0)
+            reader.join(timeout=0.25)
             event_reader.join(timeout=0.25)
+            if proc.stdout is not None:
+                with contextlib.suppress(Exception):
+                    proc.stdout.close()
             if execution_adapter is not None:
                 execution_adapter.process_exited(exit_code=124, duration_seconds=max(0.0, time.monotonic() - started), failure_kind="timeout")
                 execution_adapter.progress(detail=timeout_message)
@@ -219,6 +223,9 @@ def _run_live_with_events(
         rc = 124
     reader.join(timeout=0.25)
     event_reader.join(timeout=0.25)
+    if proc.stdout is not None:
+        with contextlib.suppress(Exception):
+            proc.stdout.close()
     if execution_adapter is not None:
         execution_adapter.process_exited(exit_code=rc, duration_seconds=max(0.0, time.monotonic() - started), failure_kind="" if rc == 0 else "hook_process_failure")
     return rc, "".join(output_parts), tracker, test_events

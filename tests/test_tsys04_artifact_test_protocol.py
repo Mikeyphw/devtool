@@ -5,8 +5,10 @@ from devtool.test_model import TestStatus as Status
 def test_validation_tests_refs_and_inline():
     m={"validation":{"tests":[{"ref":"unit"},{"id":"contract","runner":"pytest","command":["python","-m","pytest"]}]}}
     x=artifact_validation_tests(m); assert x[0]=={"ref":"unit"} and x[1]["id"]=="contract"
-def test_validation_tests_gradle_task():
-    x=artifact_validation_tests({"validation":{"tests":[{"id":"u","runner":"gradle","task":":app:test"}]}}); assert x[0]["command"]==["./gradlew",":app:test"]
+def test_validation_tests_gradle_task_stays_semantic():
+    x=artifact_validation_tests({"validation":{"tests":[{"id":"u","runner":"gradle","task":":app:test"}]}})
+    assert x[0]["task"] == ":app:test"
+    assert "command" not in x[0]
 def test_protocol_accumulator_preserves_rich_status():
     a=EventAccumulator(); a.feed({"type":"suite_started","id":"s","name":"S"}); a.feed({"type":"case","suite":"s","id":"s#a","name":"a","status":"cancelled"}); a.feed({"type":"case","suite":"s","id":"s#b","name":"b","status":"failed","message":"boom"}); r=a.to_result("x"); assert r.tests_total==2 and r.tests_failed==2 and r.suites[0].cases[0].status==Status.CANCELLED
 def test_protocol_rejects_unversioned_noise():
@@ -14,12 +16,18 @@ def test_protocol_rejects_unversioned_noise():
 
 
 def test_event_fd_crosses_real_subprocess_boundary(tmp_path):
+    import gc
     import sys
+    import warnings
     from pathlib import Path
     from devtool.hooks.engine import _run_live_with_events
     code="from devtool.testing import suite;\nwith suite(\"wire\") as t: t.pass_(\"case\")"
-    rc,out,tracker,events=_run_live_with_events([sys.executable,"-c",code],cwd=tmp_path,env={**dict(__import__("os").environ),"PYTHONPATH":str(Path(__file__).parents[1])},timeout_seconds=5,activity_label="test",script_label="test",stdin_text=None)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        rc,out,tracker,events=_run_live_with_events([sys.executable,"-c",code],cwd=tmp_path,env={**dict(__import__("os").environ),"PYTHONPATH":str(Path(__file__).parents[1])},timeout_seconds=5,activity_label="test",script_label="test",stdin_text=None)
+        gc.collect()
     assert rc==0 and any(e.get("type")=="case" and e.get("id")=="case" for e in events)
+    assert not [warning for warning in caught if issubclass(warning.category, ResourceWarning)]
 
 
 def test_validation_refs_normalize_test_workflow_and_invoke():

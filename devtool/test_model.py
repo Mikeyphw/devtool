@@ -129,6 +129,8 @@ class TestSpec:
     name: str
     runner: str
     command: tuple[str, ...] = ()
+    # Typed Gradle task roots are planned at execution time; never bake in ./gradlew.
+    gradle_tasks: tuple[str, ...] = ()
     cwd: str | None = None
     env: Mapping[str, str] = field(default_factory=dict)
     timeout_seconds: float | None = None
@@ -158,6 +160,7 @@ class TestSpec:
         object.__setattr__(self, "id", _id(self.id, "test spec id"))
         object.__setattr__(self, "runner", _id(self.runner, "test runner id"))
         object.__setattr__(self, "command", tuple(str(x) for x in self.command))
+        object.__setattr__(self, "gradle_tasks", tuple(dict.fromkeys(str(x).strip() for x in self.gradle_tasks if str(x).strip())))
         if self.timeout_seconds is not None and self.timeout_seconds <= 0: raise ValueError("timeout must be > 0")
         tuple_fields = ("aliases", "lanes", "resources", "required_tools", "required_capabilities", "groups", "dependencies", "selection_groups")
         for name in tuple_fields:

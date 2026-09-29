@@ -169,11 +169,10 @@ def _positive_int(*values: object, allow_zero: bool = False) -> int | None:
 def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidationResourcePolicy:
     """Choose a phone-safe Gradle profile for validation.
 
-    Android-hosted validation favors predictable peak load over shortest wall
-    time. The default splits build/test/lint, uses one worker, disables the
-    persistent daemon, lowers scheduler priority, caps the Gradle heap, and
-    arms an emergency free-memory guard. Desktop validation keeps the normal
-    optimized profile unless explicitly opted in.
+    Android-hosted validation still owns outer-process CPU/priority/watchdog
+    controls, but ENV-X03 no longer equates a phone with one Gradle worker, no
+    daemon, no VFS, or forced split topology. Core Gradle reuse/resource policy
+    is selected by the canonical Gradle planner.
     """
 
     environment = _effective_environment(config)
@@ -197,7 +196,7 @@ def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidatio
         android.get("validation_max_workers"),
     )
     if workers is None:
-        workers = 1 if enabled and mobile_host else base.max_workers
+        workers = base.max_workers
     workers = max(1, min(base.cpu_count, workers))
 
     cpu_limit = _positive_int(
@@ -241,10 +240,10 @@ def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidatio
         cpu_limit=cpu_limit,
         gradle_heap_mb=heap,
         memory_guard_mb=guard if enabled else 0,
-        split_gradle=_bool_option(validation.get("split_gradle"), enabled and mobile_host),
+        split_gradle=_bool_option(validation.get("split_gradle"), False),
         no_daemon=_bool_option(
             _cli_override_value(cli_overrides, "no_daemon"),
-            _bool_option(validation.get("no_daemon"), enabled and mobile_host),
+            _bool_option(validation.get("no_daemon"), False),
         ),
         low_priority=_bool_option(
             _cli_override_value(cli_overrides, "low_priority"),
@@ -258,15 +257,15 @@ def _android_validation_phase_builtins(
     base: AndroidValidationResourcePolicy,
 ) -> dict[str, dict[str, object]]:
     return {
-        "preflight": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
-        "dependencies": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
-        "compile": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit)},
-        "resources": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1024, base.gradle_heap_mb)},
-        "unit-test": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit)},
-        "package": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1280, base.gradle_heap_mb)},
-        "lint": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1536, base.gradle_heap_mb)},
-        "instrumentation": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": max(768, base.gradle_heap_mb)},
-        "finalize": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
+        "preflight": {"cpu_limit": 1, "gradle_heap_mb": 768},
+        "dependencies": {"cpu_limit": 1, "gradle_heap_mb": 768},
+        "compile": {"cpu_limit": min(2, base.cpu_limit)},
+        "resources": {"cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1024, base.gradle_heap_mb)},
+        "unit-test": {"cpu_limit": min(2, base.cpu_limit)},
+        "package": {"cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1280, base.gradle_heap_mb)},
+        "lint": {"cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1536, base.gradle_heap_mb)},
+        "instrumentation": {"cpu_limit": 1, "gradle_heap_mb": max(768, base.gradle_heap_mb)},
+        "finalize": {"cpu_limit": 1, "gradle_heap_mb": 768},
     }
 
 
@@ -319,11 +318,17 @@ def resolve_android_validation_phase_policy(
     low_priority = _bool_option(values.get("low_priority"), base.low_priority)
     split_gradle = _bool_option(values.get("split_gradle"), base.split_gradle)
 
+    available, total = memory_info_mb()
+    host_basis = available or total or max(base.gradle_heap_mb * 3, 4096)
+    host_safe_heap_ceiling = max(base.gradle_heap_mb, int(host_basis * 0.45))
     return replace(
         base,
         max_workers=max(1, min(base.max_workers, max_workers)),
         cpu_limit=max(1, min(base.cpu_limit, cpu_limit)),
-        gradle_heap_mb=max(256, min(base.gradle_heap_mb, heap)),
+        # Phase floors may raise the default. Only the independently computed
+        # host-safe ceiling may clamp them; the old code incorrectly used the
+        # default heap itself as a ceiling.
+        gradle_heap_mb=max(256, min(host_safe_heap_ceiling, heap)),
         memory_guard_mb=base.memory_guard_mb if guard is None else max(0, guard),
         no_daemon=no_daemon,
         low_priority=low_priority,

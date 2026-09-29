@@ -35,7 +35,11 @@ _EVENT_KINDS = {
     "task-graph", "task-start", "task-finish", "test-suite-start",
     "test-suite-finish", "test-start", "test-finish", "build-finish",
 }
-_COUNTER_FIELDS = {"sequence", "current", "completed", "total", "passed", "failed", "skipped", "testsTotal", "durationMs"}
+_COUNTER_FIELDS = {
+    "sequence", "current", "completed", "total", "passed", "failed", "skipped",
+    "testsTotal", "durationMs", "invocationPassed", "invocationFailed",
+    "invocationSkipped", "invocationTotal", "detailLimit",
+}
 _BOOLEAN_FIELDS = {"didWork", "upToDate", "fromCache", "noSource", "incremental"}
 _TRUE_STRINGS = {"1", "true", "yes", "y", "on"}
 _FALSE_STRINGS = {"0", "false", "no", "n", "off", ""}
@@ -106,6 +110,10 @@ class GradleProgressTracker:
     tests_failed: int = field(init=False, default=0)
     tests_skipped: int = field(init=False, default=0)
     tests_total: int = field(init=False, default=0)
+    suite_tests_passed: int = field(init=False, default=0)
+    suite_tests_failed: int = field(init=False, default=0)
+    suite_tests_skipped: int = field(init=False, default=0)
+    suite_tests_total: int = field(init=False, default=0)
     current_task: str = field(init=False, default="")
     current_test: str = field(init=False, default="")
     failed_task: str = field(init=False, default="")
@@ -125,6 +133,8 @@ class GradleProgressTracker:
     task_header_counts: dict[str, int] = field(init=False, default_factory=dict)
     task_resume_counts: dict[str, int] = field(init=False, default_factory=dict)
     task_outcomes: dict[str, str] = field(init=False, default_factory=dict)
+    configuration_cache_state: str = field(init=False, default="unknown")
+    daemon_state: str = field(init=False, default="unknown")
     started_tasks: set[str] = field(init=False, default_factory=set)
     completed_tasks: set[str] = field(init=False, default_factory=set)
     structured_task_start_counts: dict[str, int] = field(init=False, default_factory=dict)
@@ -465,6 +475,15 @@ class GradleProgressTracker:
         if any(text.startswith(prefix) for prefix in _LIFECYCLE_PREFIXES):
             self.real_progress_seen = True
             self._synthetic_stop.set()
+            lowered = text.lower()
+            if lowered.startswith("reusing configuration cache"):
+                self.configuration_cache_state = "reused"
+            elif "configuration cache entry stored" in lowered:
+                self.configuration_cache_state = "stored"
+            elif lowered.startswith("calculating task graph") and (
+                "configuration cache" in lowered or "no cached configuration" in lowered
+            ):
+                self.configuration_cache_state = "miss"
             self.detail = project_live_output_line(text)
             if text.startswith("BUILD FAILED"):
                 self.errors = max(1, self.errors)
@@ -472,9 +491,37 @@ class GradleProgressTracker:
             self._publish()
             return True
 
+        lowered = text.lower()
+        if "starting a gradle daemon" in lowered:
+            self.daemon_state = "started"
+            self.fallback_lines += 1
+            self._publish()
+            return True
+        if "daemon will be stopped" in lowered:
+            self.daemon_state = "single-use"
+            self.fallback_lines += 1
+            self._publish()
+            return True
+
         return True
 
     def _update_tests(self, event: dict[str, Any]) -> None:
+        if any(key in event for key in ("invocationPassed", "invocationFailed", "invocationSkipped", "invocationTotal")):
+            self.suite_tests_passed = int(event.get("passed") or 0)
+            self.suite_tests_failed = int(event.get("failed") or 0)
+            self.suite_tests_skipped = int(event.get("skipped") or 0)
+            self.suite_tests_total = int(
+                event.get("total")
+                or (self.suite_tests_passed + self.suite_tests_failed + self.suite_tests_skipped)
+            )
+            self.tests_passed = int(event.get("invocationPassed") or 0)
+            self.tests_failed = int(event.get("invocationFailed") or 0)
+            self.tests_skipped = int(event.get("invocationSkipped") or 0)
+            self.tests_total = int(
+                event.get("invocationTotal")
+                or (self.tests_passed + self.tests_failed + self.tests_skipped)
+            )
+            return
         self.tests_passed = int(event.get("passed") or 0)
         self.tests_failed = int(event.get("failed") or 0)
         self.tests_skipped = int(event.get("skipped") or 0)
@@ -526,6 +573,10 @@ class GradleProgressTracker:
             "tests_failed": self.tests_failed,
             "tests_skipped": self.tests_skipped,
             "tests_total": self.tests_total,
+            "suite_tests_passed": self.suite_tests_passed,
+            "suite_tests_failed": self.suite_tests_failed,
+            "suite_tests_skipped": self.suite_tests_skipped,
+            "suite_tests_total": self.suite_tests_total,
             "event_sequence": self.last_sequence,
             "rejected_events": self.rejected_events,
             "run_id": self.expected_run_id,
@@ -541,6 +592,8 @@ class GradleProgressTracker:
             "task_header_count": sum(self.task_header_counts.values()),
             "task_header_counts": dict(self.task_header_counts),
             "task_outcomes": dict(self.task_outcomes),
+            "configuration_cache_state": self.configuration_cache_state,
+            "daemon_state": self.daemon_state,
             "duplicate_execution_start_count": self.duplicate_execution_start_count,
             "duplicate_terminal_header_count": self.duplicate_terminal_header_count,
             "structured_events_seen": self.structured_events_seen,

@@ -1188,9 +1188,12 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         self.assertIn("--", args)
         separator = args.index("--")
-        self.assertEqual(args[separator + 1 :], ["-Pxdm.requireAria2Runtime=true"])
+        gradle_args = args[separator + 1 :]
+        self.assertEqual(gradle_args[0], "-Pxdm.requireAria2Runtime=true")
+        self.assertIn("--configuration-cache", gradle_args)
+        self.assertIn("-Dorg.gradle.vfs.watch=true", gradle_args)
 
-    def test_android_validation_disables_configuration_cache_without_structured_events(self) -> None:
+    def test_android_validation_preserves_configuration_cache_with_summary_telemetry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_android_project(root)
@@ -1215,8 +1218,9 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         separator = args.index("--")
         gradle_args = args[separator + 1 :]
         self.assertNotIn("--init-script", gradle_args)
-        self.assertNotIn("--configuration-cache", gradle_args)
-        self.assertEqual(gradle_args.count("--no-configuration-cache"), 1)
+        self.assertEqual(gradle_args.count("--configuration-cache"), 1)
+        self.assertNotIn("--no-configuration-cache", gradle_args)
+        self.assertIn("-Dorg.gradle.vfs.watch=true", gradle_args)
         self.assertIn("-Psample=true", gradle_args)
 
     def test_android_validation_can_explicitly_collect_all_failures(self) -> None:
@@ -1769,7 +1773,7 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
                 restore_target=str(root),
                 runner_options={
                     "android": {"variant": "debug", "aapt2_provider": "auto"},
-                    "gradle": {"max_workers": 2},
+                    "gradle": {"max_workers": 2, "resource_profile": "balanced", "telemetry_level": "standard"},
                     "tasks": {},
                     "artifacts": {"output_directory": str(root / "artifacts")},
                 },
@@ -1863,18 +1867,22 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             }, clear=True):
                 validation = build_validation_specs(config)
 
-        lint = next(spec for spec in validation if spec.metadata["validation_components"] == ["lint"])
-        self.assertEqual(lint.metadata["lint_scope"], "affected-modules")
+        combined = next(spec for spec in validation if "lint" in spec.metadata["validation_components"])
+        self.assertEqual(combined.metadata["lint_scope"], "affected-modules")
+        self.assertEqual(combined.metadata["lint_modules"], [":app", ":browser-integration", ":persistence"])
         self.assertEqual(
-            lint.metadata["gradle_tasks"],
-            [":app:lintDebug", ":browser-integration:lintDebug", ":persistence:lintDebug"],
+            combined.metadata["gradle_tasks"],
+            [
+                "assembleDebug", ":app:testDebugUnitTest", ":app:lintDebug",
+                ":browser-integration:lintDebug", ":persistence:lintDebug",
+            ],
         )
-        self.assertNotIn(":protocol-test-lab:lintDebug", lint.argv)
-        self.assertNotIn(":core-model:lintDebug", lint.argv)
-        metaspace_index = lint.argv.index("--gradle-metaspace-mb")
-        self.assertEqual(lint.argv[metaspace_index + 1], "640")
+        self.assertNotIn(":protocol-test-lab:lintDebug", combined.argv)
+        self.assertNotIn(":core-model:lintDebug", combined.argv)
+        metaspace_index = combined.argv.index("--gradle-metaspace-mb")
+        self.assertEqual(combined.argv[metaspace_index + 1], "896")
 
-    def test_termux_android_validation_splits_phases_and_caps_load(self) -> None:
+    def test_termux_android_validation_balanced_profile_coalesces_and_caps_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_android_project(root)
@@ -1887,7 +1895,9 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
                         "build": ["assembleDebug"],
                         "test": ["testDebugUnitTest"],
                         "lint": ["lintDebug"],
-                    }
+                    },
+                    "gradle": {"resource_profile": "balanced"},
+                    "validation": {"max_workers": 2},
                 },
             )
             with patch.dict(os.environ, {
@@ -1899,34 +1909,22 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             }, clear=True):
                 validation = build_validation_specs(config)
 
-        self.assertEqual(
-            [spec.name for spec in validation],
-            ["android-validation-build", "android-validation-test", "android-validation-lint"],
-        )
-        self.assertEqual([spec.metadata["validation_phase_total"] for spec in validation], [3, 3, 3])
-        self.assertEqual(
-            [spec.metadata["validation_phase_name"] for spec in validation],
-            ["package", "unit-test", "lint"],
-        )
-        self.assertEqual(
-            [spec.metadata["validation_components"] for spec in validation],
-            [["package"], ["unit-test"], ["lint"]],
-        )
-        self.assertEqual(
-            [spec.metadata["validation_resource_profile"] for spec in validation],
-            ["android-package", "android-unit-test", "android-lint"],
-        )
-        for spec in validation:
-            worker_index = spec.argv.index("--max-workers")
-            self.assertEqual(spec.argv[worker_index + 1], "1")
-            self.assertIn("--constrained", spec.argv)
-            self.assertIn("--low-priority", spec.argv)
-            cpu_index = spec.argv.index("--cpu-limit")
-            self.assertEqual(spec.argv[cpu_index + 1], "2")
-            self.assertIn("--no-daemon", spec.argv)
-            self.assertNotIn("--parallel", spec.argv)
-            self.assertIn("--memory-guard-mb", spec.argv)
-            self.assertFalse(spec.metadata["coalesced_gradle_validation"])
+        self.assertEqual([spec.name for spec in validation], ["android-validation"])
+        spec = validation[0]
+        self.assertEqual(spec.metadata["validation_phase_total"], 1)
+        self.assertEqual(spec.metadata["validation_phase_name"], "validation")
+        self.assertEqual(spec.metadata["validation_components"], ["build", "test", "lint"])
+        self.assertEqual(spec.metadata["validation_resource_profile"], "gradle-balanced")
+        self.assertEqual(spec.metadata["gradle_tasks"], ["assembleDebug", "testDebugUnitTest", "lintDebug"])
+        worker_index = spec.argv.index("--max-workers")
+        self.assertEqual(spec.argv[worker_index + 1], "2")
+        self.assertNotIn("--constrained", spec.argv)
+        self.assertIn("--low-priority", spec.argv)
+        cpu_index = spec.argv.index("--cpu-limit")
+        self.assertEqual(spec.argv[cpu_index + 1], "2")
+        self.assertNotIn("--no-daemon", spec.argv)
+        self.assertIn("--memory-guard-mb", spec.argv)
+        self.assertTrue(spec.metadata["coalesced_gradle_validation"])
 
     def test_split_android_validation_removes_cross_phase_duplicate_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1962,6 +1960,15 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
                 ("android-validation-lint", [":lintDebug"]),
             ],
         )
+        for spec in validation:
+            self.assertIn(
+                "explicit-isolation",
+                [item["kind"] for item in spec.metadata["gradle_invocation_barriers"]],
+            )
+            self.assertIn(
+                "validation.split_gradle=true compatibility isolation",
+                [item["detail"] for item in spec.metadata["gradle_invocation_barriers"]],
+            )
 
     def test_memory_guard_uses_adaptive_thresholds_for_ksp_dips(self) -> None:
         android_sustained, android_hard = android_memory_guard_limits(558)
@@ -2049,17 +2056,44 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             ["android-safe", "android-safe", "android-safe", "android-lint"],
         )
         for spec in validation:
-            self.assertEqual(spec.env["DEVTOOL_MAX_WORKERS"], "1")
-            self.assertEqual(spec.env["DEVTOOL_VALIDATION_CPU_LIMIT"], "2")
-            self.assertIn("-Dorg.gradle.workers.max=1", spec.env["GRADLE_OPTS"])
-            self.assertIn("-XX:ActiveProcessorCount=2", spec.env["JAVA_TOOL_OPTIONS"])
+            workers = int(spec.env["DEVTOOL_MAX_WORKERS"])
+            cpu_limit = int(spec.env["DEVTOOL_VALIDATION_CPU_LIMIT"])
+            self.assertGreaterEqual(workers, 1)
+            self.assertGreaterEqual(cpu_limit, 1)
+            self.assertIn(f"-Dorg.gradle.workers.max={workers}", spec.env["GRADLE_OPTS"])
+            self.assertIn(f"-XX:ActiveProcessorCount={cpu_limit}", spec.env["JAVA_TOOL_OPTIONS"])
             self.assertEqual(spec.metadata["validation_memory_guard_mb"], 0)
+
+    def test_explicit_android_validation_worker_override_is_honored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                execution_environment="chroot",
+                build_command="./gradlew assembleDebug",
+                test_command="./gradlew testDebugUnitTest",
+                runner_options={"validation": {"max_workers": 2, "cpu_limit": 2}},
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                validation = build_validation_specs(config)
+
+        for spec in validation:
+            self.assertEqual(spec.env["DEVTOOL_MAX_WORKERS"], "2")
+            self.assertEqual(spec.env["DEVTOOL_VALIDATION_CPU_LIMIT"], "2")
+            self.assertIn("-Dorg.gradle.workers.max=2", spec.env["GRADLE_OPTS"])
+            self.assertIn("-XX:ActiveProcessorCount=2", spec.env["JAVA_TOOL_OPTIONS"])
 
     def test_android_builder_and_gradle_init_default_to_xdg_data_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_android_project(root)
-            config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
+            config = ProjectConfig(
+                repo_root=root, project_root=str(root), kind="android",
+                runner_options={"gradle": {"telemetry_level": "standard"}},
+            )
             xdg = root / "xdg"
             with patch.dict(
                 os.environ,
@@ -2125,7 +2159,7 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
                 repo_root=root,
                 project_root=str(root),
                 kind="android",
-                runner_options={"android": {"variant": "release"}},
+                runner_options={"android": {"variant": "release"}, "gradle": {"telemetry_level": "standard"}},
             )
             init_script = root / "state" / "events.gradle"
             with patch.dict(
@@ -2143,7 +2177,8 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         self.assertIn(":app:lintRelease", lint_spec.argv)
         self.assertIn("--no-artifact-scan", test_spec.argv)
         self.assertIn("--init-script", test_spec.argv)
-        self.assertEqual(test_spec.argv.count("--no-configuration-cache"), 1)
+        self.assertEqual(test_spec.argv.count("--configuration-cache"), 1)
+        self.assertNotIn("--no-configuration-cache", test_spec.argv)
         self.assertEqual(test_spec.metadata["report_parser"], "gradle-junit")
         self.assertEqual(lint_spec.metadata["report_parser"], "android-lint")
 
@@ -2192,8 +2227,8 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
                 args = android_builder_arguments(config, "build")
 
         self.assertIn("--init-script", args)
-        self.assertEqual(args.count("--no-configuration-cache"), 1)
-        self.assertNotIn("--configuration-cache", args)
+        self.assertEqual(args.count("--configuration-cache"), 1)
+        self.assertNotIn("--no-configuration-cache", args)
         self.assertEqual([value for value in args if str(value).startswith("--console")], [])
 
     def test_attached_gradle_project_properties_are_passed_through(self) -> None:
@@ -2244,8 +2279,10 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
 
         self.assertEqual(staged, target.resolve())
         self.assertIn("DEVTOOL_EVENT", text)
-        self.assertIn("task-graph", text)
-        self.assertIn("test-finish", text)
+        self.assertIn("BuildEventsListenerRegistry", text)
+        self.assertIn("onTaskCompletion", text)
+        self.assertIn("task-finish", text)
+        self.assertNotIn("gradle.addListener", text)
 
     def test_staged_builder_is_self_contained_and_executable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2417,3 +2454,37 @@ def test_resumable_android_phase_configuration_can_explicitly_disable_redundant_
     assert "if isinstance(configured, (list, tuple)) and not configured:" in source
     assert "return False" in source
     assert "return task_values(configured)" in source
+
+
+def test_env_x03_instrumentation_build_enters_canonical_gradle_planner_before_device_step() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_android_project(root)
+        config = ProjectConfig(
+            repo_root=root,
+            project_root=str(root),
+            kind="android",
+            runner="android",
+            runner_options={
+                "android": {"platform": "none"},
+                "gradle": {"structured_events": False, "configuration_cache": "off"},
+                "tasks": {"instrumentation": [":app:connectedDebugAndroidTest"]},
+            },
+        )
+        with patch.dict(os.environ, {
+            "HOME": str(root / "home"),
+            "PREFIX": "/data/data/com.termux/files/usr",
+            "TERMUX_VERSION": "0.119",
+            "DEVTOOL_ANDROID_BUILDER": str(root / "state" / "build-apk"),
+        }, clear=True):
+            specs = AndroidGradleRunner().build_specs(config, "instrumentation")
+
+    assert len(specs) >= 2
+    build_specs = specs[:-1]
+    device = specs[-1]
+    assert all(spec.metadata.get("gradle_execution_plan") for spec in build_specs)
+    assert all(spec.metadata["gradle_execution_plan"]["request"]["caller"] == "build" for spec in build_specs)
+    assert "--skip-build" in device.argv
+    assert device.metadata["instrumentation_build_owned_by_gradle_planner"] is True
+    assert device.metadata["instrumentation_skip_build"] is True
+    assert not any(arg.startswith("--gradle-arg=") for arg in device.argv)

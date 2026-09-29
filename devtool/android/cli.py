@@ -248,8 +248,32 @@ def android_instrumentation_payload(
     skip_build: bool = False,
 ) -> dict[str, Any]:
     from .instrumentation import AndroidInstrumentationOrchestrator, request_from_config
+
+    # ENV-X03: even the dedicated ``devtool android instrumentation`` CLI
+    # enters the canonical Gradle planner for its build half. The orchestrator
+    # remains authoritative for device install/run/collection only.
+    if not skip_build:
+        from ..project_runners import AndroidGradleRunner
+        from ..runners import run_specs
+
+        planned = AndroidGradleRunner().build_specs(config, "instrumentation")
+        build_specs = [spec for spec in planned if spec.metadata.get("gradle_execution_plan")]
+        results, _ = run_specs(config, build_specs, verbose=False)
+        failed = [result for result in results if int(result.returncode or 0) != 0]
+        if failed:
+            first = failed[0]
+            raise RuntimeError(
+                f"Canonical instrumentation Gradle build failed in {first.name} "
+                f"with exit {first.returncode}"
+            )
+        skip_build = True
+
     orchestrator = AndroidInstrumentationOrchestrator.from_config(config)
-    request = request_from_config(config, classes=classes or [], methods=methods or [], annotations=annotations or [], not_annotations=not_annotations or [], size=size, runner_args=runner_args, skip_build=skip_build)
+    request = request_from_config(
+        config, classes=classes or [], methods=methods or [],
+        annotations=annotations or [], not_annotations=not_annotations or [],
+        size=size, runner_args=runner_args, skip_build=skip_build,
+    )
     result = orchestrator.run(request)
     return {"schema_version": 1, "result": result.as_dict()}
 

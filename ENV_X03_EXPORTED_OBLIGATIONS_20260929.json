@@ -1,0 +1,29 @@
+{
+  "overlay": "ENV-X03",
+  "exports": [
+    {
+      "owner": "ENV-G2",
+      "reason": "separate authoritative real-process gate",
+      "obligations": [
+        "prove all canonical Gradle caller classes resolve equivalent context/policy on real Gradle",
+        "prove the standard BuildEvents/BuildService telemetry adapter loads on real Gradle and preserves Configuration Cache miss -> store -> hit without legacy listener fallback",
+        "prove qualified Configuration Cache miss/hit with bounded telemetry",
+        "prove requested/effective CC/VFS/daemon/cache/worker truth from real processes",
+        "prove balanced native-Termux retains safe reuse layers",
+        "prove semantic barriers minimize real Gradle process count without losing required outcomes",
+        "prove receipt requested roots remain distinct from observed outcomes on real Gradle",
+        "bound telemetry on a large test/build graph"
+      ]
+    },
+    {
+      "owner": "ENV-X04 / ENV-G3",
+      "reason": "explicit later ENV destination/adaptive/UX scope",
+      "obligations": [
+        "qualified affected Gradle project graph and release widening (ENV-P089)",
+        "destination-resolved remote/federated Gradle request and receipt convergence (ENV-P090)",
+        "opt-in qualification for Isolated Projects, parallel Configuration Cache and remote build cache (ENV-P091)",
+        "canonical gradle plan/explain/doctor/benchmark projections plus bounded adaptive performance history (ENV-P092)"
+      ]
+    }
+  ]
+}
