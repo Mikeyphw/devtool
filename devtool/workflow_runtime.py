@@ -596,7 +596,19 @@ def _specs_from_graph(
         metadata["workspace_targets"] = list(graph.targets or ((graph.target,) if graph.target != "workspace" else ()))
         spec.metadata = metadata
     from .workflow_scheduler import annotate_specs_with_scopes
-    return annotate_specs_with_scopes(config, graph, specs)
+    annotated = annotate_specs_with_scopes(config, graph, specs)
+    # EXEC-X02: derive reusable-node contribution metadata from the same specs
+    # that will execute. This remains observational until EXEC-G1 enables any
+    # authoritative skip path.
+    from .core.execution_semantics import NodeDefinitionIdentity
+    from .core.reuse import annotate_spec_reuse
+    by_key = graph.by_key
+    for spec in annotated:
+        key = str(spec.metadata.get("workflow_node_key") or "")
+        workflow_node = by_key.get(key)
+        definition_id = NodeDefinitionIdentity.from_workflow_node(workflow_node).value if workflow_node is not None else ""
+        annotate_spec_reuse(spec, repo_root=config.repo_root, node_definition_id=definition_id)
+    return annotated
 
 
 

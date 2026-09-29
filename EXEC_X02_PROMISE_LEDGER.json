@@ -1,0 +1,75 @@
+{
+  "audit_findings_fixed": [
+    "verified-materialization-provenance",
+    "terminal-dependency-result-propagation",
+    "canonical-workflow-node-identity-preservation",
+    "multi-spec-output-aggregation",
+    "missing-output-terminal-proof",
+    "corrupt-history-fail-safe"
+  ],
+  "deferred": {
+    "EXEC-G1": [
+      "reuse correctness acceptance",
+      "shadow predictions vs fresh execution",
+      "no fake process execution"
+    ],
+    "EXEC-X03": [
+      "core ReusePlanner",
+      "validation evidence consumption",
+      "one-graph validation convergence"
+    ],
+    "EXEC-X04": [
+      "authoritative selective skipping",
+      "fresh/rerun controls",
+      "same-run/cross-run continuation",
+      "transaction/federation adoption"
+    ],
+    "LIFE": [
+      "source-proof retention/pinning"
+    ],
+    "PRES": [
+      "reuse/explain rendering"
+    ]
+  },
+  "delivered": [
+    "EXEC-P012",
+    "EXEC-P013-strengthened",
+    "EXEC-P014",
+    "EXEC-P015",
+    "EXEC-P016",
+    "EXEC-P017",
+    "EXEC-P018",
+    "EXEC-P019",
+    "EXEC-P020",
+    "EXEC-P021",
+    "EXEC-P022",
+    "EXEC-P023-operationalized",
+    "EXEC-P024",
+    "EXEC-P026",
+    "EXEC-P027",
+    "EXEC-P032",
+    "EXEC-P034",
+    "EXEC-P035",
+    "EXEC-P069-runner-contribution"
+  ],
+  "position": {
+    "exec_scope": "2/7",
+    "full_plan": "15/63",
+    "gate_window": "2/3"
+  },
+  "roadmap_id": "EXEC-X02",
+  "schema_version": 1,
+  "status": "implementation-complete-replay-qualified",
+  "validation": {
+    "artifact_replay": "passed",
+    "artifact_replay_stages_passed": 8,
+    "artifact_replay_tests_passed": 101,
+    "devtool_errors": 0,
+    "devtool_warnings": 0,
+    "first_class_test": "roadmap-exec-x02",
+    "first_class_workflow": "roadmap-exec-x02",
+    "tests_failed": 0,
+    "tests_passed": 101,
+    "tests_skipped": 0
+  }
+}

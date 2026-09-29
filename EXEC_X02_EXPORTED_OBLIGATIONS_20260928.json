@@ -1,0 +1,21 @@
+{
+  "exports": [
+    {
+      "id": "LIFE-HOOK-HANDLE-LEAK",
+      "owner": "LIFE",
+      "summary": "Existing hooks/engine.py ResourceWarning remains outside EXEC-X02."
+    },
+    {
+      "id": "MULTI-SUITE-RESULT-PROJECTION",
+      "owner": "TEST/PRES",
+      "summary": "Artifact/apply aggregate test count can project only the final suite; previously reproduced."
+    },
+    {
+      "id": "ROADMAP-IDENTITY-ALLOWLIST-DRIFT",
+      "owner": "TEST/RMP",
+      "summary": "Roadmap identity inventory tests fail on untouched baseline for newer TEST/ENV identities."
+    }
+  ],
+  "roadmap_id": "EXEC-X02",
+  "schema_version": 1
+}

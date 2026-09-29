@@ -19,6 +19,7 @@ from typing import Any, Mapping, Sequence
 
 
 _SCHEMA_VERSION = 1
+_REUSE_SCHEMA_VERSION = 2
 _SLUG_RE = re.compile(r"[^a-zA-Z0-9_.:-]+")
 
 
@@ -214,10 +215,10 @@ class ReuseDisposition(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class ReusableNodeRecord:
-    """Immutable reusable-result shell attached to EXO terminal history.
+    """Immutable reusable result attached to canonical EXO terminal history.
 
-    EXEC-X01 records only schema/identity/provenance and remains fail-safe RUN.
-    EXEC-X02 fills input/dependency/environment/output qualification fields.
+    EXEC-X02 extends the X01 shell with semantic fingerprints and output proof.
+    It is still history metadata, not a parallel cache truth store.
     """
 
     node_definition_id: str
@@ -227,9 +228,14 @@ class ReusableNodeRecord:
     disposition: ReuseDisposition = ReuseDisposition.RUN
     reusable: bool = False
     qualification_complete: bool = False
-    reason: str = "qualification-not-implemented"
+    reason: str = "qualification-incomplete"
     evidence_refs: tuple[str, ...] = ()
-    schema_version: int = _SCHEMA_VERSION
+    fingerprint: Mapping[str, Any] = field(default_factory=dict)
+    output_manifest: Mapping[str, Any] = field(default_factory=dict)
+    result_identity: str = ""
+    portability_class: str = ""
+    spec_fingerprint_digests: tuple[str, ...] = ()
+    schema_version: int = _REUSE_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -243,6 +249,11 @@ class ReusableNodeRecord:
             "qualification_complete": bool(self.qualification_complete),
             "reason": self.reason,
             "evidence_refs": list(self.evidence_refs),
+            "fingerprint": _jsonable(dict(self.fingerprint or {})),
+            "output_manifest": _jsonable(dict(self.output_manifest or {})),
+            "result_identity": self.result_identity,
+            "portability_class": self.portability_class,
+            "spec_fingerprint_digests": list(self.spec_fingerprint_digests),
         }
 
     @classmethod
@@ -254,11 +265,10 @@ class ReusableNodeRecord:
         fallback_run_id: str = "",
         fallback_node_id: str = "",
     ) -> "ReusableNodeRecord":
-        """Parse historical shell metadata fail-safe.
+        """Parse terminal reuse metadata fail-safe.
 
-        X01 has no authority to qualify reuse yet.  Unknown schema, corrupt
-        values, or even a future payload claiming reusable therefore normalize
-        to a visible RUN record until EXEC-X02 performs full qualification.
+        Old X01 shells, unknown schemas and malformed records intentionally
+        normalize to RUN.  A claimed historical REUSE never authorizes itself.
         """
 
         data = dict(payload or {}) if isinstance(payload, Mapping) else {}
@@ -270,23 +280,45 @@ class ReusableNodeRecord:
         source_run = str(data.get("source_run_id") or fallback_run_id or "")
         source_node = str(data.get("source_node_id") or fallback_node_id or "")
         execution_status = str(data.get("execution_status") or "unknown")
-        reason = "exec-x01-history-unqualified"
-        if schema_version != _SCHEMA_VERSION:
-            reason = "unsupported-or-missing-reuse-schema"
-        elif not definition or definition == "unknown":
-            reason = "missing-node-definition-identity"
-        elif not source_run or not source_node:
-            reason = "incomplete-reuse-provenance"
+        reason = str(data.get("reason") or "")
+        valid = (
+            schema_version == _REUSE_SCHEMA_VERSION
+            and bool(definition and definition != "unknown")
+            and bool(source_run and source_node)
+            and isinstance(data.get("fingerprint"), Mapping)
+            and isinstance(data.get("output_manifest"), Mapping)
+            and bool(data.get("result_identity"))
+        )
+        if not valid:
+            if schema_version != _REUSE_SCHEMA_VERSION:
+                reason = "unsupported-or-missing-reuse-schema"
+            elif not definition or definition == "unknown":
+                reason = "missing-node-definition-identity"
+            elif not source_run or not source_node:
+                reason = "incomplete-reuse-provenance"
+            else:
+                reason = "incomplete-reuse-proof"
+            return cls(
+                node_definition_id=definition or "unknown", source_run_id=source_run, source_node_id=source_node,
+                execution_status=execution_status, disposition=ReuseDisposition.RUN, reusable=False,
+                qualification_complete=False, reason=reason,
+                evidence_refs=tuple(str(v) for v in data.get("evidence_refs", ()) or () if str(v)),
+            )
+        try:
+            disposition = ReuseDisposition(str(data.get("disposition") or ReuseDisposition.RUN.value))
+        except ValueError:
+            disposition = ReuseDisposition.RUN
         return cls(
-            node_definition_id=definition or "unknown",
-            source_run_id=source_run,
-            source_node_id=source_node,
-            execution_status=execution_status,
-            disposition=ReuseDisposition.RUN,
-            reusable=False,
-            qualification_complete=False,
-            reason=reason,
+            node_definition_id=definition, source_run_id=source_run, source_node_id=source_node,
+            execution_status=execution_status, disposition=disposition,
+            reusable=bool(data.get("reusable")), qualification_complete=bool(data.get("qualification_complete")),
+            reason=reason or "qualified-terminal-record",
             evidence_refs=tuple(str(v) for v in data.get("evidence_refs", ()) or () if str(v)),
+            fingerprint=dict(data.get("fingerprint") or {}),
+            output_manifest=dict(data.get("output_manifest") or {}),
+            result_identity=str(data.get("result_identity") or ""),
+            portability_class=str(data.get("portability_class") or ""),
+            spec_fingerprint_digests=tuple(str(v) for v in data.get("spec_fingerprint_digests", ()) or () if str(v)),
         )
 
 

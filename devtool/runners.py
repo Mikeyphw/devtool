@@ -3253,6 +3253,13 @@ def run_specs(
 
         result_metadata["execution_process_id"] = execution_adapter.active_process_id if execution_adapter is not None else ""
         result_metadata["execution_diagnostic_ids"] = list(diagnostic_ids)
+        if isinstance(spec.metadata.get("reuse_fingerprint"), dict):
+            from .core.reuse import finalize_spec_reuse_metadata
+            result_metadata.update(finalize_spec_reuse_metadata(
+                spec,
+                evidence_refs=((log_file,) if log_file else ()),
+                execution_status=("cancelled" if returncode == 130 else "succeeded" if returncode == 0 else "failed"),
+            ))
         result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind, metadata=result_metadata)
         results.append(result)
         command_status = "cancelled" if returncode == 130 else "succeeded" if returncode == 0 else "failed"
@@ -3285,7 +3292,15 @@ def run_specs(
             node_id=event_node_id,
             parent_id=workflow_parent_id,
             source="runner",
-            metadata={"returncode": returncode, "duration_seconds": duration, "failure_kind": failure_kind},
+            metadata={
+                "returncode": returncode,
+                "duration_seconds": duration,
+                "failure_kind": failure_kind,
+                **({key: result_metadata[key] for key in (
+                    "reuse_fingerprint", "reuse_output_manifest", "reuse_result_identity",
+                    "reuse_evidence_refs", "reuse_portability_class",
+                ) if key in result_metadata}),
+            },
         ))
         if tasker_progress is not None and not dry_run:
             tasker_progress.phase_finished(result)

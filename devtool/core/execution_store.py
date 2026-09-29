@@ -8,7 +8,8 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 from .execution_contract import ExecutionStatus, NodeId, RunId, canonical_execution_status
-from .execution_semantics import ExecutionIntent, NodeDefinitionIdentity, ReusableNodeRecord, shadow_reuse_metadata
+from .execution_semantics import ExecutionIntent, NodeDefinitionIdentity, ReusableNodeRecord, ReuseDisposition, shadow_reuse_metadata
+from .reuse import DependencyFingerprint, aggregate_fingerprints, aggregate_output_manifests, stable_digest, result_identity
 from .execution_limits import (
     MAX_PROCESS_LAST_OUTPUT_CHARS,
     bounded_log_ref,
@@ -254,7 +255,15 @@ class ExecutionReducer:
             node.argv = tuple(str(value) for value in event.argv)
         node.discovered_at = node.discovered_at or event.timestamp
         node.started_at = node.started_at or event.timestamp
-        node.metadata.update(dict(event.metadata or {}))
+        incoming_metadata = dict(event.metadata or {})
+        reuse_fp = incoming_metadata.get("reuse_fingerprint")
+        if isinstance(reuse_fp, dict):
+            rows = list(node.metadata.get("reuse_spec_fingerprints") or [])
+            digest = str(reuse_fp.get("digest") or "")
+            if not rows or str(rows[-1].get("digest") or "") != digest:
+                rows.append(dict(reuse_fp))
+            node.metadata["reuse_spec_fingerprints"] = rows
+        node.metadata.update(incoming_metadata)
 
     def _node_progress(self, run: ExecutionRunState, event: "NodeProgressChanged") -> None:
         node = self._ensure_event_node(run, event, kind="operation", allow_active_match=True)
@@ -281,6 +290,14 @@ class ExecutionReducer:
     def _node_finished(self, run: ExecutionRunState, event: "NodeFinished") -> None:
         node = self._ensure_event_node(run, event, label=self._event_label(event), allow_active_match=True)
         status = canonical_execution_status(event.status)
+        incoming_metadata = dict(event.metadata or {})
+        incoming_output = incoming_metadata.get("reuse_output_manifest")
+        if isinstance(incoming_output, dict):
+            output_rows = list(node.metadata.get("reuse_spec_output_manifests") or [])
+            digest = str(incoming_output.get("digest") or "")
+            if not output_rows or str(output_rows[-1].get("digest") or "") != digest:
+                output_rows.append(dict(incoming_output))
+            node.metadata["reuse_spec_output_manifests"] = output_rows
         # Compatibility TaskFinished events can represent one command/spec of a
         # multi-spec workflow node. In that case the aggregate node correctly
         # remains RUNNING until the last part ends. EXO-05 will model the parts
@@ -294,7 +311,7 @@ class ExecutionReducer:
             node.failure_kind = str(event.failure_kind or node.failure_kind or "")
             node.transition_origin = str(event.transition_origin or "observed")
             node.transition_reason = str(event.transition_reason or "")
-            node.metadata.update(dict(event.metadata or {}))
+            node.metadata.update(incoming_metadata)
             return
         self._set_terminal_node_status(node, status)
         node.exit_code = int(event.exit_code)
@@ -312,19 +329,72 @@ class ExecutionReducer:
                 node.primary_failure_diagnostic_id = str(event.diagnostic_ids[0])
         node.evidence_refs[:] = merge_bounded_evidence(node.evidence_refs, event.evidence)
         node.finished_at = event.timestamp
-        node.metadata.update(dict(event.metadata or {}))
+        node.metadata.update(incoming_metadata)
         definition_id = str(node.metadata.get("node_definition_id") or "").strip()
         if definition_id:
+            spec_fingerprints = [dict(v) for v in node.metadata.get("reuse_spec_fingerprints", ()) or () if isinstance(v, dict)]
+            latest_fp = node.metadata.get("reuse_fingerprint")
+            if isinstance(latest_fp, dict) and not spec_fingerprints:
+                spec_fingerprints = [dict(latest_fp)]
+            aggregate = aggregate_fingerprints(definition_id, spec_fingerprints) if spec_fingerprints else {}
+            # Final dependency identity comes from canonical upstream EXO terminal
+            # history, not from a scheduler-local cache.
+            dependency_rows: list[tuple[str, str]] = []
+            dependency_complete = True
+            for dependency_id in node.depends_on:
+                dependency_node = run.nodes.get(str(dependency_id))
+                dependency_record = (dependency_node.metadata.get("reusable_node_record") if dependency_node is not None else None)
+                result_id = str(dependency_record.get("result_identity") or "") if isinstance(dependency_record, dict) else ""
+                if not result_id:
+                    dependency_complete = False
+                    break
+                dependency_rows.append((str(dependency_id), result_id))
+            if aggregate and node.depends_on:
+                terminal_dependency = DependencyFingerprint(tuple(dependency_rows), complete=dependency_complete)
+                aggregate["dependency_digest"] = terminal_dependency.digest
+                aggregate["dependency_complete"] = dependency_complete
+                aggregate["digest"] = stable_digest({
+                    key: aggregate.get(key, "") for key in (
+                        "node_definition_id", "invocation_digest", "input_manifest_digest",
+                        "dependency_digest", "environment_digest",
+                    )
+                })
+            output_rows = [dict(v) for v in node.metadata.get("reuse_spec_output_manifests", ()) or () if isinstance(v, dict)]
+            if not output_rows and isinstance(node.metadata.get("reuse_output_manifest"), dict):
+                output_rows = [dict(node.metadata.get("reuse_output_manifest") or {})]
+            output_manifest = aggregate_output_manifests(output_rows) if output_rows else {}
+            evidence_refs = tuple(str(value) for value in node.evidence_refs if str(value))
+            output_complete = bool(output_manifest.get("complete", False)) if output_manifest else False
+            record_reusable = bool(aggregate and aggregate.get("reusable") and dependency_complete and output_complete and node.status.value == "succeeded")
+            qualification_complete = bool(aggregate and output_manifest and dependency_complete and output_complete)
+            result_id = str(node.metadata.get("reuse_result_identity") or "")
+            if not result_id and aggregate and output_manifest:
+                result_id = result_identity(
+                    fingerprint_digest=str(aggregate.get("digest") or ""),
+                    output_manifest_digest=str(output_manifest.get("digest") or ""),
+                    execution_status=node.status.value,
+                    evidence_refs=evidence_refs,
+                )
+            reason = "qualified-terminal-proof" if record_reusable and qualification_complete else "terminal-proof-incomplete-or-nonreusable"
             reusable_record = ReusableNodeRecord(
                 node_definition_id=definition_id,
                 source_run_id=str(run.run_id),
                 source_node_id=str(node.node_id),
                 execution_status=node.status.value,
-                evidence_refs=tuple(str(value) for value in node.evidence_refs if str(value)),
-                reason="exec-x01-shadow-record; qualification deferred to EXEC-X02",
+                disposition=ReuseDisposition.RUN,
+                reusable=record_reusable,
+                qualification_complete=qualification_complete,
+                evidence_refs=evidence_refs,
+                reason=reason,
+                fingerprint=aggregate,
+                output_manifest=output_manifest,
+                result_identity=result_id,
+                portability_class=str(node.metadata.get("reuse_portability_class") or ""),
+                spec_fingerprint_digests=tuple(str(v.get("digest") or "") for v in spec_fingerprints if str(v.get("digest") or "")),
             )
-            # Attached to canonical EXO node history; no parallel reuse database.
+            # Attached to canonical EXO node history; any lookup index is derived.
             node.metadata["reusable_node_record"] = reusable_record.to_dict()
+
 
     def _process_started(self, run: ExecutionRunState, event: "ProcessStarted") -> None:
         process_id = str(event.process_id or "").strip()
