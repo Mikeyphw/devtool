@@ -67,15 +67,20 @@ class HostContext:
 
     @property
     def current_substrate(self) -> str:
+        if self.inside_chroot:
+            return "chroot"
+        if self.termux:
+            # An SSH login *into* Termux is still the native Termux execution
+            # substrate.  SSH is a session transport facet in this case, not a
+            # reason to reject native-termux preflight.  Delegated remote
+            # providers that do not expose Termux markers continue to resolve
+            # to the ssh substrate below.
+            return "native-termux"
         if self.remote:
             # Transport remains the substrate identity; provider detail is a
             # separate axis so ssh-proot-oci/OCI does not masquerade as a new
             # local execution environment or trigger recursive delegation.
             return "ssh"
-        if self.inside_chroot:
-            return "chroot"
-        if self.termux:
-            return "native-termux"
         if self.os_family == "linux":
             return "desktop-linux"
         if self.os_family == "macos":

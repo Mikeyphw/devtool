@@ -116,6 +116,39 @@ def test_chroot_identity_is_a_guest_substrate_not_native_termux() -> None:
 
 
 
+
+def test_termux_ssh_login_remains_native_termux_substrate() -> None:
+    env = {
+        "HOME": "/data/data/com.termux/files/home",
+        "PREFIX": "/data/data/com.termux/files/usr",
+        "TERMUX_VERSION": "0.119",
+        "SSH_CONNECTION": "192.0.2.10 53000 192.0.2.20 8022",
+        "SSH_CLIENT": "192.0.2.10 53000 8022",
+        "SSH_TTY": "/dev/pts/3",
+    }
+    host = detect_host_context(env, system="Linux", machine="aarch64", platform_name="linux")
+    assert host.remote is True
+    assert host.termux is True
+    assert host.remote_provider == ""
+    assert host.current_substrate == NATIVE_TERMUX
+
+
+def test_native_termux_preflight_accepts_ssh_login_session() -> None:
+    from devtool.execution_environments import preflight_execution, resolve_execution_plan
+
+    env = {
+        "HOME": "/data/data/com.termux/files/home",
+        "PREFIX": "/data/data/com.termux/files/usr",
+        "TERMUX_VERSION": "0.119",
+        "SSH_CONNECTION": "192.0.2.10 53000 192.0.2.20 8022",
+    }
+    plan = resolve_execution_plan(requested="native-termux", configured="auto", env=env)
+    assert plan.current == NATIVE_TERMUX
+    assert plan.effective == NATIVE_TERMUX
+    preflight = preflight_execution(Path.cwd(), plan)
+    assert preflight.ok
+    assert [(check.name, check.status, check.detail) for check in preflight.checks if check.name == "termux"] == [("termux", "ready", NATIVE_TERMUX)]
+
 def test_remote_provider_identity_does_not_replace_ssh_substrate() -> None:
     env = {
         "HOME": "/home/mike",

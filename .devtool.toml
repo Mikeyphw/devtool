@@ -84,6 +84,12 @@ description = "Run the PRES-X01 presentation projection workflow"
 workflow = "roadmap-pres-x01"
 target = "devtool"
 
+# HOTFIX: native Termux over SSH login must remain native Termux.
+[wrapper.commands.termux-ssh-hotfix]
+description = "Run the Termux SSH native preflight hotfix workflow"
+workflow = "hotfix-termux-ssh-preflight"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -525,6 +531,11 @@ roadmap-pres-x01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "presentation-projections", ref = "test:roadmap-pres-x01-presentation-projections", depends_on = ["syntax"] },
   { id = "env-explain-regression", ref = "test:roadmap-pres-x01-env-explain-regression", depends_on = ["presentation-projections"] },
+]
+
+hotfix-termux-ssh-preflight = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "termux-ssh", ref = "test:hotfix-termux-ssh-preflight", depends_on = ["syntax"] },
 ]
 
 roadmap-smoke = [
@@ -1856,4 +1867,18 @@ name = "PRES-X01 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "pres-x01"]
+
+# Hotfix validation for Termux SSH sessions. Keeps SSH as session transport when
+# Termux substrate markers prove the command is executing on the native host.
+[[test]]
+id = "hotfix-termux-ssh-preflight"
+name = "Hotfix native Termux preflight accepts SSH login sessions"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x01_host_privilege_foundation.py::test_termux_ssh_login_remains_native_termux_substrate",
+  "tests/test_env_x01_host_privilege_foundation.py::test_native_termux_preflight_accepts_ssh_login_session",
+  "tests/test_env_x01_host_privilege_foundation.py::test_remote_provider_identity_does_not_replace_ssh_substrate",
+]
 

@@ -1,0 +1,14 @@
+{
+  "overlay": "TERMUX-SSH native preflight hotfix",
+  "delivered": [
+    "SSH login sessions into Termux remain native-termux for execution preflight",
+    "SSH transport remains visible as host.remote=true",
+    "Non-Termux SSH provider sessions still resolve to ssh substrate",
+    "Targeted wrapper validation covers the regression"
+  ],
+  "validation": {
+    "direct_pytest": "3 passed",
+    "wrapper": "./devtoolw termux-ssh-hotfix: 2 stages, 3 tests, 0 warnings, 0 errors",
+    "artifact": "Artifact validation passed"
+  }
+}
