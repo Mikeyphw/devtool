@@ -587,10 +587,11 @@ def takeover_semantic_identity(
 ) -> str:
     """Return origin-neutral identity for equivalent Gradle work.
 
-    The canonical plan digest intentionally contains caller/evidence fields, so
-    it is not itself suitable for cross-surface RER convergence. This identity
-    keeps physical Gradle semantics, launcher/destination and effective policy
-    while excluding wrapper/invoke/workflow provenance.
+    The canonical plan digest intentionally contains caller/evidence and
+    adaptive execution-policy fields, so it is not itself suitable for
+    cross-surface RER convergence. This identity keeps logical Gradle work plus
+    launcher/destination/takeover context while excluding provenance and
+    non-semantic resource-policy fluctuations.
     """
     payload = receipt.as_dict() if isinstance(receipt, GradleTakeoverReceipt) else dict(receipt)
     if isinstance(plan, GradleInvocationPlan):
@@ -601,14 +602,31 @@ def takeover_semantic_identity(
         plan_data = {}
     context = dict(plan_data.get("context") or {}) if isinstance(plan_data, Mapping) else {}
     policy = dict(plan_data.get("policy") or {}) if isinstance(plan_data, Mapping) else {}
+
+    # The exact Gradle execution plan records adaptive resource policy (heap,
+    # workers, daemon/cache choices and the raw host evidence that selected
+    # them). Those controls change *how* equivalent work executes, not the
+    # logical Gradle work that RER may safely recognize across wrapper/invoke/
+    # workflow/TestSpec ingress. Keep that exact policy in plan_digest/RUN
+    # evidence, while takeover semantic identity retains user arguments, roots,
+    # barriers, context, launcher/destination and takeover configuration.
+    # Otherwise a 1 MiB free-memory fluctuation can fragment semantic identity
+    # between two sequential ingress surfaces.
+    logical_invocations: list[dict[str, object]] = []
+    for item in plan_data.get("invocations", ()) if plan_data else ():
+        if not isinstance(item, Mapping):
+            continue
+        logical_invocations.append({
+            "roots": list(item.get("roots") or ()),
+            "barriers": list(item.get("barriers") or ()),
+        })
     physical = {
         "requested_roots": list(plan_data.get("requested_roots") or ()),
         "optimized_roots": list(plan_data.get("optimized_roots") or ()),
         "arguments": dict(plan_data.get("arguments") or {}),
         "semantic_request_digest": str(plan_data.get("semantic_request_digest") or ""),
-        "invocations": list(plan_data.get("invocations") or ()),
+        "logical_invocations": logical_invocations,
         "context_digest": str(context.get("context_digest") or ""),
-        "policy_digest": str(policy.get("policy_digest") or ""),
     } if plan_data else {"plan_digest": str(payload.get("plan_digest") or "")}
     return _digest({
         "intent": str(payload.get("intent") or "work"),

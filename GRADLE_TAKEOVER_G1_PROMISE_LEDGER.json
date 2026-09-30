@@ -1,0 +1,116 @@
+{
+  "audited_window": [
+    "ENV-X05 34/70",
+    "EXEC-X05 35/70"
+  ],
+  "construction_validation": {
+    "completion_release": {
+      "failed": 0,
+      "passed": 36,
+      "subtests_passed": 32
+    },
+    "devtool_gate_workflow_with_test_gradle": {
+      "errors": 0,
+      "stages_failed": 0,
+      "stages_passed": 4,
+      "tests_failed": 0,
+      "tests_passed": 72,
+      "tests_skipped": 0,
+      "warnings": 0
+    },
+    "native_authority": "real-process stage intentionally requires native Termux and real gradle/java",
+    "window_tests": {
+      "failed": 0,
+      "passed": 36
+    }
+  },
+  "date": "2026-09-29",
+  "gate": "GRADLE-TAKEOVER-G1",
+  "gate_owned_closures": [
+    {
+      "closure": "canonical Gradle takeover projection added to shared presentation substrate",
+      "promises": [
+        "GT-P033"
+      ]
+    },
+    {
+      "closure": "canonical/static completion convergence restored and normal release qualification green",
+      "promises": [
+        "GT-P034"
+      ]
+    },
+    {
+      "closure": "logical takeover semantic identity no longer fragments on non-semantic adaptive resource-policy evidence",
+      "promises": [
+        "GT-P023",
+        "GT-P031"
+      ]
+    }
+  ],
+  "maximum_warnings": 0,
+  "next_major_scope": "ANDROID",
+  "next_overlay": "ANDROID-X01 (37/70)",
+  "position": {
+    "full_plan": "36/70",
+    "gate_window": "3/3",
+    "scope": "Gradle Takeover 3/3"
+  },
+  "promises": {
+    "GT-P001": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P002": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P003": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P004": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P005": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P006": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P007": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P008": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P009": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P010": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P011": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P012": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P013": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P014": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P015": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P016": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P017": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P018": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P019": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P020": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P021": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P022": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P023": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P024": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P025": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P026": "reconciled-by-retained-window-and-gate-on-success",
+    "GT-P027": "proved-by-qualified-gate-workflow-on-success",
+    "GT-P028": "proved-by-qualified-gate-workflow-on-success",
+    "GT-P029": "proved-by-qualified-gate-workflow-on-success",
+    "GT-P030": "proved-by-qualified-gate-workflow-on-success",
+    "GT-P031": "proved-by-qualified-gate-workflow-on-success",
+    "GT-P032": "proved-by-qualified-gate-workflow-on-success",
+    "GT-P033": "proved-by-qualified-gate-workflow-on-success",
+    "GT-P034": "proved-by-qualified-gate-workflow-on-success"
+  },
+  "qualified_inputs": {
+    "ENV-X05": {
+      "commit": "14f849f1",
+      "run": "f8b477190c1c4b20abed776b109d03a0"
+    },
+    "EXEC-X05": {
+      "commit": "8181fac",
+      "diagnostics": {
+        "errors": 0,
+        "warnings": 0
+      },
+      "run": "0da5823094d04d9e90d31046e895a9d6",
+      "tests": {
+        "failed": 0,
+        "passed": 98,
+        "skipped": 0
+      }
+    }
+  },
+  "remaining_in_gradle_takeover_after_gate": 0,
+  "schema_version": 1,
+  "status": "pending-qualified-native-termux-gate"
+}

@@ -239,6 +239,119 @@ def compose_dashboard(*projections: PresentationProjection, surface: Presentatio
     )
 
 
+def gradle_takeover_projection(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    surface: PresentationSurface = PresentationSurface.MACHINE,
+) -> PresentationProjection:
+    """Project canonical Gradle takeover evidence without owning execution truth.
+
+    Each input must be a RUN/EXO-style record whose ``metadata`` contains the
+    canonical ``gradle_takeover`` receipt emitted by the execution layer.  The
+    projection deliberately keeps only receipt/config/launcher identity fields;
+    process argv/stdout/stderr remain owned by RUN/EXO.
+    """
+
+    events: list[PresentationEvent] = []
+    refs: list[CanonicalReference] = []
+    modes: set[str] = set()
+    scopes: set[str] = set()
+    origins: set[str] = set()
+    enabled_states: set[str] = set()
+
+    for index, record in enumerate(records):
+        metadata_raw = record.get("metadata", record)
+        if not isinstance(metadata_raw, Mapping):
+            continue
+        takeover_raw = metadata_raw.get("gradle_takeover")
+        if not isinstance(takeover_raw, Mapping):
+            continue
+        config = takeover_raw.get("config") if isinstance(takeover_raw.get("config"), Mapping) else {}
+        launcher = takeover_raw.get("launcher") if isinstance(takeover_raw.get("launcher"), Mapping) else {}
+        receipt = takeover_raw.get("receipt") if isinstance(takeover_raw.get("receipt"), Mapping) else {}
+        if not receipt:
+            continue
+
+        authority = str(record.get("authority", "RUN") or "RUN")
+        ref_value = str(
+            record.get("ref")
+            or record.get("run_ref")
+            or metadata_raw.get("run_ref")
+            or receipt.get("receipt_id")
+            or f"gradle-takeover:{index}"
+        )
+        digest = str(record.get("digest") or metadata_raw.get("gradle_takeover_semantic_identity") or "") or None
+        cref = CanonicalReference(authority, ref_value, "gradle-takeover-receipt", digest)
+        refs.append(cref)
+
+        enabled = bool(config.get("enabled", receipt.get("enabled", False)))
+        mode = str(config.get("mode") or receipt.get("mode") or "off")
+        scope = str(config.get("scope") or receipt.get("scope") or "devtool")
+        origin = str(receipt.get("origin") or metadata_raw.get("gradle_takeover_origin") or "unknown")
+        intent = str(receipt.get("intent") or "work")
+        requested = str(receipt.get("requested_launcher") or launcher.get("requested") or "auto")
+        real = str(receipt.get("real_launcher") or launcher.get("executable") or "unknown")
+        canonicalized = bool(receipt.get("canonicalized", False))
+        bypass = str(receipt.get("bypass_reason") or "")
+        receipt_id = str(receipt.get("receipt_id") or metadata_raw.get("gradle_takeover_receipt_id") or "")
+
+        modes.add(mode)
+        scopes.add(scope)
+        origins.add(origin)
+        enabled_states.add("enabled" if enabled else "disabled")
+        result_status = str(record.get("status") or "passed")
+        label = (
+            f"{origin}/{intent}: {requested} -> {real}; "
+            f"mode={mode} scope={scope}; "
+            + ("canonical" if canonicalized else f"bypass={bypass or 'none'}")
+        )
+        events.append(
+            PresentationEvent(
+                id=receipt_id or ref_value,
+                authority=authority,
+                status=result_status,
+                label=label,
+                refs=(cref,),
+                detail={
+                    "enabled": enabled,
+                    "mode": mode,
+                    "scope": scope,
+                    "origin": origin,
+                    "intent": intent,
+                    "requested_launcher": requested,
+                    "real_launcher": real,
+                    "canonicalized": canonicalized,
+                    "bypass_reason": bypass,
+                    "receipt_id": receipt_id,
+                    "semantic_identity": str(metadata_raw.get("gradle_takeover_semantic_identity") or ""),
+                    "destination_identity": str(receipt.get("destination_identity") or ""),
+                    "launcher_identity": str(receipt.get("launcher_identity") or ""),
+                },
+            )
+        )
+
+    failed = any(event.status in {"failed", "error"} for event in events)
+    running = any(event.status in {"running", "pending"} for event in events)
+    status = "failed" if failed else "running" if running else "passed" if events else "empty"
+    if not events:
+        summary = "no canonical Gradle takeover receipt is present"
+    else:
+        summary = (
+            f"{len(events)} canonical takeover receipt(s); "
+            f"state={','.join(sorted(enabled_states))}; "
+            f"mode={','.join(sorted(modes))}; scope={','.join(sorted(scopes))}; "
+            f"origin={','.join(sorted(origins))}"
+        )
+    return PresentationProjection(
+        surface,
+        "Gradle takeover",
+        summary,
+        status,
+        tuple(events),
+        tuple(refs),
+    )
+
+
 def environment_doctor_projection(records: Sequence[Mapping[str, Any]], *, surface: PresentationSurface = PresentationSurface.TERMINAL) -> PresentationProjection:
     events: list[PresentationEvent] = []
     refs: list[CanonicalReference] = []

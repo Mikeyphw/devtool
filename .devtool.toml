@@ -90,6 +90,12 @@ description = "Run the EXEC-X05 universal Gradle ingress convergence workflow"
 workflow = "roadmap-exec-x05"
 target = "devtool"
 
+# GRADLE-TAKEOVER-G1 authoritative takeover/recursion/convergence gate.
+[wrapper.commands.gradle-takeover-g1]
+description = "Run the GRADLE-TAKEOVER-G1 authoritative takeover/recursion/convergence gate"
+workflow = "roadmap-gradle-takeover-g1"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
@@ -611,6 +617,13 @@ roadmap-exec-x05 = [
   { id = "ingress-convergence", ref = "test:roadmap-exec-x05-gradle-ingress", depends_on = ["syntax"] },
   { id = "takeover-regression", ref = "test:roadmap-exec-x05-takeover-regression", depends_on = ["ingress-convergence"] },
   { id = "caller-regression", ref = "test:roadmap-exec-x05-caller-regression", depends_on = ["takeover-regression"] },
+]
+
+roadmap-gradle-takeover-g1 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "window-audit", ref = "test:roadmap-gradle-takeover-g1-window", depends_on = ["syntax"] },
+  { id = "real-process", ref = "test:roadmap-gradle-takeover-g1-real-process", depends_on = ["window-audit"] },
+  { id = "release-qualification", ref = "test:roadmap-gradle-takeover-g1-release", depends_on = ["real-process"] },
 ]
 
 roadmap-pres-x01 = [
@@ -2072,6 +2085,49 @@ name = "EXEC-X05 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 600
 command = ["./devtoolw", "exec-x05"]
+
+# GRADLE-TAKEOVER-G1 audits the complete ENV-X05 + EXEC-X05 promise window,
+# exercises real shim/launcher process choreography, and re-runs normal release
+# integrity without creating a parallel truth store.
+[[test]]
+id = "roadmap-gradle-takeover-g1-window"
+name = "GRADLE-TAKEOVER-G1 complete takeover promise-window audit"
+runner = "pytest"
+timeout_seconds = 420
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_gradle_takeover_g1_gate.py",
+  "tests/test_env_x05_gradle_takeover.py",
+  "tests/test_exec_x05_gradle_ingress.py",
+]
+
+[[test]]
+id = "roadmap-gradle-takeover-g1-real-process"
+name = "GRADLE-TAKEOVER-G1 authoritative shim/real-launcher/wrapper process proof"
+runner = "command"
+timeout_seconds = 480
+required_tools = ["gradle", "java"]
+command = ["python", "-m", "devtool.gradle_takeover_g1_gate"]
+
+[[test]]
+id = "roadmap-gradle-takeover-g1-release"
+name = "GRADLE-TAKEOVER-G1 completion and normal release qualification regression"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_completion_and_manpage.py",
+  "tests/test_fs03_final_release_seal.py",
+  "tests/test_release_verifier_final_integrity.py",
+  "tests/test_ov15_ov16_release_final_seal.py",
+]
+
+[[test]]
+id = "roadmap-gradle-takeover-g1-artifact-bootstrap"
+name = "GRADLE-TAKEOVER-G1 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 900
+command = ["./devtoolw", "gradle-takeover-g1"]
 
 # PRES-X01 presentation projection foundation. This overlay keeps rendering
 # surfaces as projections over RUN/EXO/RER/validation/ENV references; it does

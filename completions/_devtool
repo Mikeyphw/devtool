@@ -324,6 +324,7 @@ _devtool_commands() {
     'oci:manage PRoot-Distro OCI runtime state on named SSH workers'
     'bootstrap:provision reusable destination-specific toolchains'
     'android:inspect Android capabilities, ADB providers, and connected devices'
+    'gradle:inspect and control canonical Gradle execution and optional takeover'
     'termux:inspect native Termux providers, packages, and PRoot guests'
     'apply-overlay:transactionally apply one overlay'
     'ao:alias for apply-overlay'
@@ -342,6 +343,9 @@ _devtool_commands() {
     'inspect-artifact:inspect overlay artifact metadata, inventory, validation, and diff'
     'ia:alias for inspect-artifact'
     'artifact:inspect and maintain the produced build-artifact registry'
+    'delivery:resolve and qualify canonical delivery artifacts'
+    'repo-pack:plan and atomically publish canonical repository packs'
+    'signing-identity:manage private non-secret signing identity references'
     'tui:open the responsive terminal dashboard'
     'cleanup:archive historical repository backups'
     'bundle:create artifact bundles'
@@ -857,6 +861,34 @@ _devtool() {
             esac
           fi
           ;;
+        gradle)
+          if (( ${#line} < 2 )); then
+            _values 'gradle action' takeover real
+          else
+            case ${line[2]} in
+              takeover)
+                if (( ${#line} < 3 )); then
+                  _values 'Gradle takeover action' status enable disable doctor explain intercept
+                else
+                  case ${line[3]} in
+                    intercept)
+                      _arguments '--origin[canonical ingress origin]:origin:(shell devtool wrapper invoke workflow validation testspec artifact android ssh federation)' '--intent[typed Gradle intent]:intent:(work probe control)' '--requested-launcher[requested Gradle launcher]:launcher:' '*:Gradle argument:'
+                      ;;
+                    status|disable|doctor|explain)
+                      _arguments '--json[emit structured Gradle takeover state]'
+                      ;;
+                    enable)
+                      _arguments '--mode[takeover mode]:mode:(observe manage strict)' '--scope[takeover scope]:scope:(devtool shell both)' '--json[emit structured Gradle takeover state]'
+                      ;;
+                  esac
+                fi
+                ;;
+              real)
+                _arguments '--launcher[authoritative real Gradle launcher]:launcher:(auto wrapper system gradle)' '*:Gradle argument:'
+                ;;
+            esac
+          fi
+          ;;
         wrapper)
           if (( ${#line} < 2 )); then
             _values 'wrapper action' describe help discover resolve exec init update verify status seal
@@ -1359,9 +1391,11 @@ _devtool() {
           ;;
         clean|cl)
           _arguments \
-            '--caches[also prune repository-scoped devtool-managed caches and transient state]' \
-            '--space[prune safe global Android/toolchain caches managed by Devtool]' \
-            '--gradle-user-cache[with --space, also prune old version-specific Gradle caches and build-cache-1]' \
+            '(--project-clean --project-outputs)'{--project-clean,--project-outputs}'[clean project-owned outputs through the selected runner]' \
+            '--caches[prune repository-scoped Devtool-managed caches without project clean]' \
+            '--space[prune Devtool-managed Android/toolchain caches]' \
+            '--global-caches[include user-global Android download cache cleanup]' \
+            '--gradle-user-cache[include old version-specific Gradle caches and build-cache-1]' \
             '--space-target-free-mb[stop space cleanup after reaching this much free space]:MiB:' \
             '--managed-gradle-retention[keep this many newest Devtool-managed Gradle distributions]:count:'
           ;;
@@ -1442,8 +1476,40 @@ _devtool() {
             esac
           fi
           ;;
+        delivery)
+          if (( ${#line} < 2 )); then
+            _values 'delivery action' plan
+          else
+            case ${line[2]} in
+              plan)
+                _arguments '1:artifact:_devtool_artifact_path' '--public-runner[enforce public-runner fail-closed assurance]' '--isolation[delivery isolation mode]:mode:(worktree direct none)' '*--unsafe-authorize[authorize one typed qualification blocker]:code-reason:' '--json[emit canonical delivery plan JSON]'
+                ;;
+            esac
+          fi
+          ;;
+        repo-pack)
+          if (( ${#line} < 2 )); then
+            _values 'repository pack action' plan create
+          else
+            _arguments '-o[output repository pack]:file:_files' '--output[output repository pack]:file:_files' '--mode[repository pack mode]:mode:(worktree committed)' '--compression[repository pack compression]:compression:(tar.gz tar.zst zip)' '--commit[commit/ref to pack]:revision:' '--git-bundle[include a Git bundle]' '--pin[pin repository identity]' '--retention[pack retention policy]:policy:' '--json[emit canonical repository-pack JSON]' '*:repository root:_files -/'
+          fi
+          ;;
+        signing-identity)
+          if (( ${#line} < 2 )); then
+            _values 'signing identity action' list ls register
+          else
+            case ${line[2]} in
+              list|ls)
+                _arguments '--json[emit signing identity registry JSON]'
+                ;;
+              register)
+                _arguments '1:identity id:' '--provider[signing provider]:provider:' '--key-reference[non-secret private key reference]:reference:' '--alias[provider alias]:alias:' '--certificate-sha256[expected certificate SHA-256]:digest:' '*--purpose[allowed signing purpose]:purpose:' '*--variant[allowed signing variant]:variant:' '--secret-provider[secret reference provider]:provider:(local keyring private-file fd stdin external-command)' '--secret-reference[private secret lookup reference]:reference:' '--json[emit registered signing identity JSON]'
+                ;;
+            esac
+          fi
+          ;;
         tui)
-          _arguments '--page[initial page]:page:(dashboard build overlays workers)' '--artifact[overlay artifact to preflight]:artifact:_devtool_artifact_path' '--once[render once and exit]' '--width[override terminal width]:columns:'
+          _arguments '--page[initial page]:page:(dashboard build overlays workers)' '--artifact[overlay artifact to preflight]:artifact:_devtool_artifact_path' '--once[render once and exit]' '--width[override terminal width]:columns:' '--backend[TUI backend]:backend:(auto textual legacy)' '--legacy-tui[force the legacy Rich terminal TUI backend]' '--require-textual[fail instead of falling back when Textual is unavailable]' '--no-tui-fallback[alias for --require-textual]' '--explain-backend[print resolved TUI backend selection and exit]'
           ;;
         cleanup)
           _arguments '--dry-run[show changes without moving or deleting files]' '--prune-history-days[delete archived backup batches older than this many days]:days:'
