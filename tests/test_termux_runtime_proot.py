@@ -672,7 +672,7 @@ class ProotRunnerTests(unittest.TestCase):
             combined = " ".join(" ".join(spec.argv) for spec in specs)
             self.assertNotIn("/data/data/com.termux/files/usr/bin/python", combined)
             self.assertIn("python3 -m devtool.python_support environment-snapshot", combined)
-            self.assertIn(str(root / ".devtool" / "proot" / "python"), combined)
+            self.assertIn(str(root / ".devtool" / "environments" / "python" / "proot-distro" / "python"), combined)
             wrapped = wrap_specs_for_proot_distro(
                 specs, ProotRunnerConfig(distro="ubuntu"),
                 repo_root=root, dry_run=True,

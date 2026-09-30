@@ -145,6 +145,11 @@ workflow = "roadmap-dist-x03"
 target = "devtool"
 
 # DIST-G1 authoritative distributed identity/delivery/recovery milestone gate.
+[wrapper.commands.dist-x04]
+description = "Run the DIST-X04 operational adoption and dogfooding workflow"
+workflow = "roadmap-dist-x04"
+target = "devtool"
+
 [wrapper.commands.dist-g1]
 description = "Run the DIST-G1 authoritative identity/delivery/recovery milestone gate"
 workflow = "roadmap-dist-g1"
@@ -780,6 +785,13 @@ roadmap-dist-g2 = [
   { id = "provider-substrate", ref = "test:roadmap-dist-g2-provider-substrate", depends_on = ["window-audit"] },
   { id = "retained-authorities", ref = "test:roadmap-dist-g2-retained-authorities", depends_on = ["provider-substrate"] },
   { id = "fresh-process-parity", ref = "test:roadmap-dist-g2-real-process", depends_on = ["retained-authorities"] },
+]
+
+roadmap-dist-x04 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "operational-adoption", ref = "test:roadmap-dist-x04-operational-adoption", depends_on = ["syntax"] },
+  { id = "retained-distribution", ref = "test:roadmap-dist-x04-retained-distribution", depends_on = ["operational-adoption"] },
+  { id = "provider-dogfood", ref = "test:roadmap-dist-x04-provider-dogfood", depends_on = ["retained-distribution"] },
 ]
 
 roadmap-pres-x01 = [
@@ -3224,3 +3236,25 @@ name = "LIFE-G1 artifact bootstrap into authoritative gate workflow"
 runner = "command"
 timeout_seconds = 1200
 command = ["./devtoolw", "life-g1"]
+
+
+[[test]]
+id = "roadmap-dist-x04-operational-adoption"
+name = "DIST-X04 operational adoption projections"
+runner = "pytest"
+timeout_seconds = 420
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_dist_x04_operational_adoption.py"]
+
+[[test]]
+id = "roadmap-dist-x04-retained-distribution"
+name = "DIST-X04 retained distributed authority regression"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_dist_x03_provider_control_hierarchy.py", "tests/test_dist_g2_provider_parity_gate.py"]
+
+[[test]]
+id = "roadmap-dist-x04-provider-dogfood"
+name = "DIST-X04 provider and federation operational regression"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_ssh01_transport_environment_worker_preparation.py", "tests/test_ssh02_execution_history_recovery_convergence.py", "tests/test_ssh03_lifecycle_hardening_final_qualification.py", "tests/test_oci01_execution_provider_foundation.py", "tests/test_termux_chroot_runner.py", "tests/test_termux_runtime_proot.py"]
