@@ -601,7 +601,12 @@ def resolve_android_environment(
         "android.platform": _stable({"compile_sdk": request.compile_sdk, "package": request.platform.requested}),
         "android.build-tools": _stable({"package": caps["build-tools"].selected, "helpers": {k: capability_semantic(v) for k, v in helper_caps.items()}}),
         "android.native": _stable({"ndk": capability_semantic(ndk), "cmake": capability_semantic(cmake)}),
-        "android.gradle": _stable({"context": request.gradle_context_id, "plan": request.gradle_plan_id, "jdk": request.gradle_jdk_identity, "launcher": request.gradle_launcher_identity}),
+        # The Gradle *environment* component binds canonical context/JDK/launcher
+        # authority. The workload plan digest is execution identity and is
+        # already represented by Gradle/RER receipts; folding it here would
+        # make equivalent build/release/doctor views appear to use different
+        # Android environments.
+        "android.gradle": _stable({"context": request.gradle_context_id, "jdk": request.gradle_jdk_identity, "launcher": request.gradle_launcher_identity}),
         "android.lanes": _stable({"primary": request.primary_lane.identity, "release": request.release_lane.identity, "instrumentation": request.instrumentation_lane.identity}),
     }
     # Resolved environment identity is semantic Android state, not an audit
@@ -611,7 +616,6 @@ def resolve_android_environment(
     # unrelated PATH change.
     semantic = {
         "target": request.target,
-        "action": request.action,
         "compile_sdk": request.compile_sdk,
         "platform": request.platform.requested,
         "build_tools": caps["build-tools"].selected,
@@ -619,13 +623,11 @@ def resolve_android_environment(
         "ndk": {"selected": ndk.selected, "provider": ndk.provider, "host_mode": ndk.metadata.get("host_mode", "")},
         "cmake": {"selected": cmake.selected, "provider": cmake.provider},
         "lanes": {"primary": request.primary_lane.identity, "release": request.release_lane.identity, "instrumentation": request.instrumentation_lane.identity},
-        "gradle_context_id": request.gradle_context_id,
-        "gradle_plan_id": request.gradle_plan_id,
-        "gradle_jdk_identity": request.gradle_jdk_identity,
-        "gradle_launcher_identity": request.gradle_launcher_identity,
-        # The environment-view fingerprint is provenance. It may contain PATH
-        # differences and therefore must not fragment semantic environment IDs.
-        "components": component_identities,
+        # The environment-view fingerprint, action and Gradle workload plan are
+        # provenance/execution identity. Keep the linked Gradle component on the
+        # resolved record for RER, but do not let a workload-specific Gradle
+        # context fragment the canonical Android SDK/native/lane environment.
+        "components": {k: v for k, v in component_identities.items() if k != "android.gradle"},
     }
     resolved = ResolvedAndroidEnvironment(
         environment_id=_stable(semantic), request_id=request.request_id, qualification_id=qualification.qualification_id,

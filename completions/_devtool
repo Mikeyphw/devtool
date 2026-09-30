@@ -1280,13 +1280,18 @@ _devtool() {
           ;;
         android)
           if (( ${#line} < 2 )); then
-            _values 'android action' capabilities devices doctor signing install uninstall launch stop restart clear-data shell push pull logcat screenshot permission instrumentation smoke release
+            _values 'android action' capabilities devices doctor environment signing install uninstall launch stop restart clear-data shell push pull logcat screenshot permission instrumentation smoke release
           else
             case ${line[2]} in
               capabilities|doctor)
                 _arguments \
                   '--provider[ADB provider override]:provider:(auto sdk termux termux-adb path none)' \
                   '--adb-path[explicit ADB executable path]:executable:_files' \
+                  '--format[output format]:format:(text json)'
+                ;;
+              environment)
+                _arguments \
+                  '--action[Android environment action view]:action:(build package release test lint instrumentation doctor explain)' \
                   '--format[output format]:format:(text json)'
                 ;;
               devices)
@@ -1358,10 +1363,10 @@ _devtool() {
                 _arguments '1:permission action:(grant revoke)' '2:package:package:' '3:permission:permission:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
                 ;;
               release)
-                _arguments '--device-tests[release device-test policy]:policy:(disabled when-device-present required)' '--previous-apk[previous APK for upgrade smoke]:file:_files' '--package[application package]:package:' '--activity[launch activity]:activity:' '--evidence-output[immutable release-evidence JSON]:file:_files' '--no-unit-tests[skip unit-test gate]' '--no-lint[skip lint gate]' '--no-install-smoke[skip install smoke]' '--no-upgrade-smoke[skip upgrade smoke]' '--no-verify-signature[skip signature verification]' '--no-verify-certificate-identity[skip expected signer comparison]' '--format[output format]:format:(text json)'
+                _arguments '--module[release module lane override]:module:' '--device-tests[release device-test policy]:policy:(disabled when-device-present required)' '--previous-apk[previous APK for upgrade smoke]:file:_files' '--package[application package]:package:' '--activity[launch activity]:activity:' '--evidence-output[immutable release-evidence JSON]:file:_files' '--no-unit-tests[skip unit-test gate]' '--no-lint[skip lint gate]' '--no-install-smoke[skip install smoke]' '--no-upgrade-smoke[skip upgrade smoke]' '--no-verify-signature[skip signature verification]' '--no-verify-certificate-identity[skip expected signer comparison]' '--format[output format]:format:(text json)'
                 ;;
               instrumentation)
-                _arguments '--class[test class]:class:' '--method[test method]:method:' '--annotation[required annotation]:annotation:' '--not-annotation[excluded annotation]:annotation:' '--size[test size]:size:(small medium large)' '--runner-arg[instrumentation runner KEY=VALUE]:argument:' '--skip-build[reuse existing app/test APKs]' '--format[output format]:format:(text json)'
+                _arguments '--module[instrumentation module lane override]:module:' '--class[test class]:class:' '--method[test method]:method:' '--annotation[required annotation]:annotation:' '--not-annotation[excluded annotation]:annotation:' '--size[test size]:size:(small medium large)' '--runner-arg[instrumentation runner KEY=VALUE]:argument:' '--skip-build[reuse existing app/test APKs]' '--format[output format]:format:(text json)'
                 ;;
               smoke)
                 _arguments '1:smoke gate:(install upgrade cold-start restart restore-restart process-death signed-artifact)' '--apk[APK/artifact path]:file:_files' '--old-apk[previous APK for upgrade smoke]:file:_files' '--package[application package]:package:' '--activity[activity/component]:activity:' '--expected-cert-sha256[expected signing certificate SHA-256]:digest:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
@@ -1387,7 +1392,7 @@ _devtool() {
           fi
           ;;
         release|rel)
-          _arguments '--device-tests[release device-test policy]:policy:(disabled when-device-present required)' '--previous-apk[previous APK for upgrade smoke]:file:_files' '--package[application package]:package:' '--activity[launch activity]:activity:' '--evidence-output[immutable release-evidence JSON]:file:_files' '--no-unit-tests[skip unit-test gate]' '--no-lint[skip lint gate]' '--no-install-smoke[skip install smoke]' '--no-upgrade-smoke[skip upgrade smoke]' '--no-verify-signature[skip signature verification]' '--no-verify-certificate-identity[skip expected signer comparison]' '--format[output format]:format:(text json)'
+          _arguments '--module[release module lane override]:module:' '--device-tests[release device-test policy]:policy:(disabled when-device-present required)' '--previous-apk[previous APK for upgrade smoke]:file:_files' '--package[application package]:package:' '--activity[launch activity]:activity:' '--evidence-output[immutable release-evidence JSON]:file:_files' '--no-unit-tests[skip unit-test gate]' '--no-lint[skip lint gate]' '--no-install-smoke[skip install smoke]' '--no-upgrade-smoke[skip upgrade smoke]' '--no-verify-signature[skip signature verification]' '--no-verify-certificate-identity[skip expected signer comparison]' '--format[output format]:format:(text json)'
           ;;
         clean|cl)
           _arguments \

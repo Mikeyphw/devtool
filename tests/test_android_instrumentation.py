@@ -108,6 +108,8 @@ INSTRUMENTATION_STATUS_CODE: -2
     def test_android_runner_builds_device_instrumentation_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / "settings.gradle").write_text("rootProject.name='instrumentation-fixture'\n", encoding="utf-8")
+            (root / "build.gradle").write_text("tasks.register('noop')\n", encoding="utf-8")
             config = ProjectConfig(
                 repo_root=root,
                 project_root=str(root),
@@ -123,8 +125,10 @@ INSTRUMENTATION_STATUS_CODE: -2
                     "test_selection": {"instrumented": True, "classes": ["demo.UiTest"]},
                 },
             )
-            spec = build_specs(config, "test")[0]
+            specs = build_specs(config, "test")
+            spec = next(item for item in specs if "devtool.android_instrumentation" in item.argv)
 
+        self.assertTrue(any(item.metadata.get("instrumentation_build_owned_by_gradle_planner") for item in specs))
         self.assertEqual(spec.name, "instrumentation")
         self.assertIn("devtool.android_instrumentation", spec.argv)
         self.assertIn("serial-1", spec.argv)
@@ -132,21 +136,25 @@ INSTRUMENTATION_STATUS_CODE: -2
         self.assertIn("sudo am instrument", spec.argv)
         self.assertIn("--aapt2-provider", spec.argv)
         self.assertIn("termux", spec.argv)
-        self.assertIn("--gradle-arg=-Dorg.gradle.parallel=true", spec.argv)
-        self.assertIn("--gradle-arg=-Pdemo.flag=true", spec.argv)
+        build_spec = next(item for item in specs if item.name == "instrumentation-build")
+        self.assertIn("-Dorg.gradle.parallel=true", build_spec.argv)
+        self.assertIn("-Pdemo.flag=true", build_spec.argv)
+        self.assertNotIn("--gradle-arg=-Dorg.gradle.parallel=true", spec.argv)
+        self.assertNotIn("--gradle-arg=-Pdemo.flag=true", spec.argv)
+        self.assertTrue(spec.metadata["instrumentation_skip_build"])
 
-        # Prove the exact generated argv is accepted by the instrumentation CLI.
+        # Prove the exact generated device argv is accepted by the instrumentation CLI.
+        # Gradle arguments belong to the planner-owned build spec, not the device spec.
         parser = android_instrumentation.build_parser()
         parsed = parser.parse_args(spec.argv[3:])
-        self.assertEqual(
-            parsed.gradle_arg,
-            ["-Dorg.gradle.parallel=true", "-Pdemo.flag=true"],
-        )
+        self.assertEqual(parsed.gradle_arg, [])
         self.assertEqual(spec.metadata["report_parser"], "android-instrumentation")
 
     def test_release_pipeline_preserves_configured_debug_instrumentation_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / "settings.gradle").write_text("rootProject.name='instrumentation-fixture'\n", encoding="utf-8")
+            (root / "build.gradle").write_text("tasks.register('noop')\n", encoding="utf-8")
             config = ProjectConfig(
                 repo_root=root,
                 project_root=str(root),
@@ -162,8 +170,10 @@ INSTRUMENTATION_STATUS_CODE: -2
                     },
                 },
             )
-            spec = build_specs(config, "instrumentation")[0]
+            specs = build_specs(config, "instrumentation")
+            spec = next(item for item in specs if "devtool.android_instrumentation" in item.argv)
 
+        self.assertTrue(any(item.metadata.get("instrumentation_build_owned_by_gradle_planner") for item in specs))
         parser = android_instrumentation.build_parser()
         parsed = parser.parse_args(spec.argv[3:])
         self.assertEqual(parsed.variant, "debug")
@@ -178,9 +188,11 @@ INSTRUMENTATION_STATUS_CODE: -2
         self.assertEqual(spec.metadata["instrumentation_variant"], "debug")
         self.assertEqual(spec.metadata["release_variant"], "release")
 
-    def test_explicit_instrumentation_variant_overrides_configured_task_lane(self) -> None:
+    def test_explicit_instrumentation_variant_rejects_conflicting_configured_task_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / "settings.gradle").write_text("rootProject.name='instrumentation-fixture'\n", encoding="utf-8")
+            (root / "build.gradle").write_text("tasks.register('noop')\n", encoding="utf-8")
             config = ProjectConfig(
                 repo_root=root,
                 project_root=str(root),
@@ -199,15 +211,8 @@ INSTRUMENTATION_STATUS_CODE: -2
                     },
                 },
             )
-            spec = build_specs(config, "instrumentation")[0]
-
-        parser = android_instrumentation.build_parser()
-        parsed = parser.parse_args(spec.argv[3:])
-        self.assertEqual(parsed.variant, "benchmark")
-        self.assertEqual(
-            spec.metadata["gradle_tasks"],
-            [":app:assembleBenchmark", ":app:assembleBenchmarkAndroidTest"],
-        )
+            with self.assertRaisesRegex(ValueError, "conflicts with variant-bound task"):
+                build_specs(config, "instrumentation")
 
     def test_instrumentation_build_injects_native_aapt2_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

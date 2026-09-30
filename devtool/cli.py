@@ -1764,6 +1764,10 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--adb-path", default="", help="Explicit ADB executable path")
         sub.add_argument("--format", choices=("text", "json"), default="text")
 
+    android_environment = android_sub.add_parser("environment", help="Explain the canonical Android environment identity and qualification")
+    android_environment.add_argument("--action", choices=("build", "package", "release", "test", "lint", "instrumentation", "doctor", "explain"), default="explain")
+    android_environment.add_argument("--format", choices=("text", "json"), default="text")
+
     android_capabilities = android_sub.add_parser("capabilities", help="Show the resolved Android execution context and tool providers")
     add_android_adb_flags(android_capabilities)
 
@@ -15885,7 +15889,7 @@ def _main_after_parse(
         return 0 if bool(payload.get("ok", False)) else 1
 
     if args.command == "android":
-        from .android.cli import android_capabilities_payload, android_devices_payload, android_device_doctor_payload
+        from .android.cli import android_environment_payload, android_capabilities_payload, android_devices_payload, android_device_doctor_payload
 
         repo = Path(args.repo or Path.cwd()).resolve()
         config = load_project_config(
@@ -15899,6 +15903,21 @@ def _main_after_parse(
         provider = str(getattr(args, "provider", "") or "")
         adb_path = str(getattr(args, "adb_path", "") or "")
         output_format = str(getattr(args, "format", "text") or "text")
+        if action == "environment":
+            payload = android_environment_payload(config, action=str(getattr(args, "action", "explain") or "explain"))
+            if output_format == "json":
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                qualification = payload["qualification"]
+                rows = [
+                    ("status", qualification["status"]),
+                    ("environment_id", payload.get("environment_id") or "unqualified"),
+                    ("sdk", qualification.get("sdk", {}).get("root") or "not discovered"),
+                ]
+                for name, identity in sorted((payload.get("component_identities") or {}).items()):
+                    rows.append((name, identity))
+                render_status_table(rows)
+            return 0 if payload.get("ok") else 1
         if action == "capabilities":
             payload = android_capabilities_payload(config, provider=provider, adb_path=adb_path)
             if output_format == "json":

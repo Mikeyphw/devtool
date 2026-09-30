@@ -20,6 +20,7 @@ from .federation_gate2 import build_federation_gate2_report
 from .federation_final_seal import build_federation_final_seal_report
 from .federation_observability import build_federation_observability
 from .android.capabilities import resolve_android_execution_context
+from .android.environment import resolve_android_environment
 from .android.devices import AndroidDeviceManager
 from .host_context import detect_host_context
 from .privilege import PrivilegeRequest, load_global_privilege_policy, qualify_privilege_providers
@@ -67,6 +68,18 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
     for package in ("pip", "setuptools", "wheel"):
         value = _package_version(package)
         checks.append(DoctorCheck("runtime", package, "ok" if value != "missing" else "missing", value))
+
+    _android_request, android_qualification, android_environment = resolve_android_environment(
+        config, action="doctor", device_required=False, fail_closed=False,
+    )
+    if android_environment is not None:
+        checks.append(DoctorCheck(
+            "android", "environment", "ok",
+            f"{android_environment.environment_id} [{android_qualification.qualification_id}]",
+        ))
+    else:
+        detail = "; ".join(android_qualification.diagnostics) or "canonical Android environment is not qualified"
+        checks.append(DoctorCheck("android", "environment", "optional", detail))
 
     android_context = resolve_android_execution_context(config)
     for name in ("java", "gradle", "build-tools", "cmake", "aapt2", "apksigner", "zipalign", "ndk"):

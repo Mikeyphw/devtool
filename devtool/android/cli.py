@@ -9,6 +9,25 @@ from ..models import ProjectConfig
 from .operations import resolve_android_operations
 
 
+
+def android_environment_payload(config: ProjectConfig, *, action: str = "build") -> dict[str, Any]:
+    """Explain the canonical Android environment authority without device side effects."""
+    from .environment import resolve_android_environment
+
+    request, qualification, resolved = resolve_android_environment(
+        config, action=action, device_required=False, fail_closed=False,
+    )
+    return {
+        "schema_version": 1,
+        "action": action,
+        "request": request.as_dict(),
+        "qualification": qualification.as_dict(),
+        "environment": resolved.as_dict() if resolved is not None else None,
+        "environment_id": resolved.environment_id if resolved is not None else "",
+        "component_identities": dict(resolved.component_identities) if resolved is not None else {},
+        "ok": qualification.ok and resolved is not None,
+    }
+
 def android_capabilities_payload(config: ProjectConfig, *, provider: str = "", adb_path: str = "") -> dict[str, Any]:
     operations = resolve_android_operations(config, adb_provider=provider or None, adb_path=adb_path or None)
     return operations.context.as_dict()
@@ -281,4 +300,4 @@ def render_android_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
 
-__all__ = ["android_capabilities_payload", "android_devices_payload", "android_device_doctor_payload", "android_signing_payload", "android_device_operation_payload", "android_smoke_payload", "android_instrumentation_payload", "render_android_payload"]
+__all__ = ["android_environment_payload", "android_capabilities_payload", "android_devices_payload", "android_device_doctor_payload", "android_signing_payload", "android_device_operation_payload", "android_smoke_payload", "android_instrumentation_payload", "render_android_payload"]

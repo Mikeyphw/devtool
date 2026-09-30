@@ -40,6 +40,11 @@ def _config(root: Path, android: dict, *, env: dict[str, str] | None = None) -> 
     )
 
 
+
+def _gradle_project(root: Path) -> None:
+    (root / "settings.gradle").write_text("rootProject.name='android-g1-fixture'\n", encoding="utf-8")
+    (root / "build.gradle").write_text("tasks.register('noop')\n", encoding="utf-8")
+
 def _context(*, adb: str = "/fake/adb", apksigner: str = "/fake/apksigner") -> AndroidExecutionContext:
     runtime = RuntimeIdentity("linux", "host", "x86_64", "glibc")
     tools = {
@@ -206,9 +211,12 @@ def test_nested_signing_and_instrumentation_config_round_trip(tmp_path: Path) ->
 
 def test_project_runner_uses_canonical_instrumentation_adapter(tmp_path: Path) -> None:
     from devtool.project_runners import AndroidGradleRunner
+    _gradle_project(tmp_path)
     config = _config(tmp_path, {"instrumentation": {"policy": "required"}, "adb": {"device_policy": "first-physical"}})
     config.runner_options["test_selection"] = {"instrumented": True}
-    spec = AndroidGradleRunner().build_specs(config, "test")[0]
+    specs = AndroidGradleRunner().build_specs(config, "test")
+    spec = next(item for item in specs if "devtool.android_instrumentation" in item.argv)
+    assert any(item.metadata.get("instrumentation_build_owned_by_gradle_planner") for item in specs)
     assert "devtool.android_instrumentation" in spec.argv
     assert "--canonical" in spec.argv
     assert "--policy" in spec.argv and spec.argv[spec.argv.index("--policy") + 1] == "required"
@@ -322,6 +330,7 @@ def test_fd_secret_is_not_consumed_by_signing_init_preflight(tmp_path: Path, mon
 
 def test_planned_android_spec_never_contains_signing_secret_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from devtool.project_runners import AndroidGradleRunner
+    _gradle_project(tmp_path)
     keystore = tmp_path / "release.p12"
     keystore.write_bytes(b"placeholder")
     monkeypatch.setenv("DEVTOOL_ANDROID_SIGNING_RUNTIME_DIR", str(tmp_path / "runtime"))
@@ -335,8 +344,9 @@ def test_planned_android_spec_never_contains_signing_secret_values(tmp_path: Pat
         }},
     })
     config.runner_options["test_selection"] = {"instrumented": True}
-    spec = AndroidGradleRunner().build_specs(config, "test")[0]
-    rendered = repr(spec)
+    specs = AndroidGradleRunner().build_specs(config, "test")
+    spec = next(item for item in specs if "devtool.android_instrumentation" in item.argv)
+    rendered = repr(specs)
     assert "planned-store-secret" not in rendered
     assert "planned-key-secret" not in rendered
     assert spec.metadata["android_signing_required"] is True

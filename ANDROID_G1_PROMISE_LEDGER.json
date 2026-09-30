@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "gate": "ANDROID-G1",
+  "full_plan_position": "39/70",
+  "gate_window_position": "3/3",
+  "scope": "authoritative Android environment/device milestone over ANDROID-X01 + ANDROID-X02",
+  "status": "PREPARED_LOCAL_QUALIFIED_PENDING_NATIVE_TERMUX_GATE_V3",
+  "base": {
+    "android_x01": {
+      "status": "CLOSED_ON_NATIVE_TERMUX",
+      "run": "3f3d1caccd844e8eaa00821de79f0638",
+      "commit": "5127425"
+    },
+    "android_x02": {
+      "status": "USER_REPORTED_APPLIED_V3",
+      "run": "not supplied",
+      "commit": "not supplied",
+      "artifact": "android_x02_execution_snapshot_device_fabric_v3.zip"
+    }
+  },
+  "window_promises": {
+    "ANDROID-P001": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P002": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P003": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P004": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P005": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P006": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P007": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P008": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P009": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P010": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P011": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P012": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P013": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P014": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P015": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P016": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P020": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P021": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P023": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P024": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P025": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P026": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P027": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P028": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P029": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P030": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P031": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P032": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P033": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P034": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P035": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P036": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P037": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P038": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P039": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P040": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P041": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P042": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P043": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P044": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P045": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P046": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P047": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    },
+    "ANDROID-P048": {
+      "status": "SEALED_BY_GATE_ON_SUCCESS"
+    }
+  },
+  "later_owned": {
+    "ANDROID-P017": {
+      "status": "OWNED_BY_ANDROID_X03",
+      "reason": "canonical InstrumentationIntent"
+    },
+    "ANDROID-P018": {
+      "status": "OWNED_BY_ANDROID_X03",
+      "reason": "ResolvedInstrumentationPlan"
+    },
+    "ANDROID-P019": {
+      "status": "OWNED_BY_ANDROID_X03",
+      "reason": "InstrumentationExecutionReceipt"
+    },
+    "ANDROID-P022": {
+      "status": "PARTIAL_X02_DEVICE_LEASE_DELIVERED_X03_LIFECYCLE_REMAINDER",
+      "reason": "instrumentation install/run/evidence/cleanup lease lifecycle remains X03-owned"
+    }
+  },
+  "authoritative_assurances": {
+    "G1-A001": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "explicit env cannot leak ambient SDK"
+    },
+    "G1-A002": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "empty/incomplete Build Tools/NDK cannot qualify"
+    },
+    "G1-A003": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "exact platform/helper/native requirements are honored"
+    },
+    "G1-A004": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "builder == doctor == explain == release environment identity"
+    },
+    "G1-A005": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "release missing/hash-drift artifact cannot pass"
+    },
+    "G1-A006": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "evidence collision fails closed"
+    },
+    "G1-A007": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "failed device readiness blocks dependent side effects"
+    },
+    "G1-A008": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "direct/runner/release/validation share one lane resolver"
+    },
+    "G1-A009": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "Host/Gradle identities are linked, not reconstructed"
+    },
+    "G1-A010": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "device transport is action-aware and Host-owned"
+    },
+    "G1-A011": {
+      "status": "PROVED_CONSTRUCTION_PENDING_NATIVE_TERMUX_REPLAY",
+      "promise": "remote child returns actual destination Android environment identity"
+    }
+  },
+  "gate_owned_remediation": [
+    "Canonical ResolvedAndroidEnvironment identity no longer includes action/workload-plan identity; android.gradle remains a linked component for dependent RER invalidation.",
+    "Doctor and android environment explain now consume the canonical ResolvedAndroidEnvironment authority instead of reconstructing legacy Android context truth.",
+    "Instrumentation retained fixtures now use real Gradle markers, select semantic device specs rather than list positions, and fail closed on explicit-lane/task conflicts.",
+    "Gradle arguments remain on the planner-owned instrumentation build spec; the canonical device spec is --skip-build and does not duplicate Gradle execution.",
+    "Zsh completion exposes android environment --action plus release/instrumentation --module and packaged/runtime completion bytes are identical.",
+    "AOPS04 completion regression now validates required Android actions semantically instead of freezing unrelated action ordering.",
+    "G1 provider-sensitive tests are now hermetic: cross-surface identity uses a synthetic Termux prefix/provider set, and incomplete Build Tools qualification pins a synthetic host with empty PATH.",
+    "Production Termux helper precedence is unchanged; remediation is test-boundary isolation only."
+  ],
+  "audit_loop": [
+    {
+      "round": 1,
+      "result": "gaps_found",
+      "details": "doctor/environment identity convergence + initial stale instrumentation fixtures"
+    },
+    {
+      "round": 2,
+      "result": "gaps_found",
+      "details": "full workflow exposed three additional stale tests/test_android_instrumentation.py contracts"
+    },
+    {
+      "round": 3,
+      "result": "gaps_found",
+      "details": "completion/manpage audit exposed --action/--module drift and brittle AOPS04 ordering assertion"
+    },
+    {
+      "round": 4,
+      "result": "clean",
+      "details": "./devtoolw android-g1: 260 passed, 0 failed, 0 skipped, 0 warnings, 0 errors across 5 stages"
+    },
+    {
+      "round": 5,
+      "result": "gaps_found_native_termux",
+      "details": "native replay e3286d8130cc4d43aa706833a7ff84a7 exposed two live-provider leaks in G1 tests; transactional rollback verified"
+    },
+    {
+      "round": 6,
+      "result": "clean",
+      "details": "post-remediation ./devtoolw android-g1: 260 passed, 0 failed, 0 skipped, 0 warnings, 0 errors across 5 stages"
+    }
+  ],
+  "validation": {
+    "workflow": "./devtoolw android-g1",
+    "construction_host_override": "desktop-linux only for local construction; production target remains native-termux",
+    "passed": 260,
+    "failed": 0,
+    "skipped": 0,
+    "warnings": 0,
+    "errors": 0,
+    "stages_passed": 5,
+    "process_proof": "construction used test-only Gradle/ADB executables plus real Java; artifact validation forbids those overrides on authoritative native-Termux replay",
+    "post_native_remediation": true,
+    "native_attempt_replayed_locally": true
+  },
+  "next": {
+    "after_gate_success": "DIST-X01 40/70",
+    "remaining_in_android_window": 0,
+    "next_major_scope": "DIST"
+  },
+  "native_termux_attempts": [
+    {
+      "artifact": "android_g1_environment_device_milestone_gate_v1.zip",
+      "run": "218614ddda5f440ba9845f7fb9ee82ed",
+      "result": "PRE_APPLY_PACKAGING_FAILURE",
+      "reason": "non-portable first-class base_tree unavailable in --copy execution repository",
+      "rollback": "not needed; artifact did not apply"
+    },
+    {
+      "artifact": "android_g1_environment_device_milestone_gate_v2.zip",
+      "run": "e3286d8130cc4d43aa706833a7ff84a7",
+      "result": "VALIDATION_FAILED_ROLLED_BACK",
+      "reason": "two G1 tests leaked live Termux provider availability into fixtures intended to be provider-explicit",
+      "rollback": "verified; 16 paths restored/removed to X02-v3 state"
+    }
+  ],
+  "packaging": {
+    "active_candidate": "android_g1_environment_device_milestone_gate_v3.zip",
+    "portable_copy_contract": "per-entry source_sha256 for 11 modifications + conflict-fail for 5 additions",
+    "base_tree_required": false,
+    "clean_base_rehearsal": "qualification/apply succeeded; desktop native-termux preflight failed as intended; rollback/source hashes verified"
+  }
+}

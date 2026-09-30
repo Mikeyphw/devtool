@@ -150,6 +150,8 @@ def test_instrumentation_config_string_false_and_malformed_values(tmp_path: Path
 
 
 def test_android_runner_instrumentation_cli_boolean_strings_and_runner_args(tmp_path: Path) -> None:
+    (tmp_path / "settings.gradle").write_text("rootProject.name='android-g1-fixture'\n", encoding="utf-8")
+    (tmp_path / "build.gradle").write_text("tasks.register('noop')\n", encoding="utf-8")
     cfg = _config(
         tmp_path,
         android={
@@ -162,7 +164,8 @@ def test_android_runner_instrumentation_cli_boolean_strings_and_runner_args(tmp_
             }
         },
     )
-    spec = AndroidGradleRunner().build_specs(cfg, "instrumentation")[0]
+    specs = AndroidGradleRunner().build_specs(cfg, "instrumentation")
+    spec = next(item for item in specs if "devtool.android_instrumentation" in item.argv)
     assert "--keep-installed" not in spec.argv
     assert "--no-logcat-on-failure" in spec.argv
     assert "--no-screenshot-on-failure" in spec.argv

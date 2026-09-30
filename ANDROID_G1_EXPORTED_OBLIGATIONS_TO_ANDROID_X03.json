@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "source_gate": "ANDROID-G1",
+  "source_position": "39/70",
+  "destination_overlay": "ANDROID-X03",
+  "status": "DEFERRED_LATER_ANDROID_SCOPE_NOT_PART_OF_G1",
+  "promises": {
+    "ANDROID-P017": "Canonical InstrumentationIntent",
+    "ANDROID-P018": "ResolvedInstrumentationPlan as sole executable semantic plan",
+    "ANDROID-P019": "InstrumentationExecutionReceipt",
+    "ANDROID-P022": "Complete DeviceLease-bound instrumentation install/run/evidence/cleanup lifecycle"
+  },
+  "rule": "Do not reinterpret G1 environment/device closure as delivery of X03 instrumentation intent/result ownership."
+}

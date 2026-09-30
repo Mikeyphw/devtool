@@ -155,7 +155,9 @@ def test_completion_exposes_release_surfaces() -> None:
     from devtool.completion import ZSH_COMPLETION
     assert "'release:run the canonical Android release pipeline'" in ZSH_COMPLETION
     assert "release|rel)" in ZSH_COMPLETION
-    assert "android action' capabilities devices doctor signing" in ZSH_COMPLETION and " smoke release" in ZSH_COMPLETION
+    android_actions = next(line for line in ZSH_COMPLETION.splitlines() if "_values 'android action'" in line)
+    for action in ("capabilities", "devices", "doctor", "environment", "signing", "smoke", "release"):
+        assert action in android_actions
 
 
 def test_aops04_report_and_final_seal_contract_are_present() -> None:

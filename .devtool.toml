@@ -109,6 +109,12 @@ description = "Run the ANDROID-X02 execution snapshot/device fabric workflow"
 workflow = "roadmap-android-x02"
 target = "devtool"
 
+# ANDROID-G1 authoritative environment/device milestone gate.
+[wrapper.commands.android-g1]
+description = "Run the ANDROID-G1 authoritative environment/device milestone gate"
+workflow = "roadmap-android-g1"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
@@ -650,6 +656,14 @@ roadmap-android-x02 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "execution-snapshot-device-fabric", ref = "test:roadmap-android-x02-execution-snapshot-device-fabric", depends_on = ["syntax"] },
   { id = "retained-android-authorities", ref = "test:roadmap-android-x02-retained-authorities", depends_on = ["execution-snapshot-device-fabric"] },
+]
+
+roadmap-android-g1 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "window-audit", ref = "test:roadmap-android-g1-window", depends_on = ["syntax"] },
+  { id = "instrumentation-fixture-reseal", ref = "test:roadmap-android-g1-instrumentation-fixtures", depends_on = ["window-audit"] },
+  { id = "platform-native-destination", ref = "test:roadmap-android-g1-platform-native-destination", depends_on = ["instrumentation-fixture-reseal"] },
+  { id = "real-process-device", ref = "test:roadmap-android-g1-real-process", depends_on = ["platform-native-destination"] },
 ]
 
 roadmap-pres-x01 = [
@@ -2219,6 +2233,67 @@ name = "ANDROID-X02 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 900
 command = ["./devtoolw", "android-x02"]
+
+
+# ANDROID-G1 audits the complete X01+X02 environment/device window and runs
+# the broad Android/Gradle/device proofs deliberately deferred by both
+# implementation overlays. The process proof requires native Termux.
+[[test]]
+id = "roadmap-android-g1-window"
+name = "ANDROID-G1 complete X01/X02 promise-window audit"
+runner = "pytest"
+timeout_seconds = 480
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_g1_environment_device_gate.py",
+  "tests/test_android_x01_environment_release.py",
+  "tests/test_android_x02_execution_snapshot_device_fabric.py",
+  "tests/test_aops02_android_execution_device_fabric.py",
+  "tests/test_aops04_android_release_evidence_final_seal.py",
+  "tests/test_completion_and_manpage.py",
+]
+
+[[test]]
+id = "roadmap-android-g1-instrumentation-fixtures"
+name = "ANDROID-G1 instrumentation planner fixture contract reseal"
+runner = "pytest"
+timeout_seconds = 420
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_aops03_android_signing_instrumentation_operations.py",
+  "tests/test_rem11_android_devices_release_gates.py",
+  "tests/test_android_instrumentation.py",
+]
+
+[[test]]
+id = "roadmap-android-g1-platform-native-destination"
+name = "ANDROID-G1 platform/native/bootstrap destination authority regression"
+runner = "pytest"
+timeout_seconds = 480
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_rem10_android_toolchain_resolution.py",
+  "tests/test_android_ndk_native_bionic.py",
+  "tests/test_android_ndk_host_fallback.py",
+  "tests/test_termux_native_android_providers.py",
+  "tests/test_android_staged_runtime.py",
+  "tests/test_bootstrap_command.py",
+]
+
+[[test]]
+id = "roadmap-android-g1-real-process"
+name = "ANDROID-G1 authoritative native-Termux Gradle/ADB/artifact/device process proof"
+runner = "command"
+timeout_seconds = 600
+required_tools = ["gradle", "java", "adb"]
+command = ["python", "-m", "devtool.android_g1_gate"]
+
+[[test]]
+id = "roadmap-android-g1-artifact-bootstrap"
+name = "ANDROID-G1 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 1200
+command = ["./devtoolw", "android-g1"]
 
 # PRES-X01 presentation projection foundation. This overlay keeps rendering
 # surfaces as projections over RUN/EXO/RER/validation/ENV references; it does
