@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "roadmap_id": "DIST-G2",
+  "position": "48/70",
+  "gate_window": "2/2",
+  "status": "prepared_local_qualified_pending_native_termux_apply",
+  "audited_window": ["DIST-X01", "DIST-X02", "DIST-G1", "DIST-X03", "DIST-G2"],
+  "provider_parity": ["local subprocess", "parallel federation", "nested federation", "chroot", "PRoot", "OCI", "SSH foreground", "SSH detached + reconnect"],
+  "proved": [
+    "equivalent semantic RUN event truth across provider classes",
+    "equivalent delivery acknowledgement sequence and reconciliation semantics",
+    "typed control request/ack remains provider-independent and telemetry-independent",
+    "provider/session binding remains source-attestation bound",
+    "nested route/hop identity remains cycle protected",
+    "generic RUN hierarchy/progress truth remains provider-independent",
+    "provider staging/session/cursor cleanup remains LIFE-owned and destination-local",
+    "SSH-01/02/03 transport/reconnect authority is retained",
+    "FRX source/attestation/recovery/hierarchy authority is retained without duplication"
+  ],
+  "gate_owned_fixes": [],
+  "construction_validation": {"gate_specific": 3, "combined_boundary": 217, "workflow": 217, "failed": 0, "skipped": 0, "stages_passed": 5, "warnings": 0, "errors": 0},
+  "next": "TEST-X03 49/70",
+  "remaining_in_dist_before_next_scope": 0,
+  "next_major_scope": "TEST"
+}

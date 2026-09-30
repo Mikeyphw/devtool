@@ -150,6 +150,12 @@ description = "Run the DIST-G1 authoritative identity/delivery/recovery mileston
 workflow = "roadmap-dist-g1"
 target = "devtool"
 
+# DIST-G2 authoritative provider parity milestone gate.
+[wrapper.commands.dist-g2]
+description = "Run the DIST-G2 authoritative distributed provider parity milestone gate"
+workflow = "roadmap-dist-g2"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
@@ -754,6 +760,14 @@ roadmap-dist-g1 = [
   { id = "retained-federation", ref = "test:roadmap-dist-g1-retained-federation", depends_on = ["window-audit"] },
   { id = "provider-substrate", ref = "test:roadmap-dist-g1-provider-substrate", depends_on = ["retained-federation"] },
   { id = "fresh-process-proof", ref = "test:roadmap-dist-g1-real-process", depends_on = ["provider-substrate"] },
+]
+
+roadmap-dist-g2 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "window-audit", ref = "test:roadmap-dist-g2-window", depends_on = ["syntax"] },
+  { id = "provider-substrate", ref = "test:roadmap-dist-g2-provider-substrate", depends_on = ["window-audit"] },
+  { id = "retained-authorities", ref = "test:roadmap-dist-g2-retained-authorities", depends_on = ["provider-substrate"] },
+  { id = "fresh-process-parity", ref = "test:roadmap-dist-g2-real-process", depends_on = ["retained-authorities"] },
 ]
 
 roadmap-pres-x01 = [
@@ -2657,6 +2671,56 @@ name = "DIST-G1 fresh-process replay-integrity and exact cursor-resume proof"
 runner = "command"
 timeout_seconds = 300
 command = ["python", "-m", "devtool.dist_g1_gate"]
+
+[[test]]
+id = "roadmap-dist-g2-window"
+name = "DIST-G2 DIST-X01/X02/G1/X03 promise and provider parity audit"
+runner = "pytest"
+timeout_seconds = 900
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_dist_g2_provider_parity_gate.py",
+  "tests/test_dist_x03_provider_control_hierarchy.py",
+  "tests/test_dist_g1_identity_delivery_recovery_gate.py",
+  "tests/test_dist_x02_async_transport.py",
+  "tests/test_dist_x01_delegation_ingest.py",
+]
+
+[[test]]
+id = "roadmap-dist-g2-provider-substrate"
+name = "DIST-G2 local/chroot/PRoot/OCI/SSH foreground-detached provider substrate parity"
+runner = "pytest"
+timeout_seconds = 1200
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_termux_chroot_runner.py",
+  "tests/test_oci02_proot_distro_lifecycle.py",
+  "tests/test_ssh01_transport_environment_worker_preparation.py",
+  "tests/test_ssh02_execution_history_recovery_convergence.py",
+  "tests/test_ssh03_lifecycle_hardening_final_qualification.py",
+]
+
+[[test]]
+id = "roadmap-dist-g2-retained-authorities"
+name = "DIST-G2 retained FRX source attestation recovery hierarchy and LIFE ownership authority"
+runner = "pytest"
+timeout_seconds = 1200
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_frx06_federation_execution_lineage.py",
+  "tests/test_frx_y01_parallel_federation_scheduler.py",
+  "tests/test_frx_y10_hierarchical_federation.py",
+  "tests/test_git_frx14_federated_cancellation_recovery.py",
+  "tests/test_life_x03_generated_cleanup_ownership.py",
+  "tests/test_life_g2_ownership_retention_gate.py",
+]
+
+[[test]]
+id = "roadmap-dist-g2-real-process"
+name = "DIST-G2 fresh-process provider semantic/control/hierarchy parity proof"
+runner = "command"
+timeout_seconds = 420
+command = ["python", "-m", "devtool.dist_g2_gate"]
 
 [[test]]
 id = "roadmap-dist-g1-artifact-bootstrap"
