@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "DIST-X01",
+  "position": "40/70",
+  "gate_window": "1/3",
+  "status": "prepared_local_qualified_pending_termux_apply",
+  "delivered": [
+    "DIST-P001", "DIST-P002", "DIST-P003", "DIST-P004", "DIST-P005", "DIST-P006", "DIST-P007",
+    "DIST-P009", "DIST-P010", "DIST-P011", "DIST-P012", "DIST-P013", "DIST-P014", "DIST-P015",
+    "DIST-P016", "DIST-P017", "DIST-P019", "DIST-P020", "DIST-P021", "DIST-P022", "DIST-P035",
+    "DIST-P037", "DIST-P039", "DIST-P049", "DIST-P050", "DIST-P063", "DIST-P064", "DIST-P069",
+    "DIST-P076", "DIST-P080", "DIST-P088", "DIST-P089", "DIST-P090", "DIST-P099"
+  ],
+  "partial": {
+    "DIST-P036": "Sequential and parallel federation now share DelegationLink/reconciliation semantics and parallel recovery imports canonical origin events, but live-tail parity is owned by DIST-X02 and authoritative parity proof by DIST-G1.",
+    "DIST-P038": "Production parallel federation no longer treats execution.json as authoritative when using the canonical child executor; compatibility fallback remains only for injected/custom executors until DIST-G1 retires/proves remaining fixtures.",
+    "DIST-P070": "Permanent X01 tests cover canonical journal import and retained sequential/parallel federation scheduling; full topology parity proof remains DIST-G1 after X02 live delivery lands."
+  },
+  "exported": {
+    "DIST-X02": [
+      "bounded async sender/spool and non-blocking origin forwarding",
+      "origin journal cursor/ack, gap detection and catch-up",
+      "EventDeliveryState and DelegatedExecutionReceipt",
+      "safe-event/redaction integration and raw stream/attachment reference separation",
+      "local delegated subprocess bridge and parallel federation live tail",
+      "chroot/PRoot/OCI adapters and protocol/schema negotiation foundation"
+    ],
+    "DIST-G1": [
+      "prove no silent sequence/event-ID collision or same-ID/different-body acceptance",
+      "prove one live subscriber update per accepted event",
+      "prove bounded sender non-blocking behavior and exact reconnect catch-up",
+      "prove terminal snapshot/cursor reconciliation and sequential/parallel semantic parity",
+      "prove primary child failure survives bridge/finalization secondary failures"
+    ]
+  },
+  "next": "DIST-X02 41/70",
+  "gate": "DIST-G1 42/70",
+  "next_major_scope_after_gate": "LIFE-X03 43/70"
+}

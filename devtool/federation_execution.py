@@ -31,6 +31,7 @@ from .core.events import (
     NodeStarted,
     RunFinished,
     RunStarted,
+    get_event_bus,
     get_execution_store,
     publish_event,
 )
@@ -52,6 +53,11 @@ from .federation_operations import (
 )
 from .models import FederatedWorkflowConfig, FederatedWorkflowStep, ProjectConfig
 from .repository_identity import RepositoryIdentity, same_repository_identity
+from .distributed_execution import (
+    DelegationLink,
+    import_child_run_journal,
+    reconcile_terminal_truth,
+)
 
 
 class FederationExecutionError(RuntimeError):
@@ -110,6 +116,8 @@ class FederatedChildRun:
     lifecycle: str = ""
     artifact_inputs: dict[str, Any] = field(default_factory=dict)
     placement: dict[str, Any] = field(default_factory=dict)
+    delegation_link: dict[str, Any] = field(default_factory=dict)
+    terminal_reconciliation: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -132,6 +140,8 @@ class FederatedChildRun:
             "lifecycle": self.lifecycle,
             "artifact_inputs": dict(self.artifact_inputs),
             "placement": dict(self.placement),
+            "delegation_link": dict(self.delegation_link),
+            "terminal_reconciliation": dict(self.terminal_reconciliation),
         }
 
 
@@ -812,6 +822,24 @@ def _run_federated_workflow_sequential(
                 "git_lineage": planned_git_lineage,
                 "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
             }
+            from .federation_transport import build_repository_attestation, federation_attestation_environment
+            attestation = build_repository_attestation(
+                resolution.root,
+                identity=RepositoryIdentity.from_dict(identity),
+                config_path=resolution.config_path or None,
+                lineage=lineage,
+            )
+            delegation_link = DelegationLink.from_federation(
+                parent_run_id=run_id,
+                parent_node_id=parent_node,
+                child_run_id=child_run_id,
+                lineage=lineage,
+                repository_identity=identity,
+                provider_identity=placement,
+                attestation=attestation.as_dict(),
+            )
+            lineage["delegation_id"] = delegation_link.delegation_id
+            lineage["delegation_link"] = delegation_link.as_dict()
             if federation_group:
                 lineage["federation_group"] = federation_group
             active_target = target
@@ -843,6 +871,7 @@ def _run_federated_workflow_sequential(
                     "federation_ref": federation_ref,
                     "requested_ref": step.ref,
                     "run_lineage": lineage,
+                    "delegation_link": delegation_link.as_dict(),
                     "resume_checkpoint": resume_checkpoint,
                     "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
                     "scheduler_state": "running",
@@ -871,6 +900,7 @@ def _run_federated_workflow_sequential(
                 "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": scheduler_node.execution_environment,
                 "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
                 "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
+                "DEVTOOL_DELEGATION_LINK_ID": delegation_link.delegation_id,
                 "DEVTOOL_FEDERATION_HIERARCHY_DEPTH": str(int(os.environ.get("DEVTOOL_FEDERATION_HIERARCHY_DEPTH") or "0") + (1 if step.hierarchical else 0)),
             }
             if not scheduler_node.provider_profile and scheduler_node.execution_environment not in {"", "auto"}:
@@ -879,13 +909,7 @@ def _run_federated_workflow_sequential(
             env.update(artifact_env)
             if federation_group:
                 env["DEVTOOL_FEDERATION_GROUP"] = federation_group
-            from .federation_transport import build_repository_attestation, federation_attestation_environment
-            env.update(federation_attestation_environment(build_repository_attestation(
-                resolution.root,
-                identity=RepositoryIdentity.from_dict(identity),
-                config_path=resolution.config_path or None,
-                lineage=lineage,
-            )))
+            env.update(federation_attestation_environment(attestation))
             child_started = time.monotonic()
             active_child_started = child_started
             with _federation_child_environment(env):
@@ -921,14 +945,9 @@ def _run_federated_workflow_sequential(
                 resume_checkpoint=resume_checkpoint,
             ).as_dict()
             active_child_run_id = ""
-            child_status = (
-                str(getattr(child_snapshot, "status", "") or "")
-                if child_snapshot is not None
-                else (ExecutionStatus.SUCCEEDED.value if rc == 0 else ExecutionStatus.CANCELLED.value if rc == 130 else ExecutionStatus.FAILED.value)
-            )
-            if rc == 130 or child_status == ExecutionStatus.CANCELLED.value:
-                child_status = ExecutionStatus.CANCELLED.value
-                rc = 130
+            terminal = reconcile_terminal_truth(transport_exit_code=rc, child_snapshot=child_snapshot)
+            child_status = terminal.authoritative_status
+            rc = terminal.authoritative_exit_code
             git_lineage = _finalize_child_git_lineage(
                 resolution, planned_git_lineage, terminal_status=child_status, publish=publish
             )
@@ -951,6 +970,8 @@ def _run_federated_workflow_sequential(
                     "federation_ref": federation_ref,
                     "requested_ref": step.ref,
                     "run_lineage": persisted_lineage or lineage,
+                    "delegation_link": delegation_link.as_dict(),
+                    "terminal_reconciliation": terminal.as_dict(),
                     "operational_ownership": operational,
                     "git_lineage": git_lineage,
                     "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
@@ -972,6 +993,8 @@ def _run_federated_workflow_sequential(
                 ),
                 artifact_inputs=dict(artifact_inputs),
                 placement=placement,
+                delegation_link=delegation_link.as_dict(),
+                terminal_reconciliation=terminal.as_dict(),
             )
             outcomes[step.step_id] = child
             children.append(child)
@@ -1355,6 +1378,24 @@ def _run_federated_workflow_parallel(
             "git_lineage": planned_git_lineage,
             "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
         }
+        from .federation_transport import build_repository_attestation, federation_attestation_environment
+        attestation = build_repository_attestation(
+            resolution.root,
+            identity=RepositoryIdentity.from_dict(identity),
+            config_path=resolution.config_path or None,
+            lineage=lineage,
+        )
+        delegation_link = DelegationLink.from_federation(
+            parent_run_id=run_id,
+            parent_node_id=parent_node,
+            child_run_id=child_run_id,
+            lineage=lineage,
+            repository_identity=identity,
+            provider_identity=placement,
+            attestation=attestation.as_dict(),
+        )
+        lineage["delegation_id"] = delegation_link.delegation_id
+        lineage["delegation_link"] = delegation_link.as_dict()
         if federation_group:
             lineage["federation_group"] = federation_group
 
@@ -1391,6 +1432,7 @@ def _run_federated_workflow_parallel(
             "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": scheduler_node.execution_environment,
             "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
             "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
+            "DEVTOOL_DELEGATION_LINK_ID": delegation_link.delegation_id,
             "DEVTOOL_FEDERATION_HIERARCHY_DEPTH": str(int(os.environ.get("DEVTOOL_FEDERATION_HIERARCHY_DEPTH") or "0") + (1 if step.hierarchical else 0)),
             # Keep each parallel child's HUD/EXO files isolated while
             # suppressing visible auto-HUD windows for internal children.
@@ -1404,13 +1446,7 @@ def _run_federated_workflow_parallel(
         env.update(artifact_env)
         if federation_group:
             env["DEVTOOL_FEDERATION_GROUP"] = federation_group
-        from .federation_transport import build_repository_attestation, federation_attestation_environment
-        env.update(federation_attestation_environment(build_repository_attestation(
-            resolution.root,
-            identity=RepositoryIdentity.from_dict(identity),
-            config_path=resolution.config_path or None,
-            lineage=lineage,
-        )))
+        env.update(federation_attestation_environment(attestation))
 
         child_started = time.monotonic()
         with active_lock:
@@ -1433,6 +1469,7 @@ def _run_federated_workflow_parallel(
                 "federation_ref": federation_ref,
                 "requested_ref": step.ref,
                 "run_lineage": lineage,
+                "delegation_link": delegation_link.as_dict(),
                 "resume_checkpoint": resume_checkpoint,
                 "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
                 "scheduler_state": "running",
@@ -1463,7 +1500,21 @@ def _run_federated_workflow_parallel(
                 rc = 130
 
             child_snapshot = snapshot_lookup(child_run_id)
+            if child_snapshot is None and publish is publish_event:
+                child_snapshot = import_child_run_journal(
+                    child_state_dir,
+                    child_run_id=child_run_id,
+                    link=delegation_link,
+                    bus=get_event_bus(),
+                )
+            if child_snapshot is None and child_executor is None and publish is publish_event:
+                raise FederationExecutionError(
+                    f"Parallel federation child {child_run_id!r} produced no canonical RUN journal to import"
+                )
             if child_snapshot is None:
+                # Compatibility only for injected/custom executors that predate
+                # DIST-X01. Production parallel federation no longer treats the
+                # lossy execution.json helper as authoritative child truth.
                 child_snapshot = _persisted_execution_snapshot(child_state_dir, child_run_id)
             persisted_lineage = _assert_child_snapshot_authority(
                 repository=step.repository,
@@ -1485,20 +1536,9 @@ def _run_federated_workflow_parallel(
                 execution_snapshot=child_snapshot,
                 resume_checkpoint=resume_checkpoint,
             ).as_dict()
-            child_status = (
-                str(getattr(child_snapshot, "status", "") or "")
-                if child_snapshot is not None
-                else (
-                    ExecutionStatus.SUCCEEDED.value
-                    if rc == 0
-                    else ExecutionStatus.CANCELLED.value
-                    if rc == 130
-                    else ExecutionStatus.FAILED.value
-                )
-            )
-            if rc == 130 or child_status == ExecutionStatus.CANCELLED.value:
-                child_status = ExecutionStatus.CANCELLED.value
-                rc = 130
+            terminal = reconcile_terminal_truth(transport_exit_code=rc, child_snapshot=child_snapshot)
+            child_status = terminal.authoritative_status
+            rc = terminal.authoritative_exit_code
             git_lineage = _finalize_child_git_lineage(
                 resolution, planned_git_lineage, terminal_status=child_status, publish=publish
             )
@@ -1521,6 +1561,8 @@ def _run_federated_workflow_parallel(
                     "federation_ref": federation_ref,
                     "requested_ref": step.ref,
                     "run_lineage": persisted_lineage or lineage,
+                    "delegation_link": delegation_link.as_dict(),
+                    "terminal_reconciliation": terminal.as_dict(),
                     "operational_ownership": operational,
                     "scheduler_state": child_status,
                     "scheduler_wave": wave_for_step.get(step.step_id, 0),
@@ -1553,6 +1595,8 @@ def _run_federated_workflow_parallel(
                 ),
                 artifact_inputs=dict(artifact_inputs),
                 placement=placement,
+                delegation_link=delegation_link.as_dict(),
+                terminal_reconciliation=terminal.as_dict(),
             )
         finally:
             with active_lock:

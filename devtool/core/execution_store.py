@@ -712,6 +712,11 @@ class ExecutionStore:
             self._last_run_id = resolved_run_id
             return ExecutionSnapshot.from_state(run)
 
+    def has_event(self, run_id: str, event_id: str) -> bool:
+        with self._lock:
+            run = self._runs.get(str(run_id or ""))
+            return bool(run is not None and str(event_id or "") in run.applied_event_ids)
+
     def snapshot(self, run_id: str | None = None) -> ExecutionSnapshot | None:
         with self._lock:
             resolved = str(run_id or self._last_run_id or "")

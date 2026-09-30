@@ -80,6 +80,7 @@ def federation_lineage_from_environment() -> dict[str, object]:
         "child_run_id": str(os.environ.get("DEVTOOL_RUN_ID") or "").strip(),
         "frozen_source_lock_digest": str(os.environ.get("DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST") or "").strip(),
         "frozen_source_equivalence_digest": str(os.environ.get("DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST") or "").strip(),
+        "delegation_id": str(os.environ.get("DEVTOOL_DELEGATION_LINK_ID") or "").strip(),
     }
     git_lineage = {
         "schema_version": 1,

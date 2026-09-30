@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "from": "DIST-X01",
+  "to": ["DIST-X02", "DIST-G1"],
+  "obligations": [
+    {"owner": "DIST-X02", "obligation": "Add bounded asynchronous event sender/spool so origin EventBus publication never performs provider network I/O synchronously."},
+    {"owner": "DIST-X02", "obligation": "Persist origin RUN journal cursor/ack state; detect sequence gaps and catch up from the origin journal without duplicate canonical events."},
+    {"owner": "DIST-X02", "obligation": "Introduce EventDeliveryState and DelegatedExecutionReceipt with transport health separate from child execution truth."},
+    {"owner": "DIST-X02", "obligation": "Route safe semantic events through the ordinary bridge while retaining raw stdout/stderr and protected evidence as stream/attachment references."},
+    {"owner": "DIST-X02", "obligation": "Adopt the X01 DelegationLink/EventTransportEnvelope boundary in local subprocess, parallel federation live tail, chroot, PRoot and OCI adapters."},
+    {"owner": "DIST-X02", "obligation": "Add protocol/schema capability negotiation without changing origin event identity."},
+    {"owner": "DIST-G1", "obligation": "Authoritatively prove sequential/parallel child semantic topology parity after live forwarding and catch-up land."},
+    {"owner": "DIST-G1", "obligation": "Authoritatively prove duplicate-equivalent idempotence, duplicate-conflicting equivocation rejection, one-producer-per-run and exactly-once live subscriber notification."},
+    {"owner": "DIST-G1", "obligation": "Authoritatively prove terminal cursor/snapshot reconciliation and fail-closed rc/snapshot contradiction handling."},
+    {"owner": "DIST-G1", "obligation": "Audit all DIST-X01 and DIST-X02 promises and fold any natural owner gaps before closing 42/70."}
+  ]
+}

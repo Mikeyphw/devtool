@@ -115,6 +115,12 @@ description = "Run the ANDROID-G1 authoritative environment/device milestone gat
 workflow = "roadmap-android-g1"
 target = "devtool"
 
+# DIST-X01 canonical delegation and external-ingest identity foundation.
+[wrapper.commands.dist-x01]
+description = "Run the DIST-X01 delegation/external-ingest integrity workflow"
+workflow = "roadmap-dist-x01"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
@@ -664,6 +670,12 @@ roadmap-android-g1 = [
   { id = "instrumentation-fixture-reseal", ref = "test:roadmap-android-g1-instrumentation-fixtures", depends_on = ["window-audit"] },
   { id = "platform-native-destination", ref = "test:roadmap-android-g1-platform-native-destination", depends_on = ["instrumentation-fixture-reseal"] },
   { id = "real-process-device", ref = "test:roadmap-android-g1-real-process", depends_on = ["platform-native-destination"] },
+]
+
+roadmap-dist-x01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "delegation-ingest", ref = "test:roadmap-dist-x01-delegation-ingest", depends_on = ["syntax"] },
+  { id = "retained-federation", ref = "test:roadmap-dist-x01-retained-federation", depends_on = ["delegation-ingest"] },
 ]
 
 roadmap-pres-x01 = [
@@ -2294,6 +2306,40 @@ name = "ANDROID-G1 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 1200
 command = ["./devtoolw", "android-g1"]
+
+# DIST-X01 owns the non-Gradle delegation/external-ingest identity boundary.
+# Async transport/cursor recovery is deferred to DIST-X02 and broad distributed
+# qualification stays separate in DIST-G1.
+[[test]]
+id = "roadmap-dist-x01-delegation-ingest"
+name = "DIST-X01 delegation link, event envelope, ingest and terminal reconciliation"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_dist_x01_delegation_ingest.py",
+]
+
+[[test]]
+id = "roadmap-dist-x01-retained-federation"
+name = "DIST-X01 retained federation lineage, parallel and observability authority regressions"
+runner = "pytest"
+timeout_seconds = 420
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_frx06_federation_execution_lineage.py",
+  "tests/test_frx_y01_parallel_federation_scheduler.py",
+  "tests/test_frx_x03_executable_federation_groups.py",
+  "tests/test_git_frx14_federated_cancellation_recovery.py",
+  "tests/test_frx11_federation_observability.py",
+]
+
+[[test]]
+id = "roadmap-dist-x01-artifact-bootstrap"
+name = "DIST-X01 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 900
+command = ["./devtoolw", "dist-x01"]
 
 # PRES-X01 presentation projection foundation. This overlay keeps rendering
 # surfaces as projections over RUN/EXO/RER/validation/ENV references; it does

@@ -4,7 +4,7 @@ from collections import defaultdict
 from threading import Lock, RLock
 from typing import Callable, DefaultDict, Type
 
-from ..execution_contract import RunId
+from ..execution_contract import EventId, RunId
 from ..execution_store import ExecutionStore
 from ..logging import get_logger
 from .events import DevtoolEvent
@@ -27,6 +27,7 @@ class EventBus:
         self._sequence_by_run: dict[str, int] = {}
         self._sequence_lock = Lock()
         self._publish_lock = RLock()
+        self._preserved_digest_by_event: dict[tuple[str, str], str] = {}
         self._fallback_run_id = str(RunId.current(create=False) or RunId.new(prefix="event-run"))
 
 
@@ -78,6 +79,73 @@ class EventBus:
                 sequence = current + 1
                 self._sequence_by_run[event.run_id] = sequence
         event.complete_envelope(sequence=sequence)
+
+    def ingest_preserved(
+        self,
+        event: DevtoolEvent,
+        *,
+        notify: bool,
+        payload_digest: str = "",
+    ) -> bool:
+        """Ingest one already-enveloped event without rewriting origin identity.
+
+        DIST external ingress performs authorization before this boundary. The
+        bus retains the accepted canonical payload digest so reconnect/retry via
+        a fresh ingestor remains idempotent within the process: an identical
+        duplicate is ignored and a same-ID/different-body event fails closed.
+        Recovery imports update canonical state without listeners; live
+        forwarding updates the same listeners exactly once.
+        """
+        if not isinstance(event, DevtoolEvent):
+            raise TypeError(f"EventBus only accepts DevtoolEvent values, got {type(event).__name__}")
+        if not str(event.run_id or "").strip():
+            raise ValueError("preserved execution event must carry run_id")
+        if int(event.sequence) < 0:
+            raise ValueError("preserved execution event must carry a non-negative sequence")
+        if not str(event.event_id or "").strip():
+            raise ValueError("preserved execution event must carry event_id")
+        expected = str(EventId.for_sequence(event.run_id, int(event.sequence)))
+        if str(event.event_id) != expected:
+            raise ValueError("preserved execution event_id does not match run/sequence identity")
+        key = (str(event.run_id), str(event.event_id))
+        digest = str(payload_digest or "")
+        with self._publish_lock:
+            previous_digest = self._preserved_digest_by_event.get(key)
+            if previous_digest is not None:
+                if digest and previous_digest and digest != previous_digest:
+                    raise ValueError(f"preserved event equivocation for {event.event_id!r}")
+                return False
+            if self._execution_store.has_event(event.run_id, event.event_id):
+                # The event is already canonical store truth (for example after
+                # recovery within this process). Never re-notify listeners.
+                if digest:
+                    self._preserved_digest_by_event[key] = digest
+                return False
+            self._execution_store.apply(event)
+            if digest:
+                self._preserved_digest_by_event[key] = digest
+            with self._sequence_lock:
+                self._sequence_by_run[event.run_id] = max(
+                    int(event.sequence),
+                    int(self._sequence_by_run.get(event.run_id, 0)),
+                )
+            if not notify:
+                return True
+            notified: list[Listener] = []
+            for event_type, listeners in tuple(self._listeners.items()):
+                if not isinstance(event, event_type):
+                    continue
+                for listener in tuple(listeners):
+                    if listener in notified:
+                        continue
+                    notified.append(listener)
+                    self._safe_notify(listener, event)
+            for listener in tuple(self._all_listeners):
+                if listener in notified:
+                    continue
+                notified.append(listener)
+                self._safe_notify(listener, event)
+            return True
 
     def replay_event(self, event: DevtoolEvent) -> None:
         """Restore one already-enveloped event without assigning a new identity.
