@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "DIST-G1",
+  "position": "42/70",
+  "gate_window": "3/3",
+  "status": "prepared_local_qualified_pending_native_termux_apply",
+  "previous_qualified": [
+    {
+      "roadmap_id": "DIST-X01",
+      "run_id": "e5c5337b4d2e41318cc0f6c359460f8c",
+      "commit": "13fa36e",
+      "tests": {
+        "passed": 113,
+        "failed": 0,
+        "skipped": 0
+      },
+      "diagnostics": {
+        "warnings": 0,
+        "errors": 0
+      }
+    },
+    {
+      "roadmap_id": "DIST-X02",
+      "run_id": "a4f4de69f2074152beb5906f6c9be566",
+      "commit": "2888434",
+      "tests": {
+        "passed": 272,
+        "failed": 0,
+        "skipped": 0
+      },
+      "diagnostics": {
+        "warnings": 0,
+        "errors": 0
+      }
+    }
+  ],
+  "gate_owned_fixes": [
+    {
+      "id": "DIST-G1-FIX-01",
+      "summary": "Persist the acknowledged event/content digest in DeliveryCursor, restore receiver acknowledgement from cursor, verify equal-boundary replay after fresh-process restart, and fail closed for unverifiable stale replay."
+    },
+    {
+      "id": "DIST-G1-FIX-02",
+      "summary": "Preserve an already-observed child failure when Git-lineage finalization or secondary lineage publication also fails; successful children still fail closed on required finalization error."
+    }
+  ],
+  "closed_promises": [
+    "DIST-P001",
+    "DIST-P002",
+    "DIST-P003",
+    "DIST-P004",
+    "DIST-P005",
+    "DIST-P006",
+    "DIST-P007",
+    "DIST-P009",
+    "DIST-P010",
+    "DIST-P011",
+    "DIST-P012",
+    "DIST-P013",
+    "DIST-P014",
+    "DIST-P015",
+    "DIST-P016",
+    "DIST-P017",
+    "DIST-P019",
+    "DIST-P020",
+    "DIST-P021",
+    "DIST-P022",
+    "DIST-P025",
+    "DIST-P026",
+    "DIST-P027",
+    "DIST-P028",
+    "DIST-P029",
+    "DIST-P030",
+    "DIST-P031",
+    "DIST-P032",
+    "DIST-P035",
+    "DIST-P036",
+    "DIST-P037",
+    "DIST-P038",
+    "DIST-P039",
+    "DIST-P046",
+    "DIST-P047",
+    "DIST-P048",
+    "DIST-P049",
+    "DIST-P050",
+    "DIST-P052",
+    "DIST-P053",
+    "DIST-P054",
+    "DIST-P055",
+    "DIST-P056",
+    "DIST-P057",
+    "DIST-P058",
+    "DIST-P059",
+    "DIST-P060",
+    "DIST-P063",
+    "DIST-P064",
+    "DIST-P068",
+    "DIST-P069",
+    "DIST-P070",
+    "DIST-P071",
+    "DIST-P072",
+    "DIST-P073",
+    "DIST-P074",
+    "DIST-P076",
+    "DIST-P078",
+    "DIST-P079",
+    "DIST-P080",
+    "DIST-P088",
+    "DIST-P089",
+    "DIST-P090",
+    "DIST-P098",
+    "DIST-P099"
+  ],
+  "closed_promise_count": 65,
+  "later_dist_partial_promises": [
+    "DIST-P008",
+    "DIST-P023",
+    "DIST-P024",
+    "DIST-P040",
+    "DIST-P045",
+    "DIST-P065",
+    "DIST-P066",
+    "DIST-P075",
+    "DIST-P085",
+    "DIST-P086",
+    "DIST-P096"
+  ],
+  "authoritative_obligations_proved": [
+    "fresh-process origin run/event/sequence preservation and same-boundary equivocation rejection",
+    "exactly-once live subscriber notification across live plus reconnect catch-up",
+    "bounded publication path with journal-backed overflow recovery",
+    "persisted acknowledgement resumes exactly at the next origin sequence",
+    "secret-safe semantic transport and raw process-output reference separation",
+    "EventDeliveryState/DelegatedExecutionReceipt remain secondary to child execution truth",
+    "cursor-ahead/cursor-behind/unresolved-gap/terminal contradiction fail closed",
+    "sequential/parallel federation semantic and terminal truth parity",
+    "primary child failure survives secondary bridge/finalization failure",
+    "promise-by-promise X01/X02 window audit remains explicit about later DIST ownership"
+  ],
+  "construction_validation": {
+    "devtool_workflow": {
+      "tests_passed": 194,
+      "failed": 0,
+      "skipped": 0,
+      "stages_passed": 5,
+      "stages_failed": 0,
+      "warnings": 0,
+      "errors": 0
+    },
+    "additional_retained": {
+      "tests_passed": 86,
+      "failed": 0
+    }
+  },
+  "known_preexisting_baseline": [
+    {
+      "owner": "OCI/ANDROID",
+      "symptom": "OCI-05 embedded Android builder resource digest mismatch",
+      "disposition": "reproduces on DIST-X01 base and is not owned by DIST-G1"
+    }
+  ],
+  "next": "LIFE-X03 43/70",
+  "remaining_in_dist_window_after_success": 0,
+  "next_major_scope": "LIFE"
+}

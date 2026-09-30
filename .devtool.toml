@@ -126,6 +126,12 @@ description = "Run the DIST-X02 async transport/cursor recovery workflow"
 workflow = "roadmap-dist-x02"
 target = "devtool"
 
+# DIST-G1 authoritative distributed identity/delivery/recovery milestone gate.
+[wrapper.commands.dist-g1]
+description = "Run the DIST-G1 authoritative identity/delivery/recovery milestone gate"
+workflow = "roadmap-dist-g1"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
@@ -688,6 +694,14 @@ roadmap-dist-x02 = [
   { id = "async-transport", ref = "test:roadmap-dist-x02-async-transport", depends_on = ["syntax"] },
   { id = "retained-federation", ref = "test:roadmap-dist-x02-retained-federation", depends_on = ["async-transport"] },
   { id = "provider-adapters", ref = "test:roadmap-dist-x02-provider-adapters", depends_on = ["retained-federation"] },
+]
+
+roadmap-dist-g1 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "window-audit", ref = "test:roadmap-dist-g1-window", depends_on = ["syntax"] },
+  { id = "retained-federation", ref = "test:roadmap-dist-g1-retained-federation", depends_on = ["window-audit"] },
+  { id = "provider-substrate", ref = "test:roadmap-dist-g1-provider-substrate", depends_on = ["retained-federation"] },
+  { id = "fresh-process-proof", ref = "test:roadmap-dist-g1-real-process", depends_on = ["provider-substrate"] },
 ]
 
 roadmap-pres-x01 = [
@@ -2400,6 +2414,65 @@ runner = "command"
 timeout_seconds = 1200
 command = ["./devtoolw", "dist-x02"]
 
+# DIST-G1 audits and seals the full X01/X02 distribution window. The gate
+# deliberately keeps later SSH/tmux/hierarchy/control adoption out of 42/70.
+[[test]]
+id = "roadmap-dist-g1-window"
+name = "DIST-G1 X01/X02 promise, replay-integrity and terminal-recovery audit"
+runner = "pytest"
+timeout_seconds = 600
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_dist_g1_identity_delivery_recovery_gate.py",
+  "tests/test_dist_x02_async_transport.py",
+  "tests/test_dist_x01_delegation_ingest.py",
+]
+
+[[test]]
+id = "roadmap-dist-g1-retained-federation"
+name = "DIST-G1 retained federation lineage, scheduling, cancellation and observability authority"
+runner = "pytest"
+timeout_seconds = 900
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_frx06_federation_execution_lineage.py",
+  "tests/test_frx_y01_parallel_federation_scheduler.py",
+  "tests/test_frx_y02_federation_resume_checkpoint.py",
+  "tests/test_frx_x03_executable_federation_groups.py",
+  "tests/test_git_frx14_federated_cancellation_recovery.py",
+  "tests/test_frx11_federation_observability.py",
+]
+
+[[test]]
+id = "roadmap-dist-g1-provider-substrate"
+name = "DIST-G1 retained chroot PRoot/OCI and SSH transport/recovery substrate"
+runner = "pytest"
+timeout_seconds = 900
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_termux_chroot_runner.py",
+  "tests/test_oci02_proot_distro_lifecycle.py",
+  "tests/test_ssh01_transport_environment_worker_preparation.py",
+  "tests/test_ssh02_execution_history_recovery_convergence.py",
+  "tests/test_ssh03_lifecycle_hardening_final_qualification.py",
+]
+
+[[test]]
+id = "roadmap-dist-g1-real-process"
+name = "DIST-G1 fresh-process replay-integrity and exact cursor-resume proof"
+runner = "command"
+timeout_seconds = 300
+command = ["python", "-m", "devtool.dist_g1_gate"]
+
+[[test]]
+id = "roadmap-dist-g1-artifact-bootstrap"
+name = "DIST-G1 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 1800
+command = ["./devtoolw", "dist-g1"]
+
+# DIST-G1 audits and seals the full X01/X02 distribution window. The gate
+# deliberately keeps later SSH/tmux/hierarchy/control adoption out of 42/70.
 # PRES-X01 presentation projection foundation. This overlay keeps rendering
 # surfaces as projections over RUN/EXO/RER/validation/ENV references; it does
 # not create a second status/progress/verdict authority.

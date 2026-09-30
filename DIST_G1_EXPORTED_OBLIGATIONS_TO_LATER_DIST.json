@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "from": "DIST-G1",
+  "to": [
+    "later DIST-X03"
+  ],
+  "promises": [
+    "DIST-P008",
+    "DIST-P023",
+    "DIST-P024",
+    "DIST-P040",
+    "DIST-P045",
+    "DIST-P065",
+    "DIST-P066",
+    "DIST-P075",
+    "DIST-P085",
+    "DIST-P086",
+    "DIST-P096"
+  ],
+  "obligations": [
+    "Adopt the provider-neutral transport contract into real SSH foreground semantic streaming.",
+    "Adopt durable cursor/live-tail recovery into detached SSH/tmux sessions with provider-session binding.",
+    "Add nested federation route/hop cycle protection and hierarchical RUN topology/control projection.",
+    "Add typed DelegatedControlRequest/Ack and cancellation behavior under degraded telemetry.",
+    "Integrate reference-aware LIFE cleanup for provider staging/spool/cursor state.",
+    "Retain one canonical RUN journal and the DIST-G1 replay-integrity boundary; do not introduce a second distributed execution store."
+  ]
+}

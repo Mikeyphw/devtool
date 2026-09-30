@@ -378,27 +378,74 @@ class DelegatedEventReceiver:
         *,
         link: DelegationLink,
         acknowledged_sequence: int = 0,
+        acknowledged_event_id: str = "",
+        acknowledged_content_digest: str = "",
         raw_reference_sink: Callable[[RawStreamReference], Any] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.link = ingestor.register(link)
         self.acknowledged_sequence = int(acknowledged_sequence)
+        self.acknowledged_event_id = str(acknowledged_event_id or "")
+        self.acknowledged_content_digest = str(acknowledged_content_digest or "")
         self.raw_reference_sink = raw_reference_sink
         self._digest_by_sequence: dict[int, str] = {}
+        if self.acknowledged_sequence > 0 and self.acknowledged_content_digest:
+            self._digest_by_sequence[self.acknowledged_sequence] = self.acknowledged_content_digest
         self.raw_references: list[RawStreamReference] = []
         self.replay_count = 0
+
+    @classmethod
+    def from_cursor(
+        cls,
+        ingestor: ExternalEventIngestor,
+        *,
+        link: DelegationLink,
+        cursor: "DeliveryCursor",
+        raw_reference_sink: Callable[[RawStreamReference], Any] | None = None,
+    ) -> "DelegatedEventReceiver":
+        """Restore the receiver-side acknowledgement boundary from durable cursor truth.
+
+        The cursor carries the last acknowledged content digest so a fresh
+        process can verify an at-least-once replay of the boundary event rather
+        than silently trusting an in-memory duplicate cache that no longer
+        exists. Older cursor files remain readable; unverifiable stale replays
+        then fail closed instead of being guessed equivalent.
+        """
+        return cls(
+            ingestor,
+            link=link,
+            acknowledged_sequence=cursor.acknowledged_sequence,
+            acknowledged_event_id=cursor.acknowledged_event_id,
+            acknowledged_content_digest=cursor.acknowledged_content_digest,
+            raw_reference_sink=raw_reference_sink,
+        )
 
     def receive(self, frame: TransportFrame) -> DeliveryAck:
         if frame.delegation_id != self.link.delegation_id or frame.child_run_id != self.link.child_run_id:
             raise DistributedTransportError("transport frame is outside the planned delegation")
         sequence = int(frame.sequence)
         content_digest = _frame_content_digest(frame)
+        if frame.semantic_envelope is not None:
+            # Duplicate/replay frames still cross the X01 authorization boundary.
+            # Otherwise a stale producer could bypass provider/attestation checks
+            # simply because the receiver had already acknowledged the sequence.
+            self.ingestor.registry.authorize(frame.semantic_envelope)
         previous_digest = self._digest_by_sequence.get(sequence)
         if sequence <= self.acknowledged_sequence:
-            if previous_digest is not None and previous_digest != content_digest:
+            if previous_digest is None:
+                raise DistributedTransportError(
+                    "cannot verify replay older than the durable acknowledgement boundary "
+                    f"at origin sequence {sequence}"
+                )
+            if previous_digest != content_digest:
                 raise ExternalEventEquivocationError(
                     f"conflicting transport frame at origin sequence {sequence}"
                 )
+            if sequence == self.acknowledged_sequence and self.acknowledged_event_id:
+                if str(frame.event_id) != self.acknowledged_event_id:
+                    raise ExternalEventEquivocationError(
+                        f"conflicting event identity at acknowledged origin sequence {sequence}"
+                    )
             self.replay_count += 1
             return DeliveryAck(
                 self.link.delegation_id,
@@ -424,6 +471,8 @@ class DelegatedEventReceiver:
                 self.raw_reference_sink(reference)
         self._digest_by_sequence[sequence] = content_digest
         self.acknowledged_sequence = sequence
+        self.acknowledged_event_id = str(frame.event_id)
+        self.acknowledged_content_digest = content_digest
         return DeliveryAck(
             self.link.delegation_id,
             self.link.child_run_id,
@@ -438,6 +487,8 @@ class DeliveryCursor:
     delegation_id: str
     child_run_id: str
     acknowledged_sequence: int = 0
+    acknowledged_event_id: str = ""
+    acknowledged_content_digest: str = ""
     replay_count: int = 0
     unresolved_gaps: tuple[tuple[int, int], ...] = ()
     health: str = "idle"
@@ -450,6 +501,8 @@ class DeliveryCursor:
             "delegation_id": self.delegation_id,
             "child_run_id": self.child_run_id,
             "acknowledged_sequence": self.acknowledged_sequence,
+            "acknowledged_event_id": self.acknowledged_event_id,
+            "acknowledged_content_digest": self.acknowledged_content_digest,
             "replay_count": self.replay_count,
             "unresolved_gaps": [list(value) for value in self.unresolved_gaps],
             "health": self.health,
@@ -488,6 +541,8 @@ class DeliveryCursorStore:
             link.delegation_id,
             link.child_run_id,
             acknowledged_sequence=int(payload.get("acknowledged_sequence") or 0),
+            acknowledged_event_id=str(payload.get("acknowledged_event_id") or ""),
+            acknowledged_content_digest=str(payload.get("acknowledged_content_digest") or ""),
             replay_count=int(payload.get("replay_count") or 0),
             unresolved_gaps=gaps,
             health=str(payload.get("health") or "idle"),
@@ -845,6 +900,8 @@ class AsyncJournalForwarder:
                 self.link.delegation_id,
                 self.link.child_run_id,
                 acknowledged_sequence=self._cursor.acknowledged_sequence,
+                acknowledged_event_id=self._cursor.acknowledged_event_id,
+                acknowledged_content_digest=self._cursor.acknowledged_content_digest,
                 replay_count=self._cursor.replay_count,
                 unresolved_gaps=gap_rows,
                 health="reconnecting" if not isinstance(exc, DeliveryGapError) else "degraded",
@@ -883,6 +940,8 @@ class AsyncJournalForwarder:
                     self.link.delegation_id,
                     self.link.child_run_id,
                     acknowledged_sequence=acknowledged,
+                    acknowledged_event_id=str(frame.event_id),
+                    acknowledged_content_digest=_frame_content_digest(frame),
                     replay_count=replay,
                     unresolved_gaps=(),
                     health="live" if delivery_mode == "live" else "reconciled",

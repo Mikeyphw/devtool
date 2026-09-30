@@ -308,6 +308,54 @@ def _finalize_child_git_lineage(
     return _publish_child_git_lineage(finalized, publish=publish)
 
 
+def _finalize_child_git_lineage_preserving_primary_failure(
+    resolution: Any,
+    planned: dict[str, Any],
+    *,
+    terminal_status: str,
+    terminal_exit_code: int,
+    publish: Callable[[Any], None],
+) -> dict[str, Any]:
+    """Keep an observed child failure authoritative if evidence finalization also fails.
+
+    Git-lineage finalization is required evidence, but it is secondary to an
+    already-observed child terminal failure.  A successful child still fails
+    closed if finalization cannot complete; a failed/cancelled/blocked child
+    keeps its primary status/exit code and records the finalization problem as
+    secondary lineage evidence instead of replacing the root cause.
+    """
+    try:
+        return _finalize_child_git_lineage(
+            resolution,
+            planned,
+            terminal_status=terminal_status,
+            publish=publish,
+        )
+    except Exception as exc:
+        primary_failed = (
+            str(terminal_status) != ExecutionStatus.SUCCEEDED.value
+            or int(terminal_exit_code or 0) != 0
+        )
+        if not primary_failed:
+            raise
+        fallback = dict(planned)
+        fallback.update({
+            "state": "finalization-error-secondary",
+            "terminal_status": str(terminal_status),
+            "terminal_exit_code": int(terminal_exit_code or 0),
+            "finalization_error": str(exc),
+            "primary_failure_preserved": True,
+        })
+        try:
+            return _publish_child_git_lineage(fallback, publish=publish)
+        except Exception as publish_exc:
+            # The parent NodeFinished metadata still carries this record, so a
+            # secondary evidence-publish failure cannot replace the already
+            # observed child execution failure.
+            fallback["secondary_evidence_publish_error"] = str(publish_exc)
+            return fallback
+
+
 def _cancelled_git_lineage_fallback(
     planned: dict[str, Any],
     error: Exception,
@@ -957,8 +1005,12 @@ def _run_federated_workflow_sequential(
             terminal = reconcile_terminal_truth(transport_exit_code=rc, child_snapshot=child_snapshot)
             child_status = terminal.authoritative_status
             rc = terminal.authoritative_exit_code
-            git_lineage = _finalize_child_git_lineage(
-                resolution, planned_git_lineage, terminal_status=child_status, publish=publish
+            git_lineage = _finalize_child_git_lineage_preserving_primary_failure(
+                resolution,
+                planned_git_lineage,
+                terminal_status=child_status,
+                terminal_exit_code=rc,
+                publish=publish,
             )
             publish(NodeFinished(
                 run_id=run_id,
@@ -1461,20 +1513,23 @@ def _run_federated_workflow_parallel(
         live_transport_error = ""
         if publish is publish_event:
             parent_bus = get_event_bus()
-            receiver = DelegatedEventReceiver(
-                ExternalEventIngestor(parent_bus),
-                link=delegation_link,
-            )
-            loopback = LocalLoopbackTransport(receiver)
             adapter = distributed_provider_adapter(
                 "federation",
                 child_state_dir,
                 provider_identity=placement,
             )
+            cursor_store = adapter.cursor_store(delegation_link)
+            durable_cursor = cursor_store.load(link=delegation_link)
+            receiver = DelegatedEventReceiver.from_cursor(
+                ExternalEventIngestor(parent_bus),
+                link=delegation_link,
+                cursor=durable_cursor,
+            )
+            loopback = LocalLoopbackTransport(receiver)
             live_forwarder = AsyncJournalForwarder(
                 link=delegation_link,
                 journal=adapter.origin_journal(delegation_link),
-                cursor_store=adapter.cursor_store(delegation_link),
+                cursor_store=cursor_store,
                 send_frame=loopback.send,
                 protocol=loopback.negotiated,
                 queue_capacity=64,
@@ -1606,8 +1661,12 @@ def _run_federated_workflow_parallel(
                 delivery_receipt = receipt.as_dict()
                 if live_transport_error:
                     delivery_receipt["secondary_transport_error"] = live_transport_error
-            git_lineage = _finalize_child_git_lineage(
-                resolution, planned_git_lineage, terminal_status=child_status, publish=publish
+            git_lineage = _finalize_child_git_lineage_preserving_primary_failure(
+                resolution,
+                planned_git_lineage,
+                terminal_status=child_status,
+                terminal_exit_code=rc,
+                publish=publish,
             )
             publish(NodeFinished(
                 run_id=run_id,
