@@ -463,6 +463,11 @@ class ProjectConfig:
     configured_runner_options: dict[str, Any] = field(default_factory=dict)
     runtime_runner_overrides: dict[str, Any] = field(default_factory=dict)
     tests: dict[str, Any] = field(default_factory=dict)
+    # Runtime-only CLI provenance. These values are never loaded from repository
+    # configuration and let execution-boundary features distinguish devtoolw,
+    # invoke and direct Devtool origins without process-global state.
+    invocation_source: str = ""
+    invocation_command: str = ""
 
     def __post_init__(self) -> None:
         effective_runner = str(self.runner or self.kind or "unknown").strip().lower() or "unknown"

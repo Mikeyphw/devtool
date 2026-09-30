@@ -865,9 +865,11 @@ def runner_capabilities(config: ProjectConfig):
 
 def build_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
     from .workflow_runtime import build_workflow_specs, has_selected_workflow
+    from .gradle_ingress import converge_gradle_specs
 
     if has_selected_workflow(config, action):
-        return _apply_config_metadata(config, build_workflow_specs(config, action))
+        specs = _apply_config_metadata(config, build_workflow_specs(config, action))
+        return converge_gradle_specs(config, specs, default_origin="devtool")
     runner = get_project_runner(config)
     if action == "validate":
         specs = runner.build_validation_specs(config)
@@ -878,7 +880,8 @@ def build_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
     annotate = getattr(runner, "apply_environment_metadata", None)
     if callable(annotate):
         specs = annotate(config, specs, action=action)
-    return _apply_config_metadata(config, specs)
+    specs = _apply_config_metadata(config, specs)
+    return converge_gradle_specs(config, specs, default_origin="devtool")
 
 
 def build_validation_specs(
@@ -892,20 +895,23 @@ def build_validation_specs(
     from .workflow_runtime import build_workflow_specs, has_selected_workflow
 
     workflow_action = "wine-validate" if wine else "validate"
+    from .gradle_ingress import converge_gradle_specs
     if has_selected_workflow(config, workflow_action):
         if skip_restore or skip_build or skip_test:
             raise SystemExit(
                 "Validation skip flags cannot rewrite an explicit target workflow. "
                 "Select a different workflow/profile or remove --skip-restore/--skip-build/--skip-test."
             )
-        return _apply_config_metadata(config, build_workflow_specs(config, workflow_action))
-    return _apply_config_metadata(config, get_project_runner(config).build_validation_specs(
+        specs = _apply_config_metadata(config, build_workflow_specs(config, workflow_action))
+        return converge_gradle_specs(config, specs, default_origin="validation")
+    specs = _apply_config_metadata(config, get_project_runner(config).build_validation_specs(
         config,
         wine=wine,
         skip_restore=skip_restore,
         skip_build=skip_build,
         skip_test=skip_test,
     ))
+    return converge_gradle_specs(config, specs, default_origin="validation")
 
 
 def _apply_config_metadata(config: ProjectConfig, specs: list[CommandSpec]) -> list[CommandSpec]:
@@ -2313,6 +2319,13 @@ def run_specs(
     event_run_id: str = "",
     publish_workflow_plan: bool = True,
 ) -> tuple[list[OperationResult], str]:
+    # EXEC-X05 library-call safety net. Normal CLI/workflow/TestSpec paths are
+    # converged earlier, before reusable identity is pinned. Direct run_specs()
+    # callers still receive the same broker boundary, with any pre-existing RER
+    # fingerprint refreshed by converge_gradle_specs.
+    from .gradle_ingress import converge_gradle_specs
+    specs = converge_gradle_specs(config, specs, default_origin="devtool")
+
     # CLI executions already own DEVTOOL_RUN_ID. Direct/library run_specs()
     # calls still need an isolated execution identity so the authoritative
     # event store never merges separate invocations into one fallback run.
@@ -3422,6 +3435,10 @@ def run_specs(
                     "reuse_fingerprint", "reuse_output_manifest", "reuse_result_identity",
                     "reuse_evidence_refs", "reuse_portability_class",
                     "gradle_execution_receipt", "gradle_receipt_id",
+                    "gradle_takeover", "gradle_takeover_receipt_id",
+                    "gradle_takeover_semantic_identity", "gradle_takeover_origin",
+                    "gradle_takeover_origin_chain", "gradle_takeover_destination_identity",
+                    "gradle_takeover_launcher_identity", "gradle_takeover_ingress_status",
                 ) if key in result_metadata}),
             },
         ))

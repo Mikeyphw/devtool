@@ -3990,8 +3990,15 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             ]
     allow_bundle_bootstrap = bool(bundle_entry_targets) and not target_name
 
+    def with_invocation_context(config: ProjectConfig) -> ProjectConfig:
+        return replace(
+            config,
+            invocation_source=_invocation_source_for_args(args),
+            invocation_command=_invocation_command_for_args(args),
+        )
+
     try:
-        return load_project_config(
+        return with_invocation_context(load_project_config(
             args.repo,
             args.config,
             target_name=target_name,
@@ -4004,7 +4011,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
                 args.command in {"federation", "fed"}
                 and str(getattr(args, "federation_command", "") or "") in {"bootstrap", "sync"}
             ),
-        )
+        ))
     except SystemExit as exc:
         # An overlay may introduce both the named target and .devtool.toml. Allow
         # extraction to proceed with a repository-only config, then reload after
@@ -4019,7 +4026,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             and (not getattr(args, "_devtool_cli_target_explicit", False) or target_is_artifact_declared)
             and "Unknown target" in str(exc)
         ):
-            return load_project_config(
+            return with_invocation_context(load_project_config(
                 args.repo,
                 args.config,
                 target_name="",
@@ -4028,7 +4035,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
                 project_override=project,
                 kind_override=str(getattr(args, "project_type", "auto") or "auto"),
                 allow_ambiguous_target=True,
-            )
+            ))
         raise
 
 

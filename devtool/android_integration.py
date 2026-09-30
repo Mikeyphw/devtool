@@ -471,7 +471,7 @@ def android_gradle_invocation_plan(
     barriers=(),
 ):
     """Build the shared ENV-X03 Gradle plan with Android context contribution."""
-    from .gradle_planning import GradleInvocationRequest, GradleLauncherIdentity, gradle_selection_identity, plan_gradle_invocation
+    from .gradle_planning import GradleInvocationRequest, GradleLauncherIdentity, gradle_selection_identity
 
     root = android_project_root(config)
     component = android_gradle_task_execution_plan(
@@ -557,10 +557,21 @@ def android_gradle_invocation_plan(
         # mobile host ceiling as capability input instead of re-rendering an
         # Android-only --max-workers decision later.
         worker_ceiling = resource.max_workers
-    return component, plan_gradle_invocation(
-        config=config, request=request, launcher=launcher, java_requirement=java_requirement,
-        jdk_home=java_home, gradle_user_home=gradle_user_home, cpu_count=worker_ceiling,
+    from .gradle_takeover import GradleOrigin, broker_gradle_invocation
+    requested_launcher = command or ("wrapper" if wrapper.is_file() else "system")
+    decision = broker_gradle_invocation(
+        config, request, origin=GradleOrigin.ANDROID, requested_launcher=requested_launcher,
+        require_plan=True, fallback_launcher=launcher,
+        planner_kwargs={
+            "java_requirement": java_requirement,
+            "jdk_home": java_home,
+            "gradle_user_home": gradle_user_home,
+            "cpu_count": worker_ceiling,
+        },
     )
+    if decision.plan is None:
+        raise RuntimeError("Gradle broker failed to return the required Android canonical plan")
+    return component, decision.plan
 
 
 def configured_tasks(config: ProjectConfig, action: str) -> list[str]:
@@ -973,6 +984,7 @@ def android_builder_arguments_for_tasks(
     canonical_plan: object | None = None,
     component_plan: AndroidGradleTaskExecutionPlan | None = None,
     physical_roots: Iterable[str] | None = None,
+    gradle_command_override: str | None = None,
 ) -> list[str]:
     root = android_project_root(config)
     android = _dict_option(config, "android")
@@ -1054,7 +1066,11 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--cmake-version", android.get("cmake_version", "auto"))
     _append_non_default_option(argv, "--native-provider", native_options.get("provider") or android.get("native_provider", "auto"))
     _append_non_default_option(argv, "--native-cache", native_options.get("cache") or android.get("native_cache", "auto"))
-    _append_option(argv, "--gradle-command", gradle.get("command") or nested_gradle.get("command") or (android.get("gradle") if not isinstance(android.get("gradle"), dict) else None))
+    _append_option(
+        argv, "--gradle-command",
+        gradle_command_override or gradle.get("command") or nested_gradle.get("command")
+        or (android.get("gradle") if not isinstance(android.get("gradle"), dict) else None),
+    )
     _append_non_default_option(argv, "--gradle-provider", gradle.get("provider") or nested_gradle.get("provider") or "auto")
     _append_option(argv, "--gradle-version", gradle.get("version"))
     _append_option(argv, "--gradle-user-home", gradle.get("user_home") or android.get("gradle_user_home"))

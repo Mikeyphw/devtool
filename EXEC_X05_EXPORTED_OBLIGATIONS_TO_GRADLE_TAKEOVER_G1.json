@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "from": "EXEC-X05 (35/70)",
+  "to": "GRADLE-TAKEOVER-G1 (36/70)",
+  "obligations": [
+    "Prove the ENV-X05 and EXEC-X05 window together with real Gradle processes where the qualification host permits; do not treat implementation-unit tests as the gate.",
+    "Prove devtoolw, direct invoke, workflow structured/raw commands, typed Gradle jobs, TestSpecs, validation, artifact validation, Android/instrumentation prebuild, SSH and federation all cross the ingress guard before EXO/RER identity is finalized.",
+    "Prove equivalent Gradle work entering through different Devtool surfaces shares the origin-neutral Gradle semantic/RER identity while retaining distinct origin-aware evidence receipts.",
+    "Prove the already-planned marker is internal execution state only: typed work plans once, cannot recursively re-enter takeover, and repository configuration cannot forge a public bypass.",
+    "Prove WORK/PROBE/CONTROL remain distinct and PROBE/CONTROL use real-launcher authority without becoming WORK.",
+    "Prove PATH beginning with the takeover shim still resolves the real Gradle launcher and cannot recurse into the shim for wrapper or system providers.",
+    "Prove raw-to-canonical lowering preserves task/root ordering, raw Gradle arguments, cwd, semantic environment, launcher and destination identity.",
+    "Prove SSH/federation destination planning never leaks a host launcher path and preserves transport origin/destination evidence.",
+    "Prove manage/observe coverage is truthful and strict mode rejects recognized opaque nested-shell Gradle escapes rather than false-greening them.",
+    "Prove RUN/EXO evidence contains takeover origin/origin chain, requested launcher, real launcher, mode/scope, coverage, semantic identity and receipt linkage without introducing another Gradle truth store.",
+    "Prove cancellation, signals, non-zero exit status and primary diagnostics remain the underlying canonical process/execution truth.",
+    "Audit all ENV-X05 and EXEC-X05 promises GT-P001..GT-P026 and fold any discovered gap into the gate remediation loop before closing 36/70."
+  ]
+}

@@ -134,6 +134,8 @@ def run_artifact_tests(repo_root, manifest, *, verbose=False, dry_run=False, log
             metadata=test_metadata,
         ))
     if specs:
+        from .gradle_ingress import converge_gradle_specs
+        specs = converge_gradle_specs(config, specs, default_origin="artifact")
         local_results, raw = _run_specs(
             config, specs, verbose=verbose, dry_run=dry_run,
             log_path=log_path, tasker_progress=tasker_progress,

@@ -84,6 +84,12 @@ description = "Run the ENV-X05 Gradle takeover broker and launcher authority wor
 workflow = "roadmap-env-x05"
 target = "devtool"
 
+# EXEC-X05 universal Devtool-owned Gradle ingress convergence.
+[wrapper.commands.exec-x05]
+description = "Run the EXEC-X05 universal Gradle ingress convergence workflow"
+workflow = "roadmap-exec-x05"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
@@ -598,6 +604,13 @@ roadmap-env-x05 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "takeover-authority", ref = "test:roadmap-env-x05-gradle-takeover", depends_on = ["syntax"] },
   { id = "planner-regression", ref = "test:roadmap-env-x05-planner-regression", depends_on = ["takeover-authority"] },
+]
+
+roadmap-exec-x05 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "ingress-convergence", ref = "test:roadmap-exec-x05-gradle-ingress", depends_on = ["syntax"] },
+  { id = "takeover-regression", ref = "test:roadmap-exec-x05-takeover-regression", depends_on = ["ingress-convergence"] },
+  { id = "caller-regression", ref = "test:roadmap-exec-x05-caller-regression", depends_on = ["takeover-regression"] },
 ]
 
 roadmap-pres-x01 = [
@@ -2016,6 +2029,49 @@ name = "ENV-X05 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 600
 command = ["./devtoolw", "env-x05"]
+
+# EXEC-X05 universal Gradle ingress convergence. Targeted implementation
+# validation stays bounded; GRADLE-TAKEOVER-G1 owns real-process qualification.
+[[test]]
+id = "roadmap-exec-x05-gradle-ingress"
+name = "EXEC-X05 universal Gradle ingress convergence contracts"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x05_gradle_ingress.py",
+]
+
+[[test]]
+id = "roadmap-exec-x05-takeover-regression"
+name = "EXEC-X05 retained ENV-X05 takeover authority regression"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x05_gradle_takeover.py",
+  "tests/test_env_x03_gradle_receipts.py",
+]
+
+[[test]]
+id = "roadmap-exec-x05-caller-regression"
+name = "EXEC-X05 retained Gradle caller, workflow, SSH and federation regression"
+runner = "pytest"
+timeout_seconds = 360
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x03_gradle_callers.py",
+  "tests/test_project_runners.py",
+  "tests/test_frx06_federation_execution_lineage.py",
+  "tests/test_ssh01_transport_environment_worker_preparation.py",
+]
+
+[[test]]
+id = "roadmap-exec-x05-artifact-bootstrap"
+name = "EXEC-X05 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 600
+command = ["./devtoolw", "exec-x05"]
 
 # PRES-X01 presentation projection foundation. This overlay keeps rendering
 # surfaces as projections over RUN/EXO/RER/validation/ENV references; it does

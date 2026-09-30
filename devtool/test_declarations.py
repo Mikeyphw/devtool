@@ -69,4 +69,5 @@ def command_specs(config: ProjectConfig, names=(), *, all_tests=False):
             specs.append(CommandSpec(
                 name=f"test:{t.id}", argv=argv, cwd=cwd, env=env, metadata=test_metadata,
             ))
-    return specs
+    from .gradle_ingress import converge_gradle_specs
+    return converge_gradle_specs(config, specs, default_origin="testspec")

@@ -517,41 +517,217 @@ def broker_gradle_invocation(
     requested_launcher: str = "auto",
     destination: GradleDestination | None = None,
     env: Mapping[str, str] | None = None,
+    require_plan: bool = False,
+    fallback_launcher: GradleLauncherIdentity | None = None,
+    planner_kwargs: Mapping[str, object] | None = None,
 ) -> GradleTakeoverDecision:
+    """Broker one Gradle request without forcing callers to plan twice.
+
+    ``require_plan`` is the EXEC-X05 bridge for already-typed Devtool work. When
+    takeover is disabled or out of scope, the canonical planner still runs once
+    with the caller's existing launcher identity. When takeover applies, that
+    same single planning pass uses the broker-resolved real launcher instead.
+    Probe/control intents never become work merely because a plan was requested.
+    """
     cfg = resolve_takeover_config(config)
     origin_value = origin if isinstance(origin, GradleOrigin) else GradleOrigin(str(origin))
     intent_value = intent if isinstance(intent, GradleIntent) else GradleIntent(str(intent))
-    launcher = resolve_real_launcher(
-        config, requested=requested_launcher or cfg.requested_launcher,
-        destination=destination, env=env, project_root=request.project_root,
-    )
-    if not cfg.enabled:
-        receipt = _receipt(cfg=cfg, origin=origin_value, intent=intent_value, launcher=launcher, canonicalized=False, bypass_reason="takeover-disabled")
-        return GradleTakeoverDecision(cfg, launcher, receipt, None)
+    configured_launcher = str(cfg.requested_launcher or "auto")
+    requested = str(requested_launcher or "auto")
+    if requested == "auto" and configured_launcher not in {"", "auto"}:
+        requested = configured_launcher
     shell_origin = origin_value is GradleOrigin.SHELL
     scope_allows = (
         cfg.scope is TakeoverScope.BOTH
         or (shell_origin and cfg.scope is TakeoverScope.SHELL)
         or ((not shell_origin) and cfg.scope is TakeoverScope.DEVTOOL)
     )
-    if not scope_allows:
-        receipt = _receipt(
-            cfg=cfg, origin=origin_value, intent=intent_value, launcher=launcher,
-            canonicalized=False, bypass_reason="origin-outside-takeover-scope",
+    destination_value = destination or destination_from_config(config, env=env)
+    preserve_fallback = bool(
+        fallback_launcher is not None
+        and (not cfg.enabled or not scope_allows or (require_plan and cfg.mode is TakeoverMode.OBSERVE))
+    )
+    if preserve_fallback:
+        launcher = GradleLauncherResolution(
+            requested=requested, executable=fallback_launcher.executable, source=fallback_launcher.source,
+            destination=destination_value, launcher=fallback_launcher, deferred=not destination_value.local,
         )
-        return GradleTakeoverDecision(cfg, launcher, receipt, None)
-    if intent_value in {GradleIntent.PROBE, GradleIntent.CONTROL}:
-        receipt = _receipt(
-            cfg=cfg, origin=origin_value, intent=intent_value, launcher=launcher,
-            canonicalized=False, bypass_reason=f"typed-{intent_value.value}-bypass",
+    else:
+        launcher = resolve_real_launcher(
+            config, requested=requested, destination=destination_value, env=env, project_root=request.project_root,
         )
-        return GradleTakeoverDecision(cfg, launcher, receipt, None)
-    plan = plan_gradle_invocation(config=config, request=request, launcher=launcher.launcher)
+    bypass_reason = ""
+    if not cfg.enabled:
+        bypass_reason = "takeover-disabled"
+    elif not scope_allows:
+        bypass_reason = "origin-outside-takeover-scope"
+    elif intent_value in {GradleIntent.PROBE, GradleIntent.CONTROL}:
+        bypass_reason = f"typed-{intent_value.value}-bypass"
+    elif cfg.mode is TakeoverMode.OBSERVE:
+        bypass_reason = "observe-only"
+
+    plan = None
+    kwargs = dict(planner_kwargs or {})
+    if intent_value is GradleIntent.WORK and (not bypass_reason or require_plan):
+        selected_launcher = launcher.launcher if not bypass_reason else (fallback_launcher or launcher.launcher)
+        plan = plan_gradle_invocation(config=config, request=request, launcher=selected_launcher, **kwargs)
+
+    canonicalized = bool(plan is not None and not bypass_reason)
     receipt = _receipt(
         cfg=cfg, origin=origin_value, intent=intent_value, launcher=launcher,
-        canonicalized=True, plan_digest=plan.plan_digest,
+        canonicalized=canonicalized, plan_digest=(plan.plan_digest if plan is not None else ""),
+        bypass_reason=bypass_reason,
     )
     return GradleTakeoverDecision(cfg, launcher, receipt, plan)
+
+
+def takeover_semantic_identity(
+    receipt: GradleTakeoverReceipt | Mapping[str, object],
+    plan: GradleInvocationPlan | Mapping[str, object] | None = None,
+) -> str:
+    """Return origin-neutral identity for equivalent Gradle work.
+
+    The canonical plan digest intentionally contains caller/evidence fields, so
+    it is not itself suitable for cross-surface RER convergence. This identity
+    keeps physical Gradle semantics, launcher/destination and effective policy
+    while excluding wrapper/invoke/workflow provenance.
+    """
+    payload = receipt.as_dict() if isinstance(receipt, GradleTakeoverReceipt) else dict(receipt)
+    if isinstance(plan, GradleInvocationPlan):
+        plan_data: Mapping[str, object] = plan.as_dict()
+    elif isinstance(plan, Mapping):
+        plan_data = plan
+    else:
+        plan_data = {}
+    context = dict(plan_data.get("context") or {}) if isinstance(plan_data, Mapping) else {}
+    policy = dict(plan_data.get("policy") or {}) if isinstance(plan_data, Mapping) else {}
+    physical = {
+        "requested_roots": list(plan_data.get("requested_roots") or ()),
+        "optimized_roots": list(plan_data.get("optimized_roots") or ()),
+        "arguments": dict(plan_data.get("arguments") or {}),
+        "semantic_request_digest": str(plan_data.get("semantic_request_digest") or ""),
+        "invocations": list(plan_data.get("invocations") or ()),
+        "context_digest": str(context.get("context_digest") or ""),
+        "policy_digest": str(policy.get("policy_digest") or ""),
+    } if plan_data else {"plan_digest": str(payload.get("plan_digest") or "")}
+    return _digest({
+        "intent": str(payload.get("intent") or "work"),
+        "real_launcher": str(payload.get("real_launcher") or ""),
+        "launcher_identity": str(payload.get("launcher_identity") or ""),
+        "destination_identity": str(payload.get("destination_identity") or ""),
+        "configuration_identity": str(payload.get("configuration_identity") or ""),
+        "bypass_reason": str(payload.get("bypass_reason") or ""),
+        "physical": physical,
+    })
+
+
+def takeover_metadata(decision: GradleTakeoverDecision) -> dict[str, object]:
+    """Identity/evidence projection for RUN/EXO/RER CommandSpec metadata."""
+    receipt = decision.receipt.as_dict()
+    return {
+        "gradle_takeover": {
+            "config": decision.config.as_dict(),
+            "launcher": decision.launcher.as_dict(),
+            "receipt": receipt,
+        },
+        "gradle_takeover_receipt_id": decision.receipt.receipt_id,
+        "gradle_takeover_semantic_identity": takeover_semantic_identity(decision.receipt, decision.plan),
+        "gradle_takeover_origin": decision.receipt.origin,
+        "gradle_takeover_destination_identity": decision.receipt.destination_identity,
+        "gradle_takeover_launcher_identity": decision.receipt.launcher_identity,
+    }
+
+
+def retag_takeover_metadata(
+    metadata: Mapping[str, object],
+    *,
+    origin: GradleOrigin | str,
+) -> dict[str, object]:
+    """Retag evidence origin without re-planning already canonical Gradle work.
+
+    Nested Devtool surfaces (typed runner -> TestSpec -> workflow -> SSH) may
+    discover a more precise ingress origin after the canonical Gradle plan was
+    produced. Rebuild only the evidence receipt and keep the origin-neutral
+    semantic identity stable.
+    """
+    takeover = metadata.get("gradle_takeover")
+    if not isinstance(takeover, Mapping):
+        return {}
+    nested = dict(takeover)
+    receipt_raw = nested.get("receipt")
+    if not isinstance(receipt_raw, Mapping):
+        return {}
+    receipt = dict(receipt_raw)
+    origin_value = origin if isinstance(origin, GradleOrigin) else GradleOrigin(str(origin))
+    existing = str(receipt.get("origin") or "")
+    if existing == origin_value.value:
+        return {}
+    payload = {key: value for key, value in receipt.items() if key != "receipt_id"}
+    payload["origin"] = origin_value.value
+    receipt_id = _digest(payload)
+    receipt["origin"] = origin_value.value
+    receipt["receipt_id"] = receipt_id
+    nested["receipt"] = receipt
+    chain = [str(item) for item in metadata.get("gradle_takeover_origin_chain", ()) or () if str(item)]
+    if not chain:
+        previous = str(metadata.get("gradle_takeover_origin") or existing)
+        if previous:
+            chain.append(previous)
+    if not chain or chain[-1] != origin_value.value:
+        chain.append(origin_value.value)
+    return {
+        "gradle_takeover": nested,
+        "gradle_takeover_receipt_id": receipt_id,
+        "gradle_takeover_semantic_identity": takeover_semantic_identity(receipt, metadata.get("gradle_execution_plan") if isinstance(metadata, Mapping) else None),
+        "gradle_takeover_origin": origin_value.value,
+        "gradle_takeover_origin_chain": chain,
+        "gradle_takeover_destination_identity": str(receipt.get("destination_identity") or ""),
+        "gradle_takeover_launcher_identity": str(receipt.get("launcher_identity") or ""),
+    }
+
+
+def takeover_metadata_for_plan(
+    config: ProjectConfig,
+    plan: GradleInvocationPlan,
+    *,
+    origin: GradleOrigin | str = GradleOrigin.DEVTOOL,
+    requested_launcher: str = "auto",
+    destination: GradleDestination | None = None,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    """Project a broker receipt for a plan already produced through this broker.
+
+    This is evidence-only: it never calls the Gradle planner and therefore does
+    not re-plan typed Android/JVM work.
+    """
+    cfg = resolve_takeover_config(config)
+    origin_value = origin if isinstance(origin, GradleOrigin) else GradleOrigin(str(origin))
+    dest = destination or destination_from_config(config, env=env)
+    requested = str(requested_launcher or "auto")
+    if requested == "auto" and str(cfg.requested_launcher or "auto") not in {"", "auto"}:
+        requested = str(cfg.requested_launcher)
+    launcher = GradleLauncherResolution(
+        requested=requested,
+        executable=plan.context.launcher.executable,
+        source=plan.context.launcher.source,
+        destination=dest,
+        launcher=plan.context.launcher,
+        deferred=not dest.local,
+    )
+    shell_origin = origin_value is GradleOrigin.SHELL
+    scope_allows = (
+        cfg.scope is TakeoverScope.BOTH
+        or (shell_origin and cfg.scope is TakeoverScope.SHELL)
+        or ((not shell_origin) and cfg.scope is TakeoverScope.DEVTOOL)
+    )
+    bypass_reason = "" if cfg.enabled and scope_allows else (
+        "takeover-disabled" if not cfg.enabled else "origin-outside-takeover-scope"
+    )
+    receipt = _receipt(
+        cfg=cfg, origin=origin_value, intent=GradleIntent.WORK, launcher=launcher,
+        canonicalized=not bool(bypass_reason), plan_digest=plan.plan_digest, bypass_reason=bypass_reason,
+    )
+    return takeover_metadata(GradleTakeoverDecision(cfg, launcher, receipt, plan))
 
 
 def _ensure_capability() -> str:

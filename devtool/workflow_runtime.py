@@ -576,6 +576,9 @@ def _specs_from_graph(
         scope = ",".join(graph.targets) if graph.targets else graph.target
         raise WorkflowRuntimeError(f"Workflow {scope}.{graph.workflow} produced no executable commands.")
 
+    from .gradle_ingress import converge_gradle_specs
+    specs = converge_gradle_specs(config, specs, default_origin="workflow")
+
     node_specs: dict[str, list[CommandSpec]] = {}
     for spec in specs:
         key = str(spec.metadata.get("workflow_node_key") or "")

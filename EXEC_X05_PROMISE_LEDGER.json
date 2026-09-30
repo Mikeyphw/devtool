@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "position": "35/70",
+  "gate_window": "2/3",
+  "scope": "EXEC-X05",
+  "status": "IMPLEMENTED_LOCAL_QUALIFIED_PENDING_TERMUX_APPLY",
+  "delivered_promises": [
+    "GT-P013",
+    "GT-P014",
+    "GT-P015",
+    "GT-P016",
+    "GT-P017",
+    "GT-P018",
+    "GT-P019",
+    "GT-P020",
+    "GT-P021",
+    "GT-P022",
+    "GT-P023",
+    "GT-P024",
+    "GT-P025",
+    "GT-P026"
+  ],
+  "local_validation": {
+    "roadmap_exec_x05_workflow": "98 passed, 0 failed, 0 skipped, 0 warnings, 0 errors",
+    "focused_exec_x05": "11 passed",
+    "android_instrumentation_canonical_boundary": "2 passed",
+    "wrapper_and_core_invocation_regression": "20 passed",
+    "compileall": "PASS",
+    "diff_check": "PASS"
+  },
+  "merge_window": {
+    "positions": [
+      "EXEC-X05 (35/70)",
+      "GRADLE-TAKEOVER-G1 (36/70)",
+      "ANDROID-X01 (37/70)"
+    ],
+    "decision": "KEEP_SEPARATE",
+    "reason": "EXEC-X05 is implementation; GRADLE-TAKEOVER-G1 is the authoritative proof gate; ANDROID-X01 starts the next major scope."
+  },
+  "next_overlay": "GRADLE-TAKEOVER-G1 (36/70)",
+  "remaining_before_next_major_scope": 1,
+  "next_major_scope": "ANDROID-X01 (37/70)"
+}

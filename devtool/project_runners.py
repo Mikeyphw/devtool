@@ -835,6 +835,16 @@ class AndroidGradleRunner(ProjectRunner):
                 "validation_phase_name": validation_phase if validation else "",
             }
             metadata.update(plan_metadata(gradle_plan))
+            from .gradle_takeover import GradleOrigin, takeover_metadata_for_plan
+            metadata.update(takeover_metadata_for_plan(
+                config, gradle_plan, origin=GradleOrigin.ANDROID,
+                requested_launcher=str(gradle_plan.context.launcher.executable or "auto"),
+            ))
+            domains = dict(metadata.get("environment_domains") or {})
+            domains["gradle_takeover"] = str(metadata.get("gradle_takeover_semantic_identity") or metadata.get("gradle_takeover_receipt_id") or "")
+            metadata["environment_domains"] = domains
+            metadata["gradle_takeover_ingress_checked"] = True
+            metadata["gradle_takeover_ingress_status"] = "typed-brokered"
             metadata.update(_android_signing_metadata(config, list(component.workload_tasks)))
             argv = [
                 *android_plan.argv_prefix,
@@ -842,6 +852,12 @@ class AndroidGradleRunner(ProjectRunner):
                     config, roots, scan_artifacts=action in {"build", "package"},
                     validation=validation, validation_phase=validation_phase,
                     canonical_plan=gradle_plan, component_plan=component, physical_roots=physical.roots,
+                    gradle_command_override=(
+                        str(gradle_plan.context.launcher.executable)
+                        if bool(((metadata.get("gradle_takeover") or {}).get("receipt") or {}).get("canonicalized"))
+                        and str(((metadata.get("gradle_takeover") or {}).get("config") or {}).get("mode") or "") in {"manage", "strict"}
+                        else None
+                    ),
                 ),
             ]
             specs.append(CommandSpec(
@@ -1731,7 +1747,7 @@ class JvmGradleRunner(ProjectRunner):
     ) -> list[CommandSpec]:
         from . import android_build
         from .gradle_planning import (
-            GradleInvocationRequest, GradleLauncherIdentity, gradle_selection_identity, plan_gradle_invocation, plan_metadata,
+            GradleInvocationRequest, GradleLauncherIdentity, gradle_selection_identity, plan_metadata,
         )
 
         roots = tuple(dict.fromkeys(str(task).strip() for task in tasks if str(task).strip()))
@@ -1777,19 +1793,33 @@ class JvmGradleRunner(ProjectRunner):
             expected_artifact_producers=tuple(roots if action in {"build", "package"} else ()),
             expected_report_producers=tuple(roots if action in {"test", "lint"} else ()),
         )
-        plan = plan_gradle_invocation(
-            config=config, request=request, launcher=launcher,
-            java_requirement=(str(java_requirement.exact) if java_requirement.exact else f">={java_requirement.minimum}" if java_requirement.minimum else ""),
-            jdk_home=java_home, gradle_user_home=gradle_user_home,
+        from .gradle_takeover import GradleOrigin, broker_gradle_invocation
+        requested_launcher = str(options.get("command") or ("wrapper" if Path(gradle).name.lower() in {"gradlew", "gradlew.bat"} else "system"))
+        decision = broker_gradle_invocation(
+            config, request, origin=GradleOrigin.DEVTOOL, requested_launcher=requested_launcher,
+            require_plan=True, fallback_launcher=launcher,
+            planner_kwargs={
+                "java_requirement": (str(java_requirement.exact) if java_requirement.exact else f">={java_requirement.minimum}" if java_requirement.minimum else ""),
+                "jdk_home": java_home,
+                "gradle_user_home": gradle_user_home,
+            },
         )
+        if decision.plan is None:
+            raise RuntimeError("Gradle broker failed to return the required JVM canonical plan")
+        plan = decision.plan
         telemetry = str(plan.policy.telemetry_level.effective)
         if plan.request.expected_artifact_producers:
             env["DEVTOOL_GRADLE_ARTIFACT_PRODUCERS"] = ",".join(plan.request.expected_artifact_producers)
         else:
             env.pop("DEVTOOL_GRADLE_ARTIFACT_PRODUCERS", None)
         specs: list[CommandSpec] = []
+        managed_launcher = (
+            decision.launcher.executable
+            if decision.receipt.canonicalized and decision.config.mode.value in {"manage", "strict"}
+            else gradle
+        )
         for index, invocation in enumerate(plan.invocations, start=1):
-            argv = [gradle, *invocation.roots, *invocation.args]
+            argv = [managed_launcher, *invocation.roots, *invocation.args]
             if telemetry in {"standard", "full"}:
                 from .android_integration import stage_gradle_init_script
                 argv.extend(["--init-script", str(stage_gradle_init_script(telemetry_level=telemetry))])
@@ -1805,6 +1835,13 @@ class JvmGradleRunner(ProjectRunner):
                 gradle_invocation_barriers=[barrier.as_dict() for barrier in invocation.barriers],
             )
             metadata.update(plan_metadata(plan))
+            from .gradle_takeover import takeover_metadata
+            metadata.update(takeover_metadata(decision))
+            domains = dict(metadata.get("environment_domains") or {})
+            domains["gradle_takeover"] = str(metadata.get("gradle_takeover_semantic_identity") or metadata.get("gradle_takeover_receipt_id") or "")
+            metadata["environment_domains"] = domains
+            metadata["gradle_takeover_ingress_checked"] = True
+            metadata["gradle_takeover_ingress_status"] = "typed-brokered"
             specs.append(CommandSpec(
                 name if len(plan.invocations) == 1 else f"{name}-{index}", argv=argv, env=env, cwd=str(root),
                 destructive=any(barrier.kind == "clean" for barrier in invocation.barriers), metadata=metadata,
