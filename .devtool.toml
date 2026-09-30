@@ -234,6 +234,12 @@ description = "Run the PRES-G1 Textual replacement proof gate"
 workflow = "roadmap-pres-g1"
 target = "devtool"
 
+# PRES-X08 live Textual control-center adoption.
+[wrapper.commands.pres-x08]
+description = "Run the PRES-X08 live Textual control-center adoption workflow"
+workflow = "roadmap-pres-x08"
+target = "devtool"
+
 # LIFE-X01 immediate lifecycle safety boundary.
 [wrapper.commands.life-x01]
 description = "Run the LIFE-X01 immediate lifecycle safety workflow"
@@ -872,6 +878,13 @@ roadmap-pres-g1 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "textual-replacement-proof", ref = "test:roadmap-pres-g1-textual-replacement-proof", depends_on = ["syntax"] },
   { id = "x07-regression", ref = "test:roadmap-pres-g1-x07-regression", depends_on = ["textual-replacement-proof"] },
+]
+
+roadmap-pres-x08 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "live-control-center", ref = "test:roadmap-pres-x08-live-control-center", depends_on = ["syntax"] },
+  { id = "pres-regression", ref = "test:roadmap-pres-x08-pres-regression", depends_on = ["live-control-center"] },
+  { id = "runtime-once", ref = "test:roadmap-pres-x08-runtime-once", depends_on = ["pres-regression"] },
 ]
 
 roadmap-life-x01 = [
@@ -3095,6 +3108,43 @@ name = "PRES-G1 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 480
 command = ["./devtoolw", "pres-g1"]
+
+
+# PRES-X08 live Textual control-center adoption.
+[[test]]
+id = "roadmap-pres-x08-live-control-center"
+name = "PRES-X08 live Textual control-center contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_pres_x08_textual_control_center.py"]
+
+[[test]]
+id = "roadmap-pres-x08-pres-regression"
+name = "PRES-X08 retained Textual replacement authority"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x04_textual_tui.py",
+  "tests/test_pres_x05_textual_feature_parity.py",
+  "tests/test_pres_x06_textual_default_replacement.py",
+  "tests/test_pres_x07_textual_replacement_hardening.py",
+  "tests/test_pres_g1_textual_replacement_proof_gate.py",
+]
+
+[[test]]
+id = "roadmap-pres-x08-runtime-once"
+name = "PRES-X08 deterministic non-interactive runtime projection"
+runner = "command"
+timeout_seconds = 120
+command = ["python", "-m", "devtool.tui_textual_runtime", "--once", "--page", "runs", "--width", "80"]
+
+[[test]]
+id = "roadmap-pres-x08-artifact-bootstrap"
+name = "PRES-X08 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 480
+command = ["./devtoolw", "pres-x08"]
 
 
 # LIFE-X01 immediate lifecycle safety. LIFE-X02 owns the complete canonical

@@ -1,0 +1,1 @@
+{"schema_version":1,"overlay":"PRES-X08","next_gate":"PRES-G2","obligations":["fresh-process Textual interaction/reliability proof","side-effect-free observation proof","renderer/control failure remains secondary to canonical execution truth","operator workflow proof for runs/logs/diagnostics/artifacts/workers/launch","Termux/tmux/plain terminal reliability proof"]}

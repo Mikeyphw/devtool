@@ -1030,6 +1030,20 @@ def run_textual_tui_runtime(args: Any, *, repo_root: Any, console: Any | None = 
     presentation contracts built by PRES-X01..PRES-X05.
     """
 
+    once = bool(getattr(args, "once", False))
+    page = str(getattr(args, "page", "dashboard") or "dashboard")
+    width = int(getattr(args, "width", 0) or 0)
+    if once:
+        from .textual_control_center import PAGES, TextualControlCenter
+        center = TextualControlCenter(page=page if page in PAGES else "dashboard")
+        payload = center.snapshot(width=width or 100, height=28)
+        payload["repo_root"] = str(repo_root)
+        if console is not None:
+            console.print(payload)
+        else:
+            print(payload)
+        return 0
+
     availability = probe_textual_availability()
     if not availability.available:
         message = "Textual TUI requested, but the textual package is not importable. Install devtool[textual] or use --legacy-tui."
@@ -1049,35 +1063,25 @@ def run_textual_tui_runtime(args: Any, *, repo_root: Any, console: Any | None = 
             print(f"Error: {message}")
         return 2
 
-    once = bool(getattr(args, "once", False))
-    page = str(getattr(args, "page", "dashboard") or "dashboard")
-    width = int(getattr(args, "width", 0) or 0)
-    if once:
-        payload = {
-            "backend": "textual",
-            "repo_root": str(repo_root),
-            "page": page,
-            "profile": classify_terminal_profile(width=width or 100, height=28).value,
-            "owns_truth": False,
-        }
-        if console is not None:
-            console.print(payload)
-        else:
-            print(payload)
-        return 0
+    from .textual_control_center import NAV_KEYS, PAGES, TextualControlCenter
 
     class DevtoolTextualShell(App):  # type: ignore[misc]
         TITLE = "Devtool"
-        SUB_TITLE = "Textual TUI"
-        BINDINGS = [("q", "quit", "Quit"), ("?", "help", "Help")]
+        SUB_TITLE = "Textual Control Center"
+        BINDINGS = [("q", "quit", "Quit"), ("?", "help", "Help")] + [(key, f"page_{target}", target.title()) for key, target in NAV_KEYS.items()]
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.control_center = TextualControlCenter(page=page if page in PAGES else "dashboard")
 
         def compose(self) -> ComposeResult:  # type: ignore[override]
             yield Header()
             yield Static(
-                "Devtool Textual TUI\n\n"
+                "Devtool Textual Control Center\n\n"
                 f"Repository: {repo_root}\n"
-                f"Initial page: {page}\n\n"
-                "Rendering is Textual-owned; RUN/EXO/RER/validation truth remains canonical.",
+                f"Initial page: {self.control_center.page}\n"
+                f"Pages: {', '.join(PAGES)}\n\n"
+                "Rendering/control requests are Textual-owned; RUN/EXO/RER/validation/LIFE/DIST/TEST truth remains canonical.",
                 id="devtool-textual-dashboard",
             )
             yield Footer()
