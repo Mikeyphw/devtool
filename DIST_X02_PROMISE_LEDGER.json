@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "DIST-X02",
+  "position": "41/70",
+  "gate_window": "2/3",
+  "status": "prepared_local_qualified_pending_termux_apply",
+  "previous_qualified": {
+    "roadmap_id": "DIST-X01",
+    "run_id": "e5c5337b4d2e41318cc0f6c359460f8c",
+    "commit": "13fa36e",
+    "tests": {"passed": 113, "failed": 0, "skipped": 0},
+    "diagnostics": {"warnings": 0, "errors": 0}
+  },
+  "delivered": [
+    "DIST-P025", "DIST-P026", "DIST-P027", "DIST-P028", "DIST-P029", "DIST-P030",
+    "DIST-P031", "DIST-P032", "DIST-P046", "DIST-P047", "DIST-P048", "DIST-P052",
+    "DIST-P053", "DIST-P054", "DIST-P055", "DIST-P056", "DIST-P057", "DIST-P058",
+    "DIST-P059", "DIST-P060", "DIST-P068", "DIST-P071", "DIST-P072", "DIST-P073",
+    "DIST-P074", "DIST-P078", "DIST-P079", "DIST-P098"
+  ],
+  "partial": {
+    "DIST-P008": "One provider-neutral run-link/frame/journal/cursor adapter contract now covers local subprocess, federation, chroot, PRoot, OCI and SSH identities; real SSH/tmux provider adoption remains DIST-X03.",
+    "DIST-P023": "Durable RUN-journal cursor sources and adapter contracts are first-class for all provider kinds; provider-specific live side-channel adoption remains DIST-X03.",
+    "DIST-P024": "Cursor/ack/reconnect semantics are implemented and tested over durable origin journals; detached SSH/tmux reconnect wiring remains DIST-X03.",
+    "DIST-P040": "Transport cursor/spool state is explicitly marked LIFE cleanup-owned; reference-aware cleanup execution remains later LIFE/DIST provider adoption.",
+    "DIST-P045": "live, recovery and catch-up provenance are distinct in the envelope; historical-reuse projection remains later reuse/UI adoption.",
+    "DIST-P065": "SSH uses the same provider-neutral adapter/cursor contract, but foreground/detached live channel wiring remains DIST-X03.",
+    "DIST-P066": "Chroot/PRoot/OCI first adapters preserve the same identity/frame/cursor contract; full real-provider parity is deferred to DIST-G2.",
+    "DIST-P075": "Devtool now dogfoods the bridge in production parallel federation and local loopback; SSH dogfood remains DIST-X03.",
+    "DIST-P085": "Existing provider state/transport remains substrate and no second workspace/result stack was introduced; full SSH transport integration remains DIST-X03.",
+    "DIST-P086": "RUN journal/cursor recovery links to existing SSH history semantics without replacing them; detached SSH live-tail adoption remains DIST-X03.",
+    "DIST-P096": "Cursor/spool state declares LIFE cleanup ownership; cleanup eligibility/reclamation wiring remains later lifecycle/provider work."
+  },
+  "exported": {
+    "DIST-G1": [
+      "fresh-process proof of no silent sequence/event-ID collision and same-ID/different-body rejection",
+      "exactly one live subscriber update per accepted semantic event",
+      "bounded sender does not stall child execution under sustained load",
+      "disconnect/reconnect exact origin-journal catch-up with cursor persistence",
+      "secret-safe ordinary semantic channel and raw-stream reference separation",
+      "terminal snapshot digest/cursor reconciliation including impossible ordering failure",
+      "sequential/parallel federation semantic topology parity",
+      "primary child failure survives bridge/finalization secondary failures",
+      "promise-by-promise audit of DIST-X01 and DIST-X02 before 42/70 closure"
+    ],
+    "DIST-X03": [
+      "SSH foreground semantic event channel",
+      "SSH detached tmux durable reconnect/live tail and provider session binding",
+      "nested federation route/hop cycle protection",
+      "typed DelegatedControlRequest/Ack and cancellation under degraded telemetry",
+      "ancestor/descendant/subtree RUN hierarchy and parent progress projection",
+      "private secret transport hooks and exact typed-tool argv preservation",
+      "reference-aware LIFE cleanup integration for provider staging/spool/cursor state"
+    ]
+  },
+  "known_preexisting_baseline": [
+    {
+      "owner": "OCI/ANDROID",
+      "symptom": "OCI-05 embedded Android builder resource digest mismatch",
+      "proof": "Four failing OCI-05 repository-execution tests reproduce unchanged on the DIST-X01 base; X02 does not touch the implicated resources."
+    }
+  ],
+  "next": "DIST-G1 42/70",
+  "remaining_implementation_before_gate": 0,
+  "next_major_scope_after_gate": "LIFE-X03 43/70"
+}

@@ -121,6 +121,11 @@ description = "Run the DIST-X01 delegation/external-ingest integrity workflow"
 workflow = "roadmap-dist-x01"
 target = "devtool"
 
+[wrapper.commands.dist-x02]
+description = "Run the DIST-X02 async transport/cursor recovery workflow"
+workflow = "roadmap-dist-x02"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
@@ -676,6 +681,13 @@ roadmap-dist-x01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "delegation-ingest", ref = "test:roadmap-dist-x01-delegation-ingest", depends_on = ["syntax"] },
   { id = "retained-federation", ref = "test:roadmap-dist-x01-retained-federation", depends_on = ["delegation-ingest"] },
+]
+
+roadmap-dist-x02 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "async-transport", ref = "test:roadmap-dist-x02-async-transport", depends_on = ["syntax"] },
+  { id = "retained-federation", ref = "test:roadmap-dist-x02-retained-federation", depends_on = ["async-transport"] },
+  { id = "provider-adapters", ref = "test:roadmap-dist-x02-provider-adapters", depends_on = ["retained-federation"] },
 ]
 
 roadmap-pres-x01 = [
@@ -2340,6 +2352,53 @@ name = "DIST-X01 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 900
 command = ["./devtoolw", "dist-x01"]
+
+# DIST-X02 owns bounded asynchronous forwarding, durable origin cursor/ack,
+# gap catch-up, delivery receipts, safe semantic content and first provider
+# adapters. Provider-network/authoritative parity remains DIST-G1.
+[[test]]
+id = "roadmap-dist-x02-async-transport"
+name = "DIST-X02 bounded async transport, cursor, catch-up and receipt contracts"
+runner = "pytest"
+timeout_seconds = 420
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_dist_x02_async_transport.py",
+  "tests/test_dist_x01_delegation_ingest.py",
+]
+
+[[test]]
+id = "roadmap-dist-x02-retained-federation"
+name = "DIST-X02 retained federation live-tail and lineage authority regressions"
+runner = "pytest"
+timeout_seconds = 600
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_frx06_federation_execution_lineage.py",
+  "tests/test_frx_y01_parallel_federation_scheduler.py",
+  "tests/test_frx_x03_executable_federation_groups.py",
+  "tests/test_git_frx14_federated_cancellation_recovery.py",
+  "tests/test_frx11_federation_observability.py",
+]
+
+[[test]]
+id = "roadmap-dist-x02-provider-adapters"
+name = "DIST-X02 retained chroot, PRoot/OCI and SSH transport substrate regressions"
+runner = "pytest"
+timeout_seconds = 600
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_termux_chroot_runner.py",
+  "tests/test_oci02_proot_distro_lifecycle.py",
+  "tests/test_ssh02_execution_history_recovery_convergence.py",
+]
+
+[[test]]
+id = "roadmap-dist-x02-artifact-bootstrap"
+name = "DIST-X02 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 1200
+command = ["./devtoolw", "dist-x02"]
 
 # PRES-X01 presentation projection foundation. This overlay keeps rendering
 # surfaces as projections over RUN/EXO/RER/validation/ENV references; it does

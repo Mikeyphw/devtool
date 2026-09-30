@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "from": "DIST-X02",
+  "to": ["DIST-G1"],
+  "obligations": [
+    "Audit every DIST-X01 and DIST-X02 delivered/partial promise before closing 42/70; fold natural DIST gate-owned gaps and rerun until clean.",
+    "Prove from fresh processes that origin run_id/event_id/sequence remain unchanged through forwarding, duplicate-equivalent replay is idempotent, and same-ID/different-body conflicts fail closed.",
+    "Prove one live subscriber update per accepted semantic event across live plus reconnect catch-up.",
+    "Prove the bounded sender never performs provider network I/O on the EventBus publication path and sustained hint overflow loses no canonical semantic events because the RUN journal is the durable spool.",
+    "Prove persisted acknowledgement resumes exactly from the next origin sequence after disconnect and gap detection/catch-up does not duplicate canonical destination state.",
+    "Prove ordinary semantic transport is secret-safe and bounded while process.output/protected evidence crosses only as typed RUN stream/attachment references.",
+    "Prove EventDeliveryState/DelegatedExecutionReceipt remain secondary transport truth and cannot overwrite canonical child execution status/failure.",
+    "Prove terminal snapshot digest and acknowledged origin cursor reconcile; cursor-ahead, cursor-behind, unresolved-gap and rc/snapshot contradictions fail closed for dependent scheduling.",
+    "Prove sequential and parallel federation expose equivalent child semantic topology/terminal truth after parallel live-tail/catch-up adoption.",
+    "Prove a primary child failure survives bridge/finalization failure with transport degradation reported only as a secondary diagnostic/receipt state.",
+    "Retain the pre-existing OCI-05 Android-builder digest mismatch as its natural OCI/ANDROID owner unless the gate demonstrates DIST caused or owns it; do not fold unrelated resource-digest repair into DIST-G1."
+  ]
+}

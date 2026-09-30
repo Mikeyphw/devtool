@@ -254,7 +254,7 @@ class EventTransportEnvelope:
 
     def __post_init__(self) -> None:
         mode = str(self.delivery_mode or "live").strip().lower()
-        if mode not in {"live", "recovery"}:
+        if mode not in {"live", "recovery", "catch-up", "historical-reuse"}:
             raise ValueError(f"unsupported external ingest mode {self.delivery_mode!r}")
         object.__setattr__(self, "delivery_mode", mode)
         object.__setattr__(self, "provider_identity", _normalized_provider_identity(self.provider_identity))
@@ -295,6 +295,22 @@ class EventTransportEnvelope:
             delivery_mode=delivery_mode,
             provider_identity=dict(link.provider_identity),
             attestation_digest=link.attestation_digest,
+        )
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "EventTransportEnvelope":
+        return cls(
+            delegation_id=str(payload.get("delegation_id") or ""),
+            child_run_id=str(payload.get("child_run_id") or ""),
+            producer_id=str(payload.get("producer_id") or ""),
+            event_id=str(payload.get("event_id") or ""),
+            sequence=int(payload.get("sequence", -1)),
+            payload=dict(payload.get("payload") or {}),
+            payload_digest=str(payload.get("payload_digest") or ""),
+            delivery_mode=str(payload.get("delivery_mode") or "live"),
+            provider_identity=dict(payload.get("provider_identity") or {}),
+            attestation_digest=str(payload.get("attestation_digest") or ""),
+            schema_version=int(payload.get("schema_version") or DIST_EVENT_TRANSPORT_SCHEMA_VERSION),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -404,7 +420,7 @@ class ExternalEventIngestor:
         try:
             applied = self.bus.ingest_preserved(
                 event,
-                notify=envelope.delivery_mode == "live",
+                notify=envelope.delivery_mode in {"live", "catch-up"},
                 payload_digest=envelope.payload_digest,
             )
         except ValueError as exc:

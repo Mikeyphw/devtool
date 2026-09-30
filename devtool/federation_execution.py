@@ -55,8 +55,15 @@ from .models import FederatedWorkflowConfig, FederatedWorkflowStep, ProjectConfi
 from .repository_identity import RepositoryIdentity, same_repository_identity
 from .distributed_execution import (
     DelegationLink,
+    ExternalEventIngestor,
     import_child_run_journal,
     reconcile_terminal_truth,
+)
+from .distributed_transport import (
+    AsyncJournalForwarder,
+    DelegatedEventReceiver,
+    LocalLoopbackTransport,
+    distributed_provider_adapter,
 )
 
 
@@ -118,6 +125,7 @@ class FederatedChildRun:
     placement: dict[str, Any] = field(default_factory=dict)
     delegation_link: dict[str, Any] = field(default_factory=dict)
     terminal_reconciliation: dict[str, Any] = field(default_factory=dict)
+    delivery_receipt: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -142,6 +150,7 @@ class FederatedChildRun:
             "placement": dict(self.placement),
             "delegation_link": dict(self.delegation_link),
             "terminal_reconciliation": dict(self.terminal_reconciliation),
+            "delivery_receipt": dict(self.delivery_receipt),
         }
 
 
@@ -1448,6 +1457,35 @@ def _run_federated_workflow_parallel(
             env["DEVTOOL_FEDERATION_GROUP"] = federation_group
         env.update(federation_attestation_environment(attestation))
 
+        live_forwarder: AsyncJournalForwarder | None = None
+        live_transport_error = ""
+        if publish is publish_event:
+            parent_bus = get_event_bus()
+            receiver = DelegatedEventReceiver(
+                ExternalEventIngestor(parent_bus),
+                link=delegation_link,
+            )
+            loopback = LocalLoopbackTransport(receiver)
+            adapter = distributed_provider_adapter(
+                "federation",
+                child_state_dir,
+                provider_identity=placement,
+            )
+            live_forwarder = AsyncJournalForwarder(
+                link=delegation_link,
+                journal=adapter.origin_journal(delegation_link),
+                cursor_store=adapter.cursor_store(delegation_link),
+                send_frame=loopback.send,
+                protocol=loopback.negotiated,
+                queue_capacity=64,
+                poll_interval=0.05,
+            )
+            # Parallel child execution is a distinct process/EventBus, so the
+            # parent live bridge tails the child's canonical RUN journal. The
+            # same forwarder can attach directly to an in-process child bus for
+            # local-subprocess delegation without changing semantic protocol.
+            live_forwarder.start()
+
         child_started = time.monotonic()
         with active_lock:
             active_children[child_run_id] = step.step_id
@@ -1499,8 +1537,28 @@ def _run_federated_workflow_parallel(
                     pass
                 rc = 130
 
+            if live_forwarder is not None:
+                try:
+                    live_forwarder.stop(drain=True, timeout=2.0)
+                except Exception as exc:
+                    # Delivery is secondary to canonical child execution. The
+                    # durable child journal remains available for recovery
+                    # import and the receipt records degraded transport health.
+                    live_transport_error = str(exc)
+
             child_snapshot = snapshot_lookup(child_run_id)
-            if child_snapshot is None and publish is publish_event:
+            snapshot_terminal = bool(
+                child_snapshot is not None
+                and str(getattr(child_snapshot, "status", "") or "")
+                in {
+                    ExecutionStatus.SUCCEEDED.value,
+                    ExecutionStatus.FAILED.value,
+                    ExecutionStatus.BLOCKED.value,
+                    ExecutionStatus.SKIPPED.value,
+                    ExecutionStatus.CANCELLED.value,
+                }
+            )
+            if (child_snapshot is None or not snapshot_terminal) and publish is publish_event:
                 child_snapshot = import_child_run_journal(
                     child_state_dir,
                     child_run_id=child_run_id,
@@ -1539,6 +1597,15 @@ def _run_federated_workflow_parallel(
             terminal = reconcile_terminal_truth(transport_exit_code=rc, child_snapshot=child_snapshot)
             child_status = terminal.authoritative_status
             rc = terminal.authoritative_exit_code
+            delivery_receipt = {}
+            if live_forwarder is not None:
+                receipt = live_forwarder.receipt(
+                    child_snapshot=child_snapshot,
+                    transport_exit_code=rc,
+                )
+                delivery_receipt = receipt.as_dict()
+                if live_transport_error:
+                    delivery_receipt["secondary_transport_error"] = live_transport_error
             git_lineage = _finalize_child_git_lineage(
                 resolution, planned_git_lineage, terminal_status=child_status, publish=publish
             )
@@ -1563,6 +1630,7 @@ def _run_federated_workflow_parallel(
                     "run_lineage": persisted_lineage or lineage,
                     "delegation_link": delegation_link.as_dict(),
                     "terminal_reconciliation": terminal.as_dict(),
+                    "delegated_execution_receipt": delivery_receipt,
                     "operational_ownership": operational,
                     "scheduler_state": child_status,
                     "scheduler_wave": wave_for_step.get(step.step_id, 0),
@@ -1597,8 +1665,14 @@ def _run_federated_workflow_parallel(
                 placement=placement,
                 delegation_link=delegation_link.as_dict(),
                 terminal_reconciliation=terminal.as_dict(),
+                delivery_receipt=delivery_receipt,
             )
         finally:
+            if live_forwarder is not None:
+                try:
+                    live_forwarder.stop(drain=False, timeout=0.5)
+                except Exception:
+                    pass
             with active_lock:
                 active_children.pop(child_run_id, None)
 
