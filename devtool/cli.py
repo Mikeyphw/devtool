@@ -1768,6 +1768,24 @@ def build_parser() -> argparse.ArgumentParser:
     android_environment.add_argument("--action", choices=("build", "package", "release", "test", "lint", "instrumentation", "doctor", "explain"), default="explain")
     android_environment.add_argument("--format", choices=("text", "json"), default="text")
 
+    # ANDROID-X04 canonical explain/diff aliases. Keep `android environment`
+    # for compatibility while exposing the roadmap spelling `android env`.
+    android_env = android_sub.add_parser("env", help="Explain or diff canonical Android environment identities")
+    android_env_sub = android_env.add_subparsers(dest="android_env_action", required=True)
+    android_env_explain = android_env_sub.add_parser("explain", help="Explain the production Android environment resolver")
+    android_env_explain.add_argument("--action", choices=("build", "package", "release", "test", "lint", "instrumentation", "doctor", "explain"), default="explain")
+    android_env_explain.add_argument("--format", choices=("text", "json"), default="text")
+    android_env_diff = android_env_sub.add_parser("diff", help="Diff canonical component identities across Android actions")
+    android_env_diff.add_argument("--left-action", choices=("build", "package", "release", "test", "lint", "instrumentation", "doctor", "explain"), default="build")
+    android_env_diff.add_argument("--right-action", choices=("build", "package", "release", "test", "lint", "instrumentation", "doctor", "explain"), default="instrumentation")
+    android_env_diff.add_argument("--format", choices=("text", "json"), default="text")
+
+    android_qualification = android_sub.add_parser("qualification", help="Inspect canonical Android qualification truth")
+    android_qualification_sub = android_qualification.add_subparsers(dest="android_qualification_action", required=True)
+    android_qualification_show = android_qualification_sub.add_parser("show", help="Show qualification freshness, diagnostics, and component identities")
+    android_qualification_show.add_argument("--action", choices=("build", "package", "release", "test", "lint", "instrumentation", "doctor", "explain"), default="build")
+    android_qualification_show.add_argument("--format", choices=("text", "json"), default="text")
+
     android_capabilities = android_sub.add_parser("capabilities", help="Show the resolved Android execution context and tool providers")
     add_android_adb_flags(android_capabilities)
 
@@ -1782,6 +1800,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     android_doctor = android_sub.add_parser("doctor", help="Diagnose Android tools and the active ADB/device transport")
     add_android_adb_flags(android_doctor)
+    android_doctor.add_argument("--for", dest="android_doctor_for", choices=("build", "package", "release", "test", "lint", "instrumentation", "doctor", "explain", "install", "smoke"), default="", help="Diagnose only capabilities required by this Android action")
 
     def add_android_device_selection_flags(sub: argparse.ArgumentParser) -> None:
         sub.add_argument("--serial", default="", help="Android device serial/transport ID")
@@ -1898,6 +1917,15 @@ def build_parser() -> argparse.ArgumentParser:
     android_instrumentation_cmd.add_argument("--size", dest="instrumentation_size", choices=("small", "medium", "large"), default="")
     android_instrumentation_cmd.add_argument("--runner-arg", dest="instrumentation_runner_args", action="append", default=[])
     android_instrumentation_cmd.add_argument("--skip-build", action="store_true")
+    android_instrumentation_cmd.add_argument("--plan", action="store_true", help="Print the ANDROID-X04 semantic plan without mutation")
+    android_instrumentation_cmd.add_argument("--explain", action="store_true", help="Include ANDROID-X04 authority/migration explanation")
+    android_instrumentation_cmd.add_argument("--shards", type=int, default=1, help="Typed AndroidJUnitRunner shard count")
+    android_instrumentation_cmd.add_argument("--retry-failed-attempts", type=int, default=1, help="Export failed-only retry policy to EXO")
+    android_instrumentation_cmd.add_argument("--quarantine", action="append", default=[], help="Explicit evidence-only quarantined testcase ID")
+    android_instrumentation_cmd.add_argument("--orchestrator-qualification", default="", help="Qualified Android Test Orchestrator capability receipt ID")
+    android_instrumentation_cmd.add_argument("--orchestrator-target", default="", help="Target instrumentation component for qualified Orchestrator mode")
+    android_instrumentation_cmd.add_argument("--ui-automator", action="store_true", help="Use the typed UI Automator/cross-app execution profile")
+    android_instrumentation_cmd.add_argument("--cross-app", action="store_true", help="Declare cross-app execution profile semantics")
     android_instrumentation_cmd.add_argument("--format", choices=("text", "json"), default="text")
 
     android_smoke = android_sub.add_parser("smoke", help="Run reusable Android install/upgrade/lifecycle/signature smoke gates")
@@ -15893,7 +15921,11 @@ def _main_after_parse(
         return 0 if bool(payload.get("ok", False)) else 1
 
     if args.command == "android":
-        from .android.cli import android_environment_payload, android_capabilities_payload, android_devices_payload, android_device_doctor_payload
+        from .android.cli import (
+            android_environment_payload, android_environment_diff_payload, android_qualification_payload,
+            android_action_doctor_payload, android_advanced_instrumentation_plan_payload,
+            android_capabilities_payload, android_devices_payload, android_device_doctor_payload,
+        )
 
         repo = Path(args.repo or Path.cwd()).resolve()
         config = load_project_config(
@@ -15920,6 +15952,41 @@ def _main_after_parse(
                 ]
                 for name, identity in sorted((payload.get("component_identities") or {}).items()):
                     rows.append((name, identity))
+                render_status_table(rows)
+            return 0 if payload.get("ok") else 1
+        if action == "env":
+            nested = str(getattr(args, "android_env_action", "") or "")
+            if nested == "explain":
+                payload = android_environment_payload(config, action=str(getattr(args, "action", "explain") or "explain"))
+                if output_format == "json":
+                    print(json.dumps(payload, indent=2, ensure_ascii=False))
+                else:
+                    qualification = payload["qualification"]
+                    rows = [("status", qualification["status"]), ("environment_id", payload.get("environment_id") or "unqualified")]
+                    rows.extend((name, identity) for name, identity in sorted((payload.get("component_identities") or {}).items()))
+                    render_status_table(rows)
+                return 0 if payload.get("ok") else 1
+            payload = android_environment_diff_payload(
+                config, left_action=str(getattr(args, "left_action", "build") or "build"),
+                right_action=str(getattr(args, "right_action", "instrumentation") or "instrumentation"),
+            )
+            if output_format == "json":
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [("left", payload["left_environment_id"] or "unqualified"), ("right", payload["right_environment_id"] or "unqualified"), ("changed", str(bool(payload["changed"])).lower())]
+                for item in payload["components"]:
+                    rows.append((item["component"], "changed" if item["changed"] else "same"))
+                render_status_table(rows)
+            return 0
+        if action == "qualification":
+            payload = android_qualification_payload(config, action=str(getattr(args, "action", "build") or "build"))
+            if output_format == "json":
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                qualification = payload["qualification"]
+                rows = [("status", qualification.get("status", "unknown")), ("environment_id", payload.get("environment_id") or "unqualified"), ("qualification_id", qualification.get("qualification_id") or "-")]
+                for diag in payload.get("diagnostics") or []:
+                    rows.append(("diagnostic", str(diag)))
                 render_status_table(rows)
             return 0 if payload.get("ok") else 1
         if action == "capabilities":
@@ -15981,20 +16048,29 @@ def _main_after_parse(
                 render_status_table(rows)
             return 1 if payload.get("error") or payload.get("selection_error") else 0
         if action == "doctor":
-            payload = android_device_doctor_payload(config, provider=provider, adb_path=adb_path)
-            report = payload["device_doctor"]
+            doctor_for = str(getattr(args, "android_doctor_for", "") or "")
+            if not doctor_for:
+                payload = android_device_doctor_payload(config, provider=provider, adb_path=adb_path)
+                report = payload["device_doctor"]
+                if output_format == "json":
+                    print(json.dumps(payload, indent=2, ensure_ascii=False))
+                else:
+                    rows = [("device_status", report["status"]), ("device_code", report["code"]), ("provider", report["provider"]), ("adb", report["adb_path"] or "-"), ("detail", report["detail"])]
+                    for name, tool in payload["context"]["tools"].items():
+                        rows.append((f"tool.{name}", f"{tool.get('provider')}: {tool.get('path') or tool.get('rejection_reason') or '-'}"))
+                    render_status_table(rows)
+                return 1 if report["status"] == "error" else 0
+            payload = android_action_doctor_payload(config, action=doctor_for, provider=provider, adb_path=adb_path)
             if output_format == "json":
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
             else:
-                rows = [
-                    ("device_status", report["status"]), ("device_code", report["code"]),
-                    ("provider", report["provider"]), ("adb", report["adb_path"] or "-"),
-                    ("detail", report["detail"]),
-                ]
-                for name, tool in payload["context"]["tools"].items():
-                    rows.append((f"tool.{name}", f"{tool.get('provider')}: {tool.get('path') or tool.get('rejection_reason') or '-'}"))
+                env_payload = payload["environment"]
+                rows = [("action", doctor_for), ("environment", env_payload.get("environment_id") or "unqualified"), ("device_required", str(bool(payload["device_required"])).lower())]
+                if payload.get("device"):
+                    report = payload["device"]["device_doctor"]
+                    rows.extend([("device_status", report["status"]), ("device_code", report["code"]), ("provider", report["provider"]), ("adb", report["adb_path"] or "-"), ("detail", report["detail"])])
                 render_status_table(rows)
-            return 1 if report["status"] == "error" else 0
+            return 0 if payload.get("ok") else 1
         if action == "signing":
             from .android.cli import android_signing_payload
             signing_action = str(getattr(args, "signing_action", "") or "")
@@ -16100,6 +16176,51 @@ def _main_after_parse(
                 instrumentation_options["module"] = str(args.instrumentation_module)
             android_options["instrumentation"] = instrumentation_options
             instrumentation_config.runner_options["android"] = android_options
+            if bool(getattr(args, "plan", False)) or bool(getattr(args, "explain", False)):
+                try:
+                    payload = android_advanced_instrumentation_plan_payload(
+                        instrumentation_config,
+                        classes=list(getattr(args, "instrumentation_classes", []) or []),
+                        methods=list(getattr(args, "instrumentation_methods", []) or []),
+                        annotations=list(getattr(args, "instrumentation_annotations", []) or []),
+                        not_annotations=list(getattr(args, "instrumentation_not_annotations", []) or []),
+                        size=str(getattr(args, "instrumentation_size", "") or ""),
+                        runner_args={str(item).split("=", 1)[0]: str(item).split("=", 1)[1] for item in list(getattr(args, "instrumentation_runner_args", []) or []) if "=" in str(item)},
+                        shard_count=max(1, int(getattr(args, "shards", 1) or 1)),
+                        retry_failed_attempts=max(1, int(getattr(args, "retry_failed_attempts", 1) or 1)),
+                        quarantine=list(getattr(args, "quarantine", []) or []),
+                        orchestrator_qualification_id=str(getattr(args, "orchestrator_qualification", "") or ""),
+                        orchestrator_target=str(getattr(args, "orchestrator_target", "") or ""),
+                        ui_automator=bool(getattr(args, "ui_automator", False)),
+                        cross_app=bool(getattr(args, "cross_app", False)),
+                    )
+                except Exception as exc:
+                    if output_format == "json": print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2))
+                    else: print(f"Error: {exc}", file=sys.stderr)
+                    return 1
+                if output_format == "json":
+                    print(json.dumps(payload, indent=2, ensure_ascii=False))
+                else:
+                    rows = [("intent", payload["intent"]["intent_id"]), ("shards", str(len(payload["shards"]))), ("device_binding", payload["device_binding"]), ("retry", payload["retry"]["mode"]), ("profile", payload["profile"]["family"])]
+                    if bool(getattr(args, "explain", False)):
+                        rows.extend((f"authority.{k}", str(v)) for k, v in payload["authorities"].items())
+                        for item in payload.get("migration_diagnostics") or []:
+                            rows.append(("migration", f"{item.get('legacy')} -> {item.get('replacement')}"))
+                    render_status_table(rows)
+                return 0
+            advanced_requested = (
+                int(getattr(args, "shards", 1) or 1) != 1
+                or int(getattr(args, "retry_failed_attempts", 1) or 1) != 1
+                or bool(getattr(args, "quarantine", []) or [])
+                or bool(getattr(args, "orchestrator_qualification", "") or "")
+                or bool(getattr(args, "ui_automator", False))
+                or bool(getattr(args, "cross_app", False))
+            )
+            if advanced_requested:
+                message = "ANDROID-X04 advanced matrix/shard/retry execution is EXO-planned; use --plan to inspect it before an EXO execution owner consumes the child nodes"
+                if output_format == "json": print(json.dumps({"schema_version": 1, "ok": False, "error": message}, indent=2))
+                else: print(f"Error: {message}", file=sys.stderr)
+                return 1
             try:
                 payload = android_instrumentation_payload(instrumentation_config, classes=list(getattr(args, "instrumentation_classes", []) or []), methods=list(getattr(args, "instrumentation_methods", []) or []), annotations=list(getattr(args, "instrumentation_annotations", []) or []), not_annotations=list(getattr(args, "instrumentation_not_annotations", []) or []), size=str(getattr(args, "instrumentation_size", "") or ""), runner_args={str(item).split("=", 1)[0]: str(item).split("=", 1)[1] for item in list(getattr(args, "instrumentation_runner_args", []) or []) if "=" in str(item)}, skip_build=bool(getattr(args, "skip_build", False)))
             except Exception as exc:

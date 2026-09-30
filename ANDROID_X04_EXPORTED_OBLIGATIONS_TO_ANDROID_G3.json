@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "from": "ANDROID-X04 (51/70)",
+  "to": "ANDROID-G3",
+  "obligations": [
+    "Prove typed AndroidJUnitRunner shards on real available Android execution without raw runner-arg fallback.",
+    "Prove Android Test Orchestrator only after qualification and preserve the same canonical testcase/result model.",
+    "Prove DeviceLease-bound multi-device child execution and per-device concurrency caps; emulator snapshot reuse must never apply to a physical device.",
+    "Prove failed-only retry attempts through EXO and preserve first/final outcome lineage; quarantine must remain evidence-only.",
+    "Prove UI Automator/cross-app execution through the same DeviceLease/result/evidence foundation.",
+    "Prove android env explain/diff, qualification show, doctor --for, instrumentation plan/explain and later TUI/Desktop projections carry canonical IDs from fresh processes.",
+    "Run the final AND-P001..AND-P084 and INST-P001..INST-P084 source-promise disposition audit before sealing Android."
+  ]
+}

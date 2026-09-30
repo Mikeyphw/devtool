@@ -25,6 +25,7 @@ from .device_ops import AndroidDeviceOperationError, AndroidDeviceOperations, ca
 from ._standalone import BuildError, normalize_android_device_test_policy
 
 INSTRUMENTATION_POLICIES = {"disabled", "when-device-present", "required"}
+X04_TYPED_RUNNER_ARGS = {"numShards", "shardIndex", "targetInstrumentation"}
 
 
 def _stable(value: Any) -> str:
@@ -111,6 +112,12 @@ class InstrumentationExecutionReceipt:
 
 
 def instrumentation_intent(request: "InstrumentationRequest") -> InstrumentationIntent:
+    bypass = sorted(X04_TYPED_RUNNER_ARGS.intersection(str(k) for k in request.runner_args))
+    if bypass:
+        raise InstrumentationError(
+            "ANDROID-X04 advanced runner arguments must use typed sharding/orchestrator planning, not raw runner_args: "
+            + ", ".join(bypass)
+        )
     payload = {
         "variant": str(request.variant), "policy": normalize_instrumentation_policy(request.policy),
         "requested_runner": str(request.runner or ""), "requested_target_package": str(request.target_package or ""),

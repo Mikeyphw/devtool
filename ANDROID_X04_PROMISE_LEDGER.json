@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "overlay": "ANDROID-X04",
+  "position": "51/70",
+  "status": "PREPARED_LOCAL_QUALIFIED_PENDING_NATIVE_TERMUX",
+  "next_three": ["ANDROID-X04 (51/70)", "LIFE-X04 (52/70)", "PRES-X08 (53/70)"],
+  "merge_decision": "separate ownership boundaries; no merge",
+  "delivered": {
+    "INST-P053": "failed-only retry policy is explicitly EXO-owned",
+    "INST-P054": "quarantine is explicit/evidence-bearing and cannot rewrite failure to pass",
+    "INST-P063": "typed AndroidJUnitRunner sharding",
+    "INST-P064": "qualified Android Test Orchestrator isolation mode",
+    "INST-P065": "shard/orchestrator child evidence reduces through the canonical result/receipt boundary",
+    "INST-P066": "DeviceLease-bound multi-device matrix child nodes",
+    "INST-P067": "UI Automator/cross-app typed execution profile",
+    "INST-P068": "android instrumentation plan/explain projection",
+    "INST-P069": "shared machine/UI projection from canonical plan data",
+    "INST-P070": "no Android-specific run store/reuse/device/privilege/Gradle authority introduced",
+    "AND-P048": "action-aware doctor consumes canonical qualification",
+    "AND-P049": "android env explain remains a production-resolver projection",
+    "AND-P050": "android env diff compares canonical component identities",
+    "AND-P051": "android qualification show exposes canonical qualification diagnostics/freshness fields",
+    "AND-P059": "device-test planning carries explicit DeviceLease/session freshness identity",
+    "AND-P071": "advanced planning is deterministic for fixed intent/device state",
+    "AND-P072": "CLI UX does not reconstruct a weaker parallel environment",
+    "AND-P080": "no parallel Android host/device/Gradle/reuse authority",
+    "AND-P083": "cross-surface plan projection carries canonical environment/device/intent identities"
+  },
+  "retained_regressions": [
+    "ANDROID-X02 exact artifact/device snapshot",
+    "ANDROID-X03 instrumentation lifecycle",
+    "ANDROID-G1 environment/device authority",
+    "ANDROID-G2 instrumentation/device seal",
+    "TEST-X03 runtime/shard scheduling",
+    "project-runner/CLI instrumentation parity"
+  ],
+  "cleanup": [
+    "retired tests/test_android_connected_task_skip.py.bak-20260821-162146"
+  ],
+  "final_gate_pending": [
+    "INST-P081 real class/method filtering on device",
+    "INST-P082 real failure/skip/cleanup/cancellation fixtures",
+    "INST-P083 companion/release live instrumentation dogfooding",
+    "INST-P084 fresh-process final seal",
+    "AND-P078 real native Termux/chroot/remote fixtures where available",
+    "AND-P079 live Android companion/release dogfooding",
+    "AND-P084 fresh-process final Android seal"
+  ],
+  "validation": {
+    "wrapper": "./devtoolw android-x04",
+    "required_on_artifact_apply": true,
+    "warnings_allowed": 0
+  },
+  "next": "LIFE-X04 (52/70)",
+  "next_android_gate": "ANDROID-G3"
+}

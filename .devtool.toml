@@ -127,6 +127,12 @@ description = "Run the ANDROID-G2 authoritative instrumentation/device milestone
 workflow = "roadmap-android-g2"
 target = "devtool"
 
+# ANDROID-X04 advanced Android test execution, matrices, UX and dogfooding.
+[wrapper.commands.android-x04]
+description = "Run the ANDROID-X04 advanced Android execution/adoption workflow"
+workflow = "roadmap-android-x04"
+target = "devtool"
+
 # DIST-X01 canonical delegation and external-ingest identity foundation.
 [wrapper.commands.dist-x01]
 description = "Run the DIST-X01 delegation/external-ingest integrity workflow"
@@ -743,6 +749,14 @@ roadmap-android-g2 = [
   { id = "runner-parity", ref = "test:roadmap-android-g2-runner-parity", depends_on = ["window-audit"] },
   { id = "cleanup-authority", ref = "test:roadmap-android-g2-cleanup-authority", depends_on = ["runner-parity"] },
   { id = "fresh-process-proof", ref = "test:roadmap-android-g2-real-process", depends_on = ["cleanup-authority"] },
+]
+
+roadmap-android-x04 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "advanced-execution", ref = "test:roadmap-android-x04-advanced-execution", depends_on = ["syntax"] },
+  { id = "retained-android", ref = "test:roadmap-android-x04-retained-android", depends_on = ["advanced-execution"] },
+  { id = "ux-runner-parity", ref = "test:roadmap-android-x04-ux-runner-parity", depends_on = ["retained-android"] },
+  { id = "test-runtime-adoption", ref = "test:roadmap-android-x04-test-runtime-adoption", depends_on = ["ux-runner-parity"] },
 ]
 
 roadmap-dist-x01 = [
@@ -2522,6 +2536,59 @@ name = "ANDROID-G2 authoritative native-Termux fresh-process instrumentation pro
 runner = "command"
 timeout_seconds = 300
 command = ["python", "-m", "devtool.android_g2_gate"]
+
+
+# ANDROID-X04 adopts TEST-X03 scheduling, X02 DeviceLease and X03 instrumentation
+# semantics without introducing parallel execution/device/retry authorities.
+[[test]]
+id = "roadmap-android-x04-advanced-execution"
+name = "ANDROID-X04 typed sharding/orchestrator/matrix/retry/quarantine/UX contracts"
+runner = "pytest"
+timeout_seconds = 420
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_x04_advanced_execution.py",
+]
+
+[[test]]
+id = "roadmap-android-x04-retained-android"
+name = "ANDROID-X04 retained Android environment/device/instrumentation authority regression"
+runner = "pytest"
+timeout_seconds = 720
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_x03_instrumentation_lifecycle.py",
+  "tests/test_android_g2_instrumentation_device_gate.py",
+  "tests/test_android_x02_execution_snapshot_device_fabric.py",
+  "tests/test_android_g1_environment_device_gate.py",
+]
+
+[[test]]
+id = "roadmap-android-x04-ux-runner-parity"
+name = "ANDROID-X04 canonical CLI/runner/instrumentation UX parity regression"
+runner = "pytest"
+timeout_seconds = 900
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_instrumentation.py",
+  "tests/test_rem11_android_devices_release_gates.py",
+  "tests/test_aops03_android_signing_instrumentation_operations.py",
+  "tests/test_android_runner.py",
+  "tests/test_env_x03_gradle_callers.py",
+]
+
+[[test]]
+id = "roadmap-android-x04-test-runtime-adoption"
+name = "ANDROID-X04 TEST-X03 shard scheduling/performance evidence adoption regression"
+runner = "pytest"
+timeout_seconds = 600
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_test_x03_runtime_optimization.py",
+  "tests/test_test_g2_lane_selection_gate.py::test_selection_and_shards_are_deterministic_explainable_and_immutable",
+  "tests/test_test_g2_lane_selection_gate.py::test_unclassified_discovery_is_conservatively_serial",
+  "tests/test_test_g2_lane_selection_gate.py::test_declared_test_without_parallel_qualification_defaults_serial",
+]
 
 # DIST-X01 owns the non-Gradle delegation/external-ingest identity boundary.
 # Async transport/cursor recovery is deferred to DIST-X02 and broad distributed

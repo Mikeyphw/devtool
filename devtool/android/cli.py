@@ -28,6 +28,127 @@ def android_environment_payload(config: ProjectConfig, *, action: str = "build")
         "ok": qualification.ok and resolved is not None,
     }
 
+
+
+def android_environment_diff_payload(
+    config: ProjectConfig, *, left_action: str = "build", right_action: str = "instrumentation"
+) -> dict[str, Any]:
+    """Compare canonical Android component identities without reinterpreting them."""
+    left = android_environment_payload(config, action=left_action)
+    right = android_environment_payload(config, action=right_action)
+    left_components = dict(left.get("component_identities") or {})
+    right_components = dict(right.get("component_identities") or {})
+    keys = sorted(set(left_components) | set(right_components))
+    components = [
+        {
+            "component": key,
+            "left": left_components.get(key, ""),
+            "right": right_components.get(key, ""),
+            "changed": left_components.get(key, "") != right_components.get(key, ""),
+        }
+        for key in keys
+    ]
+    return {
+        "schema_version": 1,
+        "left_action": left_action,
+        "right_action": right_action,
+        "left_environment_id": left.get("environment_id") or "",
+        "right_environment_id": right.get("environment_id") or "",
+        "changed": any(item["changed"] for item in components),
+        "components": components,
+        "left_qualification_id": (left.get("qualification") or {}).get("qualification_id", ""),
+        "right_qualification_id": (right.get("qualification") or {}).get("qualification_id", ""),
+    }
+
+
+def android_qualification_payload(config: ProjectConfig, *, action: str = "build") -> dict[str, Any]:
+    """Expose production qualification/freshness truth as a read-only projection."""
+    payload = android_environment_payload(config, action=action)
+    qualification = dict(payload.get("qualification") or {})
+    return {
+        "schema_version": 1,
+        "action": action,
+        "ok": bool(payload.get("ok")),
+        "environment_id": payload.get("environment_id") or "",
+        "qualification": qualification,
+        "component_identities": dict(payload.get("component_identities") or {}),
+        "repair_actions": list(qualification.get("repair_actions") or []),
+        "diagnostics": list(qualification.get("diagnostics") or []),
+    }
+
+
+def android_action_doctor_payload(
+    config: ProjectConfig, *, action: str = "build", provider: str = "", adb_path: str = ""
+) -> dict[str, Any]:
+    """Action-aware doctor composed from environment + Host-owned device doctor."""
+    from .execution_snapshot import android_action_requires_device
+
+    environment = android_environment_payload(config, action=action)
+    needs_device = android_action_requires_device(action)
+    device = None
+    if needs_device:
+        device = android_device_doctor_payload(config, provider=provider, adb_path=adb_path)
+    return {
+        "schema_version": 1,
+        "action": action,
+        "ok": bool(environment.get("ok")) and (not needs_device or bool((device or {}).get("device_doctor", {}).get("healthy"))),
+        "device_required": needs_device,
+        "environment": environment,
+        "device": device,
+        "authorities": {"environment": "ANDROID", "device": "HOST/DeviceLease" if needs_device else "not-required"},
+    }
+
+
+def android_advanced_instrumentation_plan_payload(
+    config: ProjectConfig, *, classes: list[str] | None = None, methods: list[str] | None = None,
+    annotations: list[str] | None = None, not_annotations: list[str] | None = None, size: str = "",
+    runner_args: Mapping[str, str] | None = None, shard_count: int = 1, retry_failed_attempts: int = 1,
+    quarantine: list[str] | None = None, orchestrator_qualification_id: str = "",
+    orchestrator_target: str = "", ui_automator: bool = False, cross_app: bool = False,
+) -> dict[str, Any]:
+    """Read-only X04 semantic policy preview. DeviceLease binding remains execution-owned."""
+    from .advanced_execution import (
+        AndroidTestOrchestratorMode, ExoRetryPolicy, QuarantinePolicy, android_junit_shards,
+        execution_profile, legacy_instrumentation_migration_diagnostics,
+    )
+    from .instrumentation import instrumentation_intent, request_from_config
+
+    request = request_from_config(
+        config, classes=classes or [], methods=methods or [], annotations=annotations or [],
+        not_annotations=not_annotations or [], size=size, runner_args=runner_args, skip_build=True,
+    )
+    intent = instrumentation_intent(request)
+    orchestrator = AndroidTestOrchestratorMode(
+        enabled=bool(orchestrator_qualification_id),
+        qualification_id=orchestrator_qualification_id,
+        target_instrumentation=orchestrator_target if orchestrator_qualification_id else "",
+    )
+    retry = ExoRetryPolicy(
+        mode="failed-only" if int(retry_failed_attempts) > 1 else "disabled",
+        max_attempts=max(1, int(retry_failed_attempts)),
+    )
+    qids = tuple(quarantine or ())
+    quarantine_policy = QuarantinePolicy(qids, mode="evidence-only" if qids else "disabled")
+    profile = execution_profile(ui_automator=ui_automator, cross_app=cross_app)
+    android_options = config.runner_options.get("android", {})
+    android_options = dict(android_options) if isinstance(android_options, dict) else {}
+    return {
+        "schema_version": 1,
+        "kind": "android-x04-instrumentation-policy-preview",
+        "intent": intent.as_dict(),
+        "shards": [item.as_dict() for item in android_junit_shards(intent, max(1, int(shard_count)))],
+        "orchestrator": orchestrator.as_dict(),
+        "retry": retry.as_dict(),
+        "quarantine": quarantine_policy.as_dict(),
+        "profile": profile.as_dict(),
+        "device_binding": "pending-DeviceLease",
+        "migration_diagnostics": list(legacy_instrumentation_migration_diagnostics(android_options)),
+        "authorities": {
+            "intent": "ANDROID-X03", "device_binding": "ANDROID-X02/HOST", "retry": "EXO",
+            "shard_scheduling": "TEST-X03", "evidence": "RUN-V3",
+        },
+    }
+
 def android_capabilities_payload(config: ProjectConfig, *, provider: str = "", adb_path: str = "") -> dict[str, Any]:
     operations = resolve_android_operations(config, adb_provider=provider or None, adb_path=adb_path or None)
     return operations.context.as_dict()
@@ -305,4 +426,4 @@ def render_android_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
 
-__all__ = ["android_environment_payload", "android_capabilities_payload", "android_devices_payload", "android_device_doctor_payload", "android_signing_payload", "android_device_operation_payload", "android_smoke_payload", "android_instrumentation_payload", "render_android_payload"]
+__all__ = ["android_environment_payload", "android_environment_diff_payload", "android_qualification_payload", "android_action_doctor_payload", "android_advanced_instrumentation_plan_payload", "android_capabilities_payload", "android_devices_payload", "android_device_doctor_payload", "android_signing_payload", "android_device_operation_payload", "android_smoke_payload", "android_instrumentation_payload", "render_android_payload"]
