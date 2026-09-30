@@ -13645,7 +13645,7 @@ def _build_cache_cleanup_result(config: ProjectConfig, args: argparse.Namespace,
         duration,
         output,
         [],
-        metadata={"cleanup": True, "cache_cleanup": True, "dry_run": dry_run},
+        metadata={"cleanup": True, "cache_cleanup": True, "dry_run": dry_run, "cleanup_scope": "repository-cache", "cleanup_destination": str(plan.effective)},
     )
 
 
@@ -13698,6 +13698,8 @@ def _build_space_cleanup_result(config: ProjectConfig, args: argparse.Namespace,
             "cleanup": True,
             "space_cleanup": True,
             "dry_run": dry_run,
+            "cleanup_scope": "toolchain-global",
+            "cleanup_destination": "local",
             "reclaimed_bytes": report.reclaimed_bytes,
             "paths": [str(item.path) for item in report.removed],
         },
@@ -17300,11 +17302,51 @@ def _main_after_parse(
         ))
         run_project_clean = bool(getattr(args, "project_clean", False)) or not explicit_scope
         specs = build_specs(config, args.command) if run_project_clean else []
+        provider_cleanup_plan = None
+        provider_cleanup_actions = ()
         if specs:
+            from .cleanup_lifecycle import (
+                CleanupScope,
+                annotate_cleanup_specs,
+                build_cleanup_ownership_view,
+                compile_cleanup_plan,
+                persist_cleanup_receipt,
+                provider_cleanup_receipt_from_results,
+            )
+            cleanup_destination = str(config.execution_environment or "local").strip().lower().replace("_", "-")
+            if cleanup_destination in {"", "auto", "host", "desktop-linux", "native-termux"}:
+                cleanup_destination = "local"
+            provider_cleanup_actions = annotate_cleanup_specs(specs, destination=cleanup_destination)
+            if provider_cleanup_actions:
+                cleanup_ownership = build_cleanup_ownership_view(
+                    config.repo_root, (), policy_generation="life-x03-provider-clean-v1"
+                )
+                provider_cleanup_plan = compile_cleanup_plan(
+                    cleanup_ownership,
+                    scope=CleanupScope.PROJECT,
+                    destination=cleanup_destination,
+                    opaque_actions=provider_cleanup_actions,
+                )
             results, raw_output = _run_specs_for_args(
                 config, specs, args, continue_on_error=continue_on_error,
                 log_path=log_path, tasker_progress=tasker_progress,
             )
+            if provider_cleanup_plan is not None:
+                provider_receipt = provider_cleanup_receipt_from_results(
+                    provider_cleanup_plan, provider_cleanup_actions, results
+                )
+                try:
+                    persist_cleanup_receipt(config.repo_root, provider_receipt)
+                except OSError:
+                    pass
+                for result in results:
+                    result.metadata = {
+                        **dict(result.metadata or {}),
+                        "cleanup_plan_id": provider_cleanup_plan.plan_id,
+                        "cleanup_receipt_id": provider_receipt.receipt_id,
+                        "cleanup_scope": provider_cleanup_plan.scope.value,
+                        "cleanup_destination": provider_cleanup_plan.destination,
+                    }
         else:
             results, raw_output = [], ""
         cleanup_prefix: list[OperationResult] = []

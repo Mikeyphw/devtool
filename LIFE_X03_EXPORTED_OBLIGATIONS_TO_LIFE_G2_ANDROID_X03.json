@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "from": "LIFE-X03 (43/70)",
+  "to": ["LIFE-G2 (44/70)", "ANDROID-X03 (45/70)", "LIFE-X04/presentation adoption"],
+  "life_g2": [
+    "Adversarially prove tracked/user data and heuristic-only build/dist/backup names can never become deletion authority.",
+    "Prove active RUN/process streams, RER materializations, seals/pins, published artifacts, active validation and active transactions remain protected across plan/apply races.",
+    "Prove repository config cannot weaken global/user cleanup trust or confirmation requirements.",
+    "Prove path/content/policy/destination drift fails closed before deletion.",
+    "Prove cleanup/provider-finalization failures preserve an already-established primary lifecycle failure.",
+    "Prove receipt/tombstone provenance remains inspectable after payload deletion.",
+    "Exercise destination-local remote cleanup and shared-reference protection without controller-side deletion."
+  ],
+  "android_x03": [
+    "Consume canonical generated-output/cleanup ownership for Android instrumentation/output lifecycle; do not introduce Android-specific filename deletion authority.",
+    "Keep device/instrumentation cleanup destination-qualified and subordinate to canonical RUN/transaction/seal protection roots."
+  ],
+  "later_presentation": [
+    "Render CleanupPlan/CleanupCandidate/explain/status/doctor projections without changing cleanup semantics.",
+    "Expose safety class, owner, protection reason, recreation cost, destination and invalidation consequences from canonical X03 objects."
+  ]
+}

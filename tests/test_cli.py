@@ -281,7 +281,7 @@ class CliTests(unittest.TestCase):
                 run_patch as run_specs,
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "clean", "--caches"])
+                rc = main(["--repo", str(root), "--execution-environment", "desktop-linux", "clean", "--caches"])
 
         self.assertEqual(rc, 0)
         cleanup_mock.assert_called_once()

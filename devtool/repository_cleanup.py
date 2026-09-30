@@ -118,9 +118,23 @@ def _candidate_cleanup_safe(path: Path, repo_root: Path, *, is_git: bool, tracke
     return is_git and _path_or_descendant_in(rel, ignored)
 
 def discover_backup_candidates(repo_root: Path) -> list[Path]:
+    """Discover archival candidates through LIFE-X03 ownership planning.
+
+    Backup-shaped names are only discovery hints. Known Devtool backup
+    directories have explicit producer ownership; generic ``.bak``/``.orig``
+    resources become managed only when Git ignore ownership corroborates them.
+    Tracked/user data and active lifecycle roots remain protected by the shared
+    cleanup planner.
+    """
+    from .cleanup_lifecycle import (
+        CleanupScope,
+        build_cleanup_ownership_view,
+        compile_cleanup_plan,
+        descriptor_from_path,
+    )
+
     repo_root = repo_root.expanduser().resolve()
-    candidates: list[Path] = []
-    is_git, tracked, ignored = _git_path_sets(repo_root)
+    discovered: list[Path] = []
     for current, dirnames, filenames in os.walk(repo_root, topdown=True, followlinks=False):
         current_path = Path(current)
         if current_path == repo_root:
@@ -128,17 +142,42 @@ def discover_backup_candidates(repo_root: Path) -> list[Path]:
         selected_dirs: list[str] = []
         for name in list(dirnames):
             path = current_path / name
-            if _is_backup_candidate(path, repo_root) and _candidate_cleanup_safe(path, repo_root, is_git=is_git, tracked=tracked, ignored=ignored):
-                candidates.append(path)
+            if _is_backup_candidate(path, repo_root):
+                discovered.append(path)
                 selected_dirs.append(name)
-        # Do not descend into a directory that will be archived as one unit.
         if selected_dirs:
             dirnames[:] = [name for name in dirnames if name not in selected_dirs]
         for name in filenames:
             path = current_path / name
-            if _is_backup_candidate(path, repo_root) and _candidate_cleanup_safe(path, repo_root, is_git=is_git, tracked=tracked, ignored=ignored):
-                candidates.append(path)
-    return sorted(candidates, key=lambda item: str(item.relative_to(repo_root)))
+            if _is_backup_candidate(path, repo_root):
+                discovered.append(path)
+
+    descriptors = []
+    by_resource: dict[str, Path] = {}
+    for path in discovered:
+        explicit = _known_devtool_backup(path) or (
+            path.parent == repo_root
+            and path.is_dir()
+            and path.name.startswith(".")
+            and ("backup" in path.name.lower() or ".before-" in path.name.lower() or ".pre-" in path.name.lower())
+        )
+        descriptor = descriptor_from_path(
+            path,
+            owner="devtool-legacy-backup" if explicit else "legacy-backup-discovery",
+            provider="repository-cleanup",
+            category="backup-history",
+            producer_id="devtool-backup" if explicit else f"backup-name:{path.name}",
+            repo_root=repo_root,
+            heuristic=not explicit,
+            scope=CleanupScope.PROJECT,
+            lifecycle="rebuildable",
+        )
+        descriptors.append(descriptor)
+        by_resource[descriptor.resource_id] = path
+    ownership = build_cleanup_ownership_view(repo_root, descriptors, policy_generation="life-x03-backup-v1")
+    plan = compile_cleanup_plan(ownership, scope=CleanupScope.PROJECT, destination="local")
+    selected = [by_resource[item.resource_id] for item in plan.selected if item.resource_id in by_resource]
+    return sorted(selected, key=lambda item: str(item.relative_to(repo_root)))
 
 
 def _unique_destination(base: Path) -> Path:
@@ -169,13 +208,28 @@ def archive_backup_candidates(repo_root: Path, *, dry_run: bool = False, stamp: 
 
 
 def prune_backup_history(repo_root: Path, *, older_than_days: float, dry_run: bool = False) -> list[str]:
+    """Prune explicitly Devtool-owned history only after reference revalidation.
+
+    Age is a selection policy, never deletion authority by itself. Candidate
+    directories live under Devtool's private backup-history owner, then pass the
+    same LIFE-X03 protection/reference/drift checks as other generated outputs.
+    """
     if older_than_days <= 0:
         return []
+    from .cleanup_lifecycle import (
+        CleanupScope,
+        GeneratedOutputDescriptor,
+        apply_cleanup_plan,
+        build_cleanup_ownership_view,
+        compile_cleanup_plan,
+    )
+
+    repo_root = repo_root.expanduser().resolve()
     root = _history_root(repo_root)
     if not root.is_dir():
         return []
     cutoff = datetime.now(timezone.utc) - timedelta(days=float(older_than_days))
-    removed: list[str] = []
+    descriptors: list[GeneratedOutputDescriptor] = []
     for child in sorted(root.iterdir()):
         if not child.is_dir():
             continue
@@ -185,10 +239,36 @@ def prune_backup_history(repo_root: Path, *, older_than_days: float, dry_run: bo
             continue
         if mtime >= cutoff:
             continue
-        removed.append(str(child.relative_to(repo_root)))
-        if not dry_run:
-            shutil.rmtree(child)
-    return removed
+        descriptors.append(GeneratedOutputDescriptor.create(
+            child,
+            owner="devtool-backup-history",
+            provider="repository-cleanup",
+            category="backup-history",
+            producer_id=f"backup-history:{child.name}",
+            lifecycle="retained",
+            rebuild_cost="unknown",
+            scope=CleanupScope.DURABLE_HISTORY,
+            destination="local",
+            provenance={"age_policy_days": float(older_than_days), "mtime": mtime.isoformat()},
+            managed=True,
+            published=False,
+        ))
+    if not descriptors:
+        return []
+    ownership = build_cleanup_ownership_view(
+        repo_root,
+        descriptors,
+        policy_generation=f"life-x03-history-v1:{float(older_than_days):.6f}",
+    )
+    plan = compile_cleanup_plan(ownership, scope=CleanupScope.DURABLE_HISTORY, destination="local")
+    receipt = apply_cleanup_plan(plan, ownership=ownership, dry_run=dry_run, confirm=True)
+    by_id = {item.resource_id: item for item in receipt.results}
+    selected: list[str] = []
+    for candidate in plan.candidates:
+        result = by_id.get(candidate.resource_id)
+        if result is not None and result.status in {"planned", "applied"}:
+            selected.append(str(Path(candidate.path).relative_to(repo_root)))
+    return selected
 
 
 def cleanup_repository(repo_root: Path, *, dry_run: bool = False, prune_history_days: float = 0.0) -> dict[str, Any]:

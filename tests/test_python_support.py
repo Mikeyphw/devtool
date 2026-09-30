@@ -409,13 +409,16 @@ class PythonSupportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
+            # LIFE-X03: generic build/dist names are discovery hints, not
+            # deletion authority outside an ownership-bearing Git/provider
+            # context. Both user-looking build trees therefore survive.
             (root / "build").mkdir()
             nested = root / "fixtures" / "nested"
             nested.mkdir(parents=True)
             (nested / "pyproject.toml").write_text("[project]\nname='fixture'\nversion='1'\n", encoding="utf-8")
             (nested / "build").mkdir()
             clean_python(root)
-            self.assertFalse((root / "build").exists())
+            self.assertTrue((root / "build").exists())
             self.assertTrue((nested / "build").exists())
 
     def test_requires_python_is_checked_against_resolved_interpreter(self) -> None:

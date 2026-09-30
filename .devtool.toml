@@ -205,6 +205,12 @@ description = "Run the LIFE-G1 mutation and recovery proof gate"
 workflow = "roadmap-life-g1"
 target = "devtool"
 
+# LIFE-X03 canonical generated-output ownership and cleanup convergence.
+[wrapper.commands.life-x03]
+description = "Run the LIFE-X03 generated ownership/cleanup convergence workflow"
+workflow = "roadmap-life-x03"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -786,6 +792,14 @@ roadmap-life-g1 = [
   { id = "x02-inspection-regression", ref = "test:roadmap-life-x02-artifact-inspection-regression", depends_on = ["x02-canonical-regression"] },
   { id = "x02-apply-regression", ref = "test:roadmap-life-x02-artifact-apply-regression", depends_on = ["x02-inspection-regression"] },
   { id = "bundle-rollback-regression", ref = "test:roadmap-life-g1-bundle-rollback-regression", depends_on = ["x02-apply-regression"] },
+]
+
+roadmap-life-x03 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "generated-ownership", ref = "test:roadmap-life-x03-generated-ownership", depends_on = ["syntax"] },
+  { id = "retained-safety", ref = "test:roadmap-life-x03-retained-safety", depends_on = ["generated-ownership"] },
+  { id = "python-cleanup", ref = "test:roadmap-life-x03-python-cleanup", depends_on = ["retained-safety"] },
+  { id = "cli-cleanup", ref = "test:roadmap-life-x03-cli-cleanup", depends_on = ["python-cleanup"] },
 ]
 
 roadmap-smoke = [
@@ -2813,6 +2827,49 @@ command = [
   "tests/test_artifact_v2.py::ArtifactV2Tests::test_cli_ignore_checksum_applies_overlay_without_disabling_manifest_checks",
 ]
 
+
+# LIFE-X03 generated-output ownership and cleanup convergence.
+[[test]]
+id = "roadmap-life-x03-generated-ownership"
+name = "LIFE-X03 canonical generated ownership, protection roots, planning and receipts"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_x03_generated_cleanup_ownership.py",
+]
+
+[[test]]
+id = "roadmap-life-x03-retained-safety"
+name = "LIFE-X03 retained lifecycle, cache and backup cleanup safety"
+runner = "pytest"
+timeout_seconds = 360
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_x01_immediate_lifecycle_safety.py",
+  "tests/test_cache_cleanup.py",
+  "tests/test_arch_ov08_tui_cleanup.py",
+]
+
+[[test]]
+id = "roadmap-life-x03-python-cleanup"
+name = "LIFE-X03 Python generated-output cleanup authority regression"
+runner = "pytest"
+timeout_seconds = 360
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_python_support.py",
+]
+
+[[test]]
+id = "roadmap-life-x03-cli-cleanup"
+name = "LIFE-X03 provider cleanup receipt and CLI adoption regression"
+runner = "pytest"
+timeout_seconds = 360
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_cli.py", "-k", "clean or cleanup",
+]
 
 # LIFE-G1 mutation/recovery authoritative proof gate.
 [[test]]

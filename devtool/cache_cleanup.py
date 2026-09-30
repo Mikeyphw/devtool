@@ -109,12 +109,43 @@ def cleanup_devtool_caches(
             raise ValueError(f"Refusing unscoped cache cleanup path: {path}")
         candidates.append(path)
 
+    from .cleanup_lifecycle import (
+        CleanupScope,
+        GeneratedOutputDescriptor,
+        apply_cleanup_plan,
+        build_cleanup_ownership_view,
+        compile_cleanup_plan,
+    )
+
     seen: set[Path] = set()
+    descriptors: list[GeneratedOutputDescriptor] = []
+    existed: dict[str, bool] = {}
     for path in candidates:
         path = path.resolve(strict=False)
         if path in seen:
             continue
         seen.add(path)
-        if _remove_path(path, dry_run=dry_run):
-            removed.append(str(path))
+        descriptor = GeneratedOutputDescriptor.create(
+            path, owner="devtool-cache", provider="devtool", category="repository-cache",
+            producer_id=f"cache:{key}:{safe_backend}", lifecycle="disposable", rebuild_cost="low",
+            scope=CleanupScope.REPOSITORY_CACHE, destination="local",
+            provenance={"repository_cache_key": key, "backend": safe_backend},
+        )
+        descriptors.append(descriptor)
+        existed[descriptor.resource_id] = path.exists() or path.is_symlink()
+
+    ownership = build_cleanup_ownership_view(
+        repo_root, descriptors, policy_generation=f"cache:{key}:{safe_backend}:v1"
+    )
+    plan = compile_cleanup_plan(
+        ownership, scope=CleanupScope.REPOSITORY_CACHE, destination="local"
+    )
+    receipt = apply_cleanup_plan(plan, ownership=ownership, dry_run=dry_run, confirm=True)
+    by_id = {item.resource_id: item for item in receipt.results}
+    for candidate in plan.candidates:
+        result = by_id.get(candidate.resource_id)
+        if not existed.get(candidate.resource_id, False) or result is None:
+            continue
+        if result.status in {"planned", "applied"}:
+            removed.append(candidate.path)
     return removed

@@ -2237,17 +2237,35 @@ def _python_cleanup_candidate_safe(root: Path, path: Path, *, heuristic_artifact
     return True
 
 
-def clean_python(root: Path, *, categories: Sequence[str] = ("artifacts", "caches")) -> list[str]:
+def plan_python_cleanup(root: Path, *, categories: Sequence[str] = ("artifacts", "caches")):
+    """Compile Python generated-output cleanup through LIFE-X03 ownership truth.
+
+    Provider-known cache directories are explicit generated outputs. Generic
+    ``build``/``dist`` and ``*.egg-info`` names remain heuristic discovery and
+    become managed only when Git ignore ownership corroborates them. Tracked
+    paths remain protected by the shared cleanup planner.
+    """
+    from .cleanup_lifecycle import (
+        CleanupScope,
+        build_cleanup_ownership_view,
+        compile_cleanup_plan,
+        descriptor_from_path,
+    )
+
     root = root.resolve()
     selected = set(categories)
-    names: set[str] = set()
+    descriptors = []
+    known_cache_names = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".coverage", "htmlcov"}
+    heuristic_artifacts = {"build", "dist"}
+    environment_names = {".tox", ".nox"}
+    wanted_names: set[str] = set()
     if "caches" in selected or "all" in selected:
-        names.update({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".coverage", "htmlcov"})
+        wanted_names.update(known_cache_names)
     if "artifacts" in selected or "all" in selected:
-        names.update({"build", "dist"})
+        wanted_names.update(heuristic_artifacts)
     if "environments" in selected or "all" in selected:
-        names.update({".tox", ".nox"})
-    removed: list[str] = []
+        wanted_names.update(environment_names)
+
     for path in sorted(root.rglob("*"), key=lambda value: len(value.parts), reverse=True):
         try:
             relative = path.relative_to(root)
@@ -2255,33 +2273,57 @@ def clean_python(root: Path, *, categories: Sequence[str] = ("artifacts", "cache
             continue
         if any(part in {".git", "vendor", "node_modules", "fixtures", "testdata"} for part in relative.parts[:-1]):
             continue
-        if path.name not in names:
+        if path.name not in wanted_names:
             continue
-        heuristic_artifact = path.name in {"build", "dist"}
-        if not _python_cleanup_candidate_safe(root, path, heuristic_artifact=heuristic_artifact):
-            continue
-        # Never cross into nested projects unless they are the selected root.
         if any((parent / "pyproject.toml").is_file() for parent in path.parents if parent not in {root, path.parent} and root in parent.parents):
             continue
-        try:
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-            removed.append(str(path))
-        except OSError:
-            continue
+        heuristic = path.name in heuristic_artifacts
+        descriptors.append(descriptor_from_path(
+            path,
+            owner="python-runner",
+            provider="python",
+            category="artifact" if heuristic else "environment" if path.name in environment_names else "cache",
+            producer_id=f"python:{path.name}",
+            repo_root=root,
+            heuristic=heuristic,
+            scope=CleanupScope.PROJECT,
+            lifecycle="rebuildable" if heuristic or path.name in environment_names else "disposable",
+        ))
+
     if "artifacts" in selected or "all" in selected:
         for path in root.glob("*.egg-info"):
-            if path.is_dir() and _python_cleanup_candidate_safe(root, path, heuristic_artifact=True):
-                shutil.rmtree(path, ignore_errors=True)
-                removed.append(str(path))
+            if path.exists():
+                descriptors.append(descriptor_from_path(
+                    path, owner="python-runner", provider="python", category="artifact",
+                    producer_id="python:egg-info", repo_root=root, heuristic=True,
+                    scope=CleanupScope.PROJECT, lifecycle="rebuildable",
+                ))
     if "environments" in selected or "all" in selected:
         managed = root / ".devtool" / "venvs"
-        if managed.is_dir():
-            shutil.rmtree(managed, ignore_errors=True)
-            removed.append(str(managed))
-    return removed
+        if managed.exists():
+            descriptors.append(descriptor_from_path(
+                managed, owner="devtool", provider="python", category="environment",
+                producer_id="devtool:python-environment", repo_root=root, heuristic=False,
+                scope=CleanupScope.PROJECT, lifecycle="rebuildable",
+            ))
+
+    ownership = build_cleanup_ownership_view(root, descriptors, policy_generation="life-x03-python-v1")
+    return compile_cleanup_plan(ownership, scope=CleanupScope.PROJECT, destination="local"), ownership
+
+
+def clean_python_with_receipt(root: Path, *, categories: Sequence[str] = ("artifacts", "caches"), dry_run: bool = False):
+    from .cleanup_lifecycle import apply_cleanup_plan, persist_cleanup_receipt
+    plan, ownership = plan_python_cleanup(root, categories=categories)
+    receipt = apply_cleanup_plan(plan, ownership=ownership, dry_run=dry_run, confirm=True)
+    if not dry_run and str(os.environ.get("DEVTOOL_RUN_ID") or "").strip():
+        persist_cleanup_receipt(root, receipt)
+    return plan, receipt
+
+
+def clean_python(root: Path, *, categories: Sequence[str] = ("artifacts", "caches")) -> list[str]:
+    """Compatibility projection returning only successfully removed paths."""
+    _plan, receipt = clean_python_with_receipt(root, categories=categories, dry_run=False)
+    return [item.path for item in receipt.results if item.status == "applied" and item.path]
 
 
 def _missing_imports(output: str) -> list[str]:
@@ -3726,9 +3768,10 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         if args.command == "package-check":
             return _package_check(args)
         if args.command == "clean":
-            removed = clean_python(args.root, categories=args.category or ("artifacts", "caches"))
-            print(json.dumps({"removed": removed}, indent=2))
-            return 0
+            plan, receipt = clean_python_with_receipt(args.root, categories=args.category or ("artifacts", "caches"))
+            removed = [item.path for item in receipt.results if item.status == "applied" and item.path]
+            print(json.dumps({"removed": removed, "cleanup_plan": plan.as_dict(), "cleanup_receipt": receipt.as_dict()}, indent=2))
+            return 0 if receipt.status in {"applied", "planned"} else 1
         if args.command == "prepare-dist":
             print(f"Prepared Python distribution directory: {prepare_dist(args.root)}")
             return 0
