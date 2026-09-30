@@ -138,6 +138,12 @@ description = "Run the DIST-X02 async transport/cursor recovery workflow"
 workflow = "roadmap-dist-x02"
 target = "devtool"
 
+# DIST-X03 SSH/tmux semantic channel, typed control and RUN hierarchy convergence.
+[wrapper.commands.dist-x03]
+description = "Run the DIST-X03 provider control/hierarchy convergence workflow"
+workflow = "roadmap-dist-x03"
+target = "devtool"
+
 # DIST-G1 authoritative distributed identity/delivery/recovery milestone gate.
 [wrapper.commands.dist-g1]
 description = "Run the DIST-G1 authoritative identity/delivery/recovery milestone gate"
@@ -733,6 +739,13 @@ roadmap-dist-x02 = [
   { id = "async-transport", ref = "test:roadmap-dist-x02-async-transport", depends_on = ["syntax"] },
   { id = "retained-federation", ref = "test:roadmap-dist-x02-retained-federation", depends_on = ["async-transport"] },
   { id = "provider-adapters", ref = "test:roadmap-dist-x02-provider-adapters", depends_on = ["retained-federation"] },
+]
+
+roadmap-dist-x03 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "provider-control-hierarchy", ref = "test:roadmap-dist-x03-provider-control-hierarchy", depends_on = ["syntax"] },
+  { id = "retained-distribution", ref = "test:roadmap-dist-x03-retained-distribution", depends_on = ["provider-control-hierarchy"] },
+  { id = "ssh-life-adoption", ref = "test:roadmap-dist-x03-ssh-life-adoption", depends_on = ["retained-distribution"] },
 ]
 
 roadmap-dist-g1 = [
@@ -2552,6 +2565,48 @@ name = "DIST-X02 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 1200
 command = ["./devtoolw", "dist-x02"]
+
+# DIST-X03 owns provider/session binding, typed control, SSH semantic journal
+# reconnect, generic RUN hierarchy/progress and LIFE-owned provider cleanup.
+[[test]]
+id = "roadmap-dist-x03-provider-control-hierarchy"
+name = "DIST-X03 provider session, typed control, RUN hierarchy and SSH reconnect contracts"
+runner = "pytest"
+timeout_seconds = 420
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_dist_x03_provider_control_hierarchy.py",
+]
+
+[[test]]
+id = "roadmap-dist-x03-retained-distribution"
+name = "DIST-X03 retained delegation, delivery, federation hierarchy and cancellation authority"
+runner = "pytest"
+timeout_seconds = 720
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_dist_x01_delegation_ingest.py",
+  "tests/test_dist_x02_async_transport.py",
+  "tests/test_dist_g1_identity_delivery_recovery_gate.py",
+  "tests/test_frx06_federation_execution_lineage.py",
+  "tests/test_frx_y01_parallel_federation_scheduler.py",
+  "tests/test_frx_y10_hierarchical_federation.py",
+  "tests/test_git_frx14_federated_cancellation_recovery.py",
+]
+
+[[test]]
+id = "roadmap-dist-x03-ssh-life-adoption"
+name = "DIST-X03 SSH durable history compatibility and LIFE provider cleanup ownership"
+runner = "pytest"
+timeout_seconds = 720
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_ssh01_transport_environment_worker_preparation.py",
+  "tests/test_ssh02_execution_history_recovery_convergence.py",
+  "tests/test_ssh03_lifecycle_hardening_final_qualification.py",
+  "tests/test_life_x03_generated_cleanup_ownership.py",
+  "tests/test_life_g2_ownership_retention_gate.py",
+]
 
 # DIST-G1 audits and seals the full X01/X02 distribution window. The gate
 # deliberately keeps later SSH/tmux/hierarchy/control adoption out of 42/70.

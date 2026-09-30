@@ -476,16 +476,65 @@ def discover_federated_orphan_children(
     return tuple(sorted(set(children))) if not parent_present else ()
 
 
-def request_federated_child_cancellation(child_run_id: str, *, reason: str = "Federation parent cancellation") -> tuple[bool, str]:
-    """Request cancellation of a child run without performing child cleanup.
+def request_federated_child_control(
+    child_run_id: str,
+    *,
+    delegation_id: str,
+    reason: str = "Federation parent cancellation",
+    provider_session_binding_id: str = "",
+    requested_by_run_id: str = "",
+    telemetry_health: str = "unknown",
+):
+    """Send canonical typed child control independently of event-channel health."""
+    run_id = str(child_run_id or "").strip()
+    if not run_id:
+        raise FederationOperationalBoundaryError("No active federated child run is available for control.")
+    from .distributed_provider_control import DelegatedControlChannel, DelegatedControlRequest
+    from .ipc import request_run_cancel
 
-    Cleanup/rollback deliberately remains the child command's responsibility;
-    this helper only forwards the cancellation request to the canonical IPC
-    control path.
+    request = DelegatedControlRequest.cancel(
+        delegation_id=str(delegation_id or "").strip(),
+        child_run_id=run_id,
+        reason=reason,
+        provider_session_binding_id=provider_session_binding_id,
+        requested_by_run_id=requested_by_run_id,
+    )
+    channel = DelegatedControlChannel()
+    return channel.dispatch(
+        request,
+        cancel=lambda candidate, why: request_run_cancel(candidate, reason=why),
+        telemetry_health=telemetry_health,
+    )
+
+
+def request_federated_child_cancellation(
+    child_run_id: str,
+    *,
+    reason: str = "Federation parent cancellation",
+    delegation_id: str = "",
+    provider_session_binding_id: str = "",
+    requested_by_run_id: str = "",
+    telemetry_health: str = "unknown",
+) -> tuple[bool, str]:
+    """Compatibility surface over typed control, with legacy IPC fallback.
+
+    Cleanup/rollback remains the child command's responsibility.  Callers with
+    canonical delegation identity use the typed request/ack channel; legacy
+    callers remain behavior-compatible until their owning adoption boundary.
     """
     run_id = str(child_run_id or "").strip()
     if not run_id:
         return False, "No active federated child run is available for cancellation."
+    if delegation_id:
+        ack = request_federated_child_control(
+            run_id,
+            delegation_id=delegation_id,
+            reason=reason,
+            provider_session_binding_id=provider_session_binding_id,
+            requested_by_run_id=requested_by_run_id,
+            telemetry_health=telemetry_health,
+        )
+        return ack.accepted, ack.detail
     from .ipc import request_run_cancel
     return request_run_cancel(run_id, reason=reason)
 
@@ -498,6 +547,7 @@ __all__ = [
     "capture_federated_resume_checkpoint",
     "collect_federated_operational_snapshot",
     "discover_federated_orphan_children",
+    "request_federated_child_control",
     "request_federated_child_cancellation",
     "validate_federated_resume_checkpoint",
 ]

@@ -274,6 +274,63 @@ class RunReference:
 
 
 @dataclass(frozen=True, slots=True)
+class RunRelation:
+    relation_id: str
+    parent_run_id: str
+    child_run_id: str
+    parent_node_id: str = ""
+    relationship: str = "delegated-child"
+    delegation_id: str = ""
+    provider_identity: Mapping[str, Any] = field(default_factory=dict)
+    delivery_health: str = "unknown"
+    pinned: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.parent_run_id or not self.child_run_id:
+            raise ValueError("run relation requires parent_run_id and child_run_id")
+        if self.parent_run_id == self.child_run_id:
+            raise ValueError("run relation cannot point to itself")
+        if not self.relation_id:
+            object.__setattr__(self, "relation_id", _sha({
+                "parent_run_id": self.parent_run_id,
+                "child_run_id": self.child_run_id,
+                "parent_node_id": self.parent_node_id,
+                "relationship": self.relationship,
+                "delegation_id": self.delegation_id,
+            })[:32])
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "RunRelation":
+        return cls(
+            relation_id=str(payload.get("relation_id") or ""),
+            parent_run_id=str(payload.get("parent_run_id") or ""),
+            child_run_id=str(payload.get("child_run_id") or ""),
+            parent_node_id=str(payload.get("parent_node_id") or ""),
+            relationship=str(payload.get("relationship") or "delegated-child"),
+            delegation_id=str(payload.get("delegation_id") or ""),
+            provider_identity=dict(payload.get("provider_identity") or {}),
+            delivery_health=str(payload.get("delivery_health") or "unknown"),
+            pinned=bool(payload.get("pinned")),
+        )
+
+    def pin(self) -> "RunRelation":
+        return replace(self, pinned=True)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "relation_id": self.relation_id,
+            "parent_run_id": self.parent_run_id,
+            "child_run_id": self.child_run_id,
+            "parent_node_id": self.parent_node_id,
+            "relationship": self.relationship,
+            "delegation_id": self.delegation_id,
+            "provider_identity": dict(self.provider_identity),
+            "delivery_health": self.delivery_health,
+            "pinned": self.pinned,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class GcPlan:
     schema_version: int
     delete_paths: tuple[str, ...]
@@ -315,6 +372,7 @@ class RunCatalog:
     streams: dict[str, StreamDescriptor] = field(default_factory=dict)
     events: dict[str, CoalescedEvent] = field(default_factory=dict)
     references: dict[str, RunReference] = field(default_factory=dict)
+    relations: dict[str, RunRelation] = field(default_factory=dict)
 
     @classmethod
     def open(cls, root: str | Path, *, create: bool = True) -> "RunCatalog":
@@ -337,6 +395,7 @@ class RunCatalog:
             catalog.streams = {k: StreamDescriptor(**({"privacy": "private", **v})) for k, v in raw.get("streams", {}).items()}
             catalog.events = {k: CoalescedEvent(**v) for k, v in raw.get("events", {}).items()}
             catalog.references = {k: RunReference(**v) for k, v in raw.get("references", {}).items()}
+            catalog.relations = {k: RunRelation.from_dict(v) for k, v in raw.get("relations", {}).items()}
         return catalog
 
     def save(self) -> None:
@@ -351,6 +410,89 @@ class RunCatalog:
         if not run_id:
             raise ValueError("run descriptor requires run_id")
         self.runs[run_id] = dict(descriptor)
+
+    def add_relation(self, relation: RunRelation) -> RunRelation:
+        existing = self.relations.get(relation.relation_id)
+        if existing is not None and existing != relation:
+            raise ValueError(f"run relation id collision: {relation.relation_id}")
+        for prior in self.relations.values():
+            if prior.child_run_id == relation.child_run_id and prior.relation_id != relation.relation_id:
+                raise ValueError(
+                    f"run {relation.child_run_id!r} already has canonical parent relation {prior.relation_id!r}"
+                )
+        self.relations[relation.relation_id] = relation
+        self.runs.setdefault(relation.parent_run_id, {"run_id": relation.parent_run_id})
+        self.runs.setdefault(relation.child_run_id, {"run_id": relation.child_run_id})
+        return relation
+
+    def pin_relation(self, relation_id: str) -> RunRelation:
+        updated = self.relations[relation_id].pin()
+        self.relations[relation_id] = updated
+        return updated
+
+    def ancestors(self, run_id: str) -> list[Mapping[str, Any]]:
+        current = str(run_id or "")
+        rows: list[Mapping[str, Any]] = []
+        seen: set[str] = set()
+        while current:
+            relation = next((item for item in self.relations.values() if item.child_run_id == current), None)
+            if relation is None:
+                break
+            if relation.relation_id in seen:
+                raise ValueError("run hierarchy cycle detected while resolving ancestors")
+            seen.add(relation.relation_id)
+            rows.append({
+                "relation": relation.to_dict(),
+                "run": dict(self.runs.get(relation.parent_run_id, {"run_id": relation.parent_run_id})),
+            })
+            current = relation.parent_run_id
+        return rows
+
+    def descendants(self, run_id: str) -> list[Mapping[str, Any]]:
+        root = str(run_id or "")
+        rows: list[Mapping[str, Any]] = []
+        queue = [root]
+        seen_runs = {root}
+        while queue:
+            parent = queue.pop(0)
+            children = sorted(
+                (item for item in self.relations.values() if item.parent_run_id == parent),
+                key=lambda item: (item.child_run_id, item.relation_id),
+            )
+            for relation in children:
+                if relation.child_run_id in seen_runs:
+                    raise ValueError("run hierarchy cycle detected while resolving descendants")
+                seen_runs.add(relation.child_run_id)
+                rows.append({
+                    "relation": relation.to_dict(),
+                    "run": dict(self.runs.get(relation.child_run_id, {"run_id": relation.child_run_id})),
+                })
+                queue.append(relation.child_run_id)
+        return rows
+
+    def subtree(self, run_id: str) -> dict[str, Any]:
+        root = dict(self.runs.get(run_id, {"run_id": run_id}))
+        return {
+            "root": root,
+            "ancestors": self.ancestors(run_id),
+            "descendants": self.descendants(run_id),
+        }
+
+    def parent_progress(self, run_id: str) -> dict[str, Any]:
+        direct = [item for item in self.relations.values() if item.parent_run_id == run_id]
+        statuses: dict[str, int] = {}
+        for relation in direct:
+            status = str(self.runs.get(relation.child_run_id, {}).get("status") or "unknown")
+            statuses[status] = statuses.get(status, 0) + 1
+        terminal = sum(count for status, count in statuses.items() if status in {"succeeded", "failed", "cancelled", "blocked", "skipped"})
+        return {
+            "parent_run_id": run_id,
+            "child_count": len(direct),
+            "terminal_count": terminal,
+            "active_count": max(0, len(direct) - terminal),
+            "statuses": dict(sorted(statuses.items())),
+            "flattened_child_identity": False,
+        }
 
     def add_attachment(self, attachment: AttachmentDescriptor) -> RunReference:
         if attachment.run_id not in self.runs:
@@ -433,13 +575,22 @@ class RunCatalog:
         delete: list[str] = []
         keep: list[str] = []
         dangling: list[str] = []
+        pinned_relation_runs: set[str] = set()
+        for relation in self.relations.values():
+            if not relation.pinned:
+                continue
+            pinned_relation_runs.add(relation.child_run_id)
+            pinned_relation_runs.update(
+                str(item.get("run", {}).get("run_id") or "")
+                for item in self.descendants(relation.child_run_id)
+            )
         for ref in sorted(self.references.values(), key=lambda r: r.ref_id):
             attachment = self.attachments.get(ref.attachment_id or "")
             if attachment is None:
                 dangling.append(ref.ref_id)
                 continue
-            if attachment.state == "pinned" or ref.pinned:
-                keep.append(ref.ref_id)
+            if attachment.state == "pinned" or ref.pinned or attachment.run_id in pinned_relation_runs:
+                keep.append(ref.ref_id if attachment.run_id not in pinned_relation_runs else f"relation-retention:{attachment.run_id}:{ref.ref_id}")
                 continue
             if attachment.state == "tombstoned" or ref.tombstoned:
                 if attachment.materialized and attachment.path:
@@ -460,6 +611,7 @@ class RunCatalog:
             "attachment_count": len(self.attachments),
             "stream_count": len(self.streams),
             "reference_count": len(self.references),
+            "relation_count": len(self.relations),
             "root_classification": "private-state",
             "index_rebuildable": True,
         }
@@ -472,6 +624,7 @@ class RunCatalog:
             "streams": {key: value.to_dict(include_private_path=include_private_paths) for key, value in sorted(self.streams.items())},
             "events": {key: value.to_dict() for key, value in sorted(self.events.items())},
             "references": {key: value.to_dict() for key, value in sorted(self.references.items())},
+            "relations": {key: value.to_dict() for key, value in sorted(self.relations.items())},
         }
 
 

@@ -243,6 +243,15 @@ def _records_script(config: SSHRunnerConfig) -> str:
         "ssh_confirmation_mode", "tmux_window", "tmux_pane", "federation_parent_run_id", "federation_parent_node_id",
         "federation_child_run_id", "federation_child_repository", "federation_child_target",
         "federation_child_workflow", "federation_child_contract", "federation_contract_ref",
+        "federation_attestation_schema_version", "federation_attestation_repository",
+        "federation_attestation_parent_run_id", "federation_attestation_parent_node_id",
+        "federation_attestation_child_run_id", "federation_attestation_federation_ref",
+        "federation_attestation_start_commit", "federation_attestation_config_sha256",
+        "federation_attestation_git_remote_sha256", "federation_attestation_required",
+        "dist_child_run_id", "dist_delegation_id", "dist_attestation_digest",
+        "dist_provider_session_binding_id", "dist_origin_journal_path", "dist_provider_state_path",
+        "dist_event_cursor_path", "dist_private_transport_hook_id", "dist_private_secret_count",
+        "dist_tool_argv_digest", "dist_tool_argv_token_count",
     )
     extracts = "\n".join(
         "  {key}=\"$(sed -n 's/^{key}=//p' \"$meta\" 2>/dev/null | head -n1)\"".format(key=key)
@@ -305,6 +314,15 @@ def runs_payload(config: SSHRunnerConfig) -> dict[str, Any]:
         "confirmation_mode", "tmux_window", "tmux_pane", "federation_parent_run_id", "federation_parent_node_id",
         "federation_child_run_id", "federation_child_repository", "federation_child_target",
         "federation_child_workflow", "federation_child_contract", "federation_contract_ref",
+        "federation_attestation_schema_version", "federation_attestation_repository",
+        "federation_attestation_parent_run_id", "federation_attestation_parent_node_id",
+        "federation_attestation_child_run_id", "federation_attestation_federation_ref",
+        "federation_attestation_start_commit", "federation_attestation_config_sha256",
+        "federation_attestation_git_remote_sha256", "federation_attestation_required",
+        "dist_child_run_id", "dist_delegation_id", "dist_attestation_digest",
+        "dist_provider_session_binding_id", "dist_origin_journal_path", "dist_provider_state_path",
+        "dist_event_cursor_path", "dist_private_transport_hook_id", "dist_private_secret_count",
+        "dist_tool_argv_digest", "dist_tool_argv_token_count",
     )
     records: list[dict[str, Any]] = []
     for line in completed.stdout.splitlines():
@@ -339,6 +357,17 @@ def runs_payload(config: SSHRunnerConfig) -> dict[str, Any]:
             record = {key: "" for key in metadata_keys}
             record.update(dict(zip(oci06_keys, fields[5:])))
             stdout_exists = stdout_size = stderr_exists = stderr_size = "0"
+        elif len(fields) in {45, 55}:
+            # SSH-02 history existed before federation-attestation metadata and
+            # again before DIST-X03 provider/session metadata.  Both formats end
+            # with the same four durable stdout/stderr columns, so preserve the
+            # historical field width instead of padding first and shifting the
+            # output tail into newly-added metadata slots.
+            legacy_metadata_count = len(fields) - 5 - 4
+            legacy_keys = metadata_keys[:legacy_metadata_count]
+            record = {key: "" for key in metadata_keys}
+            record.update(dict(zip(legacy_keys, fields[5:5 + legacy_metadata_count])))
+            stdout_exists, stdout_size, stderr_exists, stderr_size = fields[-4:]
         else:
             minimum = 5 + len(metadata_keys) + 4
             fields.extend([""] * (minimum - len(fields)))
@@ -376,8 +405,25 @@ def runs_payload(config: SSHRunnerConfig) -> dict[str, Any]:
         record["lineage"] = {
             "parent_run_id": str(record.get("federation_parent_run_id") or ""),
             "parent_node_id": str(record.get("federation_parent_node_id") or ""),
-            "child_run_id": str(record.get("federation_child_run_id") or ""),
+            "child_run_id": str(record.get("federation_child_run_id") or record.get("dist_child_run_id") or ""),
         }
+        record["authority_role"] = "provider-observation"
+        record["semantic_authority"] = "RUN-V3"
+        try:
+            from .distributed_provider_control import provider_cleanup_descriptors
+            cleanup = provider_cleanup_descriptors(
+                destination=config.destination,
+                provider=str(record.get("execution_provider") or "ssh"),
+                run_id=str(record.get("dist_child_run_id") or record.get("run_id") or ""),
+                session=str(record.get("session") or ""),
+                stage_path=str(record.get("workspace_path") or ""),
+                state_path=str(record.get("dist_provider_state_path") or ""),
+                cursor_path=str(record.get("dist_event_cursor_path") or ""),
+                delegation_id=str(record.get("dist_delegation_id") or ""),
+            )
+            record["cleanup_ownership"] = [item.as_dict() for item in cleanup]
+        except Exception:
+            record["cleanup_ownership"] = []
         records.append(record)
     records.sort(key=lambda item: (int(item.get("started_unix") or 0), str(item.get("session") or "")), reverse=True)
     run_ids = {str(item.get("run_id") or "") for item in records if str(item.get("run_id") or "")}
@@ -553,6 +599,48 @@ printf 'cancelled\n' > "$state_dir/state.tmp"; mv -f -- "$state_dir/state.tmp" "
         "destination": config.destination,
         "cancelled": cancelled,
         "recovery": {"intent": "cancel", "rerun_required": False, "resumable": False},
+    }
+
+
+def read_remote_run_journal(
+    config: SSHRunnerConfig,
+    *,
+    run_id: str = "",
+    session: str = "",
+    node_id: str = "",
+) -> dict[str, Any]:
+    """Read one child canonical RUN journal through the existing SSH substrate."""
+    payload = runs_payload(config)
+    matches = _select_records(payload, run_id=run_id, session=session, node_id=node_id)
+    if not matches:
+        raise ValueError("No SSH worker run/session matched the semantic journal request")
+    record = matches[0]
+    journal = str(record.get("dist_origin_journal_path") or "").strip()
+    if not journal:
+        child = str(record.get("dist_child_run_id") or record.get("federation_child_run_id") or record.get("run_id") or "").strip()
+        root = str(record.get("repository_root") or record.get("workspace_path") or "").rstrip("/")
+        if not child or not root:
+            raise ValueError("SSH run record has no canonical child RUN journal identity")
+        journal = f"{root}/.devtool/private/run-v3/{child}/execution-events.jsonl"
+    script = "p=" + shlex.quote(journal) + '; [ -f "$p" ] && cat -- "$p" || true'
+    completed = _run_remote(config, script)
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise ValueError(f"SSH semantic journal read failed: {detail or completed.returncode}")
+    return {
+        "schema_version": 1,
+        "kind": "ssh-semantic-run-journal",
+        "profile": config.profile,
+        "destination": config.destination,
+        "run_id": str(record.get("run_id") or ""),
+        "session": str(record.get("session") or ""),
+        "child_run_id": str(record.get("dist_child_run_id") or record.get("federation_child_run_id") or record.get("run_id") or ""),
+        "delegation_id": str(record.get("dist_delegation_id") or ""),
+        "provider_session_binding_id": str(record.get("dist_provider_session_binding_id") or ""),
+        "journal_path": journal,
+        "journal": completed.stdout,
+        "provider_observation_only": True,
+        "semantic_authority": "RUN-V3",
     }
 
 

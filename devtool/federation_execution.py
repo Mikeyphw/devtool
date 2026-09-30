@@ -897,6 +897,9 @@ def _run_federated_workflow_sequential(
             )
             lineage["delegation_id"] = delegation_link.delegation_id
             lineage["delegation_link"] = delegation_link.as_dict()
+            from .distributed_provider_control import DelegationRoute, record_delegation_relation
+            dist_route = DelegationRoute.from_json(os.environ.get("DEVTOOL_DIST_ROUTE")).append(delegation_link)
+            record_delegation_relation(parent.repo_root, delegation_link, delivery_health="starting")
             if federation_group:
                 lineage["federation_group"] = federation_group
             active_target = target
@@ -958,6 +961,9 @@ def _run_federated_workflow_sequential(
                 "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
                 "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
                 "DEVTOOL_DELEGATION_LINK_ID": delegation_link.delegation_id,
+                "DEVTOOL_DIST_DELEGATION_ID": delegation_link.delegation_id,
+                "DEVTOOL_DIST_ATTESTATION_DIGEST": delegation_link.attestation_digest,
+                "DEVTOOL_DIST_ROUTE": dist_route.to_json(),
                 "DEVTOOL_FEDERATION_HIERARCHY_DEPTH": str(int(os.environ.get("DEVTOOL_FEDERATION_HIERARCHY_DEPTH") or "0") + (1 if step.hierarchical else 0)),
             }
             if not scheduler_node.provider_profile and scheduler_node.execution_environment not in {"", "auto"}:
@@ -1457,6 +1463,9 @@ def _run_federated_workflow_parallel(
         )
         lineage["delegation_id"] = delegation_link.delegation_id
         lineage["delegation_link"] = delegation_link.as_dict()
+        from .distributed_provider_control import DelegationRoute, record_delegation_relation
+        dist_route = DelegationRoute.from_json(os.environ.get("DEVTOOL_DIST_ROUTE")).append(delegation_link)
+        record_delegation_relation(parent.repo_root, delegation_link, delivery_health="starting")
         if federation_group:
             lineage["federation_group"] = federation_group
 
@@ -1494,6 +1503,9 @@ def _run_federated_workflow_parallel(
             "DEVTOOL_FEDERATION_SOURCE_LOCK_DIGEST": str(plan.source_lock.get("lock_digest") or ""),
             "DEVTOOL_FEDERATION_SOURCE_EQUIVALENCE_DIGEST": str(plan.source_lock.get("equivalence_digest") or ""),
             "DEVTOOL_DELEGATION_LINK_ID": delegation_link.delegation_id,
+            "DEVTOOL_DIST_DELEGATION_ID": delegation_link.delegation_id,
+            "DEVTOOL_DIST_ATTESTATION_DIGEST": delegation_link.attestation_digest,
+            "DEVTOOL_DIST_ROUTE": dist_route.to_json(),
             "DEVTOOL_FEDERATION_HIERARCHY_DEPTH": str(int(os.environ.get("DEVTOOL_FEDERATION_HIERARCHY_DEPTH") or "0") + (1 if step.hierarchical else 0)),
             # Keep each parallel child's HUD/EXO files isolated while
             # suppressing visible auto-HUD windows for internal children.

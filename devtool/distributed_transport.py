@@ -642,6 +642,64 @@ class DelegatedExecutionReceipt:
         }
 
 
+def frames_from_origin_journal_text(
+    text: str,
+    *,
+    child_run_id: str,
+    link: DelegationLink,
+    acknowledged_sequence: int,
+    delivery_mode: str,
+    limit: int | None = None,
+) -> tuple[TransportFrame, ...]:
+    """Project provider-fetched RUN journal JSONL into canonical transport frames.
+
+    Remote providers may fetch journal bytes through SSH/tmux or another provider
+    side channel.  Parsing remains provider-neutral and identical to local
+    OriginRunJournal semantics.
+    """
+    rows: list[TransportFrame] = []
+    for raw in str(text or "").splitlines():
+        if not raw.strip():
+            continue
+        payload = json.loads(raw)
+        if str(payload.get("run_id") or "") != child_run_id:
+            raise DistributedTransportError("origin journal contains foreign run_id")
+        sequence = int(payload.get("sequence", -1))
+        if sequence <= int(acknowledged_sequence):
+            continue
+        event_id = str(payload.get("event_id") or "")
+        if str(payload.get("event_type") or "") == "process.output":
+            reference = RawStreamReference.from_payload(payload)
+            frame = TransportFrame(
+                delegation_id=link.delegation_id,
+                child_run_id=child_run_id,
+                event_id=event_id,
+                sequence=sequence,
+                content_class=CONTENT_RAW_STREAM_REFERENCE,
+                raw_stream_reference=reference,
+            )
+        else:
+            safe_payload = safe_semantic_payload(payload)
+            envelope = EventTransportEnvelope.for_event(
+                safe_payload,
+                link=link,
+                producer_id=link.delegation_id,
+                delivery_mode=delivery_mode,
+            )
+            frame = TransportFrame(
+                delegation_id=link.delegation_id,
+                child_run_id=child_run_id,
+                event_id=event_id,
+                sequence=sequence,
+                content_class=CONTENT_SEMANTIC_SAFE,
+                semantic_envelope=envelope,
+            )
+        rows.append(frame)
+        if limit is not None and len(rows) >= int(limit):
+            break
+    return tuple(rows)
+
+
 class OriginRunJournal:
     def __init__(self, directory: str | Path, *, child_run_id: str, link: DelegationLink) -> None:
         self.directory = Path(directory)
@@ -661,47 +719,14 @@ class OriginRunJournal:
     ) -> tuple[TransportFrame, ...]:
         if not self.path.is_file():
             return ()
-        rows: list[TransportFrame] = []
-        for raw in self.path.read_text(encoding="utf-8").splitlines():
-            if not raw.strip():
-                continue
-            payload = json.loads(raw)
-            if str(payload.get("run_id") or "") != self.child_run_id:
-                raise DistributedTransportError("origin journal contains foreign run_id")
-            sequence = int(payload.get("sequence", -1))
-            if sequence <= int(acknowledged_sequence):
-                continue
-            event_id = str(payload.get("event_id") or "")
-            if str(payload.get("event_type") or "") == "process.output":
-                reference = RawStreamReference.from_payload(payload)
-                frame = TransportFrame(
-                    delegation_id=self.link.delegation_id,
-                    child_run_id=self.child_run_id,
-                    event_id=event_id,
-                    sequence=sequence,
-                    content_class=CONTENT_RAW_STREAM_REFERENCE,
-                    raw_stream_reference=reference,
-                )
-            else:
-                safe_payload = safe_semantic_payload(payload)
-                envelope = EventTransportEnvelope.for_event(
-                    safe_payload,
-                    link=self.link,
-                    producer_id=self.link.delegation_id,
-                    delivery_mode=delivery_mode,
-                )
-                frame = TransportFrame(
-                    delegation_id=self.link.delegation_id,
-                    child_run_id=self.child_run_id,
-                    event_id=event_id,
-                    sequence=sequence,
-                    content_class=CONTENT_SEMANTIC_SAFE,
-                    semantic_envelope=envelope,
-                )
-            rows.append(frame)
-            if limit is not None and len(rows) >= int(limit):
-                break
-        return tuple(rows)
+        return frames_from_origin_journal_text(
+            self.path.read_text(encoding="utf-8"),
+            child_run_id=self.child_run_id,
+            link=self.link,
+            acknowledged_sequence=acknowledged_sequence,
+            delivery_mode=delivery_mode,
+            limit=limit,
+        )
 
     def sequence_bounds(self) -> tuple[int, int]:
         frames = self.frames_after(0, delivery_mode="recovery")
@@ -1069,6 +1094,7 @@ __all__ = [
     "DeliveryCursorStore",
     "EventDeliveryState",
     "DelegatedExecutionReceipt",
+    "frames_from_origin_journal_text",
     "OriginRunJournal",
     "DistributedProviderAdapter",
     "distributed_provider_adapter",

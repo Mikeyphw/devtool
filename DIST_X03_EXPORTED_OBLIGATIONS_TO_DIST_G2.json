@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "from": "DIST-X03 47/70",
+  "to": "DIST-G2 48/70",
+  "status": "exported_pending_gate",
+  "required_provider_parity": ["local subprocess","parallel federation","nested federation","chroot","PRoot","OCI","SSH foreground","SSH detached + reconnect"],
+  "required_semantics": ["semantic link identity","event delivery/cursor reconciliation","typed control request/ack","provider/attestation binding","hierarchy/progress/retention linkage","destination-local LIFE cleanup ownership"],
+  "retained_contracts": ["SSH-01","SSH-02","SSH-03","FRX source identity","FRX attestation","FRX recovery"],
+  "gate_rule": "fresh-process authoritative validation; do not duplicate provider truth or merge gate implementation into DIST-X03"
+}

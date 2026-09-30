@@ -2087,6 +2087,38 @@ def wrap_specs_for_ssh_commands(
             phase_meta["ssh_output_schema"] = "split-v1"
             phase_meta["ssh_confirmation_mode"] = str(metadata.get("ssh_confirmation_mode") or "interactive")
             phase_meta["oci_phase_node_id"] = phase_node_id(run_identity, session, provider=str(phase_meta.get("execution_provider") or "ssh-command"))
+            try:
+                from .distributed_execution import DelegationLink
+                from .distributed_provider_control import ssh_phase_dist_metadata
+                raw_link = metadata.get("delegation_link")
+                if not isinstance(raw_link, Mapping):
+                    raw_lineage = metadata.get("run_lineage")
+                    raw_link = raw_lineage.get("delegation_link") if isinstance(raw_lineage, Mapping) else None
+                delegation_link = DelegationLink.from_dict(raw_link) if isinstance(raw_link, Mapping) else None
+                child_identity = str(
+                    metadata.get("federation_child_run_id")
+                    or public_env.get("DEVTOOL_RUN_ID")
+                    or translated_env.get("DEVTOOL_RUN_ID")
+                    or run_identity
+                    or ""
+                ).strip()
+                planned_provider = dict(delegation_link.provider_identity) if delegation_link is not None else {}
+                phase_meta.update(ssh_phase_dist_metadata(
+                    link=delegation_link,
+                    child_run_id=child_identity,
+                    remote_root=remote_root,
+                    session=session,
+                    profile=config.profile,
+                    destination=config.destination,
+                    provider_kind=str(planned_provider.get("provider_kind") or config.execution_provider or "ssh"),
+                    provider_evidence_digest=str(planned_provider.get("provider_evidence_digest") or ""),
+                    secret_keys=tuple(sorted(sensitive_env)),
+                    original_argv=original_argv,
+                ))
+            except (ValueError, TypeError):
+                # Non-delegated SSH commands remain valid provider work; DIST
+                # metadata is additive and must never invent delegation truth.
+                pass
             remote_script = _build_remote_phase_script(
                 config, session=session, command=command, run_id=run_identity,
                 workspace_id=workspace_id, workspace_path=remote_root, lease_dir=lease_dir,
