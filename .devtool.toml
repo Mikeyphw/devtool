@@ -133,6 +133,12 @@ description = "Run the ANDROID-X04 advanced Android execution/adoption workflow"
 workflow = "roadmap-android-x04"
 target = "devtool"
 
+# LIFE-X04 final lifecycle convergence/adoption.
+[wrapper.commands.life-x04]
+description = "Run the LIFE-X04 lifecycle convergence/adoption workflow"
+workflow = "roadmap-life-x04"
+target = "devtool"
+
 # DIST-X01 canonical delegation and external-ingest identity foundation.
 [wrapper.commands.dist-x01]
 description = "Run the DIST-X01 delegation/external-ingest integrity workflow"
@@ -806,6 +812,12 @@ roadmap-dist-x04 = [
   { id = "operational-adoption", ref = "test:roadmap-dist-x04-operational-adoption", depends_on = ["syntax"] },
   { id = "retained-distribution", ref = "test:roadmap-dist-x04-retained-distribution", depends_on = ["operational-adoption"] },
   { id = "provider-dogfood", ref = "test:roadmap-dist-x04-provider-dogfood", depends_on = ["retained-distribution"] },
+]
+
+roadmap-life-x04 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "convergence", ref = "test:roadmap-life-x04-convergence", depends_on = ["syntax"] },
+  { id = "retained-authority", ref = "test:roadmap-life-x04-retained-authority", depends_on = ["convergence"] },
 ]
 
 roadmap-pres-x01 = [
@@ -3325,3 +3337,19 @@ name = "DIST-X04 provider and federation operational regression"
 runner = "pytest"
 timeout_seconds = 900
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_ssh01_transport_environment_worker_preparation.py", "tests/test_ssh02_execution_history_recovery_convergence.py", "tests/test_ssh03_lifecycle_hardening_final_qualification.py", "tests/test_oci01_execution_provider_foundation.py", "tests/test_termux_chroot_runner.py", "tests/test_termux_runtime_proot.py"]
+
+
+# LIFE-X04 final lifecycle convergence/adoption.
+[[test]]
+id = "roadmap-life-x04-convergence"
+name = "LIFE-X04 convergence projections, remote identity, migration and dogfood"
+runner = "pytest"
+timeout_seconds = 300
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_x04_lifecycle_convergence.py"]
+
+[[test]]
+id = "roadmap-life-x04-retained-authority"
+name = "LIFE-X04 retained lifecycle authority regression"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_x01_immediate_lifecycle_safety.py", "tests/test_life_x02_canonical_artifact_trust_pack.py", "tests/test_life_x03_generated_cleanup_ownership.py", "tests/test_life_g1_mutation_recovery_proof_gate.py", "tests/test_life_g2_ownership_retention_gate.py"]

@@ -1,0 +1,19 @@
+{
+  "roadmap_id": "LIFE-X04",
+  "position": "52/70",
+  "status": "implementation",
+  "promises": [
+    "deterministic delivery and qualification projection",
+    "transaction explain/diff/rollback-plan and recovery-doctor projection",
+    "signing identity lifecycle without secret persistence",
+    "repository-pack status/list/pin and retention projection",
+    "cleanup explain/doctor/reclaim projection",
+    "remote lifecycle envelope preserving repository and signing identity",
+    "federation pack selection without identity flattening",
+    "explicit legacy migration disposition",
+    "self-host overlay/bundle/snapshot + pack/sign + SSH/federation cleanup dogfood",
+    "explicit ownership exports without stealing CORE/EXEC/RMP authority"
+  ],
+  "next": "PRES-X08",
+  "separate_gates": ["PRES-G2", "LIFE-G3", "DIST-G3"]
+}

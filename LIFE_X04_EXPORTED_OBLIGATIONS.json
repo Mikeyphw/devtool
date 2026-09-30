@@ -1,0 +1,8 @@
+{
+  "PRES-X08": ["render lifecycle projections and actions without becoming lifecycle authority"],
+  "DIST-G3": ["qualify remote lifecycle envelope identity and reference preservation"],
+  "LIFE-G3": ["authoritatively qualify lifecycle convergence, migration and self-host dogfood"],
+  "CORE": ["RUN garbage collection remains CORE-owned"],
+  "EXEC": ["reusable execution-result semantics remain EXEC-owned"],
+  "RMP": ["attestation semantics remain RMP-owned"]
+}
