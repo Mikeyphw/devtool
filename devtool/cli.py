@@ -804,6 +804,7 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Collect artifacts without content verification",
             )
         if name == "release":
+            cmd.add_argument("--module", dest="release_module", default="", help="Release module lane override")
             cmd.add_argument("--device-tests", choices=("disabled", "when-device-present", "required"), default="", help="Release device/instrumentation policy")
             cmd.add_argument("--previous-apk", default="", help="Previous APK used by upgrade-smoke")
             cmd.add_argument("--package", dest="release_package", default="", help="Application package override for smoke gates")
@@ -1868,6 +1869,8 @@ def build_parser() -> argparse.ArgumentParser:
         add_android_device_selection_flags(_sub)
 
     android_release = android_sub.add_parser("release", help="Run the canonical Android release pipeline and seal evidence")
+    android_release.add_argument("--variant", dest="release_variant", default="", help="Release variant lane override")
+    android_release.add_argument("--module", dest="release_module", default="", help="Release module lane override")
     android_release.add_argument("--device-tests", choices=("disabled", "when-device-present", "required"), default="")
     android_release.add_argument("--previous-apk", default="")
     android_release.add_argument("--package", dest="release_package", default="")
@@ -1882,6 +1885,8 @@ def build_parser() -> argparse.ArgumentParser:
     android_release.add_argument("--format", choices=("text", "json"), default="text")
 
     android_instrumentation_cmd = android_sub.add_parser("instrumentation", help="Run Android instrumentation through the canonical device orchestrator")
+    android_instrumentation_cmd.add_argument("--variant", dest="instrumentation_variant", default="", help="Instrumentation variant lane override")
+    android_instrumentation_cmd.add_argument("--module", dest="instrumentation_module", default="", help="Instrumentation module lane override")
     android_instrumentation_cmd.add_argument("--class", dest="instrumentation_classes", action="append", default=[])
     android_instrumentation_cmd.add_argument("--method", dest="instrumentation_methods", action="append", default=[])
     android_instrumentation_cmd.add_argument("--annotation", dest="instrumentation_annotations", action="append", default=[])
@@ -16036,6 +16041,8 @@ def _main_after_parse(
         if action == "release":
             from .android.release import AndroidReleaseOrchestrator
             overrides = {}
+            if str(getattr(args, "release_variant", "") or ""): overrides["variant"] = str(args.release_variant)
+            if str(getattr(args, "release_module", "") or ""): overrides["module"] = str(args.release_module)
             if str(getattr(args, "device_tests", "") or ""): overrides["device_tests"] = str(args.device_tests)
             if str(getattr(args, "previous_apk", "") or ""): overrides["previous_apk"] = str(args.previous_apk)
             if str(getattr(args, "release_package", "") or ""): overrides["package"] = str(args.release_package)
@@ -16059,8 +16066,19 @@ def _main_after_parse(
             return 0 if outcome.passed else 1
         if action == "instrumentation":
             from .android.cli import android_instrumentation_payload
+            instrumentation_config = copy.deepcopy(config)
+            android_options = instrumentation_config.runner_options.get("android", {})
+            android_options = dict(android_options) if isinstance(android_options, dict) else {}
+            instrumentation_options = android_options.get("instrumentation", {})
+            instrumentation_options = dict(instrumentation_options) if isinstance(instrumentation_options, dict) else {}
+            if str(getattr(args, "instrumentation_variant", "") or ""):
+                instrumentation_options["variant"] = str(args.instrumentation_variant)
+            if str(getattr(args, "instrumentation_module", "") or ""):
+                instrumentation_options["module"] = str(args.instrumentation_module)
+            android_options["instrumentation"] = instrumentation_options
+            instrumentation_config.runner_options["android"] = android_options
             try:
-                payload = android_instrumentation_payload(config, classes=list(getattr(args, "instrumentation_classes", []) or []), methods=list(getattr(args, "instrumentation_methods", []) or []), annotations=list(getattr(args, "instrumentation_annotations", []) or []), not_annotations=list(getattr(args, "instrumentation_not_annotations", []) or []), size=str(getattr(args, "instrumentation_size", "") or ""), runner_args={str(item).split("=", 1)[0]: str(item).split("=", 1)[1] for item in list(getattr(args, "instrumentation_runner_args", []) or []) if "=" in str(item)}, skip_build=bool(getattr(args, "skip_build", False)))
+                payload = android_instrumentation_payload(instrumentation_config, classes=list(getattr(args, "instrumentation_classes", []) or []), methods=list(getattr(args, "instrumentation_methods", []) or []), annotations=list(getattr(args, "instrumentation_annotations", []) or []), not_annotations=list(getattr(args, "instrumentation_not_annotations", []) or []), size=str(getattr(args, "instrumentation_size", "") or ""), runner_args={str(item).split("=", 1)[0]: str(item).split("=", 1)[1] for item in list(getattr(args, "instrumentation_runner_args", []) or []) if "=" in str(item)}, skip_build=bool(getattr(args, "skip_build", False)))
             except Exception as exc:
                 if output_format == "json": print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2))
                 else: print(f"Error: {exc}", file=sys.stderr)
@@ -17229,6 +17247,8 @@ def _main_after_parse(
     elif args.command in {"release", "rel"}:
         from .android.release import AndroidReleaseOrchestrator
         overrides = {}
+        if str(getattr(args, "release_variant", "") or ""): overrides["variant"] = str(args.release_variant)
+        if str(getattr(args, "release_module", "") or ""): overrides["module"] = str(args.release_module)
         if str(getattr(args, "device_tests", "") or ""): overrides["device_tests"] = str(args.device_tests)
         if str(getattr(args, "previous_apk", "") or ""): overrides["previous_apk"] = str(args.previous_apk)
         if str(getattr(args, "release_package", "") or ""): overrides["package"] = str(args.release_package)

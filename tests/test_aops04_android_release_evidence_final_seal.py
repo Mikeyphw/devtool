@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from unittest import mock
@@ -54,7 +55,8 @@ def test_evidence_session_is_hashed_immutable_and_registry_integrated(tmp_path: 
     assert len(payload["evidence_sha256"]) == 64
     original = path.read_bytes()
     session.add_gate("late", "failed")
-    assert session.seal() == path
+    with pytest.raises(FileExistsError):
+        session.seal()
     assert path.read_bytes() == original
     registry = json.loads((tmp_path / ".devtool/artifacts/registry.json").read_text(encoding="utf-8"))
     assert any(item.get("metadata", {}).get("release_session_id") == "session-1" for item in registry["items"])
@@ -88,7 +90,10 @@ def test_orchestrator_seals_evidence_from_shared_runner_results(tmp_path: Path, 
     def executor(config, specs):
         result = OperationResult(specs[0].name, specs[0].argv, 0, 0.01, "ok", [], metadata={})
         if specs[0].name == "package":
-            result.metadata["artifacts"] = {"items": [{"path": "build/app-release.aab", "type": "aab", "valid": True, "sha256": "c" * 64}]}
+            artifact = tmp_path / "build" / "app-release.aab"
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_bytes(b"release")
+            result.metadata["artifacts"] = {"items": [{"path": str(artifact), "type": "aab", "valid": True, "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}]}
         return [result], "ok"
     outcome = AndroidReleaseOrchestrator(config, executor=executor).run()
     assert outcome.passed
@@ -162,10 +167,17 @@ def test_aops04_report_and_final_seal_contract_are_present() -> None:
 
 
 def _package_executor(tmp_path: Path, items: list[dict]):
+    normalized: list[dict] = []
+    for raw in items:
+        item = dict(raw)
+        path = Path(str(item.get("path") or ""))
+        if path.is_file():
+            item["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        normalized.append(item)
     def executor(config, specs):
         result = OperationResult(specs[0].name, specs[0].argv, 0, 0.01, "ok", [], metadata={})
         if specs[0].name == "package":
-            result.metadata["artifacts"] = {"items": items}
+            result.metadata["artifacts"] = {"items": normalized}
         return [result], "ok"
     return executor
 

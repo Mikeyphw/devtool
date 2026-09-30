@@ -544,7 +544,7 @@ def request_from_config(config: ProjectConfig, *, classes: Sequence[str] = (), m
     timeout = _coerce_float(ins.get("wait_timeout_seconds", timeout_default), timeout_default, field="android.instrumentation.wait_timeout_seconds")
     return InstrumentationRequest(
         project=project,
-        variant=__import__("devtool.android.variants", fromlist=["resolve_android_variant"]).resolve_android_variant(config).name,
+        variant=__import__("devtool.android.variants", fromlist=["resolve_android_variant_lane"]).resolve_android_variant_lane(config, "instrumentation").name,
         policy=resolve_instrumentation_policy(config),
         serial=str(config.device_serial or adb.get("serial") or android.get("device_serial") or ""),
         device_policy=str(adb.get("device_policy") or "exactly-one"),

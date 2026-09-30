@@ -3,16 +3,19 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+import hashlib
 import os
 from pathlib import Path
 import time
 from typing import Any, Callable, Mapping, Sequence
 
 from ..models import CommandSpec, OperationResult, ProjectConfig
-from .capabilities import resolve_android_execution_context
+from .capabilities import AndroidExecutionContext, AndroidToolResolution, resolve_android_execution_context, resolved_android_tool
 from .device_ops import AndroidDeviceOperationError, AndroidDeviceOperations, SmokeGateResult, capture_failure_evidence
 from .evidence import AndroidReleaseEvidenceSession
+from .environment import resolve_android_environment
 from .signing import AndroidSigningManager, signing_profile, validate_signing_profile_for_tasks
+from .variants import resolve_android_variant, resolve_android_variant_lane, validate_variant_bound_tasks
 
 DEVICE_TEST_POLICIES = frozenset({"disabled", "when-device-present", "required"})
 
@@ -20,6 +23,7 @@ DEVICE_TEST_POLICIES = frozenset({"disabled", "when-device-present", "required"}
 @dataclass(frozen=True, slots=True)
 class AndroidReleaseOptions:
     variant: str = "release"
+    module: str = ""
     unit_tests: bool = True
     lint: bool = True
     device_tests: str = "required"
@@ -103,6 +107,7 @@ def release_options(config: ProjectConfig, overrides: Mapping[str, Any] | None =
         # Custom release variants remain available through
         # android.release.variant or an explicit command override.
         variant=str(values.get("variant") or "release").strip() or "release",
+        module=str(values.get("module") or "").strip().strip(":"),
         unit_tests=_bool(values, "unit_tests", True),
         lint=_bool(values, "lint", True),
         device_tests=device_tests,
@@ -159,6 +164,12 @@ class AndroidReleaseOrchestrator:
         instrumentation = dict(instrumentation) if isinstance(instrumentation, dict) else {}
         instrumentation["policy"] = options.device_tests
         android["instrumentation"] = instrumentation
+        release_raw = android.get("release", {})
+        release = dict(release_raw) if isinstance(release_raw, dict) else {}
+        release["variant"] = options.variant
+        if options.module:
+            release["module"] = options.module
+        android["release"] = release
         config.runner_options["android"] = android
 
         # Canonical release qualification must not accidentally reuse a target's
@@ -185,13 +196,14 @@ class AndroidReleaseOrchestrator:
         from ..project_runners import AndroidGradleRunner
         options = release_options(self.base_config, overrides)
         config = self._config(options)
-        from .variants import resolve_android_variant
-        profile = resolve_android_variant(config)
+        release_lane = resolve_android_variant_lane(config, "release")
+        profile = resolve_android_variant(config, release_lane.name)
         if not profile.release_gates:
             raise ValueError(
                 f"Android variant {profile.name!r} is not enabled for release qualification; "
                 "set android.variants.<name>.release_gates = true"
             )
+        instrumentation_lane = resolve_android_variant_lane(config, "instrumentation")
         runner = AndroidGradleRunner()
         phases: list[tuple[str, list[CommandSpec]]] = []
         if options.unit_tests:
@@ -203,11 +215,18 @@ class AndroidReleaseOrchestrator:
         if options.device_tests != "disabled":
             phases.append(("instrumentation", runner.build_specs(config, "instrumentation")))
         for phase_name, specs in phases:
+            phase_lane = instrumentation_lane if phase_name == "instrumentation" else release_lane
             for spec in specs:
+                metadata = spec.metadata if isinstance(spec.metadata, dict) else {}
+                gradle_tasks = tuple(str(item) for item in metadata.get("gradle_tasks", []) or [])
+                if gradle_tasks:
+                    validate_variant_bound_tasks(gradle_tasks, phase_lane)
                 spec.metadata.update({
                     "android_release_pipeline": True,
                     "android_release_phase": phase_name,
                     "release_variant": options.variant,
+                    "android_variant_lane": phase_lane.as_dict(),
+                    "android_release_lane": release_lane.as_dict(),
                 })
         return config, options, phases
 
@@ -226,7 +245,15 @@ class AndroidReleaseOrchestrator:
         return {}
 
     @staticmethod
-    def _release_artifacts(config: ProjectConfig, artifact_payload: Mapping[str, Any]) -> list[tuple[Path, dict[str, Any]]]:
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @classmethod
+    def _release_artifacts(cls, config: ProjectConfig, artifact_payload: Mapping[str, Any]) -> list[tuple[Path, dict[str, Any]]]:
         candidates: list[tuple[Path, dict[str, Any]]] = []
         for raw in artifact_payload.get("items", []) or []:
             if not isinstance(raw, dict) or not _strict_bool(raw.get("valid", False), False):
@@ -239,27 +266,53 @@ class AndroidReleaseOrchestrator:
             path = Path(value).expanduser()
             if not path.is_absolute():
                 path = config.repo_root / path
-            candidates.append((path.resolve(strict=False), item))
-        variant = str(config.variant or "").strip().lower()
-        if not variant:
-            return candidates
-        selected = [
-            entry
-            for entry in candidates
-            if (
-                str(entry[1].get("variant") or "").strip().lower() == variant
-                or variant in entry[0].name.lower()
-            )
-        ]
-        # Canonical release evidence must never silently fall back to stale or
-        # reused outputs from another variant (for example debug APKs/JARs).
-        # Absence of a selected-variant artifact is a release-artifact failure.
+            path = path.resolve(strict=False)
+            # Release qualification owns materialization truth, not producer claims.
+            if not path.is_file():
+                continue
+            actual_sha = cls._sha256(path)
+            expected_sha = str(item.get("sha256") or item.get("current_sha256") or "").strip().lower()
+            if expected_sha and expected_sha != actual_sha:
+                continue
+            item["sha256"] = actual_sha
+            item["current_sha256"] = actual_sha
+            item["materialized"] = True
+            item["verified_path"] = str(path)
+            candidates.append((path, item))
+        # The orchestrator activates the selected release variant on config;
+        # use that execution variant here so custom release lanes do not fall
+        # back to the conventional literal ``release`` name.
+        variant = str(config.variant or resolve_android_variant_lane(config, "release").name).strip().lower()
+        selected = []
+        for entry in candidates:
+            declared_variant = str(entry[1].get("variant") or "").strip().lower()
+            if declared_variant:
+                if declared_variant == variant:
+                    selected.append(entry)
+                continue
+            if variant in entry[0].name.lower():
+                selected.append(entry)
         return selected
 
     @classmethod
     def _release_apk(cls, config: ProjectConfig, artifact_payload: Mapping[str, Any]) -> Path | None:
         candidates = [path for path, item in cls._release_artifacts(config, artifact_payload) if str(item.get("type") or "").lower() == "apk"]
         return candidates[0] if candidates else None
+
+    def _signing_context(self, config: ProjectConfig, resolved_environment: object | None) -> AndroidExecutionContext:
+        """Build a narrow signing context without probing device transport."""
+        from ..termux_toolchains import detect_runtime_identity
+        runtime = detect_runtime_identity(self.env)
+        tools: dict[str, AndroidToolResolution] = {}
+        java = resolved_android_tool("java", config, env=self.env)
+        apksigner = resolved_android_tool("apksigner", config, env=self.env)
+        tools["java"] = AndroidToolResolution("java", "path" if java else "none", bool(java), path=str(java or ""), compatible=bool(java))
+        tools["apksigner"] = AndroidToolResolution("apksigner", "resolved" if apksigner else "none", bool(apksigner), path=str(apksigner or ""), compatible=bool(apksigner), rejection_reason="" if apksigner else "apksigner is unavailable")
+        tools["adb"] = AndroidToolResolution("adb", "not-requested", False, compatible=True, rejection_reason="device transport not requested for signing")
+        sdk_root = str(getattr(resolved_environment, "sdk_root", "") or "")
+        sdk_source = str(getattr(resolved_environment, "sdk_source", "") or "")
+        lane = resolve_android_variant_lane(config, "release")
+        return AndroidExecutionContext(runtime, str(config.project_root or config.repo_root), config.selected_target, lane.name, sdk_root, sdk_source, tools, "none")
 
     def run(
         self,
@@ -272,9 +325,31 @@ class AndroidReleaseOrchestrator:
         output: Path | None = None,
     ) -> AndroidReleaseResult:
         config, options, phases = self.plan(overrides=overrides)
-        context = resolve_android_execution_context(config, env=self.env)
         session = AndroidReleaseEvidenceSession(config.repo_root, config.selected_target, options.variant)
-        session.execution = context.as_dict()
+        first_metadata = next((spec.metadata for _phase, specs in phases for spec in specs if isinstance(spec.metadata, dict)), {})
+        resolved_environment = None
+        if self.executor is not None:
+            # Injected executors are an explicit external execution/test seam.
+            # Preserve the legacy compatibility context there without claiming
+            # destination Android environment qualification. Production release
+            # execution below is canonical and fail-closed.
+            compatibility_context = resolve_android_execution_context(config, env=self.env)
+            session.execution = {
+                "authority": "external-executor",
+                "compatibility_context": compatibility_context.as_dict(),
+                "android_environment": None,
+            }
+        else:
+            request, qualification, resolved_environment = resolve_android_environment(
+                config, action="release", env=self.env, gradle_metadata=first_metadata,
+                device_required=False, fail_closed=True,
+            )
+            session.execution = {
+                "authority": "android-environment-v1",
+                "android_environment_request": request.as_dict(),
+                "android_environment_qualification": qualification.as_dict(),
+                "android_environment": resolved_environment.as_dict() if resolved_environment is not None else None,
+            }
         try:
             from .variants import resolve_semantic_tasks
             signing_tasks = resolve_semantic_tasks(config, ["assemble"])
@@ -356,7 +431,7 @@ class AndroidReleaseOrchestrator:
             if not release_artifacts:
                 failure = "Release pipeline produced no signed APK/AAB artifact"
             else:
-                manager = AndroidSigningManager(context, env=self.env)
+                manager = AndroidSigningManager(self._signing_context(config, resolved_environment), env=self.env)
                 expected = str(session.signing.get("expected_cert_sha256") or "") if options.verify_certificate_identity else ""
                 for artifact, _item in release_artifacts:
                     try:
@@ -402,6 +477,10 @@ class AndroidReleaseOrchestrator:
             except Exception as exc:
                 required = options.device_tests == "required" or device_needed
                 session.add_gate("device-readiness", "failed" if required else "skipped", required=required, detail=str(exc))
+
+        # Device readiness is a prerequisite barrier. Recompute after selection
+        # so a readiness failure can never leak into install/lifecycle side effects.
+        downstream_ok = downstream_ok and not required_failure_present()
 
         def add_smoke(smoke: SmokeGateResult, *, required: bool = True) -> None:
             session.add_gate(smoke.gate, smoke.status, required=required, duration_seconds=smoke.duration_ms / 1000.0, detail=smoke.detail, metadata=smoke.evidence)
@@ -460,7 +539,7 @@ def audit_android_release_convergence(repo_root: Path) -> dict[str, Any]:
     release_src = (root / "devtool" / "android" / "release.py").read_text(encoding="utf-8")
     checks.append({"id": "release.uses-project-runner", "pass": "AndroidGradleRunner" in release_src and ".build_specs(" in release_src})
     checks.append({"id": "release.uses-device-ops", "pass": "AndroidDeviceOperations" in release_src})
-    checks.append({"id": "release.uses-capability-context", "pass": "resolve_android_execution_context" in release_src})
+    checks.append({"id": "release.uses-canonical-environment", "pass": "resolve_android_environment" in release_src})
     failed = [item["id"] for item in checks if not item["pass"]]
     return {"schema_version": 1, "status": "pass" if not failed else "fail", "checks": checks, "failed": failed}
 

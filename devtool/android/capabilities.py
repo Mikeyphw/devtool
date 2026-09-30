@@ -261,7 +261,7 @@ def resolve_android_execution_context(
     root = Path(project_root or (config.project_root if config else "") or (config.repo_root if config else Path.cwd())).expanduser().resolve(strict=False)
     explicit_sdk_text = str(android.get("sdk_root") or env_map.get("ANDROID_SDK_ROOT") or env_map.get("ANDROID_HOME") or "").strip()
     explicit_sdk = Path(explicit_sdk_text).expanduser() if explicit_sdk_text else None
-    sdk_root, sdk_source = discover_sdk_root_with_source(explicit_sdk, root)
+    sdk_root, sdk_source = discover_sdk_root_with_source(explicit_sdk, root, env=env_map)
     sdk_source = sdk_source or ""
     build_tools = _highest_dir(sdk_root / "build-tools" if sdk_root else None)
 
@@ -338,7 +338,7 @@ def resolved_android_tool(name: str, config: ProjectConfig | None = None, *, env
     root = Path((config.project_root if config else "") or (config.repo_root if config else Path.cwd())).expanduser().resolve(strict=False)
     explicit_sdk_text = str(android.get("sdk_root") or env_map.get("ANDROID_SDK_ROOT") or env_map.get("ANDROID_HOME") or "").strip()
     explicit_sdk = Path(explicit_sdk_text).expanduser() if explicit_sdk_text else None
-    sdk_root, _ = discover_sdk_root_with_source(explicit_sdk, root)
+    sdk_root, _ = discover_sdk_root_with_source(explicit_sdk, root, env=env_map)
     if name == "adb":
         adb_config = android.get("adb", {}) if isinstance(android.get("adb", {}), dict) else {}
         resolved = resolve_adb(

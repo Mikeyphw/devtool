@@ -96,6 +96,12 @@ description = "Run the GRADLE-TAKEOVER-G1 authoritative takeover/recursion/conve
 workflow = "roadmap-gradle-takeover-g1"
 target = "devtool"
 
+# ANDROID-X01 canonical Android environment and release/variant truth.
+[wrapper.commands.android-x01]
+description = "Run the ANDROID-X01 canonical Android environment/release truth workflow"
+workflow = "roadmap-android-x01"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
@@ -624,6 +630,12 @@ roadmap-gradle-takeover-g1 = [
   { id = "window-audit", ref = "test:roadmap-gradle-takeover-g1-window", depends_on = ["syntax"] },
   { id = "real-process", ref = "test:roadmap-gradle-takeover-g1-real-process", depends_on = ["window-audit"] },
   { id = "release-qualification", ref = "test:roadmap-gradle-takeover-g1-release", depends_on = ["real-process"] },
+]
+
+roadmap-android-x01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "environment-release-truth", ref = "test:roadmap-android-x01-environment-release", depends_on = ["syntax"] },
+  { id = "retained-release-variant", ref = "test:roadmap-android-x01-retained-release-variant", depends_on = ["environment-release-truth"] },
 ]
 
 roadmap-pres-x01 = [
@@ -2128,6 +2140,36 @@ name = "GRADLE-TAKEOVER-G1 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 900
 command = ["./devtoolw", "gradle-takeover-g1"]
+
+# ANDROID-X01 owns bounded non-Gradle qualification only. Android/Gradle
+# execution and device-host proofs remain authoritative in ANDROID-G1.
+[[test]]
+id = "roadmap-android-x01-environment-release"
+name = "ANDROID-X01 canonical environment, lanes, release integrity and RUN evidence"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_x01_environment_release.py",
+]
+
+[[test]]
+id = "roadmap-android-x01-retained-release-variant"
+name = "ANDROID-X01 retained release and variant regressions"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_variant_profiles.py",
+  "tests/test_aops04_android_release_evidence_final_seal.py",
+]
+
+[[test]]
+id = "roadmap-android-x01-artifact-bootstrap"
+name = "ANDROID-X01 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 900
+command = ["./devtoolw", "android-x01"]
 
 # PRES-X01 presentation projection foundation. This overlay keeps rendering
 # surfaces as projections over RUN/EXO/RER/validation/ENV references; it does

@@ -1,0 +1,30 @@
+{
+  "partial_promises": [
+    "ANDROID-P023",
+    "ANDROID-P024",
+    "ANDROID-P029",
+    "ANDROID-P031",
+    "ANDROID-P048"
+  ],
+  "schema_version": 1,
+  "source_overlay": "ANDROID-X01",
+  "source_position": "37/70",
+  "to_android_g1": [
+    "Audit X01+X02 promises as one gate window and fold gate-owned fixes before sealing.",
+    "Prove explicit environment views do not leak ambient SDK state and incomplete packages cannot qualify.",
+    "Prove builder/doctor/explain/release consume equivalent canonical environment identity.",
+    "Prove exact artifact/hash drift and evidence collisions fail closed.",
+    "Prove failed device readiness makes downstream side effects unreachable.",
+    "Prove release/instrumentation/direct/validation share canonical lane semantics.",
+    "Run authoritative Android/Gradle/device/remote checks deferred from implementation overlays."
+  ],
+  "to_android_x02": [
+    "Define AndroidExecutionSnapshot consuming the X01 resolved environment and lane identities.",
+    "Bind exact ArtifactPair lineage to canonical Gradle/RUN evidence; do not infer solely from filenames.",
+    "Introduce action-aware AndroidTransport/DeviceLease so build-only actions never touch device transport.",
+    "Bridge semantic X01 component identities into reusable execution identity while keeping absolute paths as provenance.",
+    "Qualify destination-local/remote Android environments and child evidence without re-reading controller ambient state.",
+    "Complete NDK host-mode/runtime qualification across destination types and canonical Java identity linkage from Gradle/JDK authority.",
+    "Apply the staged runtime mechanical seal only after execution snapshot convergence."
+  ]
+}

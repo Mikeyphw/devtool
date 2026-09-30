@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from hashlib import sha256
+import json
+import re
 from typing import Any, Mapping, Sequence
 
 from ..models import ProjectConfig
@@ -16,6 +19,125 @@ SEMANTIC_TASKS = {
     "connectedandroidtest": "connected{variant}AndroidTest",
     "instrumentation": "connected{variant}AndroidTest",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class AndroidVariantLane:
+    lane: str
+    name: str
+    module: str
+    build_type: str
+    flavor: str = ""
+    source: str = ""
+    identity: str = ""
+
+    @property
+    def title(self) -> str:
+        return self.name[:1].upper() + self.name[1:]
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _lane_identity(payload: Mapping[str, Any]) -> str:
+    return sha256(json.dumps(dict(payload), sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+
+
+def _configured_task_values(config: ProjectConfig, key: str) -> list[str]:
+    raw = config.runner_options.get("tasks", {})
+    tasks = dict(raw) if isinstance(raw, Mapping) else {}
+    value = tasks.get(key, [])
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [str(item) for item in value if str(item).strip()]
+    return []
+
+
+def _infer_lane_from_tasks(tasks: Sequence[str]) -> tuple[str, str]:
+    for raw in tasks:
+        text = str(raw).strip()
+        leaf = text.rsplit(":", 1)[-1]
+        match = re.fullmatch(r"(?:connected|assemble)(.+)AndroidTest", leaf)
+        if match:
+            title = match.group(1)
+            parts = [part for part in text.split(":") if part]
+            return title[:1].lower() + title[1:], (parts[-2] if len(parts) >= 2 else "")
+        match = re.fullmatch(r"(?:assemble|bundle|lint|test)([A-Z][A-Za-z0-9]*?)(?:UnitTest)?", leaf)
+        if match:
+            title = match.group(1)
+            parts = [part for part in text.split(":") if part]
+            return title[:1].lower() + title[1:], (parts[-2] if len(parts) >= 2 else "")
+    return "", ""
+
+
+def resolve_android_variant_lane(config: ProjectConfig, lane: str) -> AndroidVariantLane:
+    """Resolve one canonical Android module/variant lane across all frontends."""
+    lane_name = str(lane or "primary").strip().lower()
+    if lane_name not in {"primary", "release", "instrumentation"}:
+        raise ValueError(f"Unknown Android variant lane: {lane}")
+    android_raw = config.runner_options.get("android", {})
+    android = dict(android_raw) if isinstance(android_raw, Mapping) else {}
+    source = "active-variant"
+    module_hint = ""
+    if lane_name == "primary":
+        variant = str(config.variant or android.get("default_variant") or android.get("variant") or "debug").strip() or "debug"
+    elif lane_name == "release":
+        release_raw = android.get("release", {})
+        release = dict(release_raw) if isinstance(release_raw, Mapping) else {}
+        module_hint = str(release.get("module") or "").strip().strip(":")
+        variant = str(release.get("variant") or "release").strip() or "release"
+        source = "android.release.variant" if release.get("variant") else "release-default"
+        task_variant, task_module = _infer_lane_from_tasks(_configured_task_values(config, "release_build"))
+        if task_variant and not release.get("variant"):
+            variant, module_hint, source = task_variant, task_module, "tasks.release_build"
+    else:
+        ins_raw = android.get("instrumentation", {})
+        ins = dict(ins_raw) if isinstance(ins_raw, Mapping) else {}
+        module_hint = str(ins.get("module") or "").strip().strip(":")
+        variant = str(ins.get("variant") or "").strip()
+        source = "android.instrumentation.variant" if variant else ""
+        task_variant, task_module = _infer_lane_from_tasks(_configured_task_values(config, "instrumentation"))
+        if not variant and task_variant:
+            variant, module_hint, source = task_variant, task_module, "tasks.instrumentation"
+        if not variant:
+            variant = str(config.variant or android.get("default_variant") or android.get("variant") or "debug").strip() or "debug"
+            source = "active-variant-fallback"
+    profile = resolve_android_variant(config, variant)
+    module = module_hint or profile.module
+    payload = {
+        "lane": lane_name, "name": profile.name, "module": module,
+        "build_type": profile.build_type, "flavor": profile.flavor, "source": source,
+    }
+    return AndroidVariantLane(identity=_lane_identity(payload), **payload)
+
+
+def validate_variant_bound_tasks(tasks: Sequence[str], lane: AndroidVariantLane) -> tuple[str, ...]:
+    """Fail closed when a variant-bound Gradle task contradicts its lane."""
+    accepted: list[str] = []
+    expected = lane.title.lower()
+    module = lane.module.strip(":").lower()
+    for raw in tasks:
+        text = str(raw).strip()
+        if not text:
+            continue
+        parts = [part for part in text.split(":") if part]
+        leaf = parts[-1] if parts else text
+        task_module = parts[-2].lower() if len(parts) >= 2 else ""
+        # Only enforce tasks that encode an Android variant in their identity.
+        match = re.search(r"(Debug|Release|[A-Z][A-Za-z0-9]*?(?:Debug|Release))(?=(?:AndroidTest|UnitTest)?$)", leaf)
+        if match:
+            encoded = match.group(1).lower()
+            if expected not in encoded and encoded not in expected:
+                raise ValueError(
+                    f"Android {lane.lane} lane {lane.module}:{lane.name} conflicts with variant-bound task {text!r}"
+                )
+            if task_module and module and task_module != module:
+                raise ValueError(
+                    f"Android {lane.lane} lane module {lane.module!r} conflicts with task module {task_module!r}: {text!r}"
+                )
+        accepted.append(text)
+    return tuple(accepted)
 
 @dataclass(frozen=True, slots=True)
 class AndroidVariantProfile:
@@ -166,3 +288,11 @@ def activate_android_variant(config: ProjectConfig, variant: str) -> ProjectConf
                 deep(merged, value)
                 activated.runner_options[key] = merged
     return activated
+
+
+__all__ = [
+    "AndroidVariantProfile", "AndroidVariantLane", "SEMANTIC_TASKS",
+    "resolve_android_variant", "resolve_android_variant_lane", "validate_variant_bound_tasks",
+    "resolve_semantic_tasks", "has_explicit_signing_policy", "variant_requires_release_signing",
+    "list_android_variant_profiles", "activate_android_variant",
+]

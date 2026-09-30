@@ -5946,7 +5946,9 @@ def discover_sdk_root_with_source(
     *,
     include_managed_cache: bool = False,
     cache_root: Path | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[Path | None, str | None]:
+    env_map = os.environ if env is None else env
     candidates: list[tuple[Path, str, bool]] = []
     if explicit:
         candidates.append((explicit.expanduser(), "explicit --sdk-root", True))
@@ -5954,8 +5956,8 @@ def discover_sdk_root_with_source(
     if local_properties is not None:
         candidates.append((local_properties, "local.properties sdk.dir", False))
     for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
-        if os.environ.get(variable):
-            candidates.append((Path(os.environ[variable]).expanduser(), variable, False))
+        if env_map.get(variable):
+            candidates.append((Path(str(env_map[variable])).expanduser(), variable, False))
     if include_managed_cache and cache_root is not None:
         candidates.append(((cache_root / "android-sdk").expanduser(), "managed cache", False))
     if running_under_termux_python():

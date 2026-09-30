@@ -878,59 +878,32 @@ class AndroidGradleRunner(ProjectRunner):
             android = config.runner_options.get("android", {})
             android = dict(android) if isinstance(android, dict) else {}
             root = android_project_root(config)
-            from .android.variants import resolve_android_variant
+            from .android.variants import resolve_android_variant, resolve_android_variant_lane, validate_variant_bound_tasks
             from .android.instrumentation import instrumentation_config, resolve_instrumentation_policy
 
-            active_profile = resolve_android_variant(config)
             ins_cfg = instrumentation_config(config)
-            explicit_instrumentation_variant = str(ins_cfg.get("variant") or "").strip()
-
-            # Instrumentation is its own Android variant lane. A release
-            # qualification may package/sign Release while the repository's
-            # authoritative device-test lane remains Debug.
+            instrumentation_lane = resolve_android_variant_lane(config, "instrumentation")
+            release_lane = resolve_android_variant_lane(config, "release")
+            variant_profile = resolve_android_variant(config, instrumentation_lane.name)
+            if not variant_profile.deployable:
+                raise ValueError(
+                    f"Android variant {variant_profile.name!r} is not deployable "
+                    "and cannot run instrumentation"
+                )
             tasks_cfg_raw = config.runner_options.get("tasks", {})
             tasks_cfg = dict(tasks_cfg_raw) if isinstance(tasks_cfg_raw, dict) else {}
             configured_raw = tasks_cfg.get("instrumentation", [])
             if isinstance(configured_raw, str):
                 configured_instrumentation_tasks = [configured_raw]
             elif isinstance(configured_raw, (list, tuple, set)):
-                configured_instrumentation_tasks = [
-                    str(item) for item in configured_raw if str(item).strip()
-                ]
+                configured_instrumentation_tasks = [str(item) for item in configured_raw if str(item).strip()]
             else:
                 configured_instrumentation_tasks = []
-
-            instrumentation_variant = explicit_instrumentation_variant
-            instrumentation_module = active_profile.module
-            if not instrumentation_variant:
-                for task in configured_instrumentation_tasks:
-                    task_text = str(task).strip()
-                    leaf = task_text.rsplit(":", 1)[-1]
-                    match = re.fullmatch(
-                        r"(?:connected|assemble)(.+)AndroidTest",
-                        leaf,
-                    )
-                    if not match:
-                        continue
-                    title = match.group(1)
-                    instrumentation_variant = title[:1].lower() + title[1:]
-                    parts = [part for part in task_text.split(":") if part]
-                    if len(parts) >= 2:
-                        instrumentation_module = parts[-2]
-                    break
-
-            variant_profile = resolve_android_variant(
-                config,
-                instrumentation_variant or active_profile.name,
-            )
-            if not variant_profile.deployable:
-                raise ValueError(
-                    f"Android variant {variant_profile.name!r} is not deployable "
-                    "and cannot run instrumentation"
-                )
-            variant_name = variant_profile.name
-            variant_title = variant_profile.title
-            module_name = instrumentation_module or variant_profile.module
+            if configured_instrumentation_tasks:
+                validate_variant_bound_tasks(configured_instrumentation_tasks, instrumentation_lane)
+            variant_name = instrumentation_lane.name
+            variant_title = instrumentation_lane.title
+            module_name = instrumentation_lane.module
             module_prefix = f":{module_name}:"
             instrumentation_build_tasks = [
                 f"{module_prefix}assemble{variant_title}",
@@ -1018,7 +991,8 @@ class AndroidGradleRunner(ProjectRunner):
                 "gradle_tasks": list(instrumentation_build_tasks),
                 "configured_instrumentation_tasks": list(configured_instrumentation_tasks),
                 "instrumentation_variant": variant_name,
-                "release_variant": active_profile.name if active_profile.name != variant_name else "",
+                "release_variant": release_lane.name if release_lane.name != variant_name else "",
+                "android_variant_lane": instrumentation_lane.as_dict(),
                 "progress_parser": "gradle",
                 "report_parser": "android-instrumentation",
                 "execution_environment": "android-device",

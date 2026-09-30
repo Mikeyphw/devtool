@@ -335,6 +335,8 @@ def minimal_global_config_template() -> str:
         "# serial = \"\"",
         "",
         "[android.instrumentation]",
+        "# variant = \"debug\" # independent instrumentation lane; defaults to active variant/task inference",
+        "# module = \"app\" # module lane; validated against variant-bound tasks",
         "policy = \"when-device-present\" # disabled | when-device-present | required",
         "keep_installed = false",
         "cleanup_app = false",
@@ -354,7 +356,8 @@ def minimal_global_config_template() -> str:
         "# Never store password values in TOML; use env/fd/stdin/prompt/external secret sources.",
         "",
         "[android.release]",
-        "variant = \"release\"",
+        "variant = \"release\" # independent release lane",
+        "# module = \"app\" # module lane; conflicting variant-bound tasks fail closed",
         "unit_tests = true",
         "lint = true",
         "device_tests = \"required\" # disabled | when-device-present | required",
@@ -2180,6 +2183,8 @@ device_policy = "exactly-one" # exactly-one | serial | preferred | first-physica
 # serial = ""
 
 [android.instrumentation]
+# variant = "debug" # independent instrumentation lane; defaults to active variant/task inference
+# module = "app" # module lane; validated against variant-bound tasks
 policy = "when-device-present" # disabled | when-device-present | required
 keep_installed = false
 cleanup_app = false
@@ -2199,7 +2204,8 @@ policy = "optional" # optional | release-required | external
 # Never store password values in TOML; use env/fd/stdin/prompt/external secret sources.
 
 [android.release]
-variant = "release"
+variant = "release" # independent release lane
+# module = "app" # module lane; conflicting variant-bound tasks fail closed
 unit_tests = true
 lint = true
 device_tests = "required" # disabled | when-device-present | required

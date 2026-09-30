@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 from typing import Any, Mapping
 import uuid
 
@@ -73,12 +74,13 @@ class AndroidReleaseEvidenceSession:
     gates: list[ReleaseGateEvidence] = field(default_factory=list)
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     hooks: list[dict[str, Any]] = field(default_factory=list)
+    storage: dict[str, Any] = field(default_factory=dict)
     verdict: str = "running"
 
     def __post_init__(self) -> None:
         self.repo_root = Path(self.repo_root).expanduser().resolve()
-        self.run_id = self.run_id or os.environ.get("DEVTOOL_RUN_ID", "")
         self.session_id = self.session_id or f"android-release-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+        self.run_id = self.run_id or os.environ.get("DEVTOOL_RUN_ID", "") or self.session_id
         self.started_at = self.started_at or _now()
         if not self.source:
             self.source = {
@@ -119,6 +121,7 @@ class AndroidReleaseEvidenceSession:
             "gates": [g.as_dict() for g in self.gates],
             "artifacts": list(self.artifacts),
             "hooks": list(self.hooks),
+            "storage": dict(self.storage),
             "verdict": self.verdict,
         }
         payload["evidence_sha256"] = hashlib.sha256(_canonical(payload)).hexdigest()
@@ -127,27 +130,79 @@ class AndroidReleaseEvidenceSession:
     def seal(self, output: Path | None = None, *, register: bool = True) -> Path:
         self.finished_at = self.finished_at or _now()
         self.verdict = "passed" if self.passed else "failed"
-        output = output or (self.repo_root / ".devtool" / "reports" / "android-release" / f"{self.session_id}.final.json")
-        output = Path(output).expanduser().resolve(strict=False)
-        if output.exists():
-            return output
-        output.parent.mkdir(parents=True, exist_ok=True)
+        from ..core_runtime import private_run_root
+        canonical = (private_run_root(self.repo_root) / self.run_id / "android-release" / f"{self.session_id}.final.json").resolve(strict=False)
+        export = Path(output).expanduser().resolve(strict=False) if output is not None else None
+        explicit_export = export is not None and export != canonical
+
+        # Canonical RUN evidence is always private. An explicit output is a
+        # projection/export of those exact bytes, never a replacement authority.
+        destinations = [canonical] + ([export] if explicit_export and export is not None else [])
+        for destination in destinations:
+            if destination.exists():
+                raise FileExistsError(f"Android release evidence output already exists: {destination}")
+        self.storage = {
+            "authority": "run-v3",
+            "privacy": "private",
+            "canonical_path": str(canonical),
+            "explicit_export": explicit_export,
+            "export_path": str(export) if explicit_export and export is not None else "",
+        }
         payload = self.to_dict()
-        fd, temp_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=str(output.parent))
-        temp = Path(temp_name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2, ensure_ascii=False, sort_keys=True)
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp, output)
-        finally:
-            temp.unlink(missing_ok=True)
+        encoded = (json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+
+        def write_once(destination: Path) -> None:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=str(destination.parent))
+            temp = Path(temp_name)
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(encoded)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp, destination)
+            finally:
+                temp.unlink(missing_ok=True)
+
+        write_once(canonical)
+        if explicit_export and export is not None:
+            try:
+                write_once(export)
+            except Exception:
+                canonical.unlink(missing_ok=True)
+                raise
+
         if register:
+            from ..run_store import AttachmentDescriptor, RunCatalog
+            catalog = RunCatalog.open(private_run_root(self.repo_root))
+            existing_run = dict(catalog.runs.get(self.run_id, {}))
+            if existing_run:
+                existing_run.update({
+                    "release_session_id": self.session_id,
+                    "release_verdict": self.verdict,
+                    "android_release_variant": self.variant,
+                })
+                catalog.add_run(existing_run)
+            else:
+                catalog.add_run({
+                    "run_id": self.run_id,
+                    "command_id": "android.release",
+                    "target": self.target,
+                    "variant": self.variant,
+                    "status": self.verdict,
+                    "release_session_id": self.session_id,
+                    "created_at": time.time(),
+                })
+            attachment = AttachmentDescriptor.from_file(
+                run_id=self.run_id, path=canonical, kind="android-release-evidence",
+                privacy="private", media_type="application/json",
+            )
+            catalog.add_attachment(attachment)
+            catalog.save()
             try:
                 from ..artifact_registry import register_paths
-                register_paths(self.repo_root, [output], metadata={
+                registered = [canonical] + ([export] if explicit_export and export is not None else [])
+                register_paths(self.repo_root, registered, metadata={
                     "producer": "android-release",
                     "command": "release",
                     "target": self.target,
@@ -155,12 +210,17 @@ class AndroidReleaseEvidenceSession:
                     "state": self.verdict,
                     "type": "release-evidence",
                     "run_id": self.run_id,
+                    "run_attachment_id": attachment.attachment_id,
                     "release_session_id": self.session_id,
                     "release_verdict": self.verdict,
+                    "explicit_export": explicit_export,
+                    "canonical_path": str(canonical),
                 })
             except Exception:
+                # RUN V3 is canonical. The artifact registry is a compatibility
+                # projection and cannot invalidate successfully persisted evidence.
                 pass
-        return output
+        return export if explicit_export and export is not None else canonical
 
 
 __all__ = ["RELEASE_EVIDENCE_SCHEMA_VERSION", "ReleaseGateEvidence", "AndroidReleaseEvidenceSession"]
