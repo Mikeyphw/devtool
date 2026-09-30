@@ -363,6 +363,7 @@ class CleanupPlan:
     candidates: tuple[CleanupCandidate, ...]
     opaque_actions: tuple[OpaqueCleanupAction, ...] = ()
     confirmation_required: bool = False
+    global_scope_authorized: bool = False
 
     @property
     def selected(self) -> tuple[CleanupCandidate, ...]:
@@ -385,6 +386,7 @@ class CleanupPlan:
             "protected": [item.candidate_id for item in self.protected],
             "opaque_actions": [item.as_dict() for item in self.opaque_actions],
             "confirmation_required": self.confirmation_required,
+            "global_scope_authorized": self.global_scope_authorized,
         }
 
 
@@ -428,6 +430,24 @@ class CleanupReceipt:
             "invalidated_evidence_ids": list(self.invalidated_evidence_ids),
             "tombstones": [dict(item) for item in self.tombstones],
         }
+
+
+@dataclass(frozen=True, slots=True)
+class DestinationCleanupResult:
+    status: str
+    revalidated: bool
+    reclaimed_bytes: int = 0
+    detail: str = ""
+    postcondition: str = ""
+
+    def __post_init__(self) -> None:
+        if self.status not in {"applied", "protected", "partial", "failed"}:
+            raise ValueError(f"Unsupported destination cleanup status: {self.status}")
+        if self.reclaimed_bytes < 0:
+            raise ValueError("reclaimed_bytes must be non-negative")
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -601,17 +621,61 @@ def compile_cleanup_plan(
         "destination": destination,
         "candidates": [item.as_dict() for item in candidates],
         "opaque_actions": [item.as_dict() for item in opaque],
+        "global_scope_authorized": bool(include_user_global),
     }
     return CleanupPlan(
         plan_id="cleanup-plan:" + _digest(payload)[:32], repository_id=ownership.repository_id,
         repository_root=ownership.repository_root, policy_generation=ownership.policy_generation,
         scope=scope, destination=destination, candidates=tuple(candidates), opaque_actions=opaque,
-        confirmation_required=confirmation,
+        confirmation_required=confirmation, global_scope_authorized=bool(include_user_global),
     )
 
 
 def _same_snapshot(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
     return all(left.get(key) == right.get(key) for key in ("exists", "kind", "size", "mtime_ns", "sha256", "tree_sha256"))
+
+
+def refresh_cleanup_ownership_view(ownership: CleanupOwnershipView) -> CleanupOwnershipView:
+    """Re-read live lifecycle protection roots immediately before mutation.
+
+    Caller-supplied descriptors/references remain conservative inputs, while RUN,
+    artifact, transaction and validation authorities are re-projected from their
+    canonical stores.  A newly-active protection root therefore wins even when
+    the original plan was compiled before that reference existed.
+    """
+    return build_cleanup_ownership_view(
+        ownership.repository_root,
+        ownership.descriptors,
+        policy_generation=ownership.policy_generation,
+        references=ownership.references,
+    )
+
+
+def preserve_primary_lifecycle_failure(results: Sequence[Any], cleanup_result: Any) -> Any:
+    """Demote a secondary cleanup failure when a primary failure already exists.
+
+    Cleanup evidence remains attached in metadata/output, but it cannot replace
+    the failure that caused lifecycle termination.  Successful primary work is
+    still allowed to fail closed on cleanup when cleanup itself is required.
+    """
+    if cleanup_result is None or int(getattr(cleanup_result, "returncode", 0) or 0) == 0:
+        return cleanup_result
+    primary = next((item for item in results if int(getattr(item, "returncode", 0) or 0) != 0), None)
+    if primary is None:
+        return cleanup_result
+    metadata = dict(getattr(cleanup_result, "metadata", {}) or {})
+    metadata.update({
+        "secondary_lifecycle_failure": True,
+        "secondary_original_returncode": int(getattr(cleanup_result, "returncode", 0) or 0),
+        "secondary_original_failure_kind": str(getattr(cleanup_result, "failure_kind", "") or ""),
+        "primary_failure_name": str(getattr(primary, "name", "") or ""),
+        "primary_failure_kind": str(getattr(primary, "failure_kind", "") or ""),
+    })
+    cleanup_result.metadata = metadata
+    cleanup_result.returncode = 0
+    cleanup_result.failure_kind = ""
+    cleanup_result.skipped = True
+    return cleanup_result
 
 
 def apply_cleanup_plan(
@@ -621,20 +685,25 @@ def apply_cleanup_plan(
     dry_run: bool = False,
     confirm: bool = False,
     provider_executor: Callable[[OpaqueCleanupAction], tuple[bool, str]] | None = None,
+    destination_executor: Callable[[CleanupCandidate], DestinationCleanupResult] | None = None,
 ) -> CleanupReceipt:
     if plan.repository_id != ownership.repository_id:
         raise RuntimeError("Cleanup plan repository identity drifted; re-plan before deletion")
     if plan.policy_generation != ownership.policy_generation:
         raise RuntimeError("Cleanup policy generation drifted; re-plan before deletion")
-    if plan.destination != "local" and provider_executor is None:
+    if plan.scope in {CleanupScope.TOOLCHAIN_GLOBAL, CleanupScope.USER_GLOBAL} and not plan.global_scope_authorized and not dry_run:
+        raise RuntimeError("Global cleanup requires explicit global scope authorization")
+    if plan.destination != "local" and plan.candidates and destination_executor is None and not dry_run:
         raise RuntimeError("Remote/provider cleanup requires a destination-local provider executor")
     if plan.confirmation_required and not confirm and not dry_run:
         raise RuntimeError("Cleanup plan requires explicit confirmation")
 
-    root = Path(ownership.repository_root)
+    live_ownership = refresh_cleanup_ownership_view(ownership)
+    if live_ownership.repository_id != plan.repository_id:
+        raise RuntimeError("Cleanup repository identity drifted during revalidation")
     refreshed = compile_cleanup_plan(
-        ownership, scope=plan.scope, destination=plan.destination,
-        include_user_global=plan.scope in {CleanupScope.TOOLCHAIN_GLOBAL, CleanupScope.USER_GLOBAL},
+        live_ownership, scope=plan.scope, destination=plan.destination,
+        include_user_global=plan.global_scope_authorized,
         opaque_actions=plan.opaque_actions,
     )
     fresh_by_resource = {item.resource_id: item for item in refreshed.candidates}
@@ -650,14 +719,45 @@ def apply_cleanup_plan(
             results.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "protected", reason="ownership disappeared during revalidation"))
             any_partial = True
             continue
+        if not original.selected or not fresh.selected:
+            reason = fresh.protection_reason or original.protection_reason or "resource is protected"
+            results.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "protected", reason=reason))
+            any_partial = True
+            continue
+
+        if plan.destination != "local":
+            if dry_run:
+                results.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "planned", reclaimed_bytes=original.reclaimable_bytes, reason="destination-local revalidation required at apply"))
+                continue
+            assert destination_executor is not None
+            try:
+                outcome = destination_executor(original)
+            except Exception as exc:
+                outcome = DestinationCleanupResult(status="failed", revalidated=False, detail=f"destination executor failed: {type(exc).__name__}: {exc}")
+            if not outcome.revalidated:
+                results.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "failed", reason=outcome.detail or "destination executor did not revalidate resource identity/content before deletion"))
+                any_failed = True
+                continue
+            results.append(CleanupActionResult(
+                original.candidate_id, original.resource_id, original.path, outcome.status,
+                reclaimed_bytes=int(outcome.reclaimed_bytes), reason=outcome.detail, postcondition=outcome.postcondition,
+            ))
+            reclaimed += int(outcome.reclaimed_bytes)
+            any_failed = any_failed or outcome.status == "failed"
+            any_partial = any_partial or outcome.status in {"partial", "protected"}
+            if outcome.status == "applied" and outcome.postcondition == "absent":
+                tombstones.append({
+                    "resource_id": original.resource_id, "candidate_id": original.candidate_id,
+                    "path": original.path, "owner": original.owner, "provider": original.provider,
+                    "destination": original.destination, "reason": "destination-cleanup-plan-applied",
+                    "source_snapshot": dict(original.source_snapshot),
+                })
+            continue
+
         current_snapshot = _path_snapshot(Path(original.path))
         if not _same_snapshot(original.source_snapshot, current_snapshot):
             results.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "protected", reason="resource changed after cleanup plan was created"))
             any_partial = True
-            continue
-        if not original.selected or not fresh.selected:
-            reason = fresh.protection_reason or original.protection_reason or "resource is protected"
-            results.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "protected", reason=reason))
             continue
         path = Path(original.path)
         before = _tree_bytes(path)
@@ -680,15 +780,17 @@ def apply_cleanup_plan(
         status = "applied" if deleted else "partial"
         any_partial = any_partial or not deleted
         results.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, status, reclaimed_bytes=actual, postcondition="absent" if deleted else "still-present"))
-        tombstones.append({
-            "resource_id": original.resource_id,
-            "candidate_id": original.candidate_id,
-            "path": original.path,
-            "owner": original.owner,
-            "provider": original.provider,
-            "reason": "cleanup-plan-applied",
-            "source_snapshot": dict(original.source_snapshot),
-        })
+        if deleted:
+            tombstones.append({
+                "resource_id": original.resource_id,
+                "candidate_id": original.candidate_id,
+                "path": original.path,
+                "owner": original.owner,
+                "provider": original.provider,
+                "destination": original.destination,
+                "reason": "cleanup-plan-applied",
+                "source_snapshot": dict(original.source_snapshot),
+            })
 
     for action in plan.opaque_actions:
         if dry_run:
@@ -948,13 +1050,19 @@ def descriptor_from_path(
     destination: str = "local",
     lifecycle: str = "rebuildable",
 ) -> GeneratedOutputDescriptor:
+    # A filename/suffix/ignore match is discovery evidence only.  It never
+    # becomes deletion authority by itself (LIFE-G2).  Callers that can prove
+    # producer ownership must pass ``heuristic=False`` or construct an explicit
+    # GeneratedOutputDescriptor.
     managed = not heuristic
-    if heuristic and repo_root is not None:
-        managed = _git_state(_canonical_path(repo_root), _canonical_path(path)) == "ignored"
+    git_state = _git_state(_canonical_path(repo_root), _canonical_path(path)) if repo_root is not None else "unknown"
     return GeneratedOutputDescriptor.create(
         path, owner=owner, provider=provider, category=category, producer_id=producer_id,
         lifecycle=lifecycle, rebuild_cost="low", scope=scope, destination=destination,
-        provenance={"discovery": "heuristic" if heuristic else "declared-provider-output"}, managed=managed,
+        provenance={
+            "discovery": "heuristic" if heuristic else "declared-provider-output",
+            "git_state_at_discovery": git_state,
+        }, managed=managed,
     )
 
 
@@ -1056,9 +1164,11 @@ def annotate_cleanup_specs(specs: Sequence[Any], *, destination: str = "local") 
 __all__ = [
     "CleanupActionKind", "CleanupActionResult", "CleanupCandidate", "CleanupOwnershipView",
     "CleanupPlan", "CleanupReceipt", "CleanupReference", "CleanupSafetyClass", "CleanupScope",
+    "DestinationCleanupResult",
     "GeneratedOutputDescriptor", "OpaqueCleanupAction", "RepositoryCacheMigrationPlan",
     "annotate_cleanup_specs", "apply_cleanup_plan", "build_cleanup_ownership_view",
     "compile_cleanup_plan", "descriptor_from_path", "explain_cleanup_candidate",
+    "preserve_primary_lifecycle_failure", "refresh_cleanup_ownership_view",
     "opaque_action_from_spec", "persist_cleanup_receipt", "plan_repository_cache_relocation",
     "provider_cleanup_receipt_from_results", "remote_staging_descriptor",
 ]

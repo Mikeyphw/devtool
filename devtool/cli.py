@@ -11603,6 +11603,8 @@ def _run_sequential_overlays(
                 delete_on_failure=delete_on_failure,
             )
             if cleanup is not None:
+                from .cleanup_lifecycle import preserve_primary_lifecycle_failure
+                cleanup = preserve_primary_lifecycle_failure(all_results, cleanup)
                 all_results.append(cleanup)
                 raw_sections.append("$ " + " ".join(cleanup.argv) + "\n" + cleanup.output)
 
@@ -17207,6 +17209,8 @@ def _main_after_parse(
                         delete_on_failure=delete_on_failure,
                     )
                     if cleanup_result is not None:
+                        from .cleanup_lifecycle import preserve_primary_lifecycle_failure
+                        cleanup_result = preserve_primary_lifecycle_failure(results, cleanup_result)
                         results.append(cleanup_result)
                         raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
                 if args.command in {"apply-overlay", "ao"}:

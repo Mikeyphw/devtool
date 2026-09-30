@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "LIFE-G2",
+  "position": "44/70",
+  "gate_window": "2/2",
+  "previous": "LIFE-X03 (43/70)",
+  "next": "ANDROID-X03 (45/70)",
+  "proved_by_gate": [
+    "LIFE-P063", "LIFE-P064", "LIFE-P065", "LIFE-P066", "LIFE-P067",
+    "LIFE-P068", "LIFE-P069", "LIFE-P070", "LIFE-P071", "LIFE-P072",
+    "LIFE-P073", "LIFE-P074", "LIFE-P075", "LIFE-P076", "LIFE-P077",
+    "LIFE-P078", "LIFE-P079", "LIFE-P080", "LIFE-P081", "LIFE-P082",
+    "LIFE-P083", "LIFE-P084", "LIFE-P085", "LIFE-P086", "LIFE-P087",
+    "LIFE-P088", "LIFE-P089", "LIFE-P090",
+    "LIFE-P092", "LIFE-P093", "LIFE-P094", "LIFE-P095",
+    "LIFE-P098", "LIFE-P099", "LIFE-P101", "LIFE-P105"
+  ],
+  "partial_or_exported": {
+    "LIFE-P091": "Explicit global/user scope, immutable plan authorization and confirmation are proved. Provider-specific lease/idle coordination remains with provider adoption where such a lease exists.",
+    "LIFE-P096": "Canonical plan/receipt data remains passive; status/doctor surface adoption is LIFE-X04.",
+    "LIFE-P097": "Semantics are presentation-neutral; output/presentation parity remains LIFE-X04.",
+    "LIFE-P100": "Cleanup canonical projection exists; cross-surface lifecycle projection convergence remains LIFE-X04."
+  },
+  "gate_owned_remediation": [
+    "live apply-time ownership/reference refresh",
+    "destination-local revalidating remote path executor",
+    "plan-bound global-scope authorization",
+    "partial receipt and tombstone postcondition truth",
+    "zero heuristic/ignore-only deletion authority",
+    "secondary cleanup failure cannot replace primary lifecycle failure"
+  ],
+  "validation": {
+    "devtool_workflow": {"passed": 101, "failed": 0, "skipped": 0, "stages": 6, "warnings": 0, "errors": 0},
+    "artifact_cleanup_primary_failure_regression": {"passed": 10, "failed": 0},
+    "retained_cleanup_run_transaction_sweep": {"passed": 101, "failed": 0}
+  }
+}

@@ -122,8 +122,8 @@ def discover_backup_candidates(repo_root: Path) -> list[Path]:
 
     Backup-shaped names are only discovery hints. Known Devtool backup
     directories have explicit producer ownership; generic ``.bak``/``.orig``
-    resources become managed only when Git ignore ownership corroborates them.
-    Tracked/user data and active lifecycle roots remain protected by the shared
+    resources remain discovery-only even when ignored.  Ignore state is not
+    producer ownership. Tracked/user data and active lifecycle roots remain protected by the shared
     cleanup planner.
     """
     from .cleanup_lifecycle import (

@@ -211,6 +211,12 @@ description = "Run the LIFE-X03 generated ownership/cleanup convergence workflow
 workflow = "roadmap-life-x03"
 target = "devtool"
 
+# LIFE-G2 authoritative ownership/retention milestone gate.
+[wrapper.commands.life-g2]
+description = "Run the LIFE-G2 ownership and retention proof gate"
+workflow = "roadmap-life-g2"
+target = "devtool"
+
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -800,6 +806,15 @@ roadmap-life-x03 = [
   { id = "retained-safety", ref = "test:roadmap-life-x03-retained-safety", depends_on = ["generated-ownership"] },
   { id = "python-cleanup", ref = "test:roadmap-life-x03-python-cleanup", depends_on = ["retained-safety"] },
   { id = "cli-cleanup", ref = "test:roadmap-life-x03-cli-cleanup", depends_on = ["python-cleanup"] },
+]
+
+roadmap-life-g2 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "ownership-retention-proof", ref = "test:roadmap-life-g2-ownership-retention-proof", depends_on = ["syntax"] },
+  { id = "x03-regression", ref = "test:roadmap-life-g2-x03-regression", depends_on = ["ownership-retention-proof"] },
+  { id = "retained-safety", ref = "test:roadmap-life-g2-retained-safety", depends_on = ["x03-regression"] },
+  { id = "authority-regression", ref = "test:roadmap-life-g2-authority-regression", depends_on = ["retained-safety"] },
+  { id = "provider-cli-regression", ref = "test:roadmap-life-g2-provider-cli-regression", depends_on = ["authority-regression"] },
 ]
 
 roadmap-smoke = [
@@ -2868,6 +2883,62 @@ runner = "pytest"
 timeout_seconds = 360
 command = [
   "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_cli.py", "-k", "clean or cleanup",
+]
+
+# LIFE-G2 ownership/retention authoritative proof gate.
+[[test]]
+id = "roadmap-life-g2-ownership-retention-proof"
+name = "LIFE-G2 adversarial generated ownership and retention proof"
+runner = "pytest"
+timeout_seconds = 420
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_g2_ownership_retention_gate.py",
+]
+
+[[test]]
+id = "roadmap-life-g2-x03-regression"
+name = "LIFE-G2 retained LIFE-X03 canonical ownership regression"
+runner = "pytest"
+timeout_seconds = 420
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_x03_generated_cleanup_ownership.py",
+]
+
+[[test]]
+id = "roadmap-life-g2-retained-safety"
+name = "LIFE-G2 retained destructive cleanup safety regression"
+runner = "pytest"
+timeout_seconds = 480
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_x01_immediate_lifecycle_safety.py",
+  "tests/test_cache_cleanup.py",
+  "tests/test_arch_ov08_tui_cleanup.py",
+]
+
+[[test]]
+id = "roadmap-life-g2-authority-regression"
+name = "LIFE-G2 RUN transaction and recovery protection-root regression"
+runner = "pytest"
+timeout_seconds = 600
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_x01_transaction_lifecycle_recovery.py",
+  "tests/test_core_x03_run_store.py",
+  "tests/test_core_g2_run_store_authority_gate.py",
+]
+
+[[test]]
+id = "roadmap-life-g2-provider-cli-regression"
+name = "LIFE-G2 Python/provider cleanup and CLI regression"
+runner = "pytest"
+timeout_seconds = 600
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_python_support.py",
   "tests/test_cli.py", "-k", "clean or cleanup",
 ]
 

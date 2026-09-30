@@ -78,7 +78,7 @@ def test_tracked_resource_is_protected_even_with_managed_descriptor(tmp_path: Pa
     assert "tracked source" in candidate.protection_reason
 
 
-def test_ignored_provider_output_is_selected_and_filesystem_accounted(tmp_path: Path) -> None:
+def test_ignored_heuristic_output_is_protected_and_filesystem_accounted(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     path = repo / "ignored-build"
     path.mkdir()
@@ -89,7 +89,8 @@ def test_ignored_provider_output_is_selected_and_filesystem_accounted(tmp_path: 
     )
     view = build_cleanup_ownership_view(repo, [descriptor], policy_generation="p1")
     candidate = compile_cleanup_plan(view).candidates[0]
-    assert candidate.selected
+    assert not candidate.selected
+    assert candidate.safety_class is CleanupSafetyClass.PROTECTED_UNKNOWN
     assert candidate.reclaimable_bytes >= 4096
     assert candidate.filesystem_id.startswith("dev:") or candidate.filesystem_id == "unknown"
 
@@ -118,7 +119,7 @@ def test_plan_drift_revalidation_prevents_deletion(tmp_path: Path) -> None:
     file.write_text("before", encoding="utf-8")
     descriptor = descriptor_from_path(
         path, owner="runner", provider="python", category="artifact",
-        producer_id="producer", repo_root=repo, heuristic=True,
+        producer_id="producer", repo_root=repo, heuristic=False,
     )
     view = build_cleanup_ownership_view(repo, [descriptor], policy_generation="p1")
     plan = compile_cleanup_plan(view)
@@ -134,7 +135,7 @@ def test_policy_generation_drift_fails_closed(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     path = repo / "ignored-build"
     path.mkdir()
-    descriptor = descriptor_from_path(path, owner="runner", provider="python", category="cache", producer_id="p", repo_root=repo, heuristic=True)
+    descriptor = descriptor_from_path(path, owner="runner", provider="python", category="cache", producer_id="p", repo_root=repo, heuristic=False)
     old = build_cleanup_ownership_view(repo, [descriptor], policy_generation="p1")
     plan = compile_cleanup_plan(old)
     new = build_cleanup_ownership_view(repo, [descriptor], policy_generation="p2")
@@ -245,7 +246,7 @@ def test_legacy_backup_discovery_uses_ownership_not_suffix_alone(tmp_path: Path)
     ignored = repo / "scratch.bak"
     ignored.write_text("generated", encoding="utf-8")
     found = discover_backup_candidates(repo)
-    assert ignored in found
+    assert ignored not in found
     assert tracked not in found
 
 
@@ -283,7 +284,7 @@ def test_cleanup_receipt_tombstone_survives_payload_deletion_and_links_to_run(tm
     path = repo / "ignored-build"
     path.mkdir()
     (path / "x").write_text("x", encoding="utf-8")
-    descriptor = descriptor_from_path(path, owner="runner", provider="python", category="cache", producer_id="p", repo_root=repo, heuristic=True)
+    descriptor = descriptor_from_path(path, owner="runner", provider="python", category="cache", producer_id="p", repo_root=repo, heuristic=False)
     view = build_cleanup_ownership_view(repo, [descriptor], policy_generation="p1")
     plan = compile_cleanup_plan(view)
     receipt = apply_cleanup_plan(plan, ownership=view, confirm=True)
@@ -338,7 +339,7 @@ def test_run_stream_is_cleanup_protection_root(tmp_path: Path) -> None:
     catalog.save()
     descriptor = descriptor_from_path(
         output, owner="runner", provider="python", category="cache", producer_id="p",
-        repo_root=repo, heuristic=True,
+        repo_root=repo, heuristic=False,
     )
     view = build_cleanup_ownership_view(repo, [descriptor], policy_generation="p1")
     candidate = next(item for item in compile_cleanup_plan(view).candidates if item.resource_id == descriptor.resource_id)

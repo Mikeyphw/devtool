@@ -168,7 +168,7 @@ def test_life_x01_transaction_state_is_private_and_history_redacts_secrets(
     assert "secret-value" not in history.read_text(encoding="utf-8")
 
 
-def test_life_x01_cleanup_preserves_tracked_and_nonignored_heuristic_paths(tmp_path: Path) -> None:
+def test_life_g2_cleanup_preserves_tracked_and_heuristic_only_paths(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
@@ -188,8 +188,8 @@ def test_life_x01_cleanup_preserves_tracked_and_nonignored_heuristic_paths(tmp_p
     backups = {path.relative_to(repo).as_posix() for path in discover_backup_candidates(repo)}
 
     assert (repo / "build" / "tracked.txt").exists()
-    assert not (repo / "dist").exists()
-    assert any(path.endswith("dist") for path in removed)
+    assert (repo / "dist").exists()
+    assert not any(path.endswith("dist") for path in removed)
     assert "tracked.bak" not in backups
     assert "untracked.bak" not in backups
 

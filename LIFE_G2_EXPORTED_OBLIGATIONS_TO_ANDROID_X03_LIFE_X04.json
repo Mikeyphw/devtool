@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "from": "LIFE-G2 (44/70)",
+  "to": ["ANDROID-X03 (45/70)", "LIFE-X04 (52/70)"],
+  "android_x03": [
+    "Consume GeneratedOutputDescriptor/CleanupOwnershipView for instrumentation and device-output lifecycle; do not introduce Android filename/suffix deletion authority.",
+    "Keep device/instrumentation cleanup destination-qualified and require destination-side revalidation before mutation.",
+    "Honor active RUN/RER/transaction/validation/seal/artifact protection roots that can appear after planning.",
+    "Keep cleanup/finalization failures secondary when an Android execution failure is already authoritative."
+  ],
+  "life_x04": [
+    "Adopt canonical CleanupPlan/CleanupReceipt/explain projections for status/doctor/machine/human/TUI/Desktop surfaces without changing selection semantics.",
+    "Finish LIFE-P096/P097/P100 presentation and cross-surface convergence.",
+    "Adopt provider-specific global/toolchain cache leases or idle qualification where ENV/ANDROID providers expose them, completing the remaining LIFE-P091 portion.",
+    "Preserve G2's no-heuristic-only-deletion and destination-local remote cleanup invariants in deterministic cleanup UX/migration/dogfooding."
+  ]
+}
