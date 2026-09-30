@@ -102,6 +102,13 @@ description = "Run the ANDROID-X01 canonical Android environment/release truth w
 workflow = "roadmap-android-x01"
 target = "devtool"
 
+
+# ANDROID-X02 exact artifact/device qualification and execution snapshot.
+[wrapper.commands.android-x02]
+description = "Run the ANDROID-X02 execution snapshot/device fabric workflow"
+workflow = "roadmap-android-x02"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
@@ -636,6 +643,13 @@ roadmap-android-x01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "environment-release-truth", ref = "test:roadmap-android-x01-environment-release", depends_on = ["syntax"] },
   { id = "retained-release-variant", ref = "test:roadmap-android-x01-retained-release-variant", depends_on = ["environment-release-truth"] },
+]
+
+
+roadmap-android-x02 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "execution-snapshot-device-fabric", ref = "test:roadmap-android-x02-execution-snapshot-device-fabric", depends_on = ["syntax"] },
+  { id = "retained-android-authorities", ref = "test:roadmap-android-x02-retained-authorities", depends_on = ["execution-snapshot-device-fabric"] },
 ]
 
 roadmap-pres-x01 = [
@@ -2170,6 +2184,41 @@ name = "ANDROID-X01 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 900
 command = ["./devtoolw", "android-x01"]
+
+
+# ANDROID-X02 owns bounded non-Gradle qualification for exact artifact lineage,
+# DeviceLease stability, destination snapshots and AndroidExecutionSnapshot.
+# Real Gradle/device/remote qualification remains authoritative in ANDROID-G1.
+[[test]]
+id = "roadmap-android-x02-execution-snapshot-device-fabric"
+name = "ANDROID-X02 exact artifact/device execution snapshot contracts"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_x02_execution_snapshot_device_fabric.py",
+]
+
+[[test]]
+id = "roadmap-android-x02-retained-authorities"
+name = "ANDROID-X02 retained X01 release and AOPS02 device authority regressions"
+runner = "pytest"
+timeout_seconds = 360
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_x01_environment_release.py",
+  "tests/test_aops02_android_execution_device_fabric.py",
+  "tests/test_aops04_android_release_evidence_final_seal.py",
+  "tests/test_rem10_android_toolchain_resolution.py",
+  "tests/test_bootstrap_command.py",
+]
+
+[[test]]
+id = "roadmap-android-x02-artifact-bootstrap"
+name = "ANDROID-X02 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 900
+command = ["./devtoolw", "android-x02"]
 
 # PRES-X01 presentation projection foundation. This overlay keeps rendering
 # surfaces as projections over RUN/EXO/RER/validation/ENV references; it does

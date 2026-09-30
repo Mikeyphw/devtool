@@ -6,6 +6,7 @@ import textwrap
 
 import pytest
 
+import devtool.android.capabilities as android_capabilities_module
 from devtool.android.capabilities import AndroidToolResolution, resolve_android_execution_context
 from devtool.android.devices import AndroidDevice, AndroidDeviceError, AndroidDeviceManager, parse_adb_devices
 from devtool.cli import build_parser
@@ -196,7 +197,9 @@ def test_explicit_path_provider_and_none_provider(tmp_path: Path) -> None:
     assert disabled.available is False and "disabled" in disabled.rejection_reason.lower()
 
 
-def test_execution_context_resolves_sdk_build_tools_and_configured_adb(tmp_path: Path) -> None:
+def test_execution_context_resolves_sdk_build_tools_and_configured_adb(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sdk = tmp_path / "sdk"
     bt = sdk / "build-tools" / "36.0.0"
     for name, invocation in {
@@ -209,8 +212,15 @@ def test_execution_context_resolves_sdk_build_tools_and_configured_adb(tmp_path:
         sdk / "platform-tools" / "adb",
         'if [ "${1:-}" = "version" ]; then printf "Android Debug Bridge version 1.0.41\\n"; else printf "List of devices attached\\n"; fi\n',
     )
+    # This retained AOPS02 case specifically verifies SDK Build Tools + an
+    # explicitly configured SDK ADB provider. Make the runtime hermetic so a
+    # native Termux host cannot legitimately substitute $PREFIX/bin helpers
+    # (ANDROID-X01/X02 intentionally prefer those when available). Termux
+    # helper precedence is covered separately by X02 provider tests.
+    runtime = RuntimeIdentity("linux", "host", "x86_64", "glibc")
+    monkeypatch.setattr(android_capabilities_module, "detect_runtime_identity", lambda _env=None: runtime)
     config = _project_config(tmp_path, {"sdk_root": str(sdk), "adb": {"provider": "sdk"}})
-    context = resolve_android_execution_context(config, env={"PATH": os.environ.get("PATH", ""), "ANDROID_SDK_ROOT": str(sdk)})
+    context = resolve_android_execution_context(config, env={"PATH": "", "ANDROID_SDK_ROOT": str(sdk)})
     assert context.sdk_root == str(sdk)
     assert context.tool("build-tools").version == "36.0.0"
     assert context.tool("apksigner").provider == "sdk"

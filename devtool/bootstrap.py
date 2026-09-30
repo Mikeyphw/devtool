@@ -154,6 +154,70 @@ def load_receipt(destination: BootstrapDestination | str) -> dict[str, Any] | No
     return payload
 
 
+def _freshness_probe(path: Path) -> dict[str, Any]:
+    path = path.expanduser()
+    try:
+        stat = path.stat()
+    except OSError:
+        return {"path": str(path), "exists": False}
+    return {
+        "path": str(path),
+        "exists": True,
+        "kind": "dir" if path.is_dir() else "file",
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+        "executable": bool(path.is_file() and os.access(path, os.X_OK)),
+    }
+
+
+def bootstrap_capability_freshness(report: Mapping[str, Any]) -> dict[str, Any]:
+    sdk_text = str(report.get("sdk_root") or "").strip()
+    sdk = Path(sdk_text).expanduser() if sdk_text else None
+    probes: dict[str, list[Path]] = {}
+    java_home = str(report.get("java_home") or "").strip()
+    if java_home:
+        probes["java"] = [Path(java_home) / "bin" / "java"]
+    gradle = str(report.get("gradle") or "").strip()
+    if gradle:
+        probes["gradle"] = [Path(gradle)]
+    platform = str(report.get("platform") or "").strip()
+    if sdk is not None and platform:
+        probes["platform"] = [sdk / "platforms" / platform / "android.jar"]
+    build_tools = str(report.get("build_tools") or "").strip()
+    build_tool_paths = report.get("build_tool_paths")
+    if isinstance(build_tool_paths, Mapping) and build_tool_paths:
+        probes["build-tools"] = [Path(str(value)) for value in build_tool_paths.values() if str(value).strip()]
+    elif sdk is not None and build_tools:
+        probes["build-tools"] = [sdk / "build-tools" / build_tools]
+    ndk = str(report.get("ndk") or "").strip()
+    if sdk is not None and ndk:
+        probes["ndk"] = [sdk / "ndk" / ndk / "source.properties"]
+    cmake = str(report.get("cmake") or "").strip()
+    if sdk is not None and cmake:
+        probes["cmake"] = [sdk / "cmake" / cmake / "bin" / "cmake"]
+    aapt2 = str(report.get("aapt2") or "").strip()
+    if aapt2:
+        probes.setdefault("aapt2", []).append(Path(aapt2))
+    payload: dict[str, Any] = {}
+    for capability, paths in sorted(probes.items()):
+        entries = [_freshness_probe(path) for path in paths]
+        digest = __import__("hashlib").sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        payload[capability] = {"digest": digest, "probes": entries}
+    return payload
+
+
+def _local_freshness_matches(receipt: Mapping[str, Any]) -> tuple[bool, str]:
+    stored = receipt.get("capability_freshness")
+    resolved = receipt.get("resolved")
+    if not isinstance(stored, Mapping) or not isinstance(resolved, Mapping):
+        return True, "freshness-unavailable"
+    current = bootstrap_capability_freshness(resolved)
+    stale = [name for name, entry in stored.items() if isinstance(entry, Mapping) and str(entry.get("digest") or "") != str((current.get(name) or {}).get("digest") or "")]
+    if stale:
+        return False, "stale provisioned capabilities: " + ", ".join(sorted(stale))
+    return True, "fresh"
+
+
 def write_receipt(destination: BootstrapDestination, request: BootstrapRequest, report: Mapping[str, Any]) -> Path:
     path = receipt_path(destination)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,6 +231,8 @@ def write_receipt(destination: BootstrapDestination, request: BootstrapRequest, 
         "installed_at": datetime.now(timezone.utc).isoformat(),
         "request": asdict(request),
         "resolved": dict(report),
+        "capability_freshness": bootstrap_capability_freshness(report),
+        "network_evidence": dict(report.get("network_evidence") or {}),
         "status": "ready",
     }
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -469,6 +535,56 @@ def _run_chroot_install(destination: BootstrapDestination, request: BootstrapReq
     return payload
 
 
+def android_environment_snapshot_from_bootstrap(
+    destination: BootstrapDestination,
+    resolved: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project destination-local Android bootstrap truth without host paths as identity."""
+    raw = dict(resolved or {})
+    build_tools = str(raw.get("build_tools") or "")
+    tool_paths = raw.get("build_tool_paths") if isinstance(raw.get("build_tool_paths"), Mapping) else {}
+    tool_names = tuple(sorted(str(name) for name in tool_paths))
+    component_payloads = {
+        "android.platform": {"package": str(raw.get("platform") or "")},
+        "android.build-tools": {"package": build_tools, "helpers": tool_names},
+        "android.native": {
+            "ndk": str(raw.get("ndk") or ""), "cmake": str(raw.get("cmake") or ""),
+            "provider": str(raw.get("native_provider") or ""),
+        },
+        "android.gradle": {
+            "gradle_version": str(raw.get("gradle_version") or ""),
+            "gradle_provider": str(raw.get("gradle_provider") or ""),
+            "java_version": str(raw.get("java_version") or ""),
+            "java_provider": str(raw.get("java_provider") or ""),
+        },
+    }
+    digest = lambda value: __import__("hashlib").sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+    components = {name: digest(payload) for name, payload in sorted(component_payloads.items())}
+    semantic = {
+        "destination": destination.canonical, "kind": destination.kind,
+        "architecture": str(raw.get("architecture") or destination.expected_arch or ""),
+        "components": components,
+    }
+    return {
+        "schema_version": 1,
+        "environment_id": digest(semantic),
+        "component_identities": components,
+        "destination_id": destination.canonical,
+        "architecture": semantic["architecture"],
+        "sdk": {"root": str(raw.get("sdk_root") or ""), "provider": str(raw.get("sdk_provider") or "")},
+        "resolved_packages": {
+            "platform": str(raw.get("platform") or ""), "build_tools": build_tools,
+            "ndk": str(raw.get("ndk") or ""), "cmake": str(raw.get("cmake") or ""),
+        },
+        "path_provenance": {
+            "java_home": str(raw.get("java_home") or ""), "gradle": str(raw.get("gradle") or ""),
+            "sdk_root": str(raw.get("sdk_root") or ""), "aapt2": str(raw.get("aapt2") or ""),
+            "build_tool_paths": {str(k): str(v) for k, v in dict(tool_paths).items()},
+        },
+        "network_evidence": dict(raw.get("network_evidence") or {}),
+    }
+
+
 def _resolved_paths(receipt: Mapping[str, Any]) -> list[str]:
     resolved = receipt.get("resolved")
     if not isinstance(resolved, dict):
@@ -499,6 +615,9 @@ def _probe_local_receipt(destination: BootstrapDestination, receipt: Mapping[str
     missing = [value for value in _resolved_paths(receipt) if not Path(value).expanduser().exists()]
     if missing:
         return False, "missing provisioned paths: " + ", ".join(missing)
+    fresh, fresh_detail = _local_freshness_matches(receipt)
+    if not fresh:
+        return False, fresh_detail
     if destination.kind == "termux":
         resolved = receipt.get("resolved")
         build_tool_paths = resolved.get("build_tool_paths") if isinstance(resolved, dict) else None
@@ -588,6 +707,7 @@ def install_bootstrap(
                 "detail": detail,
                 "receipt": str(receipt_path(destination)),
                 "resolved": dict(existing.get("resolved") or {}),
+                "android_environment": android_environment_snapshot_from_bootstrap(destination, dict(existing.get("resolved") or {})),
             }
     downloads = "force" if upgrade else "auto"
     if destination.kind == "chroot":
@@ -610,6 +730,7 @@ def install_bootstrap(
         "detail": "provisioning completed" if not dry_run else "provisioning dry-run completed",
         "receipt": path,
         "resolved": report,
+        "android_environment": android_environment_snapshot_from_bootstrap(destination, report),
     }
 
 
@@ -624,6 +745,9 @@ def bootstrap_status(destination: BootstrapDestination) -> dict[str, Any]:
         "receipt": str(receipt_path(destination)),
         "request": dict(receipt.get("request") or {}) if receipt else {},
         "resolved": dict(receipt.get("resolved") or {}) if receipt else {},
+        "capability_freshness": dict(receipt.get("capability_freshness") or {}) if receipt else {},
+        "network_evidence": dict(receipt.get("network_evidence") or {}) if receipt else {},
+        "android_environment": android_environment_snapshot_from_bootstrap(destination, dict(receipt.get("resolved") or {})) if receipt else {},
     }
 
 

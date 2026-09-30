@@ -13,7 +13,16 @@ from ..models import CommandSpec, OperationResult, ProjectConfig
 from .capabilities import AndroidExecutionContext, AndroidToolResolution, resolve_android_execution_context, resolved_android_tool
 from .device_ops import AndroidDeviceOperationError, AndroidDeviceOperations, SmokeGateResult, capture_failure_evidence
 from .evidence import AndroidReleaseEvidenceSession
-from .environment import resolve_android_environment
+from .environment import EnvironmentView, resolve_android_environment
+from .execution_snapshot import (
+    acquire_device_lease,
+    build_android_execution_snapshot,
+    build_artifact_pair,
+    device_requirements_from_config,
+    operations_for_device_lease,
+    persist_android_execution_snapshot,
+    resolve_android_transport,
+)
 from .signing import AndroidSigningManager, signing_profile, validate_signing_profile_for_tasks
 from .variants import resolve_android_variant, resolve_android_variant_lane, validate_variant_bound_tasks
 
@@ -328,6 +337,11 @@ class AndroidReleaseOrchestrator:
         session = AndroidReleaseEvidenceSession(config.repo_root, config.selected_target, options.variant)
         first_metadata = next((spec.metadata for _phase, specs in phases for spec in specs if isinstance(spec.metadata, dict)), {})
         resolved_environment = None
+        environment_view = EnvironmentView.from_config(config, env=self.env)
+        gradle_receipts: list[dict[str, Any]] = []
+        package_gradle_receipt: dict[str, Any] = {}
+        artifact_pair = None
+        device_lease = None
         if self.executor is not None:
             # Injected executors are an explicit external execution/test seam.
             # Preserve the legacy compatibility context there without claiming
@@ -384,6 +398,14 @@ class AndroidReleaseOrchestrator:
             started = time.monotonic()
             phase_results, raw = self._run_specs(config, specs, verbose=verbose, dry_run=dry_run, continue_on_error=continue_on_error, log_path=log_path)
             all_results.extend(phase_results)
+            phase_receipts = [
+                dict(item.metadata.get("gradle_execution_receipt") or {})
+                for item in phase_results
+                if isinstance(item.metadata, dict) and isinstance(item.metadata.get("gradle_execution_receipt"), Mapping)
+            ]
+            gradle_receipts.extend(item for item in phase_receipts if item)
+            if phase_name == "package" and phase_receipts:
+                package_gradle_receipt = phase_receipts[-1]
             if raw:
                 raw_chunks.append(raw)
             failed = [item for item in phase_results if _result_failed(item)]
@@ -460,9 +482,46 @@ class AndroidReleaseOrchestrator:
                 metadata={"artifacts": verifications, "certificate_sha256": session.signing.get("certificate_sha256", "")},
             )
 
-        # Signature/certificate verification is itself a required release gate.
-        # Re-evaluate before any operation capable of touching or launching a
-        # device. A failed instrumentation/signature gate therefore stops here.
+        # Bind the exact materialized APK to canonical Gradle/RUN evidence.
+        # This happens only after signature verification so signing identity can
+        # be part of the lineage record. Non-APK release artifacts remain in the
+        # release evidence but do not masquerade as an ArtifactPair.
+        if downstream_ok and resolved_environment is not None and apk is not None and not dry_run:
+            try:
+                from ..core_runtime import private_run_root
+                from ..run_store import RunCatalog
+                catalog = RunCatalog.open(private_run_root(config.repo_root))
+                if session.run_id not in catalog.runs:
+                    catalog.add_run({
+                        "run_id": session.run_id, "command_id": "android.release",
+                        "target": config.selected_target, "variant": options.variant, "status": "running",
+                    })
+                release_lane = resolve_android_variant_lane(config, "release")
+                app_item = next(
+                    (item for path, item in release_artifacts if path == apk),
+                    {},
+                )
+                artifact_pair = build_artifact_pair(
+                    repo_root=config.repo_root,
+                    module=release_lane.module,
+                    variant_identity=release_lane.identity,
+                    environment=resolved_environment,
+                    app=app_item,
+                    gradle_receipt=package_gradle_receipt,
+                    source_identity=str(session.source.get("git_head") or ""),
+                    config_identity=release_lane.identity,
+                    signing_ref=str(session.signing.get("certificate_sha256") or session.signing.get("expected_cert_sha256") or ""),
+                    run_catalog=catalog,
+                    run_id=session.run_id,
+                )
+                catalog.save()
+                session.execution["artifact_pair"] = artifact_pair.as_dict()
+            except Exception as exc:
+                session.add_gate("artifact-lineage", "failed", required=True, detail=str(exc))
+
+        # Signature/certificate verification and exact artifact lineage are
+        # required release gates. Re-evaluate before any operation capable of
+        # touching or launching a device.
         downstream_ok = downstream_ok and not required_failure_present()
         upgrade_ready = options.upgrade_smoke and bool(options.previous_apk)
         if downstream_ok and options.upgrade_smoke and not options.previous_apk:
@@ -471,9 +530,29 @@ class AndroidReleaseOrchestrator:
         operations: AndroidDeviceOperations | None = None
         if downstream_ok and device_needed and not dry_run:
             try:
-                operations = AndroidDeviceOperations.from_config(config, env=self.env)
-                selected = operations.select_device(enrich=True)
-                session.device = selected.as_dict()
+                if resolved_environment is not None and self.executor is None:
+                    requirements = device_requirements_from_config(config)
+                    transport = resolve_android_transport(
+                        config, resolved_environment, action="release-device", env_view=environment_view,
+                        device_required=True,
+                    )
+                    if transport is None:
+                        raise RuntimeError("Android release device work requires an Android transport")
+                    device_lease = acquire_device_lease(
+                        transport, requirements, env=environment_view.values, attempt_id=session.run_id,
+                    )
+                    operations = operations_for_device_lease(transport, device_lease, env=environment_view.values)
+                    session.device = {
+                        "authority": "android-device-lease-v1",
+                        "requirements": requirements.as_dict(),
+                        "transport": transport.as_dict(),
+                        "lease": device_lease.as_dict(),
+                    }
+                else:
+                    # Explicit external executor compatibility seam.
+                    operations = AndroidDeviceOperations.from_config(config, env=self.env)
+                    selected = operations.select_device(enrich=True)
+                    session.device = selected.as_dict()
             except Exception as exc:
                 required = options.device_tests == "required" or device_needed
                 session.add_gate("device-readiness", "failed" if required else "skipped", required=required, detail=str(exc))
@@ -516,6 +595,29 @@ class AndroidReleaseOrchestrator:
                         pass
         elif downstream_ok and device_needed and not apk and not dry_run:
             session.add_gate("device-smoke", "failed", detail="Configured device smoke gates require an installable APK; release produced only non-APK artifacts")
+
+        # One immutable AndroidExecutionSnapshot composes the actual environment,
+        # Gradle receipts, exact artifact lineage and stable DeviceLease used by
+        # this release. It is private RUN evidence; the release report only
+        # projects its identity/reference.
+        if resolved_environment is not None and self.executor is None and not dry_run:
+            try:
+                signing_ref = str(session.signing.get("certificate_sha256") or session.signing.get("expected_cert_sha256") or "")
+                release_lane = resolve_android_variant_lane(config, "release")
+                snapshot = build_android_execution_snapshot(
+                    target=config.selected_target, action="release", environment=resolved_environment,
+                    gradle_receipts=gradle_receipts, artifact_pair=artifact_pair, device_lease=device_lease,
+                    source_identity=str(session.source.get("git_head") or ""), config_identity=release_lane.identity,
+                    signing_ref=signing_ref,
+                )
+                snapshot_path, attachment_id = persist_android_execution_snapshot(config.repo_root, session.run_id, snapshot)
+                session.execution["android_execution_snapshot"] = {
+                    "snapshot_id": snapshot.snapshot_id,
+                    "run_attachment_id": attachment_id,
+                    "path": str(snapshot_path),
+                }
+            except Exception as exc:
+                session.add_gate("execution-snapshot", "failed", required=True, detail=str(exc))
 
         evidence_path = session.seal(output)
         payload = session.to_dict()

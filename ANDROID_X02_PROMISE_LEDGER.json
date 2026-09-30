@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "overlay": "ANDROID-X02",
+  "full_plan_position": "38/70",
+  "gate_window_position": "2/3",
+  "scope": "exact artifact/device qualification + execution snapshot convergence",
+  "status": "REMEDIATED_V3_PREPARED_LOCAL_QUALIFIED",
+  "promises": {
+    "ANDROID-P016": {
+      "status": "DELIVERED",
+      "evidence": "AndroidExecutionSnapshot composes environment, Gradle receipt/plan/context/JDK/launcher, exact ArtifactPair, DeviceLease, RUN/RER/EXO refs and source/config/signing identity."
+    },
+    "ANDROID-P017": {
+      "status": "OWNED_BY_ANDROID_X03"
+    },
+    "ANDROID-P018": {
+      "status": "OWNED_BY_ANDROID_X03"
+    },
+    "ANDROID-P019": {
+      "status": "OWNED_BY_ANDROID_X03"
+    },
+    "ANDROID-P020": {
+      "status": "DELIVERED",
+      "evidence": "ArtifactPair verifies materialization/hash and Gradle producer lineage; path-shaped evidence refs remain provenance rather than semantic identity."
+    },
+    "ANDROID-P021": {
+      "status": "DELIVERED",
+      "evidence": "DeviceRequirements declares policy/serial/API/ABI/transport/boot/root-loopback constraints without transport bootstrap."
+    },
+    "ANDROID-P022": {
+      "status": "PARTIAL_EXPORTED_TO_ANDROID_X03",
+      "evidence": "DeviceLease authority, stable serial and release lifecycle adoption are implemented; instrumentation install/run/evidence/cleanup lifecycle adoption remains X03-owned."
+    },
+    "ANDROID-P023": {
+      "status": "DELIVERED",
+      "evidence": "Android environment exposes domain-selective semantic component identities for RER; request/view/path provenance no longer fragments resolved environment identity."
+    },
+    "ANDROID-P024": {
+      "status": "DELIVERED",
+      "evidence": "SDK/JDK/artifact/attachment paths are provenance and are not sole semantic identities."
+    },
+    "ANDROID-P029": {
+      "status": "DELIVERED",
+      "evidence": "NDK qualification records native/wrapped/QEMU host mode and runtime evidence only when NDK is relevant."
+    },
+    "ANDROID-P031": {
+      "status": "DELIVERED",
+      "evidence": "Android Gradle component consumes canonical Gradle/JDK/launcher identity; JDK home remains provenance."
+    },
+    "ANDROID-P048": {
+      "status": "DELIVERED",
+      "evidence": "Produced artifact lineage binds source/config/environment/Gradle plan+receipt/artifact hashes/signing/device evidence without secret values."
+    }
+  },
+  "additional_deliveries": [
+    "action-aware AndroidTransport does not resolve ADB for build-only actions",
+    "DeviceLease pins one selected serial through AndroidDeviceOperations",
+    "root-loopback adbd mutation uses injected Host authority with typed acquire/restore receipts",
+    "bootstrap receipts project per-capability freshness and structured network evidence",
+    "destination-generated Android bootstrap snapshots are path-independent semantically and retain actual destination path provenance",
+    "inspect/qualify/repair/requalify records provisioning receipts without Android cleanup ownership",
+    "authoritative standalone Android runtime and OCI staged copy are mechanically identical"
+  ],
+  "remediation": {
+    "failed_runs": [
+      {
+        "run": "20c907de4df54870849614f2c1fe0c6e",
+        "classification": "test_environment_leakage",
+        "detail": "repair-path test assumed SDK-local aidl absence implied capability absence; native Termux correctly qualified $PREFIX/bin/aidl instead",
+        "fix": "inject synthetic Termux runtime/prefix and prove both missing-helper repair and existing-Termux-helper no-repair contracts"
+      },
+      {
+        "run": "c2ef5d59fa7647d68aae1683ebf3a17b",
+        "classification": "retained_test_provider_assumption",
+        "detail": "AOPS02 retained test hard-coded SDK apksigner while native Termux canonical policy correctly preferred a qualified $PREFIX/bin/apksigner",
+        "fix": "make the SDK-specific retained test force a host runtime and add a separate synthetic-Termux regression proving Termux-helper precedence"
+      }
+    ],
+    "validation": "110 passed, 0 failed, 0 skipped, 0 warnings, 0 errors via ./devtoolw android-x02"
+  }
+}

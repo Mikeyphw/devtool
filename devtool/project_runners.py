@@ -842,6 +842,34 @@ class AndroidGradleRunner(ProjectRunner):
             ))
             domains = dict(metadata.get("environment_domains") or {})
             domains["gradle_takeover"] = str(metadata.get("gradle_takeover_semantic_identity") or metadata.get("gradle_takeover_receipt_id") or "")
+            execution_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
+            remote_destination = execution_environment in {"ssh", "oci", "ssh-oci", "ssh-proot-oci", "chroot", "proot", "proot-distro"}
+            if remote_destination:
+                # Destination workers must return their actual Android bootstrap
+                # snapshot. Never poison Android RER identity with controller
+                # SDK/PATH state for remote execution.
+                metadata["android_environment_authority"] = "destination-bootstrap"
+                metadata["android_environment_destination"] = execution_environment
+            else:
+                from .android.environment import android_environment_reuse_components, resolve_android_environment
+                _android_request, _android_qualification, _android_environment = resolve_android_environment(
+                    config, action=action or "build", env=env, gradle_metadata=metadata,
+                    device_required=False, fail_closed=False,
+                )
+                metadata["android_environment_request"] = _android_request.as_dict()
+                metadata["android_environment_qualification"] = _android_qualification.as_dict()
+                if _android_environment is not None:
+                    metadata["android_environment"] = _android_environment.as_dict()
+                    metadata["android_environment_identity"] = _android_environment.environment_id
+                    for domain_name, domain_identity in android_environment_reuse_components(_android_environment).items():
+                        domains[domain_name] = domain_identity
+                    metadata["android_environment_authority"] = "canonical-local"
+                else:
+                    # Planning is intentionally side-effect-free and can happen
+                    # before bootstrap. Record the blocked truth but do not
+                    # invent an environment domain. Execution/release remains
+                    # fail-closed at its owned preflight.
+                    metadata["android_environment_authority"] = "unqualified-local"
             metadata["environment_domains"] = domains
             metadata["gradle_takeover_ingress_checked"] = True
             metadata["gradle_takeover_ingress_status"] = "typed-brokered"

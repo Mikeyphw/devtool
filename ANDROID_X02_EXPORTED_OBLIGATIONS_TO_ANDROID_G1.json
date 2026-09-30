@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "from": "ANDROID-X02",
+  "to": "ANDROID-G1",
+  "full_plan_gate": "39/70",
+  "status": "PENDING_AUTHORITATIVE_GATE",
+  "obligations": [
+    "Audit ANDROID-X01 and ANDROID-X02 promise ledgers together; do not seal partial/later-owned promises as delivered.",
+    "Prove explicit Android environment views do not leak ambient controller SDK/PATH state and incomplete SDK packages fail closed at execution boundaries.",
+    "Prove builder, doctor, explain and release project equivalent canonical Android environment identities when consuming the same qualified destination state.",
+    "Exercise exact ArtifactPair materialization/hash/producer lineage with real Gradle receipts and fail closed on hash/evidence collisions.",
+    "Exercise action-aware transport and DeviceLease on a qualified Android host/device; failed readiness must block install/lifecycle side effects and the lease serial must remain stable.",
+    "Prove release, instrumentation, direct Android commands and validation preserve independent release/instrumentation lane semantics.",
+    "Qualify destination-local bootstrap snapshots for native Termux plus applicable chroot/remote/OCI destinations and prove controller ambient state is not substituted for returned destination truth.",
+    "Qualify NDK native/wrapped/QEMU host-mode evidence and canonical Gradle/JDK identity linkage on relevant destination types.",
+    "Verify bootstrap freshness/network evidence and inspect/repair/requalify behavior under stale/missing capabilities.",
+    "Verify authoritative and staged standalone Android runtimes are mechanically identical.",
+    "Re-audit three pre-existing instrumentation planner fixture failures (AOPS03 x2, REM11 x1) that already fail on the X01 base because the fixtures lack Gradle project markers; classify/fix at the gate if they represent a current contract gap rather than stale tests.",
+    "Run authoritative Android/Gradle/device/remote checks that were deliberately deferred from X01/X02 implementation overlays."
+  ]
+}

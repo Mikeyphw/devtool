@@ -133,6 +133,9 @@ class AndroidEnvironmentRequest:
     environment_view_id: str
     gradle_context_id: str = ""
     gradle_plan_id: str = ""
+    gradle_jdk_identity: str = ""
+    gradle_jdk_home: str = ""
+    gradle_launcher_identity: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -156,6 +159,9 @@ class AndroidEnvironmentRequest:
             "environment_view_id": self.environment_view_id,
             "gradle_context_id": self.gradle_context_id,
             "gradle_plan_id": self.gradle_plan_id,
+            "gradle_jdk_identity": self.gradle_jdk_identity,
+            "gradle_jdk_home": self.gradle_jdk_home,
+            "gradle_launcher_identity": self.gradle_launcher_identity,
         }
 
 
@@ -185,6 +191,7 @@ class AndroidEnvironmentQualification:
     sdk_source: str
     capabilities: dict[str, AndroidCapabilityQualification]
     diagnostics: tuple[str, ...] = ()
+    provenance: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -199,6 +206,7 @@ class AndroidEnvironmentQualification:
             "sdk": {"root": self.sdk_root, "source": self.sdk_source},
             "capabilities": {k: v.as_dict() for k, v in sorted(self.capabilities.items())},
             "diagnostics": list(self.diagnostics),
+            "provenance": dict(self.provenance),
         }
 
 
@@ -220,6 +228,9 @@ class ResolvedAndroidEnvironment:
     lanes: dict[str, AndroidVariantLane]
     gradle_context_id: str
     gradle_plan_id: str
+    gradle_jdk_identity: str
+    gradle_jdk_home: str
+    gradle_launcher_identity: str
     environment_view_id: str
     component_identities: dict[str, str]
     path_provenance: dict[str, Any]
@@ -242,21 +253,31 @@ class ResolvedAndroidEnvironment:
             "lanes": {k: v.as_dict() for k, v in sorted(self.lanes.items())},
             "gradle_context_id": self.gradle_context_id,
             "gradle_plan_id": self.gradle_plan_id,
+            "gradle_jdk_identity": self.gradle_jdk_identity,
+            "gradle_jdk_home": self.gradle_jdk_home,
+            "gradle_launcher_identity": self.gradle_launcher_identity,
             "environment_view_id": self.environment_view_id,
             "component_identities": dict(self.component_identities),
             "path_provenance": dict(self.path_provenance),
         }
 
 
-def _gradle_refs(gradle_metadata: Mapping[str, Any] | None) -> tuple[str, str]:
+def _gradle_refs(gradle_metadata: Mapping[str, Any] | None) -> tuple[str, str, str, str, str]:
     metadata = dict(gradle_metadata or {})
+    receipt = metadata.get("gradle_execution_receipt")
+    receipt = dict(receipt) if isinstance(receipt, Mapping) else {}
     plan = metadata.get("gradle_execution_plan")
-    if isinstance(plan, Mapping):
-        context = plan.get("context")
-        context_id = str((context or {}).get("context_digest") if isinstance(context, Mapping) else "")
-        plan_id = str(plan.get("plan_digest") or metadata.get("gradle_plan_digest") or "")
-        return context_id or str(metadata.get("gradle_context_digest") or ""), plan_id
-    return str(metadata.get("gradle_context_digest") or ""), str(metadata.get("gradle_plan_digest") or "")
+    plan = dict(plan) if isinstance(plan, Mapping) else {}
+    context = plan.get("context")
+    context = dict(context) if isinstance(context, Mapping) else {}
+    launcher = context.get("launcher")
+    launcher = dict(launcher) if isinstance(launcher, Mapping) else {}
+    context_id = str(context.get("context_digest") or receipt.get("context_digest") or metadata.get("gradle_context_digest") or "")
+    plan_id = str(plan.get("plan_digest") or receipt.get("plan_digest") or metadata.get("gradle_plan_digest") or "")
+    jdk_identity = str(context.get("jdk_identity") or receipt.get("jdk_identity") or metadata.get("gradle_jdk_identity") or "")
+    jdk_home = str(context.get("jdk_home") or receipt.get("jdk_home") or metadata.get("gradle_jdk_home") or "")
+    launcher_identity = str(launcher.get("identity") or receipt.get("launcher_identity") or metadata.get("gradle_launcher_identity") or "")
+    return context_id, plan_id, jdk_identity, jdk_home, launcher_identity
 
 
 def build_android_environment_request(
@@ -292,7 +313,7 @@ def build_android_environment_request(
         except ValueError:
             pass
     platform_name = f"android-{compile_sdk}" if compile_sdk else ""
-    context_id, plan_id = _gradle_refs(gradle_metadata)
+    context_id, plan_id, jdk_identity, jdk_home, launcher_identity = _gradle_refs(gradle_metadata)
     action_name = str(action or "build").strip().lower()
     required_device = bool(device_required if device_required is not None else action_name in _DEVICE_ACTIONS)
     lanes = {
@@ -315,6 +336,8 @@ def build_android_environment_request(
         "environment_view_id": env_view.identity,
         "gradle_context_id": context_id,
         "gradle_plan_id": plan_id,
+        "gradle_jdk_identity": jdk_identity,
+        "gradle_launcher_identity": launcher_identity,
     }
     request_id = _stable(base_payload)
     return AndroidEnvironmentRequest(
@@ -335,6 +358,9 @@ def build_android_environment_request(
         environment_view_id=env_view.identity,
         gradle_context_id=context_id,
         gradle_plan_id=plan_id,
+        gradle_jdk_identity=jdk_identity,
+        gradle_jdk_home=jdk_home,
+        gradle_launcher_identity=launcher_identity,
     )
 
 
@@ -379,6 +405,41 @@ def _helper_qualification(
         source="build-tools-helper", rejection_reason=f"required helper {name} is unavailable for Build Tools {build_tools_version}",
         candidates=tuple(rendered), metadata={"runtime": runtime.environment},
     )
+
+
+def _ndk_host_runtime(
+    sdk_root: Path, version: str, *, runtime: RuntimeIdentity, view: EnvironmentView,
+) -> tuple[bool, str, str]:
+    if not version:
+        return False, "", "NDK version is unresolved"
+    prebuilt = sdk_root / "ndk" / version / "toolchains" / "llvm" / "prebuilt"
+    candidates: list[tuple[str, str]] = []
+    if runtime.arch == "arm64":
+        candidates.extend((("linux-aarch64", "native-arm64"), ("linux-arm64", "native-arm64"), ("linux-x86_64", "x86_64")))
+    elif runtime.arch in {"x86_64", "amd64"}:
+        candidates.append(("linux-x86_64", "native-x86_64"))
+    else:
+        candidates.extend(((f"linux-{runtime.arch}", f"native-{runtime.arch}"), ("linux-x86_64", "x86_64")))
+    rendered: list[str] = []
+    for tag, base_mode in candidates:
+        clang = prebuilt / tag / "bin" / "clang++"
+        rendered.append(str(clang))
+        if not clang.is_file() or not os.access(clang, os.X_OK):
+            continue
+        mode = base_mode
+        if base_mode == "x86_64" and runtime.arch == "arm64":
+            try:
+                prefix = clang.read_bytes()[:2]
+            except OSError:
+                prefix = b""
+            if prefix == b"#!":
+                mode = "wrapped-x86_64"
+            elif view.which("qemu-x86_64") is not None:
+                mode = "qemu-x86_64"
+            else:
+                continue
+        return True, mode, str(clang.resolve(strict=False))
+    return False, "", "no runnable NDK host prebuilt for runtime; checked " + ", ".join(rendered)
 
 
 def qualify_android_environment(
@@ -431,13 +492,20 @@ def qualify_android_environment(
 
         requested_ndk = request.ndk.requested
         ndk_candidates = installed_ndk_versions(sdk_root)
-        ndk_ready = bool(requested_ndk and ndk_is_ready(sdk_root, requested_ndk))
+        ndk_structural_ready = bool(requested_ndk and ndk_is_ready(sdk_root, requested_ndk))
+        host_ready, host_mode, host_tool = _ndk_host_runtime(sdk_root, requested_ndk, runtime=runtime, view=env_view) if ndk_structural_ready else (False, "", "")
+        ndk_ready = ndk_structural_ready and (host_ready or not request.ndk.required)
         if request.ndk.required or requested_ndk:
+            rejection = ""
+            if request.ndk.required and not ndk_structural_ready:
+                rejection = f"required NDK {requested_ndk or '<unresolved>'} is not structurally ready"
+            elif request.ndk.required and not host_ready:
+                rejection = host_tool or f"required NDK {requested_ndk or '<unresolved>'} has no runnable host mode"
             capabilities["ndk"] = AndroidCapabilityQualification(
                 "ndk", requested_ndk, requested_ndk if ndk_ready else "", ndk_ready,
                 source=request.ndk.source, provider="sdk", path=str(sdk_root / "ndk" / requested_ndk) if requested_ndk else "",
-                rejection_reason="" if ndk_ready or not request.ndk.required else f"required NDK {requested_ndk or '<unresolved>'} is not ready",
-                candidates=tuple(ndk_candidates), metadata={"host_mode": "sdk-prebuilt" if ndk_ready else ""},
+                rejection_reason=rejection, candidates=tuple(ndk_candidates),
+                metadata={"host_mode": host_mode, "runtime": runtime.environment, "runtime_arch": runtime.arch, "host_tool": host_tool if host_ready else ""},
             )
             if request.ndk.required and not ndk_ready:
                 diagnostics.append(capabilities["ndk"].rejection_reason)
@@ -474,10 +542,18 @@ def qualify_android_environment(
         "capabilities": {k: v.as_dict() for k, v in sorted(capabilities.items())},
         "diagnostics": diagnostics,
     }
+    storage: dict[str, Any] = {}
+    if sdk_root and sdk_root.exists():
+        try:
+            usage = shutil.disk_usage(sdk_root)
+            storage = {"path": str(sdk_root), "free_bytes": usage.free, "total_bytes": usage.total}
+        except OSError:
+            storage = {"path": str(sdk_root), "free_bytes": None, "total_bytes": None}
     return AndroidEnvironmentQualification(
         qualification_id=_stable(payload), request_id=request.request_id, status=status,
         sdk_root=str(sdk_root) if sdk_root else "", sdk_source=sdk_source,
         capabilities=capabilities, diagnostics=tuple(diagnostics),
+        provenance={"runtime": runtime.environment, "runtime_arch": runtime.arch, "storage_headroom": storage, "environment_view_id": request.environment_view_id},
     )
 
 
@@ -525,12 +601,15 @@ def resolve_android_environment(
         "android.platform": _stable({"compile_sdk": request.compile_sdk, "package": request.platform.requested}),
         "android.build-tools": _stable({"package": caps["build-tools"].selected, "helpers": {k: capability_semantic(v) for k, v in helper_caps.items()}}),
         "android.native": _stable({"ndk": capability_semantic(ndk), "cmake": capability_semantic(cmake)}),
-        "android.gradle": _stable({"context": request.gradle_context_id, "plan": request.gradle_plan_id}),
+        "android.gradle": _stable({"context": request.gradle_context_id, "plan": request.gradle_plan_id, "jdk": request.gradle_jdk_identity, "launcher": request.gradle_launcher_identity}),
         "android.lanes": _stable({"primary": request.primary_lane.identity, "release": request.release_lane.identity, "instrumentation": request.instrumentation_lane.identity}),
     }
+    # Resolved environment identity is semantic Android state, not an audit
+    # receipt identity. Request/qualification IDs deliberately include the
+    # explicit environment-view/provenance used to reach this result and must
+    # therefore not fragment reusable Android work after path relocation or an
+    # unrelated PATH change.
     semantic = {
-        "request_id": request.request_id,
-        "qualification_id": qualification.qualification_id,
         "target": request.target,
         "action": request.action,
         "compile_sdk": request.compile_sdk,
@@ -542,6 +621,8 @@ def resolve_android_environment(
         "lanes": {"primary": request.primary_lane.identity, "release": request.release_lane.identity, "instrumentation": request.instrumentation_lane.identity},
         "gradle_context_id": request.gradle_context_id,
         "gradle_plan_id": request.gradle_plan_id,
+        "gradle_jdk_identity": request.gradle_jdk_identity,
+        "gradle_launcher_identity": request.gradle_launcher_identity,
         # The environment-view fingerprint is provenance. It may contain PATH
         # differences and therefore must not fragment semantic environment IDs.
         "components": component_identities,
@@ -554,15 +635,95 @@ def resolve_android_environment(
         build_tools_package=caps["build-tools"].selected, helpers=helper_caps, ndk=ndk, cmake=cmake,
         lanes={"primary": request.primary_lane, "release": request.release_lane, "instrumentation": request.instrumentation_lane},
         gradle_context_id=request.gradle_context_id, gradle_plan_id=request.gradle_plan_id,
+        gradle_jdk_identity=request.gradle_jdk_identity, gradle_jdk_home=request.gradle_jdk_home,
+        gradle_launcher_identity=request.gradle_launcher_identity,
         environment_view_id=request.environment_view_id, component_identities=component_identities,
         path_provenance={
             "sdk": _path_identity(Path(qualification.sdk_root) if qualification.sdk_root else None),
             "helpers": {k: _path_identity(Path(v.path) if v.path else None) for k, v in helper_caps.items()},
             "ndk": _path_identity(Path(ndk.path) if ndk.path else None),
             "cmake": _path_identity(Path(cmake.path) if cmake.path else None),
+            "gradle_jdk_home": _path_identity(Path(request.gradle_jdk_home) if request.gradle_jdk_home else None),
         },
     )
     return request, qualification, resolved
+
+
+def android_environment_reuse_components(
+    environment: ResolvedAndroidEnvironment,
+    *,
+    domains: Sequence[str] | None = None,
+) -> dict[str, str]:
+    """Return the semantic Android component identities relevant to a node.
+
+    RER/fingerprint callers can name only the domains a node consumes (for
+    example ``android.platform`` + ``android.gradle``). Absolute paths, the
+    environment-view fingerprint and storage/network provenance never enter
+    this bridge.
+    """
+    available = dict(environment.component_identities)
+    if domains is None:
+        return dict(sorted(available.items()))
+    wanted = tuple(dict.fromkeys(str(item).strip() for item in domains if str(item).strip()))
+    missing = [name for name in wanted if name not in available]
+    if missing:
+        raise KeyError(f"Unknown Android environment reuse component(s): {', '.join(missing)}")
+    return {name: available[name] for name in wanted}
+
+
+@dataclass(frozen=True, slots=True)
+class AndroidEnvironmentConvergence:
+    request: AndroidEnvironmentRequest
+    first_qualification: AndroidEnvironmentQualification
+    final_qualification: AndroidEnvironmentQualification
+    resolved: ResolvedAndroidEnvironment | None
+    repaired: bool = False
+    repair_receipt: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": ANDROID_ENVIRONMENT_SCHEMA_VERSION,
+            "request": self.request.as_dict(),
+            "first_qualification": self.first_qualification.as_dict(),
+            "final_qualification": self.final_qualification.as_dict(),
+            "resolved": self.resolved.as_dict() if self.resolved is not None else None,
+            "repaired": self.repaired,
+            "repair_receipt": dict(self.repair_receipt),
+        }
+
+
+def inspect_qualify_repair_android_environment(
+    config: ProjectConfig,
+    *,
+    action: str = "build",
+    env: Mapping[str, str] | None = None,
+    gradle_metadata: Mapping[str, Any] | None = None,
+    device_required: bool | None = None,
+    repairer: Any | None = None,
+) -> AndroidEnvironmentConvergence:
+    """Inspect/qualify and optionally repair, then requalify using explicit state.
+
+    The repair callback owns provisioning. Android environment code only records
+    its receipt and re-runs qualification; it never acquires cleanup ownership.
+    """
+    view = EnvironmentView.from_config(config, env=env)
+    request = build_android_environment_request(
+        config, action=action, env_view=view, gradle_metadata=gradle_metadata, device_required=device_required,
+    )
+    first = qualify_android_environment(config, request, env_view=view)
+    if first.ok or repairer is None:
+        _req, final, resolved = resolve_android_environment(
+            config, action=action, env=view.values, gradle_metadata=gradle_metadata,
+            device_required=device_required, fail_closed=False,
+        )
+        return AndroidEnvironmentConvergence(request, first, final, resolved, False, {})
+    receipt = repairer(request, first, view)
+    receipt = dict(receipt or {}) if isinstance(receipt, Mapping) else {"detail": str(receipt or "")}
+    _req, final, resolved = resolve_android_environment(
+        config, action=action, env=view.values, gradle_metadata=gradle_metadata,
+        device_required=device_required, fail_closed=False,
+    )
+    return AndroidEnvironmentConvergence(request, first, final, resolved, True, receipt)
 
 
 __all__ = [
@@ -570,4 +731,6 @@ __all__ = [
     "EnvironmentView", "AndroidPackageRequirement", "AndroidEnvironmentRequest",
     "AndroidCapabilityQualification", "AndroidEnvironmentQualification", "ResolvedAndroidEnvironment",
     "build_android_environment_request", "qualify_android_environment", "resolve_android_environment",
+    "android_environment_reuse_components",
+    "AndroidEnvironmentConvergence", "inspect_qualify_repair_android_environment",
 ]

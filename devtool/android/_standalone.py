@@ -9467,6 +9467,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "sdk_provider": str(args.sdk_provider),
             "gradle_provider": executable_provider(gradle),
             "java_provider": executable_provider(java_home / "bin" / "java"),
+            "network_evidence": {
+                "offline": bool(args.offline),
+                "bootstrap_network": str(args.bootstrap_network),
+                "toolchain_downloads": str(args.toolchain_downloads),
+                "sdk_provider": str(args.sdk_provider),
+                "aapt2_provider": str(args.aapt2_provider),
+                "gradle_provider": executable_provider(gradle),
+                "secret_values_recorded": False,
+            },
             "dry_run": bool(args.dry_run),
         }
         if args.bootstrap_report:

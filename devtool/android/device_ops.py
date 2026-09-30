@@ -71,6 +71,7 @@ class AndroidDeviceOperations:
         default_policy: str = "exactly-one",
         default_serial: str = "",
         preferred: str = "",
+        device_lease: object | None = None,
     ) -> None:
         self.manager = manager
         self.context = context
@@ -78,6 +79,7 @@ class AndroidDeviceOperations:
         self.default_policy = default_policy
         self.default_serial = default_serial
         self.preferred = preferred
+        self.device_lease = device_lease
 
     @classmethod
     def from_config(cls, config: ProjectConfig, *, env: Mapping[str, str] | None = None) -> "AndroidDeviceOperations":
@@ -101,6 +103,26 @@ class AndroidDeviceOperations:
         )
 
     def select_device(self, *, serial: str = "", policy: str = "", enrich: bool = False) -> AndroidDevice:
+        lease = self.device_lease
+        if lease is not None:
+            leased_serial = str(getattr(lease, "serial", "") or "")
+            requested_serial = str(serial or self.default_serial or "")
+            if requested_serial and requested_serial != leased_serial:
+                raise AndroidDeviceOperationError(
+                    f"DeviceLease is bound to {leased_serial!r}; operation requested {requested_serial!r}"
+                )
+            raw = getattr(lease, "device", None)
+            if isinstance(raw, dict) and raw:
+                return AndroidDevice(**raw)
+            return AndroidDevice(
+                serial=leased_serial, state="device",
+                transport_id=str(getattr(lease, "transport_serial", "") or ""),
+                api_level=str(getattr(lease, "api_level", "") or ""),
+                abi=str(getattr(lease, "abi", "") or ""),
+                connection_type=str(getattr(lease, "connection_type", "") or "unknown"),
+                model=str(getattr(lease, "model", "") or ""),
+                boot_completed=str(getattr(lease, "boot_completed", "") or ""),
+            )
         selected = self.manager.select(
             policy or ("serial" if (serial or self.default_serial) else self.default_policy),
             serial=serial or self.default_serial,
