@@ -271,6 +271,7 @@ def android_instrumentation_payload(
     # ENV-X03: even the dedicated ``devtool android instrumentation`` CLI
     # enters the canonical Gradle planner for its build half. The orchestrator
     # remains authoritative for device install/run/collection only.
+    gradle_receipts: list[dict[str, Any]] = []
     if not skip_build:
         from ..project_runners import AndroidGradleRunner
         from ..runners import run_specs
@@ -278,6 +279,10 @@ def android_instrumentation_payload(
         planned = AndroidGradleRunner().build_specs(config, "instrumentation")
         build_specs = [spec for spec in planned if spec.metadata.get("gradle_execution_plan")]
         results, _ = run_specs(config, build_specs, verbose=False)
+        for item in results:
+            receipt = item.metadata.get("gradle_execution_receipt") if isinstance(item.metadata, dict) else None
+            if isinstance(receipt, dict):
+                gradle_receipts.append(dict(receipt))
         failed = [result for result in results if int(result.returncode or 0) != 0]
         if failed:
             first = failed[0]
@@ -287,7 +292,7 @@ def android_instrumentation_payload(
             )
         skip_build = True
 
-    orchestrator = AndroidInstrumentationOrchestrator.from_config(config)
+    orchestrator = AndroidInstrumentationOrchestrator.from_config(config, gradle_receipts=gradle_receipts)
     request = request_from_config(
         config, classes=classes or [], methods=methods or [],
         annotations=annotations or [], not_annotations=not_annotations or [],

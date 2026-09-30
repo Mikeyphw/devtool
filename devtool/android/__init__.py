@@ -12,7 +12,7 @@ from .devices import AndroidDevice, AndroidDeviceManager, AndroidDeviceError
 from .operations import AndroidOperations, resolve_android_operations
 from .signing import AndroidSigningError, AndroidSigningManager, SigningIdentity, SigningProfile, SigningVerification
 from .device_ops import AndroidDeviceOperationError, AndroidDeviceOperations, DeviceOperationResult, SmokeGateResult
-from .instrumentation import AndroidInstrumentationOrchestrator, InstrumentationRequest, InstrumentationResult, resolve_instrumentation_policy
+from .instrumentation import AndroidInstrumentationOrchestrator, InstrumentationRequest, InstrumentationResult, InstrumentationIntent, ResolvedInstrumentationPlan, InstrumentationExecutionReceipt, resolve_instrumentation_policy
 
 __all__ = [
     "BuildError",
@@ -25,7 +25,7 @@ __all__ = [
     "AndroidOperations", "resolve_android_operations",
     "AndroidSigningError", "AndroidSigningManager", "SigningIdentity", "SigningProfile", "SigningVerification",
     "AndroidDeviceOperationError", "AndroidDeviceOperations", "DeviceOperationResult", "SmokeGateResult",
-    "AndroidInstrumentationOrchestrator", "InstrumentationRequest", "InstrumentationResult", "resolve_instrumentation_policy",
+    "AndroidInstrumentationOrchestrator", "InstrumentationRequest", "InstrumentationResult", "InstrumentationIntent", "ResolvedInstrumentationPlan", "InstrumentationExecutionReceipt", "resolve_instrumentation_policy",
     "standalone_main",
 ]
 

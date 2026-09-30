@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "overlay": "ANDROID-X03",
+  "position": "45/70",
+  "gate_window": "1/2",
+  "status": "PREPARED_LOCAL_QUALIFIED_PENDING_NATIVE_TERMUX",
+  "delivered": {
+    "ANDROID-P017": {"status": "DELIVERED_PENDING_NATIVE_QUALIFICATION", "promise": "Canonical InstrumentationIntent"},
+    "ANDROID-P018": {"status": "DELIVERED_PENDING_NATIVE_QUALIFICATION", "promise": "ResolvedInstrumentationPlan as sole executable semantic plan"},
+    "ANDROID-P019": {"status": "DELIVERED_PENDING_NATIVE_QUALIFICATION", "promise": "InstrumentationExecutionReceipt"},
+    "ANDROID-P022": {"status": "IMPLEMENTATION_COMPLETE_PENDING_ANDROID_G2", "promise": "DeviceLease-bound instrumentation install/run/evidence/cleanup lifecycle"}
+  },
+  "additional_deliveries": [
+    "Process-crash setup classification with zero executed/failed tests",
+    "Exact ArtifactPair lineage and Gradle receipt threading on dedicated CLI path",
+    "LIFE GeneratedOutputDescriptor/CleanupOwnershipView adoption for instrumentation evidence",
+    "Destination-side package cleanup revalidation on the stable DeviceLease",
+    "Primary instrumentation failure preserved over cleanup/finalization failures",
+    "Private RUN instrumentation receipt and AndroidExecutionSnapshot linkage"
+  ],
+  "validation": {
+    "wrapper": "./devtoolw android-x03",
+    "tests": 210,
+    "failed": 0,
+    "skipped": 0,
+    "warnings": 0,
+    "errors": 0,
+    "stages": "4/4",
+    "retained_boundary_tests": 176
+  },
+  "next": "ANDROID-G2 (46/70)",
+  "next_major_after_gate": "DIST-X03 (47/70)"
+}

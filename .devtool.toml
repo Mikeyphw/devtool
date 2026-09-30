@@ -115,6 +115,12 @@ description = "Run the ANDROID-G1 authoritative environment/device milestone gat
 workflow = "roadmap-android-g1"
 target = "devtool"
 
+# ANDROID-X03 canonical instrumentation intent/plan/receipt and device lifecycle.
+[wrapper.commands.android-x03]
+description = "Run the ANDROID-X03 instrumentation intent/plan/receipt lifecycle workflow"
+workflow = "roadmap-android-x03"
+target = "devtool"
+
 # DIST-X01 canonical delegation and external-ingest identity foundation.
 [wrapper.commands.dist-x01]
 description = "Run the DIST-X01 delegation/external-ingest integrity workflow"
@@ -693,6 +699,13 @@ roadmap-android-g1 = [
   { id = "instrumentation-fixture-reseal", ref = "test:roadmap-android-g1-instrumentation-fixtures", depends_on = ["window-audit"] },
   { id = "platform-native-destination", ref = "test:roadmap-android-g1-platform-native-destination", depends_on = ["instrumentation-fixture-reseal"] },
   { id = "real-process-device", ref = "test:roadmap-android-g1-real-process", depends_on = ["platform-native-destination"] },
+]
+
+roadmap-android-x03 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "instrumentation-contract", ref = "test:roadmap-android-x03-instrumentation-contract", depends_on = ["syntax"] },
+  { id = "retained-instrumentation", ref = "test:roadmap-android-x03-retained-instrumentation", depends_on = ["instrumentation-contract"] },
+  { id = "cleanup-authority", ref = "test:roadmap-android-x03-cleanup-authority", depends_on = ["retained-instrumentation"] },
 ]
 
 roadmap-dist-x01 = [
@@ -2361,6 +2374,42 @@ name = "ANDROID-G1 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 1200
 command = ["./devtoolw", "android-g1"]
+
+# ANDROID-X03 owns the instrumentation semantic plan and execution lifecycle.
+[[test]]
+id = "roadmap-android-x03-instrumentation-contract"
+name = "ANDROID-X03 canonical InstrumentationIntent/Plan/Receipt lifecycle"
+runner = "pytest"
+timeout_seconds = 420
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_x03_instrumentation_lifecycle.py",
+]
+
+[[test]]
+id = "roadmap-android-x03-retained-instrumentation"
+name = "ANDROID-X03 retained instrumentation/device/release authority regression"
+runner = "pytest"
+timeout_seconds = 600
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_instrumentation.py",
+  "tests/test_rem11_android_devices_release_gates.py",
+  "tests/test_aops03_android_signing_instrumentation_operations.py",
+  "tests/test_aops04_android_release_evidence_final_seal.py",
+  "tests/test_android_runner.py",
+]
+
+[[test]]
+id = "roadmap-android-x03-cleanup-authority"
+name = "ANDROID-X03 LIFE-G2 cleanup ownership/protection regression"
+runner = "pytest"
+timeout_seconds = 480
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_g2_ownership_retention_gate.py",
+  "tests/test_life_x03_generated_cleanup_ownership.py",
+]
 
 # DIST-X01 owns the non-Gradle delegation/external-ingest identity boundary.
 # Async transport/cursor recovery is deferred to DIST-X02 and broad distributed

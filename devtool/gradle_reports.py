@@ -641,12 +641,14 @@ def collect_instrumentation_output(
         return ReportCollection({}, [issue])
     issues: list[Issue] = []
     if int(payload.get("failed") or 0) > 0 or int(payload.get("returncode") or 0) != 0:
-        setup_error = str(payload.get("error") or "").strip()
-        message = (
-            f"Instrumentation setup failed: {setup_error}"
-            if setup_error
-            else f"Instrumentation reported {payload.get('failed', 0)} failed test(s)."
-        )
+        setup_error = str(payload.get("error") or payload.get("reason") or "").strip()
+        failure_kind = str(payload.get("failure_kind") or "").strip()
+        if failure_kind in {"setup-crash", "setup-error", "device-readiness", "runner-error", "snapshot", "receipt", "cleanup"}:
+            message = f"Instrumentation {failure_kind.replace('-', ' ')}: {setup_error or 'execution did not reach a successful test result'}"
+        elif setup_error and int(payload.get("failed") or 0) == 0:
+            message = f"Instrumentation setup failed: {setup_error}"
+        else:
+            message = f"Instrumentation reported {payload.get('failed', 0)} failed test(s)."
         issues.append(
             Issue(
                 "error",

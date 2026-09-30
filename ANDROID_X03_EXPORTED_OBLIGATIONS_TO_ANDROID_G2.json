@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "from": "ANDROID-X03 (45/70)",
+  "to": "ANDROID-G2 (46/70)",
+  "obligations": [
+    "Audit ANDROID-P017/P018/P019 and the remaining P022 lifecycle against actual X03 source and retained X01/X02/G1 authority.",
+    "Prove one canonical ResolvedAndroidEnvironment, AndroidTransport and DeviceLease remain stable across install, runner discovery, execution, evidence and cleanup.",
+    "Prove exact app/test ArtifactPair hashes and producer lineage; where Gradle receipt evidence is available it must bind the pair and snapshot.",
+    "Prove ResolvedInstrumentationPlan is the sole executed am-instrument semantic argv and intent selector changes alter plan identity.",
+    "Prove InstrumentationExecutionReceipt and AndroidExecutionSnapshot are RUN-linked/private, collision-safe and reference exact plan/artifact/device identities.",
+    "Prove INSTRUMENTATION_STATUS_CODE -2 plus Process crashed is a setup/process failure with 0 executed and 0 failed tests, while genuine -2 test completions remain test failures.",
+    "Prove package cleanup revalidates on the exact destination DeviceLease immediately before uninstall and never falls back to controller-side cleanup.",
+    "Prove LIFE cleanup ownership/protection roots are refreshed immediately before mutation and no Android filename/suffix heuristic becomes deletion authority.",
+    "Prove cleanup/evidence/finalization failures remain secondary when instrumentation/test/setup failure is already authoritative; successful instrumentation fails closed if required cleanup/receipt/snapshot finalization fails.",
+    "Prove project-runner and dedicated android instrumentation CLI converge on the same instrumentation lane, selectors, DeviceLease/ArtifactPair authority and structured result semantics."
+  ]
+}

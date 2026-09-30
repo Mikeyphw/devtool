@@ -1027,6 +1027,9 @@ class AndroidGradleRunner(ProjectRunner):
                 "instrumentation_uses_canonical_build": True,
                 "instrumentation_build_owned_by_gradle_planner": True,
                 "instrumentation_skip_build": True,
+                "instrumentation_semantic_contract": "intent-plan-receipt-v1",
+                "instrumentation_device_authority": "DeviceLease",
+                "instrumentation_artifact_authority": "ArtifactPair",
             }
             metadata.update(_android_signing_metadata(config, instrumentation_build_tasks))
             spec = CommandSpec(

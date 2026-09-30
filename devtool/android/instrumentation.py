@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass, field
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,126 @@ from .device_ops import AndroidDeviceOperationError, AndroidDeviceOperations, ca
 from ._standalone import BuildError, normalize_android_device_test_policy
 
 INSTRUMENTATION_POLICIES = {"disabled", "when-device-present", "required"}
+
+
+def _stable(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8", "surrogatepass")
+    ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentationIntent:
+    intent_id: str
+    variant: str
+    policy: str
+    requested_runner: str
+    requested_target_package: str
+    classes: tuple[str, ...]
+    methods: tuple[str, ...]
+    annotations: tuple[str, ...]
+    not_annotations: tuple[str, ...]
+    size: str
+    runner_args: tuple[tuple[str, str], ...]
+    cleanup_app: bool
+    keep_installed: bool
+    capture_logcat_on_failure: bool
+    capture_screenshot_on_failure: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1, "intent_id": self.intent_id, "variant": self.variant, "policy": self.policy,
+            "requested_runner": self.requested_runner, "requested_target_package": self.requested_target_package,
+            "classes": list(self.classes), "methods": list(self.methods), "annotations": list(self.annotations),
+            "not_annotations": list(self.not_annotations), "size": self.size,
+            "runner_args": {key: value for key, value in self.runner_args}, "cleanup_app": self.cleanup_app,
+            "keep_installed": self.keep_installed, "capture_logcat_on_failure": self.capture_logcat_on_failure,
+            "capture_screenshot_on_failure": self.capture_screenshot_on_failure,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedInstrumentationPlan:
+    plan_id: str
+    intent_id: str
+    environment_id: str
+    artifact_pair_id: str
+    device_lease_id: str
+    destination_id: str
+    runner: str
+    target_package: str
+    test_package: str
+    command: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {**asdict(self), "schema_version": 1, "command": list(self.command)}
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentationExecutionReceipt:
+    receipt_id: str
+    intent_id: str
+    plan_id: str
+    status: str
+    failure_kind: str
+    device_lease_id: str
+    artifact_pair_id: str
+    destination_id: str
+    install_results: tuple[Mapping[str, Any], ...]
+    execution_result: Mapping[str, Any]
+    evidence: Mapping[str, Any]
+    cleanup_results: tuple[Mapping[str, Any], ...]
+    cleanup_authority: Mapping[str, Any]
+    snapshot_id: str = ""
+    snapshot_attachment_id: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1, "receipt_id": self.receipt_id, "intent_id": self.intent_id, "plan_id": self.plan_id,
+            "status": self.status, "failure_kind": self.failure_kind, "device_lease_id": self.device_lease_id,
+            "artifact_pair_id": self.artifact_pair_id, "destination_id": self.destination_id,
+            "install_results": [dict(item) for item in self.install_results], "execution_result": dict(self.execution_result),
+            "evidence": dict(self.evidence), "cleanup_results": [dict(item) for item in self.cleanup_results],
+            "cleanup_authority": dict(self.cleanup_authority), "snapshot_id": self.snapshot_id,
+            "snapshot_attachment_id": self.snapshot_attachment_id,
+        }
+
+
+def instrumentation_intent(request: "InstrumentationRequest") -> InstrumentationIntent:
+    payload = {
+        "variant": str(request.variant), "policy": normalize_instrumentation_policy(request.policy),
+        "requested_runner": str(request.runner or ""), "requested_target_package": str(request.target_package or ""),
+        "classes": list(request.classes), "methods": list(request.methods), "annotations": list(request.annotations),
+        "not_annotations": list(request.not_annotations), "size": str(request.size or ""),
+        "runner_args": {str(k): str(v) for k, v in sorted(request.runner_args.items())},
+        "cleanup_app": bool(request.cleanup_app), "keep_installed": bool(request.keep_installed),
+        "capture_logcat_on_failure": bool(request.capture_logcat_on_failure),
+        "capture_screenshot_on_failure": bool(request.capture_screenshot_on_failure),
+    }
+    return InstrumentationIntent(
+        intent_id=_stable(payload), variant=payload["variant"], policy=payload["policy"],
+        requested_runner=payload["requested_runner"], requested_target_package=payload["requested_target_package"],
+        classes=tuple(payload["classes"]), methods=tuple(payload["methods"]), annotations=tuple(payload["annotations"]),
+        not_annotations=tuple(payload["not_annotations"]), size=payload["size"],
+        runner_args=tuple(sorted(payload["runner_args"].items())), cleanup_app=payload["cleanup_app"],
+        keep_installed=payload["keep_installed"], capture_logcat_on_failure=payload["capture_logcat_on_failure"],
+        capture_screenshot_on_failure=payload["capture_screenshot_on_failure"],
+    )
+
+
+def resolve_instrumentation_plan(
+    intent: InstrumentationIntent, *, environment_id: str, artifact_pair_id: str, device_lease_id: str,
+    destination_id: str, runner: str, target_package: str, test_package: str, command: Sequence[str],
+) -> ResolvedInstrumentationPlan:
+    if not environment_id or not artifact_pair_id or not device_lease_id:
+        raise InstrumentationError("Instrumentation plan requires canonical environment, ArtifactPair and DeviceLease identity")
+    payload = {
+        "intent_id": intent.intent_id, "environment_id": environment_id, "artifact_pair_id": artifact_pair_id,
+        "device_lease_id": device_lease_id, "destination_id": destination_id, "runner": runner,
+        "target_package": target_package, "test_package": test_package, "command": list(command),
+    }
+    return ResolvedInstrumentationPlan(plan_id=_stable(payload), command=tuple(str(x) for x in command), **{k:v for k,v in payload.items() if k != "command"})
+
 _FALSE_STRINGS = {"", "0", "false", "no", "off", "disabled", "none"}
 _TRUE_STRINGS = {"1", "true", "yes", "on", "enabled"}
 
@@ -125,6 +246,15 @@ class InstrumentationResult:
     framework: str = "android-instrumentation"
     status: str = "passed"
     reason: str = ""
+    failure_kind: str = ""
+    intent_id: str = ""
+    plan_id: str = ""
+    receipt_id: str = ""
+    artifact_pair_id: str = ""
+    device_lease_id: str = ""
+    execution_snapshot_id: str = ""
+    execution_snapshot_attachment_id: str = ""
+    cleanup_status: str = "not-requested"
     runner: str = ""
     target_package: str = ""
     test_package: str = ""
@@ -305,6 +435,37 @@ def _parse_failed_ids(output: str) -> list[str]:
                 failed.append(value)
     return list(dict.fromkeys(failed))
 
+def _instrumentation_process_crash(output: str) -> bool:
+    text = str(output or "")
+    low = text.lower()
+    return (
+        "process crashed" in low
+        or "instrumentation_result: shortmsg=process crashed" in low
+        or "instrumentation aborted due to process crash" in low
+    )
+
+
+def _execution_classification(output: str, returncode: int) -> tuple[dict[str, int], list[str], str, str]:
+    """Classify AndroidJUnitRunner output without turning setup crashes into test failures.
+
+    A process crash can be emitted with ``INSTRUMENTATION_STATUS_CODE: -2`` even
+    when no test body actually executed.  That is infrastructure/setup failure,
+    not a failed test.  Preserve zero executed/failed tests while still failing
+    the instrumentation action through ``returncode``/``failure_kind``.
+    """
+    if _instrumentation_process_crash(output):
+        counts = _parse_counts(output)
+        counts.update({"executed": 0, "passed": 0, "failed": 0, "skipped": 0})
+        return counts, [], "setup-crash", "Instrumentation process crashed before test execution completed"
+    counts = _parse_counts(output)
+    failed_ids = _parse_failed_ids(output)
+    if int(returncode or 0) != 0 and counts["failed"] == 0:
+        return counts, failed_ids, "runner-error", "Instrumentation runner exited unsuccessfully"
+    if counts["failed"] > 0:
+        return counts, failed_ids, "test-failure", ""
+    return counts, failed_ids, "", ""
+
+
 def _write_report(result: InstrumentationResult, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -317,18 +478,22 @@ class AndroidInstrumentationOrchestrator:
         *,
         env: Mapping[str, str] | None = None,
         config: ProjectConfig | None = None,
+        gradle_receipts: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         self.device_ops = device_ops
         self.env = dict(os.environ if env is None else env)
         self.config = config
+        self.gradle_receipts = tuple(dict(item) for item in gradle_receipts if isinstance(item, Mapping))
 
     @classmethod
-    def from_config(cls, config: ProjectConfig, *, env: Mapping[str, str] | None = None) -> "AndroidInstrumentationOrchestrator":
-        return cls(AndroidDeviceOperations.from_config(config, env=env), env=env, config=config)
+    def from_config(
+        cls, config: ProjectConfig, *, env: Mapping[str, str] | None = None,
+        gradle_receipts: Sequence[Mapping[str, Any]] = (),
+    ) -> "AndroidInstrumentationOrchestrator":
+        return cls(AndroidDeviceOperations.from_config(config, env=env), env=env, config=config, gradle_receipts=gradle_receipts)
 
     def _build_with_devtool_builder(self, request: InstrumentationRequest) -> None:
         """Build app/test APKs through the canonical staged Android builder."""
-
         from ..android_integration import android_builder_arguments_for_tasks, plan_android_command
         from .signing import signing_environment_for_tasks
 
@@ -343,63 +508,230 @@ class AndroidInstrumentationOrchestrator:
         else:
             tasks = [f"assemble{variant_title}", f"assemble{variant_title}AndroidTest"]
         if config is None:
-            android: dict[str, Any] = {
-                "variant": request.variant,
-                "aapt2": request.aapt2,
-                "aapt2_provider": request.aapt2_provider,
-            }
+            android: dict[str, Any] = {"variant": request.variant, "aapt2": request.aapt2, "aapt2_provider": request.aapt2_provider}
             gradle_options: dict[str, Any] = {"args": list(request.gradle_args)}
             configured_gradle = str(request.gradle or "").strip()
             if configured_gradle and configured_gradle not in {"./gradlew", "gradlew"}:
                 gradle_options["command"] = configured_gradle
             config = ProjectConfig(
-                repo_root=request.project,
-                project_root=str(request.project),
-                kind="android",
-                runner="android",
-                variant=request.variant,
-                runner_options={"android": android, "gradle": gradle_options},
+                repo_root=request.project, project_root=str(request.project), kind="android", runner="android",
+                variant=request.variant, runner_options={"android": android, "gradle": gradle_options},
             )
         plan = plan_android_command(config, "build")
-        argv = [
-            *plan.argv_prefix,
-            *android_builder_arguments_for_tasks(config, tasks, scan_artifacts=False),
-        ]
+        argv = [*plan.argv_prefix, *android_builder_arguments_for_tasks(config, tasks, scan_artifacts=False)]
         child_env = signing_environment_for_tasks(config, tasks, env=self.env)
-        build = subprocess.run(
-            argv,
-            cwd=str(plan.project_root),
-            text=True,
-            capture_output=True,
-            check=False,
-            env=child_env,
-        )
+        build = subprocess.run(argv, cwd=str(plan.project_root), text=True, capture_output=True, check=False, env=child_env)
         if build.returncode:
             detail = (build.stderr or build.stdout).strip()
             raise InstrumentationError(detail or f"Devtool Android instrumentation build failed with {build.returncode}")
 
-    def _skip_or_fail(self, request: InstrumentationRequest, reason: str, started: float) -> InstrumentationResult:
+    def _skip_or_fail(self, request: InstrumentationRequest, reason: str, started: float, *, intent_id: str = "") -> InstrumentationResult:
         policy = normalize_instrumentation_policy(request.policy)
         if policy == "required":
-            return InstrumentationResult(status="failed", reason=reason, failed=1, total=0, returncode=1, duration_ms=int((time.monotonic() - started) * 1000), device_policy=request.device_policy)
-        return InstrumentationResult(status="skipped", reason=reason, skipped=1, total=1, returncode=0, duration_ms=int((time.monotonic() - started) * 1000), device_policy=request.device_policy)
+            return InstrumentationResult(
+                status="failed", reason=reason, failure_kind="device-readiness", intent_id=intent_id,
+                failed=1, total=0, returncode=1, duration_ms=int((time.monotonic() - started) * 1000),
+                device_policy=request.device_policy,
+            )
+        return InstrumentationResult(
+            status="skipped", reason=reason, intent_id=intent_id, skipped=1, total=1, returncode=0,
+            duration_ms=int((time.monotonic() - started) * 1000), device_policy=request.device_policy,
+        )
+
+    def _canonical_authority(self, request: InstrumentationRequest):
+        """Resolve one Android environment/transport/DeviceLease for this attempt.
+
+        The canonical production path has a ProjectConfig. Config-less injected
+        orchestrators remain a compatibility seam for unit tests/third-party use.
+        """
+        if self.config is None:
+            if normalize_instrumentation_policy(request.policy) == "required" and request.wait_timeout_seconds > 0:
+                device = self.device_ops.wait_for_device(serial=request.serial, policy=request.device_policy, timeout=request.wait_timeout_seconds)
+            else:
+                device = self.device_ops.select_device(serial=request.serial, policy=request.device_policy)
+            return device, None, None, None
+
+        from .environment import EnvironmentView, resolve_android_environment
+        from .execution_snapshot import (
+            acquire_device_lease, device_requirements_from_config, operations_for_device_lease, resolve_android_transport,
+        )
+        view = EnvironmentView.from_config(self.config, env=self.env)
+        _req, _qualification, environment = resolve_android_environment(
+            self.config, action="instrumentation", env=view.values, device_required=True, fail_closed=True,
+        )
+        if environment is None:
+            raise InstrumentationError("Canonical Android instrumentation environment did not resolve")
+        requirements = device_requirements_from_config(
+            self.config,
+            overrides={
+                "device_policy": request.device_policy or "exactly-one",
+                "serial": request.serial,
+            },
+        )
+        transport = resolve_android_transport(
+            self.config, environment, action="instrumentation", env_view=view, device_required=True,
+        )
+        if transport is None:
+            raise InstrumentationError("Android instrumentation requires a device transport")
+        lease = acquire_device_lease(
+            transport, requirements, env=view.values,
+            attempt_id=str(self.env.get("DEVTOOL_RUN_ID") or ""),
+        )
+        self.device_ops = operations_for_device_lease(transport, lease, env=view.values)
+        return self.device_ops.select_device(serial=lease.serial, policy="serial"), environment, transport, lease
+
+    def _artifact_pair(self, request: InstrumentationRequest, app_apk: Path, test_apk: Path, environment):
+        if self.config is None or environment is None:
+            return None
+        from .execution_snapshot import build_artifact_pair
+        from .variants import resolve_android_variant_lane
+        lane = resolve_android_variant_lane(self.config, "instrumentation")
+        module_prefix = f":{lane.module}:"
+        return build_artifact_pair(
+            repo_root=self.config.repo_root,
+            module=lane.module,
+            variant_identity=lane.identity,
+            environment=environment,
+            app={"path": str(app_apk), "type": "apk", "producer_task": f"{module_prefix}assemble{lane.title}"},
+            test={"path": str(test_apk), "type": "apk", "producer_task": f"{module_prefix}assemble{lane.title}AndroidTest"},
+            gradle_receipt=(self.gradle_receipts[-1] if self.gradle_receipts else None),
+            source_identity="",
+            config_identity=lane.identity,
+        )
+
+    @staticmethod
+    def _command_for_intent(intent: InstrumentationIntent, runner: str) -> list[str]:
+        args = ["am", "instrument", "-w", "-r"]
+        selected_classes = list(intent.classes)
+        for method in intent.methods:
+            if "#" in method:
+                selected_classes.append(method)
+            elif "." in method:
+                class_name, method_name = method.rsplit(".", 1)
+                selected_classes.append(f"{class_name}#{method_name}")
+            else:
+                selected_classes.append(method)
+        if selected_classes:
+            args.extend(["-e", "class", ",".join(selected_classes)])
+        if intent.annotations:
+            args.extend(["-e", "annotation", ",".join(intent.annotations)])
+        if intent.not_annotations:
+            args.extend(["-e", "notAnnotation", ",".join(intent.not_annotations)])
+        if intent.size:
+            args.extend(["-e", "size", intent.size])
+        for key, value in intent.runner_args:
+            args.extend(["-e", key, value])
+        args.append(runner)
+        return args
+
+    def _cleanup_authority(self, request: InstrumentationRequest, report_path: Path, *, plan_id: str) -> dict[str, Any]:
+        """Refresh LIFE ownership/protection roots immediately before cleanup."""
+        try:
+            from ..cleanup_lifecycle import GeneratedOutputDescriptor, build_cleanup_ownership_view
+            descriptors = [
+                GeneratedOutputDescriptor.create(
+                    report_path, owner="android-instrumentation", provider="android", category="instrumentation-report",
+                    producer_id=plan_id or "instrumentation", lifecycle="published", rebuild_cost="high", published=True,
+                )
+            ]
+            evidence_dir = report_path.parent / "android-instrumentation-evidence"
+            if evidence_dir.exists():
+                descriptors.append(GeneratedOutputDescriptor.create(
+                    evidence_dir, owner="android-instrumentation", provider="android", category="instrumentation-failure-evidence",
+                    producer_id=plan_id or "instrumentation", lifecycle="published", rebuild_cost="high", published=True,
+                ))
+            view = build_cleanup_ownership_view(
+                request.project, descriptors, policy_generation="android-x03-instrumentation-cleanup",
+            )
+            return {
+                "repository_id": view.repository_id,
+                "policy_generation": view.policy_generation,
+                "authority_sources": list(view.authority_sources),
+                "reference_ids": [ref.reference_id for ref in view.references],
+                "refreshed_before_mutation": True,
+            }
+        except Exception as exc:
+            return {"refreshed_before_mutation": False, "detail": str(exc)}
+
+    def _cleanup_packages(
+        self, request: InstrumentationRequest, *, device_serial: str, installed_test_package: str,
+        target_package: str, cleanup_authority: Mapping[str, Any], primary_failed: bool,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        results: list[dict[str, Any]] = []
+        errors: list[str] = []
+        if request.keep_installed:
+            return results, errors
+        packages: list[tuple[str, str]] = []
+        if installed_test_package:
+            packages.append(("test-package", installed_test_package))
+        if request.cleanup_app and target_package:
+            packages.append(("target-package", target_package))
+        for role, package in packages:
+            try:
+                # Destination-side revalidation on the exact DeviceLease-bound
+                # serial occurs immediately before destructive uninstall.
+                probe = self.device_ops.shell(["pm", "path", package], serial=device_serial, policy="serial", check=False)
+                cleanup = self.device_ops.uninstall(package, serial=device_serial, policy="serial", check=False)
+                row = {
+                    "role": role, "package": package, "destination": f"android-device:{device_serial}",
+                    "revalidation": probe.as_dict(), "result": cleanup.as_dict(),
+                    "protection_refresh": dict(cleanup_authority),
+                }
+                results.append(row)
+                if not cleanup.ok:
+                    errors.append(cleanup.detail or f"{package} cleanup exited {cleanup.returncode}")
+            except Exception as exc:
+                results.append({
+                    "role": role, "package": package, "destination": f"android-device:{device_serial}",
+                    "status": "failed", "detail": str(exc), "protection_refresh": dict(cleanup_authority),
+                })
+                errors.append(str(exc))
+        return results, errors
+
+    def _persist_receipt(self, request: InstrumentationRequest, receipt: InstrumentationExecutionReceipt) -> tuple[Path, str]:
+        directory = request.project / ".devtool" / "private" / "android" / "instrumentation"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{receipt.receipt_id}.json"
+        encoded = json.dumps(receipt.as_dict(), indent=2, sort_keys=True) + "\n"
+        if path.exists() and path.read_text(encoding="utf-8") != encoded:
+            raise InstrumentationError(f"Instrumentation receipt collision: {path}")
+        path.write_text(encoded, encoding="utf-8")
+        attachment_id = ""
+        run_id = str(self.env.get("DEVTOOL_RUN_ID") or "").strip()
+        if run_id:
+            try:
+                from ..core_runtime import private_run_root
+                from ..run_store import AttachmentDescriptor, RunCatalog
+                catalog = RunCatalog.open(private_run_root(request.project))
+                if run_id not in catalog.runs:
+                    catalog.add_run({"run_id": run_id, "command_id": "android.instrumentation", "target": getattr(self.config, "selected_target", ""), "status": "running"})
+                attachment = AttachmentDescriptor.from_file(
+                    run_id=run_id, path=path, kind="android-instrumentation-receipt", privacy="private", media_type="application/json",
+                )
+                catalog.add_attachment(attachment)
+                catalog.save()
+                attachment_id = attachment.attachment_id
+            except Exception:
+                attachment_id = ""
+        return path, attachment_id
 
     def run(self, request: InstrumentationRequest) -> InstrumentationResult:
         started = time.monotonic()
         policy = normalize_instrumentation_policy(request.policy)
         report_path = request.report or request.project / ".devtool" / "reports" / "android-instrumentation.json"
+        intent = instrumentation_intent(request)
         if policy == "disabled":
-            result = InstrumentationResult(status="skipped", reason="instrumentation policy is disabled", skipped=1, total=1, duration_ms=0)
+            result = InstrumentationResult(
+                status="skipped", reason="instrumentation policy is disabled", intent_id=intent.intent_id,
+                skipped=1, total=1, duration_ms=0,
+            )
             _write_report(result, report_path)
             return result
 
         try:
-            if policy == "required" and request.wait_timeout_seconds > 0:
-                device = self.device_ops.wait_for_device(serial=request.serial, policy=request.device_policy, timeout=request.wait_timeout_seconds)
-            else:
-                device = self.device_ops.select_device(serial=request.serial, policy=request.device_policy)
+            device, environment, _transport, lease = self._canonical_authority(request)
         except Exception as exc:
-            result = self._skip_or_fail(request, str(exc), started)
+            result = self._skip_or_fail(request, str(exc), started, intent_id=intent.intent_id)
             _write_report(result, report_path)
             return result
 
@@ -407,119 +739,158 @@ class AndroidInstrumentationOrchestrator:
         target_package = request.target_package
         if request.runner and "/" in request.runner:
             installed_test_package = request.runner.split("/", 1)[0].strip()
+        artifact_pair = None
+        plan = None
+        install_results: list[dict[str, Any]] = []
+        execution_result: dict[str, Any] = {}
+        evidence: dict[str, Any] = {}
+        result: InstrumentationResult | None = None
         try:
             if not request.skip_build:
                 self._build_with_devtool_builder(request)
 
             app_apk, test_apk = _find_apks(request.project, request.variant)
-            self.device_ops.install(app_apk, serial=device.serial, policy="serial", replace=True, test_only=True)
-            self.device_ops.install(test_apk, serial=device.serial, policy="serial", replace=True, test_only=True)
+            artifact_pair = self._artifact_pair(request, app_apk, test_apk, environment)
+            app_install = self.device_ops.install(app_apk, serial=device.serial, policy="serial", replace=True, test_only=True)
+            install_results.append(app_install.as_dict())
+            test_install = self.device_ops.install(test_apk, serial=device.serial, policy="serial", replace=True, test_only=True)
+            install_results.append(test_install.as_dict())
 
             listed = self.device_ops.shell(["pm", "list", "instrumentation"], serial=device.serial, policy="serial")
-            runner, target_package = _choose_runner(listed.stdout + listed.stderr, configured=request.runner, target_package=target_package)
+            runner, target_package = _choose_runner(
+                listed.stdout + listed.stderr, configured=intent.requested_runner, target_package=target_package,
+            )
             installed_test_package = runner.split("/", 1)[0]
-            args = ["am", "instrument", "-w", "-r"]
-            selected_classes = list(request.classes)
-            for method in request.methods:
-                if "#" in method:
-                    selected_classes.append(method)
-                elif "." in method:
-                    class_name, method_name = method.rsplit(".", 1)
-                    selected_classes.append(f"{class_name}#{method_name}")
-                else:
-                    selected_classes.append(method)
-            if selected_classes:
-                args.extend(["-e", "class", ",".join(selected_classes)])
-            if request.annotations:
-                args.extend(["-e", "annotation", ",".join(request.annotations)])
-            if request.not_annotations:
-                args.extend(["-e", "notAnnotation", ",".join(request.not_annotations)])
-            if request.size:
-                args.extend(["-e", "size", request.size])
-            for key, value in sorted(request.runner_args.items()):
-                args.extend(["-e", str(key), str(value)])
-            args.append(runner)
-            execution = self.device_ops.shell(args, serial=device.serial, policy="serial", timeout=1800, check=False)
+            command = self._command_for_intent(intent, runner)
+            if environment is not None and artifact_pair is not None and lease is not None:
+                plan = resolve_instrumentation_plan(
+                    intent, environment_id=environment.environment_id, artifact_pair_id=artifact_pair.pair_id,
+                    device_lease_id=lease.lease_id, destination_id="local", runner=runner,
+                    target_package=target_package, test_package=installed_test_package, command=command,
+                )
+                command = list(plan.command)
+            execution = self.device_ops.shell(command, serial=device.serial, policy="serial", timeout=1800, check=False)
             output = execution.stdout + "\n" + execution.stderr
-            counts = _parse_counts(output)
-            failed_ids = _parse_failed_ids(output)
-            zero_required = policy == "required" and counts["total"] <= 0
-            failed = execution.returncode != 0 or counts["failed"] > 0 or zero_required
+            counts, failed_ids, failure_kind, classification_reason = _execution_classification(output, execution.returncode)
+            zero_required = policy == "required" and counts["total"] <= 0 and failure_kind != "setup-crash"
+            failed = execution.returncode != 0 or counts["failed"] > 0 or zero_required or bool(failure_kind)
             if zero_required:
                 counts["failed"] = max(1, counts["failed"])
+                failure_kind = failure_kind or "zero-tests"
+                classification_reason = "Required instrumentation executed zero tests"
             result = InstrumentationResult(
                 status="failed" if failed else "passed",
-                reason="Required instrumentation executed zero tests" if zero_required else "",
-                runner=runner,
-                target_package=target_package,
-                test_package=installed_test_package,
-                device_serial=device.serial,
-                device_policy=request.device_policy,
-                app_apk=str(app_apk), test_apk=str(test_apk),
-                **counts,
-                failed_ids=failed_ids,
-                returncode=execution.returncode or (1 if counts["failed"] else 0),
+                reason=classification_reason,
+                failure_kind=failure_kind,
+                intent_id=intent.intent_id,
+                plan_id=plan.plan_id if plan else "",
+                artifact_pair_id=artifact_pair.pair_id if artifact_pair else "",
+                device_lease_id=lease.lease_id if lease else "",
+                runner=runner, target_package=target_package, test_package=installed_test_package,
+                device_serial=device.serial, device_policy=request.device_policy,
+                app_apk=str(app_apk), test_apk=str(test_apk), **counts, failed_ids=failed_ids,
+                returncode=execution.returncode or (1 if failed else 0),
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
+            execution_result = execution.as_dict()
             if failed and (request.capture_logcat_on_failure or request.capture_screenshot_on_failure):
-                result.evidence = capture_failure_evidence(
-                    self.device_ops,
-                    report_dir=report_path.parent / "android-instrumentation-evidence",
-                    package=target_package,
-                    serial=device.serial,
-                    policy="serial",
+                evidence = capture_failure_evidence(
+                    self.device_ops, report_dir=report_path.parent / "android-instrumentation-evidence",
+                    package=target_package, serial=device.serial, policy="serial",
                     capture_logcat=request.capture_logcat_on_failure,
                     capture_screenshot=request.capture_screenshot_on_failure,
                 )
-            _write_report(result, report_path)
-            return result
-        except (InstrumentationError, AndroidDeviceOperationError, OSError) as exc:
-            evidence: dict[str, Any] = {}
+                result.evidence = evidence
+        except (InstrumentationError, AndroidDeviceOperationError, OSError, RuntimeError, ValueError) as exc:
             if request.capture_logcat_on_failure or request.capture_screenshot_on_failure:
                 try:
                     evidence = capture_failure_evidence(
-                        self.device_ops,
-                        report_dir=report_path.parent / "android-instrumentation-evidence",
-                        package=target_package,
-                        serial=device.serial,
-                        policy="serial",
+                        self.device_ops, report_dir=report_path.parent / "android-instrumentation-evidence",
+                        package=target_package, serial=device.serial, policy="serial",
                         capture_logcat=request.capture_logcat_on_failure,
                         capture_screenshot=request.capture_screenshot_on_failure,
                     )
                 except Exception:
                     evidence = {}
-            result = InstrumentationResult(status="failed", reason=str(exc), target_package=target_package, test_package=installed_test_package, device_serial=device.serial, device_policy=request.device_policy, failed=1, returncode=1, duration_ms=int((time.monotonic() - started) * 1000), evidence=evidence)
-            _write_report(result, report_path)
-            return result
-        finally:
-            if not request.keep_installed:
-                cleanup_errors: list[str] = []
-                if installed_test_package:
-                    try:
-                        cleanup = self.device_ops.uninstall(installed_test_package, serial=device.serial, policy="serial", check=False)
-                        if not cleanup.ok:
-                            cleanup_errors.append(cleanup.detail or f"test package cleanup exited {cleanup.returncode}")
-                    except Exception as exc:
-                        cleanup_errors.append(str(exc))
-                if request.cleanup_app and target_package:
-                    try:
-                        cleanup = self.device_ops.uninstall(target_package, serial=device.serial, policy="serial", check=False)
-                        if not cleanup.ok:
-                            cleanup_errors.append(cleanup.detail or f"app cleanup exited {cleanup.returncode}")
-                    except Exception as exc:
-                        cleanup_errors.append(str(exc))
-                if cleanup_errors:
-                    try:
-                        existing = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
-                        if isinstance(existing, dict):
-                            existing["status"] = "failed"
-                            existing["reason"] = (existing.get("reason") or "") + ("; " if existing.get("reason") else "") + "cleanup failed: " + "; ".join(cleanup_errors)
-                            existing["returncode"] = 1
-                            existing["failed"] = max(1, int(existing.get("failed") or 0))
-                            report_path.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-                    except Exception:
-                        pass
+            result = InstrumentationResult(
+                status="failed", reason=str(exc), failure_kind="setup-error", intent_id=intent.intent_id,
+                plan_id=plan.plan_id if plan else "", artifact_pair_id=artifact_pair.pair_id if artifact_pair else "",
+                device_lease_id=lease.lease_id if lease else "", target_package=target_package,
+                test_package=installed_test_package, device_serial=device.serial, device_policy=request.device_policy,
+                failed=1, returncode=1, duration_ms=int((time.monotonic() - started) * 1000), evidence=evidence,
+            )
 
+        assert result is not None
+        cleanup_authority = self._cleanup_authority(request, report_path, plan_id=result.plan_id or intent.intent_id)
+        cleanup_results, cleanup_errors = self._cleanup_packages(
+            request, device_serial=device.serial, installed_test_package=installed_test_package,
+            target_package=target_package, cleanup_authority=cleanup_authority, primary_failed=result.status == "failed",
+        )
+        if request.keep_installed or (not installed_test_package and not (request.cleanup_app and target_package)):
+            result.cleanup_status = "skipped"
+        elif cleanup_errors:
+            result.cleanup_status = "failed"
+            cleanup_detail = "cleanup failed: " + "; ".join(cleanup_errors)
+            if result.status == "failed":
+                # Cleanup is secondary evidence; never replace the authoritative
+                # instrumentation/test/setup failure classification.
+                result.reason = (result.reason + "; " if result.reason else "") + cleanup_detail
+            else:
+                result.status = "failed"
+                result.reason = cleanup_detail
+                result.failure_kind = "cleanup"
+                result.returncode = 1
+        else:
+            result.cleanup_status = "passed"
+
+        snapshot_id = ""
+        snapshot_attachment_id = ""
+        if environment is not None and artifact_pair is not None and lease is not None and self.config is not None:
+            try:
+                from .execution_snapshot import build_android_execution_snapshot, persist_android_execution_snapshot
+                run_id = str(self.env.get("DEVTOOL_RUN_ID") or "").strip()
+                snapshot = build_android_execution_snapshot(
+                    target=self.config.selected_target, action="instrumentation", environment=environment,
+                    gradle_receipts=self.gradle_receipts, artifact_pair=artifact_pair, device_lease=lease,
+                    config_identity=plan.plan_id if plan else intent.intent_id,
+                )
+                snapshot_id = snapshot.snapshot_id
+                if run_id:
+                    _snapshot_path, snapshot_attachment_id = persist_android_execution_snapshot(request.project, run_id, snapshot)
+                result.execution_snapshot_id = snapshot_id
+                result.execution_snapshot_attachment_id = snapshot_attachment_id
+            except Exception as exc:
+                if result.status == "passed":
+                    result.status = "failed"
+                    result.failure_kind = "snapshot"
+                    result.reason = f"execution snapshot failed: {exc}"
+                    result.returncode = 1
+                else:
+                    result.reason = (result.reason + "; " if result.reason else "") + f"execution snapshot failed: {exc}"
+
+        receipt_payload = {
+            "intent_id": intent.intent_id, "plan_id": result.plan_id, "status": result.status,
+            "failure_kind": result.failure_kind, "device_lease_id": result.device_lease_id,
+            "artifact_pair_id": result.artifact_pair_id, "destination_id": "local",
+            "install_results": install_results, "execution_result": execution_result, "evidence": evidence,
+            "cleanup_results": cleanup_results, "cleanup_authority": cleanup_authority,
+            "snapshot_id": snapshot_id, "snapshot_attachment_id": snapshot_attachment_id,
+        }
+        receipt = InstrumentationExecutionReceipt(receipt_id=_stable(receipt_payload), **receipt_payload)
+        try:
+            self._persist_receipt(request, receipt)
+            result.receipt_id = receipt.receipt_id
+        except Exception as exc:
+            if result.status == "passed":
+                result.status = "failed"
+                result.failure_kind = "receipt"
+                result.reason = f"instrumentation receipt failed: {exc}"
+                result.returncode = 1
+            else:
+                result.reason = (result.reason + "; " if result.reason else "") + f"instrumentation receipt failed: {exc}"
+        result.duration_ms = int((time.monotonic() - started) * 1000)
+        _write_report(result, report_path)
+        return result
 
 def request_from_config(config: ProjectConfig, *, classes: Sequence[str] = (), methods: Sequence[str] = (), annotations: Sequence[str] = (), not_annotations: Sequence[str] = (), size: str = "", runner_args: Mapping[str, str] | None = None, skip_build: bool = False, report: Path | None = None) -> InstrumentationRequest:
     android = config.runner_options.get("android", {})
@@ -642,8 +1013,10 @@ def main(raw_args: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "AndroidInstrumentationOrchestrator", "InstrumentationError", "InstrumentationRequest", "InstrumentationResult",
+    "InstrumentationIntent", "ResolvedInstrumentationPlan", "InstrumentationExecutionReceipt",
     "InstrumentationUnavailable", "INSTRUMENTATION_POLICIES", "build_parser", "instrumentation_config", "main",
-    "normalize_instrumentation_policy", "request_from_config", "resolve_instrumentation_policy", "_parse_counts", "_parse_failed_ids",
+    "instrumentation_intent", "resolve_instrumentation_plan", "normalize_instrumentation_policy",
+    "request_from_config", "resolve_instrumentation_policy", "_parse_counts", "_parse_failed_ids", "_execution_classification",
 ]
 
 if __name__ == "__main__":
