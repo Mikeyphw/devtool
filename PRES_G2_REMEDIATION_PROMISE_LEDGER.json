@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "boundary": "PRES-G2-remediation",
+  "full_plan_position": null,
+  "gate_target": "PRES-G2",
+  "promises": [
+    "panel-local-source-degradation",
+    "stable-multi-run-selection",
+    "logs-diagnostics-semantic-separation",
+    "registry-backed-visible-actions",
+    "explicit-disabled-action-reasons",
+    "ctrl-c-shared-cancel-semantics",
+    "q-escape-exit-without-cancel",
+    "terminal-restoration-lifetime",
+    "overlays-domain-authority-page",
+    "no-guessed-shell-command-actions",
+    "renderer-independent-read-only-once"
+  ]
+}

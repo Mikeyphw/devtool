@@ -240,6 +240,12 @@ description = "Run the PRES-X08 live Textual control-center adoption workflow"
 workflow = "roadmap-pres-x08"
 target = "devtool"
 
+# PRES-G2 pre-gate interaction/reliability remediation.
+[wrapper.commands.pres-g2-remediation]
+description = "Run the PRES-G2 interaction/reliability remediation workflow"
+workflow = "roadmap-pres-g2-remediation"
+target = "devtool"
+
 # LIFE-X01 immediate lifecycle safety boundary.
 [wrapper.commands.life-x01]
 description = "Run the LIFE-X01 immediate lifecycle safety workflow"
@@ -885,6 +891,13 @@ roadmap-pres-x08 = [
   { id = "live-control-center", ref = "test:roadmap-pres-x08-live-control-center", depends_on = ["syntax"] },
   { id = "pres-regression", ref = "test:roadmap-pres-x08-pres-regression", depends_on = ["live-control-center"] },
   { id = "runtime-once", ref = "test:roadmap-pres-x08-runtime-once", depends_on = ["pres-regression"] },
+]
+
+roadmap-pres-g2-remediation = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "interaction-remediation", ref = "test:roadmap-pres-g2-remediation-interaction", depends_on = ["syntax"] },
+  { id = "x08-regression", ref = "test:roadmap-pres-g2-remediation-x08-regression", depends_on = ["interaction-remediation"] },
+  { id = "runtime-once", ref = "test:roadmap-pres-g2-remediation-runtime-once", depends_on = ["x08-regression"] },
 ]
 
 roadmap-life-x01 = [
@@ -3145,6 +3158,41 @@ name = "PRES-X08 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 480
 command = ["./devtoolw", "pres-x08"]
+
+
+# PRES-G2 pre-gate interaction/reliability remediation.
+[[test]]
+id = "roadmap-pres-g2-remediation-interaction"
+name = "PRES-G2 interaction and reliability remediation contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_pres_g2_interaction_reliability_remediation.py"]
+
+[[test]]
+id = "roadmap-pres-g2-remediation-x08-regression"
+name = "PRES-G2 retained PRES-X08 control-center regression"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x08_textual_control_center.py",
+  "tests/test_pres_x07_textual_replacement_hardening.py",
+  "tests/test_pres_g1_textual_replacement_proof_gate.py",
+]
+
+[[test]]
+id = "roadmap-pres-g2-remediation-runtime-once"
+name = "PRES-G2 renderer-independent once projection"
+runner = "command"
+timeout_seconds = 120
+command = ["python", "-m", "devtool.tui_textual_runtime", "--once", "--page", "overlays", "--width", "80"]
+
+[[test]]
+id = "roadmap-pres-g2-remediation-artifact-bootstrap"
+name = "PRES-G2 remediation artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 480
+command = ["./devtoolw", "pres-g2-remediation"]
 
 
 # LIFE-X01 immediate lifecycle safety. LIFE-X02 owns the complete canonical

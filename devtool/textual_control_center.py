@@ -11,9 +11,66 @@ from hashlib import sha256
 import json
 from typing import Any, Iterable, Mapping, Sequence
 
-PAGES = ("dashboard", "runs", "logs", "diagnostics", "history", "targets", "workers", "validation", "artifacts", "evidence")
-NAV_KEYS = {"d":"dashboard", "u":"runs", "l":"logs", "g":"diagnostics", "h":"history", "t":"targets", "w":"workers", "v":"validation", "s":"artifacts", "e":"evidence"}
+PAGES = ("dashboard", "runs", "logs", "diagnostics", "history", "targets", "workers", "validation", "artifacts", "overlays", "evidence")
+NAV_KEYS = {"d":"dashboard", "u":"runs", "l":"logs", "g":"diagnostics", "h":"history", "t":"targets", "w":"workers", "v":"validation", "s":"artifacts", "o":"overlays", "e":"evidence"}
 TERMINAL_STATES = {"passed", "failed", "cancelled", "blocked", "error", "complete", "completed"}
+
+PANEL_AUTHORITIES: dict[str, str] = {
+    "dashboard": "RUN/PRES",
+    "runs": "RUN/EXO",
+    "logs": "RUN",
+    "diagnostics": "EXO",
+    "history": "RUN",
+    "targets": "EXEC/WRAP/TEST",
+    "workers": "DIST/SSH",
+    "validation": "validation",
+    "artifacts": "LIFE",
+    "overlays": "LIFE",
+    "evidence": "RUN/CORE",
+}
+
+@dataclass(frozen=True)
+class OperatorActionSpec:
+    id: str
+    authority: str
+    destructive: bool = False
+    requires_run: bool = False
+    requires_node: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
+ACTION_SPECS: dict[str, OperatorActionSpec] = {
+    "cancel": OperatorActionSpec("cancel", "EXO/RUN", destructive=True, requires_run=True),
+    "retry": OperatorActionSpec("retry", "EXO/RUN", requires_run=True),
+    "rerun": OperatorActionSpec("rerun", "EXO/RUN", requires_run=True),
+    "resume": OperatorActionSpec("resume", "EXO/RUN", requires_run=True),
+    "logs.open": OperatorActionSpec("logs.open", "RUN", requires_run=True),
+    "workflow.inspect": OperatorActionSpec("workflow.inspect", "EXEC/WRAP"),
+    "target.launch": OperatorActionSpec("target.launch", "EXEC/WRAP/TEST"),
+    "artifact.apply": OperatorActionSpec("artifact.apply", "LIFE", destructive=True),
+    "overlay.apply": OperatorActionSpec("overlay.apply", "LIFE", destructive=True),
+    "rollback": OperatorActionSpec("rollback", "LIFE", destructive=True),
+    "recover": OperatorActionSpec("recover", "LIFE", destructive=True),
+    "worker.cancel": OperatorActionSpec("worker.cancel", "DIST/SSH", destructive=True),
+    "worker.resume": OperatorActionSpec("worker.resume", "DIST/SSH"),
+    "worker.recover": OperatorActionSpec("worker.recover", "DIST/SSH", destructive=True),
+}
+
+PAGE_ACTIONS: dict[str, tuple[str, ...]] = {
+    "dashboard": (),
+    "runs": ("cancel", "retry", "rerun", "resume"),
+    "logs": ("logs.open",),
+    "diagnostics": ("logs.open",),
+    "history": ("rerun",),
+    "targets": ("workflow.inspect", "target.launch"),
+    "workers": ("worker.cancel", "worker.resume", "worker.recover"),
+    "validation": (),
+    "artifacts": ("artifact.apply",),
+    "overlays": ("overlay.apply", "rollback", "recover"),
+    "evidence": (),
+}
 
 @dataclass(frozen=True)
 class ControlCenterCapabilities:
@@ -53,6 +110,29 @@ class ControlActionAck:
         return {"request_id": self.request_id, "accepted": self.accepted, "status": "accepted" if self.accepted else "rejected", "reason": self.reason}
 
 @dataclass
+class TerminalRestorationGuard:
+    """Small explicit lifetime guard for renderer-owned terminal state.
+
+    Textual remains responsible for the actual terminal driver.  This guard makes
+    Devtool's ownership boundary observable and guarantees our runtime always
+    records restoration through normal return and exceptions.
+    """
+
+    active: bool = False
+    restored: bool = False
+
+    def __enter__(self) -> "TerminalRestorationGuard":
+        self.active = True
+        self.restored = False
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        self.active = False
+        self.restored = True
+        return False
+
+
+@dataclass
 class TextualControlCenter:
     max_events: int = 2048
     max_log_lines: int = 4000
@@ -65,6 +145,7 @@ class TextualControlCenter:
     events: list[dict[str, Any]] = field(default_factory=list)
     logs: list[dict[str, Any]] = field(default_factory=list)
     dropped_progress_updates: int = 0
+    panel_failures: dict[str, str] = field(default_factory=dict)
     _progress_slots: dict[tuple[str | None, str | None], int] = field(default_factory=dict, repr=False)
 
     def navigate(self, page: str) -> None:
@@ -101,13 +182,64 @@ class TextualControlCenter:
         if run_id is not None: self.selected_run = run_id
         if node_id is not None: self.selected_node = node_id
 
+    def degrade_panel(self, page: str, reason: str) -> None:
+        if page not in PAGES:
+            raise ValueError(f"unknown control-center page: {page}")
+        self.panel_failures[page] = str(reason)
+
+    def recover_panel(self, page: str) -> None:
+        self.panel_failures.pop(page, None)
+
+    def action_availability(self, action_id: str) -> tuple[bool, str | None]:
+        spec = ACTION_SPECS.get(action_id)
+        if spec is None:
+            return False, "unsupported-action"
+        if spec.requires_run and not self.selected_run:
+            return False, "select-a-run"
+        if spec.requires_node and not self.selected_node:
+            return False, "select-a-node"
+        return True, None
+
+    def visible_actions(self, page: str | None = None) -> list[dict[str, Any]]:
+        current = page or self.page
+        if current not in PAGES:
+            raise ValueError(f"unknown control-center page: {current}")
+        rows: list[dict[str, Any]] = []
+        for action_id in PAGE_ACTIONS[current]:
+            spec = ACTION_SPECS[action_id]
+            enabled, disabled_reason = self.action_availability(action_id)
+            row = spec.as_dict()
+            row.update({"enabled": enabled, "disabled_reason": disabled_reason})
+            rows.append(row)
+        return rows
+
     def action_request(self, action_id: str, *, confirmed: bool = False) -> ControlActionRequest:
-        authority = _action_authority(action_id)
-        destructive = action_id in {"cancel", "artifact.apply", "overlay.apply", "rollback", "recover"}
-        if destructive and not confirmed:
+        spec = ACTION_SPECS.get(action_id)
+        if spec is None:
+            raise KeyError(f"unsupported control-center action: {action_id}")
+        enabled, reason = self.action_availability(action_id)
+        if not enabled:
+            raise RuntimeError(f"{action_id} disabled: {reason}")
+        if spec.destructive and not confirmed:
             raise PermissionError(f"{action_id} requires canonical confirmation")
         payload = f"{action_id}\0{self.selected_run or ''}\0{self.selected_node or ''}\0{len(self.events)}"
-        return ControlActionRequest(sha256(payload.encode()).hexdigest()[:20], action_id, self.selected_run, self.selected_node, destructive, authority)
+        return ControlActionRequest(sha256(payload.encode()).hexdigest()[:20], action_id, self.selected_run, self.selected_node, spec.destructive, spec.authority)
+
+    def handle_key(self, key: str, *, confirmed: bool = False) -> dict[str, Any]:
+        normalized = str(key).strip().lower()
+        if normalized in {"q", "esc", "escape"}:
+            return {"kind": "exit", "cancel_requested": False, "key": normalized}
+        if normalized in {"ctrl+c", "^c"}:
+            enabled, reason = self.action_availability("cancel")
+            if not enabled:
+                return {"kind": "disabled", "action_id": "cancel", "reason": reason}
+            if not confirmed:
+                return {"kind": "confirmation-required", "action_id": "cancel"}
+            return {"kind": "action-request", "request": self.action_request("cancel", confirmed=True).as_dict()}
+        if normalized in NAV_KEYS:
+            self.navigate(NAV_KEYS[normalized])
+            return {"kind": "navigate", "page": self.page}
+        return {"kind": "unhandled", "key": normalized}
 
     def snapshot(self, *, width: int = 100, height: int = 28, term: str = "xterm", clipboard_available: bool = False, hyperlinks: bool = True, screen_reader: bool = False, reduced_motion: bool = False) -> dict[str, Any]:
         caps = capabilities(width=width, height=height, term=term, clipboard_available=clipboard_available, hyperlinks=hyperlinks, screen_reader=screen_reader, reduced_motion=reduced_motion)
@@ -120,6 +252,8 @@ class TextualControlCenter:
             "runs": runs, "attention": attention[:50],
             "log_lines": [] if self.paused else self.logs[-min(self.max_log_lines, 500):],
             "follow_logs": self.follow_logs, "paused": self.paused,
+            "panel_health": {page: {"status": "degraded" if page in self.panel_failures else "healthy", "reason": self.panel_failures.get(page), "authority": PANEL_AUTHORITIES[page]} for page in PAGES},
+            "visible_actions": self.visible_actions(),
             "capabilities": caps.as_dict(), "dropped_progress_updates": self.dropped_progress_updates,
             "source_authorities": ["RUN", "EXO", "RER", "validation", "ENV", "LIFE", "DIST", "TEST", "RMP", "CFG"],
             "owns_truth": False,
@@ -169,12 +303,38 @@ def _runs(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _action_authority(action_id: str) -> str:
-    if action_id in {"cancel","retry","rerun","resume"}: return "EXO/RUN"
-    if action_id.startswith(("artifact.","overlay.")) or action_id in {"rollback","recover"}: return "LIFE"
-    if action_id.startswith("worker."): return "DIST/SSH"
-    if action_id.startswith("test."): return "TEST"
-    return "PRES-navigation"
+    spec = ACTION_SPECS.get(action_id)
+    if spec is None:
+        raise KeyError(f"unsupported control-center action: {action_id}")
+    return spec.authority
 
+
+def render_control_center_text(snapshot: Mapping[str, Any]) -> str:
+    """Render a bounded plain-text view from the canonical control-center snapshot."""
+    page = str(snapshot.get("page") or "dashboard")
+    health = dict(snapshot.get("panel_health") or {}).get(page, {})
+    lines = [
+        "Devtool Textual Control Center",
+        f"Page: {page}",
+        f"Panel: {health.get('status', 'unknown')} · authority={health.get('authority', 'unknown')}",
+    ]
+    if health.get("reason"):
+        lines.append(f"Panel issue: {health['reason']}")
+    selected_run = snapshot.get("selected_run")
+    selected_node = snapshot.get("selected_node")
+    lines.append(f"Selection: run={selected_run or '-'} node={selected_node or '-'}")
+    lines.append(f"Runs: {len(snapshot.get('runs') or [])} · attention={len(snapshot.get('attention') or [])}")
+    if page == "logs":
+        lines.append(f"Log lines: {len(snapshot.get('log_lines') or [])} · paused={bool(snapshot.get('paused'))} · follow={bool(snapshot.get('follow_logs'))}")
+    actions = list(snapshot.get("visible_actions") or [])
+    if actions:
+        rendered=[]
+        for action in actions:
+            state="enabled" if action.get("enabled") else f"disabled:{action.get('disabled_reason')}"
+            rendered.append(f"{action.get('id')}[{state}]@{action.get('authority')}")
+        lines.append("Actions: " + ", ".join(rendered))
+    lines.append("Keys: " + " ".join(f"{key}={page_name}" for key,page_name in NAV_KEYS.items()) + " ctrl+c=cancel q/esc=exit ?=help")
+    return "\n".join(lines)
 
 def _digest(payload: Mapping[str, Any]) -> str:
     return sha256(json.dumps(payload,sort_keys=True,separators=(",",":"),default=str).encode()).hexdigest()

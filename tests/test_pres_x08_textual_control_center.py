@@ -4,7 +4,7 @@ from devtool.textual_control_center import PAGES, NAV_KEYS, TextualControlCenter
 
 
 def test_control_center_has_complete_operator_pages_and_stable_keys():
-    assert set(PAGES) == {"dashboard","runs","logs","diagnostics","history","targets","workers","validation","artifacts","evidence"}
+    assert set(PAGES) == {"dashboard","runs","logs","diagnostics","history","targets","workers","validation","artifacts","overlays","evidence"}
     assert NAV_KEYS["l"] == "logs" and NAV_KEYS["w"] == "workers" and NAV_KEYS["s"] == "artifacts"
     assert len(NAV_KEYS) == len(set(NAV_KEYS))
 

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "producer": "PRES-G2-remediation",
+  "consumer": "PRES-G2",
+  "obligations": [
+    "fresh-process-read-only-observation",
+    "panel-local-degradation-proof",
+    "stable-selection-proof",
+    "action-router-and-confirmation-proof",
+    "terminal-restoration-proof",
+    "operator-workflow-no-guessed-command-proof"
+  ]
+}
