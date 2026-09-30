@@ -78,6 +78,12 @@ description = "Run the ENV-X04 environment lifecycle adoption workflow"
 workflow = "roadmap-env-x04"
 target = "devtool"
 
+# ENV-X05 optional Gradle takeover broker / real-launcher authority.
+[wrapper.commands.env-x05]
+description = "Run the ENV-X05 Gradle takeover broker and launcher authority workflow"
+workflow = "roadmap-env-x05"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
@@ -586,6 +592,12 @@ roadmap-env-x04 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "environment-lifecycle", ref = "test:roadmap-env-x04-environment-lifecycle", depends_on = ["syntax"] },
   { id = "exec-adoption-regression", ref = "test:roadmap-env-x04-exec-adoption-regression", depends_on = ["environment-lifecycle"] },
+]
+
+roadmap-env-x05 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "takeover-authority", ref = "test:roadmap-env-x05-gradle-takeover", depends_on = ["syntax"] },
+  { id = "planner-regression", ref = "test:roadmap-env-x05-planner-regression", depends_on = ["takeover-authority"] },
 ]
 
 roadmap-pres-x01 = [
@@ -1971,6 +1983,39 @@ name = "ENV-X04 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 420
 command = ["./devtoolw", "env-x04"]
+
+# ENV-X05 Gradle takeover broker / real-launcher authority. No real network
+# Gradle build is required here; GRADLE-TAKEOVER-G1 owns authoritative real
+# process convergence after EXEC-X05 lands.
+[[test]]
+id = "roadmap-env-x05-gradle-takeover"
+name = "ENV-X05 Gradle takeover and launcher authority contracts"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x05_gradle_takeover.py",
+]
+
+[[test]]
+id = "roadmap-env-x05-planner-regression"
+name = "ENV-X05 retained canonical Gradle planner/environment regression"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_env_x03_gradle_planner.py",
+  "tests/test_env_x03_gradle_receipts.py",
+  "tests/test_env_x04_environment_lifecycle.py",
+  "tests/test_ov03_config_execution_contracts.py",
+]
+
+[[test]]
+id = "roadmap-env-x05-artifact-bootstrap"
+name = "ENV-X05 artifact bootstrap into canonical wrapper workflow"
+runner = "command"
+timeout_seconds = 600
+command = ["./devtoolw", "env-x05"]
 
 # PRES-X01 presentation projection foundation. This overlay keeps rendering
 # surfaces as projections over RUN/EXO/RER/validation/ENV references; it does

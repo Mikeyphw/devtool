@@ -721,6 +721,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    gradle_cmd = subparsers.add_parser("gradle", help="Inspect and control canonical Gradle execution")
+    gradle_sub = gradle_cmd.add_subparsers(dest="gradle_command", required=True)
+    gradle_takeover = gradle_sub.add_parser("takeover", help="Manage optional Gradle takeover/interception")
+    takeover_sub = gradle_takeover.add_subparsers(dest="gradle_takeover_command", required=True)
+    for takeover_action in ("status", "doctor", "explain", "disable"):
+        takeover_parser = takeover_sub.add_parser(takeover_action)
+        takeover_parser.add_argument("--json", action="store_true", help="Emit structured JSON")
+    takeover_enable = takeover_sub.add_parser("enable")
+    takeover_enable.add_argument("--mode", choices=("observe", "manage", "strict"), default="manage")
+    takeover_enable.add_argument("--scope", choices=("devtool", "shell", "both"), default="both")
+    takeover_enable.add_argument("--json", action="store_true", help="Emit structured JSON")
+    takeover_intercept = takeover_sub.add_parser("intercept", help=argparse.SUPPRESS)
+    takeover_intercept.add_argument("--origin", default="shell", choices=("shell", "devtool", "wrapper", "invoke", "workflow", "validation", "testspec", "artifact", "android", "ssh", "federation"))
+    takeover_intercept.add_argument("--intent", default="work", choices=("work", "probe", "control"))
+    takeover_intercept.add_argument("--requested-launcher", default="gradle")
+    takeover_intercept.add_argument("gradle_args", nargs=argparse.REMAINDER)
+    gradle_real = gradle_sub.add_parser("real", help="Run the authoritative real Gradle launcher, bypassing takeover planning for diagnostics")
+    gradle_real.add_argument("--launcher", default="auto", help="auto, wrapper, system, gradle, or an explicit launcher path")
+    gradle_real.add_argument("gradle_args", nargs=argparse.REMAINDER)
+
     for name, aliases in [
         ("restore", ["rs"]),
         ("build", ["b"]),
@@ -14074,6 +14094,98 @@ def _handle_wrapper_command(args: argparse.Namespace) -> int:
     print(f"Error: Unknown wrapper command: {action}", file=sys.stderr)
     return 2
 
+def _handle_gradle_command(args: argparse.Namespace) -> int:
+    from .gradle_takeover import (
+        GradleTakeoverError,
+        disable_takeover,
+        enable_takeover,
+        execute_intercepted_gradle,
+        execute_real_gradle,
+        takeover_doctor,
+        takeover_explain,
+        takeover_status,
+    )
+
+    config = _load_command_config(args)
+    action = str(getattr(args, "gradle_command", "") or "")
+    try:
+        if action == "real":
+            raw = list(getattr(args, "gradle_args", []) or [])
+            if raw and raw[0] == "--":
+                raw = raw[1:]
+            return execute_real_gradle(config, raw, requested_launcher=str(getattr(args, "launcher", "auto") or "auto"))
+        if action != "takeover":
+            raise GradleTakeoverError(f"Unknown Gradle command: {action}")
+        takeover_action = str(getattr(args, "gradle_takeover_command", "") or "")
+        if takeover_action == "enable":
+            payload = enable_takeover(
+                config,
+                mode=str(getattr(args, "mode", "manage") or "manage"),
+                scope=str(getattr(args, "scope", "both") or "both"),
+            )
+        elif takeover_action == "disable":
+            payload = disable_takeover(config)
+        elif takeover_action == "doctor":
+            payload = takeover_doctor(config)
+        elif takeover_action == "explain":
+            payload = takeover_explain(config)
+        elif takeover_action == "status":
+            payload = takeover_status(config)
+        elif takeover_action == "intercept":
+            raw = list(getattr(args, "gradle_args", []) or [])
+            if raw and raw[0] == "--":
+                raw = raw[1:]
+            return execute_intercepted_gradle(
+                config,
+                raw,
+                origin=str(getattr(args, "origin", "shell") or "shell"),
+                intent=str(getattr(args, "intent", "work") or "work"),
+                requested_launcher=str(getattr(args, "requested_launcher", "gradle") or "gradle"),
+            )
+        else:
+            raise GradleTakeoverError(f"Unknown Gradle takeover command: {takeover_action}")
+    except GradleTakeoverError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        if takeover_action == "enable":
+            state = payload.get("state", {}) if isinstance(payload, dict) else {}
+            print(f"Gradle takeover enabled: mode={state.get('mode')} scope={state.get('scope')}")
+            shell = payload.get("shell", {}) if isinstance(payload, dict) else {}
+            if isinstance(shell, dict) and shell.get("adapter"):
+                print(f"Shell adapter: . {shell['adapter']}")
+        elif takeover_action == "disable":
+            print("Gradle takeover disabled.")
+        elif takeover_action == "doctor":
+            print("Gradle takeover doctor: " + ("ok" if payload.get("ok") else "attention required"))
+            for issue in payload.get("issues", []):
+                print(f"- {issue}")
+        elif takeover_action == "explain":
+            print(str(payload.get("summary", "")))
+            truth = payload.get("truth", {})
+            if isinstance(truth, dict):
+                print(f"Planner authority: {truth.get('planner_authority')}")
+                print(f"Bare gradle shell interception: {truth.get('bare_gradle_intercepted')}")
+                print(f"Direct ./gradlew shell interception: {truth.get('direct_dot_gradlew_intercepted')}")
+                print(f"Nested-script interception: {truth.get('nested_script_intercepted')}")
+        else:
+            cfg = payload.get("config", {}) if isinstance(payload, dict) else {}
+            print(f"Gradle takeover: enabled={cfg.get('enabled')} mode={cfg.get('mode')} scope={cfg.get('scope')}")
+            launcher = payload.get("real_launcher", {}) if isinstance(payload, dict) else {}
+            if isinstance(launcher, dict):
+                if launcher.get("error"):
+                    print(f"Real launcher: unavailable ({launcher.get('error')})")
+                elif launcher.get("executable"):
+                    print(f"Real launcher: {launcher.get('executable')}")
+            shell = payload.get("shell", {}) if isinstance(payload, dict) else {}
+            if isinstance(shell, dict) and shell.get("adapter_installed"):
+                print(f"Shell adapter: . {shell.get('adapter')}")
+    return 0
+
+
 def _apply_ui_cli_overrides(args: argparse.Namespace) -> None:
     mapping = {
         "ui_profile": "DEVTOOL_UI_PROFILE",
@@ -14279,6 +14391,9 @@ def _main_after_parse(
     if auto_chroot_rc is not None:
         return auto_chroot_rc
     _print_chroot_indicator_once(args)
+
+    if args.command == "gradle":
+        return _handle_gradle_command(args)
 
     if args.command in {"ai-prompt", "ap"}:
         config = _load_command_config(args)

@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "from": "ENV-X05 (34/70)",
+  "to": "EXEC-X05 (35/70)",
+  "obligations": [
+    "Route every directly owned Devtool Gradle ingress through broker_gradle_invocation before EXO/RER identity is finalized.",
+    "Canonicalize representable raw gradle/gradlew command vectors without double-planning typed Gradle jobs.",
+    "Preserve exact argv, cwd, semantic environment, typed origin, destination identity and takeover receipt linkage.",
+    "Keep PROBE and CONTROL bypasses typed and recursion-safe through the ENV-X05 real-launcher authority.",
+    "Handle opaque shell Gradle escapes truthfully; strict mode must reject known unrepresentable escapes rather than claiming coverage.",
+    "Project takeover origin, requested launcher, real launcher, mode/scope, coverage and receipt linkage into RUN/EXO evidence without creating a second truth store."
+  ]
+}

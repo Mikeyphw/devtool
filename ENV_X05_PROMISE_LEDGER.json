@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "position": "34/70",
+  "gate_window": "1/3",
+  "scope": "ENV-X05",
+  "status": "IMPLEMENTED_PENDING_QUALIFIED_HOST_APPLY",
+  "delivered_promises": [
+    "GT-P001",
+    "GT-P002",
+    "GT-P003",
+    "GT-P004",
+    "GT-P005",
+    "GT-P006",
+    "GT-P007",
+    "GT-P008",
+    "GT-P009",
+    "GT-P010",
+    "GT-P011",
+    "GT-P012"
+  ],
+  "local_validation": {
+    "focused": "16 passed",
+    "retained_gradle_environment": "79 passed",
+    "canonical_workflow_total": "95 passed, 0 failed, 0 warnings",
+    "compileall": "PASS"
+  },
+  "baseline_non_owning_findings": [
+    {
+      "owner": "TEST/LIFE regression maintenance",
+      "summary": "tests/test_cli.py has eight pre-existing failures on the post-LIFE-G1 baseline, including tasker_progress mock signature drift, legacy artifact-validation fixture assumptions, and an unbound config fixture path.",
+      "env_x05_regression": false
+    }
+  ],
+  "next_overlay": "EXEC-X05 (35/70)",
+  "remaining_before_gate": 1,
+  "gate": "GRADLE-TAKEOVER-G1 (36/70)",
+  "next_major_scope_after_gate": "ANDROID-X01 (37/70)"
+}
