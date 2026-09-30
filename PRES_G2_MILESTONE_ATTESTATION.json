@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "gate_id": "PRES-G2",
+  "full_plan_position": 54,
+  "status": "PENDING_NATIVE_TERMUX_QUALIFICATION",
+  "owns_truth": false,
+  "prerequisites": ["PRES-X08", "PRES-G2-remediation"],
+  "proof_scope": [
+    "read-only-observation",
+    "panel-local-degradation",
+    "stable-selection",
+    "logs-diagnostics-separation",
+    "canonical-action-routing",
+    "control-key-race-semantics",
+    "terminal-restoration",
+    "domain-authority-pages",
+    "collision-free-keymap",
+    "fresh-process-once"
+  ]
+}

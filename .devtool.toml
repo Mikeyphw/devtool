@@ -246,6 +246,12 @@ description = "Run the PRES-G2 interaction/reliability remediation workflow"
 workflow = "roadmap-pres-g2-remediation"
 target = "devtool"
 
+# PRES-G2 authoritative interaction/reliability milestone gate.
+[wrapper.commands.pres-g2]
+description = "Run the PRES-G2 interaction/reliability milestone gate"
+workflow = "roadmap-pres-g2"
+target = "devtool"
+
 # LIFE-X01 immediate lifecycle safety boundary.
 [wrapper.commands.life-x01]
 description = "Run the LIFE-X01 immediate lifecycle safety workflow"
@@ -898,6 +904,14 @@ roadmap-pres-g2-remediation = [
   { id = "interaction-remediation", ref = "test:roadmap-pres-g2-remediation-interaction", depends_on = ["syntax"] },
   { id = "x08-regression", ref = "test:roadmap-pres-g2-remediation-x08-regression", depends_on = ["interaction-remediation"] },
   { id = "runtime-once", ref = "test:roadmap-pres-g2-remediation-runtime-once", depends_on = ["x08-regression"] },
+]
+
+roadmap-pres-g2 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "gate-proof", ref = "test:roadmap-pres-g2-interaction-reliability-gate", depends_on = ["syntax"] },
+  { id = "remediation-regression", ref = "test:roadmap-pres-g2-remediation-interaction", depends_on = ["gate-proof"] },
+  { id = "pres-window-regression", ref = "test:roadmap-pres-g2-pres-window-regression", depends_on = ["remediation-regression"] },
+  { id = "fresh-process-once", ref = "test:roadmap-pres-g2-fresh-process-once", depends_on = ["pres-window-regression"] },
 ]
 
 roadmap-life-x01 = [
@@ -3193,6 +3207,44 @@ name = "PRES-G2 remediation artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 480
 command = ["./devtoolw", "pres-g2-remediation"]
+
+
+# PRES-G2 authoritative interaction/reliability milestone gate.
+[[test]]
+id = "roadmap-pres-g2-interaction-reliability-gate"
+name = "PRES-G2 interaction/reliability milestone proof"
+runner = "pytest"
+timeout_seconds = 180
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_pres_g2_interaction_reliability_gate.py"]
+
+[[test]]
+id = "roadmap-pres-g2-pres-window-regression"
+name = "PRES-G2 retained presentation interaction window"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_x04_textual_tui.py",
+  "tests/test_pres_x05_textual_feature_parity.py",
+  "tests/test_pres_x06_textual_default_replacement.py",
+  "tests/test_pres_x07_textual_replacement_hardening.py",
+  "tests/test_pres_x08_textual_control_center.py",
+  "tests/test_pres_g1_textual_replacement_proof_gate.py",
+]
+
+[[test]]
+id = "roadmap-pres-g2-fresh-process-once"
+name = "PRES-G2 fresh-process non-interactive control-center proof"
+runner = "command"
+timeout_seconds = 120
+command = ["python", "-m", "devtool.tui_textual_runtime", "--once", "--page", "workers", "--width", "44"]
+
+[[test]]
+id = "roadmap-pres-g2-artifact-bootstrap"
+name = "PRES-G2 artifact bootstrap into canonical wrapper gate"
+runner = "command"
+timeout_seconds = 600
+command = ["./devtoolw", "pres-g2"]
 
 
 # LIFE-X01 immediate lifecycle safety. LIFE-X02 owns the complete canonical
