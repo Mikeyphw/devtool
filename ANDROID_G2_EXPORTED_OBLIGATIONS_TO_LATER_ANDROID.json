@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "from": "ANDROID-G2 (46/70)",
+  "next_campaign_scope": "DIST-X03 (47/70)",
+  "next_android_scope": "ANDROID-X04 (51/70)",
+  "obligations": [
+    "Preserve G2's current-RUN Gradle receipt bridge for every future instrumentation frontend; do not reconstruct producer lineage from paths.",
+    "Preserve selected-target and instrumentation lane/module identity when instrumentation is delegated through project-runner or remote/provider boundaries.",
+    "Keep AndroidTransport destination identity aligned across ResolvedInstrumentationPlan, AndroidExecutionSnapshot and InstrumentationExecutionReceipt.",
+    "Keep setup/process crashes distinct from genuine test failures in CLI, validation, RUN evidence and presentation surfaces.",
+    "Keep instrumentation cleanup destination-local, DeviceLease-bound, LIFE-owned and secondary to an existing primary instrumentation failure."
+  ]
+}

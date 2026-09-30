@@ -213,6 +213,45 @@ def resolve_instrumentation_policy(config: ProjectConfig | None) -> str:
     return normalize_instrumentation_policy(instrumentation_config(config).get("policy"))
 
 
+def gradle_receipts_from_current_run(repo_root: Path, *, run_id: str) -> tuple[dict[str, Any], ...]:
+    """Recover canonical Gradle receipts already emitted in the active RUN.
+
+    Project-runner instrumentation executes the Gradle producer spec and the
+    device spec as separate processes.  The execution journal is the canonical
+    cross-process hand-off: it already contains the TaskFinished metadata with
+    the GradleExecutionReceipt, so instrumentation must consume that authority
+    rather than reconstructing or dropping producer lineage.
+    """
+    resolved_run = str(run_id or "").strip()
+    if not resolved_run:
+        return ()
+    try:
+        from ..core.execution_recovery import load_execution_journal
+        from ..core_runtime import private_run_root
+        events, _skipped = load_execution_journal(
+            private_run_root(Path(repo_root)) / resolved_run, run_id=resolved_run, strict=False,
+        )
+    except Exception:
+        return ()
+    receipts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for event in events:
+        metadata = getattr(event, "metadata", {})
+        if not isinstance(metadata, Mapping):
+            continue
+        receipt = metadata.get("gradle_execution_receipt")
+        if not isinstance(receipt, Mapping):
+            continue
+        payload = {str(key): value for key, value in dict(receipt).items()}
+        receipt_id = str(payload.get("receipt_id") or "").strip()
+        key = receipt_id or _stable(payload)
+        if key in seen:
+            continue
+        seen.add(key)
+        receipts.append(payload)
+    return tuple(receipts)
+
+
 @dataclass(slots=True)
 class InstrumentationRequest:
     project: Path
@@ -729,7 +768,8 @@ class AndroidInstrumentationOrchestrator:
             return result
 
         try:
-            device, environment, _transport, lease = self._canonical_authority(request)
+            device, environment, transport, lease = self._canonical_authority(request)
+            destination_id = str(getattr(transport, "destination_id", "local") or "local")
         except Exception as exc:
             result = self._skip_or_fail(request, str(exc), started, intent_id=intent.intent_id)
             _write_report(result, report_path)
@@ -765,7 +805,7 @@ class AndroidInstrumentationOrchestrator:
             if environment is not None and artifact_pair is not None and lease is not None:
                 plan = resolve_instrumentation_plan(
                     intent, environment_id=environment.environment_id, artifact_pair_id=artifact_pair.pair_id,
-                    device_lease_id=lease.lease_id, destination_id="local", runner=runner,
+                    device_lease_id=lease.lease_id, destination_id=destination_id, runner=runner,
                     target_package=target_package, test_package=installed_test_package, command=command,
                 )
                 command = list(plan.command)
@@ -852,6 +892,7 @@ class AndroidInstrumentationOrchestrator:
                 snapshot = build_android_execution_snapshot(
                     target=self.config.selected_target, action="instrumentation", environment=environment,
                     gradle_receipts=self.gradle_receipts, artifact_pair=artifact_pair, device_lease=lease,
+                    destination_id=destination_id,
                     config_identity=plan.plan_id if plan else intent.intent_id,
                 )
                 snapshot_id = snapshot.snapshot_id
@@ -871,7 +912,7 @@ class AndroidInstrumentationOrchestrator:
         receipt_payload = {
             "intent_id": intent.intent_id, "plan_id": result.plan_id, "status": result.status,
             "failure_kind": result.failure_kind, "device_lease_id": result.device_lease_id,
-            "artifact_pair_id": result.artifact_pair_id, "destination_id": "local",
+            "artifact_pair_id": result.artifact_pair_id, "destination_id": destination_id,
             "install_results": install_results, "execution_result": execution_result, "evidence": evidence,
             "cleanup_results": cleanup_results, "cleanup_authority": cleanup_authority,
             "snapshot_id": snapshot_id, "snapshot_attachment_id": snapshot_attachment_id,
@@ -1013,7 +1054,7 @@ def main(raw_args: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "AndroidInstrumentationOrchestrator", "InstrumentationError", "InstrumentationRequest", "InstrumentationResult",
-    "InstrumentationIntent", "ResolvedInstrumentationPlan", "InstrumentationExecutionReceipt",
+    "InstrumentationIntent", "ResolvedInstrumentationPlan", "InstrumentationExecutionReceipt", "gradle_receipts_from_current_run",
     "InstrumentationUnavailable", "INSTRUMENTATION_POLICIES", "build_parser", "instrumentation_config", "main",
     "instrumentation_intent", "resolve_instrumentation_plan", "normalize_instrumentation_policy",
     "request_from_config", "resolve_instrumentation_policy", "_parse_counts", "_parse_failed_ids", "_execution_classification",

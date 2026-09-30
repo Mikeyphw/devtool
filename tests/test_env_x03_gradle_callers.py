@@ -260,7 +260,7 @@ def test_android_instrumentation_cli_build_is_canonical_and_device_orchestrator_
     monkeypatch.setattr(
         instrumentation_module.AndroidInstrumentationOrchestrator,
         "from_config",
-        lambda cfg: fake_orchestrator,
+        lambda cfg, **kwargs: fake_orchestrator,
     )
 
     payload = android_cli.android_instrumentation_payload(config, skip_build=False)

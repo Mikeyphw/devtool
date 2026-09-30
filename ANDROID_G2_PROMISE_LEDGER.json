@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "overlay": "ANDROID-G2",
+  "position": "46/70",
+  "gate_window": "2/2",
+  "status": "PREPARED_LOCAL_QUALIFIED_PENDING_NATIVE_TERMUX",
+  "sealed_on_success": {
+    "ANDROID-P017": {"status": "GATE_PROVED_PENDING_NATIVE_QUALIFICATION", "promise": "Canonical InstrumentationIntent"},
+    "ANDROID-P018": {"status": "GATE_PROVED_PENDING_NATIVE_QUALIFICATION", "promise": "ResolvedInstrumentationPlan as sole executable semantic plan"},
+    "ANDROID-P019": {"status": "GATE_PROVED_PENDING_NATIVE_QUALIFICATION", "promise": "InstrumentationExecutionReceipt"},
+    "ANDROID-P022": {"status": "GATE_PROVED_PENDING_NATIVE_QUALIFICATION", "promise": "Stable DeviceLease-bound install/run/evidence/cleanup lifecycle"}
+  },
+  "gate_owned_remediation": [
+    "Recover available GradleExecutionReceipt from the authoritative current RUN journal across project-runner process boundaries",
+    "Reload the real selected target config in the canonical instrumentation subprocess instead of reconstructing a stripped Android config",
+    "Propagate AndroidTransport destination identity into instrumentation plan, snapshot and receipt",
+    "Refresh the retained ENV-X03 instrumentation constructor fixture for the canonical gradle_receipts bridge"
+  ],
+  "validation": {
+    "wrapper": "./devtoolw android-g2",
+    "tests": 241,
+    "failed": 0,
+    "skipped": 0,
+    "warnings": 0,
+    "errors": 0,
+    "stages": "5/5"
+  },
+  "next": "DIST-X03 (47/70)",
+  "android_next": "ANDROID-X04 (51/70)"
+}

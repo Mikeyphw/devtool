@@ -1182,9 +1182,14 @@ class AndroidProjectInspectionTests(unittest.TestCase):
                 },
             )
 
-            args = android_builder_arguments_for_tasks(
-                config, [":transfer-aria2:verifyAria2Runtime", "assembleDebug"], scan_artifacts=True
-            )
+            with patch.dict(
+                os.environ,
+                {"GRADLE_USER_HOME": str(root / ".gradle-user-home")},
+                clear=False,
+            ):
+                args = android_builder_arguments_for_tasks(
+                    config, [":transfer-aria2:verifyAria2Runtime", "assembleDebug"], scan_artifacts=True
+                )
 
         self.assertIn("--", args)
         separator = args.index("--")
@@ -1210,9 +1215,14 @@ class AndroidProjectInspectionTests(unittest.TestCase):
                 },
             )
 
-            args = android_builder_arguments_for_tasks(
-                config, [":app:testDebugUnitTest"], scan_artifacts=False, validation=True
-            )
+            with patch.dict(
+                os.environ,
+                {"GRADLE_USER_HOME": str(root / ".gradle-user-home")},
+                clear=False,
+            ):
+                args = android_builder_arguments_for_tasks(
+                    config, [":app:testDebugUnitTest"], scan_artifacts=False, validation=True
+                )
 
         self.assertIn("--", args)
         separator = args.index("--")

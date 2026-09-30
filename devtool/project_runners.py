@@ -958,6 +958,7 @@ class AndroidGradleRunner(ProjectRunner):
                 "--install-command", str(android.get("install_command") or "sudo pm install -r -t"),
                 "--am-command", str(android.get("am_command") or "sudo am instrument"),
                 "--canonical",
+                "--target", str(config.selected_target or module_name),
                 "--skip-build",
             ]
             from .android.instrumentation import instrumentation_config, resolve_instrumentation_policy

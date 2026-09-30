@@ -476,6 +476,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adb-provider", choices=("auto", "sdk", "termux", "termux-adb", "path", "none"), default=os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER", "auto"))
     parser.add_argument("--adb-path", default=os.environ.get("DEVTOOL_ANDROID_ADB_PATH", ""))
     parser.add_argument("--canonical", action="store_true", help="Run through the AOPS03 canonical device/instrumentation orchestrator")
+    parser.add_argument("--target", default="", help=argparse.SUPPRESS)
     parser.add_argument("--policy", choices=("disabled", "when-device-present", "required"), default="when-device-present")
     parser.add_argument("--device-policy", choices=("exactly-one", "serial", "preferred", "first-physical", "first-emulator"), default="exactly-one")
     parser.add_argument("--install-command", default="sudo pm install -r -t")
@@ -572,7 +573,10 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         return 2
     if args.canonical:
         from .android.device_ops import AndroidDeviceOperations
-        from .android.instrumentation import AndroidInstrumentationOrchestrator, InstrumentationRequest
+        from .android.instrumentation import (
+            AndroidInstrumentationOrchestrator, InstrumentationRequest,
+            gradle_receipts_from_current_run, request_from_config,
+        )
         from .models import ProjectConfig
         android_cfg = {
             "adb": {"provider": args.adb_provider, "path": args.adb_path, "device_policy": args.device_policy, "serial": args.device_serial},
@@ -592,17 +596,34 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         }
         cfg = ProjectConfig(repo_root=project, project_root=str(project), kind="android", runner="android", variant=args.variant, device_serial=args.device_serial, runner_options={"android": android_cfg})
         try:
+            if str(args.target or "").strip():
+                from .config import load_project_config
+                cfg = load_project_config(
+                    str(project), None, target_name=str(args.target).strip(),
+                    variant_name=str(args.variant or "").strip(), allow_parent_config=True,
+                )
+                request = request_from_config(
+                    cfg, classes=list(args.classes), methods=list(args.methods),
+                    annotations=list(args.annotation), not_annotations=list(args.not_annotation), size=args.size,
+                    runner_args=_runner_args(args.runner_arg), skip_build=args.skip_build, report=args.report,
+                )
+            else:
+                request = InstrumentationRequest(
+                    project=project, variant=args.variant, policy=args.policy, serial=args.device_serial, device_policy=args.device_policy,
+                    runner=args.runner, target_package=args.target_package, classes=list(args.classes), methods=list(args.methods),
+                    annotations=list(args.annotation), not_annotations=list(args.not_annotation), size=args.size,
+                    runner_args=_runner_args(args.runner_arg),
+                    gradle=args.gradle, gradle_args=list(args.gradle_arg),
+                    aapt2=args.aapt2, aapt2_provider=args.aapt2_provider, skip_build=args.skip_build, keep_installed=args.keep_installed,
+                    wait_timeout_seconds=args.wait_timeout_seconds, cleanup_app=args.cleanup_app,
+                    capture_logcat_on_failure=not args.no_logcat_on_failure, capture_screenshot_on_failure=not args.no_screenshot_on_failure, report=args.report,
+                )
+            gradle_receipts = gradle_receipts_from_current_run(
+                cfg.repo_root, run_id=str(os.environ.get("DEVTOOL_RUN_ID") or ""),
+            )
             device_ops = AndroidDeviceOperations.from_config(cfg)
-            orchestrator = AndroidInstrumentationOrchestrator(device_ops, config=cfg)
-            request = InstrumentationRequest(
-                project=project, variant=args.variant, policy=args.policy, serial=args.device_serial, device_policy=args.device_policy,
-                runner=args.runner, target_package=args.target_package, classes=list(args.classes), methods=list(args.methods),
-                annotations=list(args.annotation), not_annotations=list(args.not_annotation), size=args.size,
-                runner_args=_runner_args(args.runner_arg),
-                gradle=args.gradle, gradle_args=list(args.gradle_arg),
-                aapt2=args.aapt2, aapt2_provider=args.aapt2_provider, skip_build=args.skip_build, keep_installed=args.keep_installed,
-                wait_timeout_seconds=args.wait_timeout_seconds, cleanup_app=args.cleanup_app,
-                capture_logcat_on_failure=not args.no_logcat_on_failure, capture_screenshot_on_failure=not args.no_screenshot_on_failure, report=args.report,
+            orchestrator = AndroidInstrumentationOrchestrator(
+                device_ops, config=cfg, gradle_receipts=gradle_receipts,
             )
             result = orchestrator.run(request)
             print("DEVTOOL_INSTRUMENTATION_RESULT " + json.dumps(result.as_dict(), separators=(",", ":")))

@@ -121,6 +121,12 @@ description = "Run the ANDROID-X03 instrumentation intent/plan/receipt lifecycle
 workflow = "roadmap-android-x03"
 target = "devtool"
 
+# ANDROID-G2 authoritative instrumentation/device milestone gate.
+[wrapper.commands.android-g2]
+description = "Run the ANDROID-G2 authoritative instrumentation/device milestone gate"
+workflow = "roadmap-android-g2"
+target = "devtool"
+
 # DIST-X01 canonical delegation and external-ingest identity foundation.
 [wrapper.commands.dist-x01]
 description = "Run the DIST-X01 delegation/external-ingest integrity workflow"
@@ -706,6 +712,14 @@ roadmap-android-x03 = [
   { id = "instrumentation-contract", ref = "test:roadmap-android-x03-instrumentation-contract", depends_on = ["syntax"] },
   { id = "retained-instrumentation", ref = "test:roadmap-android-x03-retained-instrumentation", depends_on = ["instrumentation-contract"] },
   { id = "cleanup-authority", ref = "test:roadmap-android-x03-cleanup-authority", depends_on = ["retained-instrumentation"] },
+]
+
+roadmap-android-g2 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "window-audit", ref = "test:roadmap-android-g2-window", depends_on = ["syntax"] },
+  { id = "runner-parity", ref = "test:roadmap-android-g2-runner-parity", depends_on = ["window-audit"] },
+  { id = "cleanup-authority", ref = "test:roadmap-android-g2-cleanup-authority", depends_on = ["runner-parity"] },
+  { id = "fresh-process-proof", ref = "test:roadmap-android-g2-real-process", depends_on = ["cleanup-authority"] },
 ]
 
 roadmap-dist-x01 = [
@@ -2410,6 +2424,53 @@ command = [
   "tests/test_life_g2_ownership_retention_gate.py",
   "tests/test_life_x03_generated_cleanup_ownership.py",
 ]
+
+# ANDROID-G2 audits X03 plus retained G1/LIFE authorities and a fresh-process proof.
+[[test]]
+id = "roadmap-android-g2-window"
+name = "ANDROID-G2 complete instrumentation/device promise-window audit"
+runner = "pytest"
+timeout_seconds = 720
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_g2_instrumentation_device_gate.py",
+  "tests/test_android_x03_instrumentation_lifecycle.py",
+  "tests/test_android_g1_environment_device_gate.py",
+  "tests/test_android_x02_execution_snapshot_device_fabric.py",
+]
+
+[[test]]
+id = "roadmap-android-g2-runner-parity"
+name = "ANDROID-G2 dedicated CLI/project-runner/receipt parity regression"
+runner = "pytest"
+timeout_seconds = 720
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_android_instrumentation.py",
+  "tests/test_rem11_android_devices_release_gates.py",
+  "tests/test_aops03_android_signing_instrumentation_operations.py",
+  "tests/test_android_runner.py",
+  "tests/test_env_x03_gradle_callers.py",
+]
+
+[[test]]
+id = "roadmap-android-g2-cleanup-authority"
+name = "ANDROID-G2 LIFE cleanup and primary-failure authority regression"
+runner = "pytest"
+timeout_seconds = 720
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_life_g2_ownership_retention_gate.py",
+  "tests/test_life_x03_generated_cleanup_ownership.py",
+  "tests/test_aops04_android_release_evidence_final_seal.py",
+]
+
+[[test]]
+id = "roadmap-android-g2-real-process"
+name = "ANDROID-G2 authoritative native-Termux fresh-process instrumentation proof"
+runner = "command"
+timeout_seconds = 300
+command = ["python", "-m", "devtool.android_g2_gate"]
 
 # DIST-X01 owns the non-Gradle delegation/external-ingest identity boundary.
 # Async transport/cursor recovery is deferred to DIST-X02 and broad distributed
