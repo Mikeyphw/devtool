@@ -150,6 +150,12 @@ description = "Run the DIST-G1 authoritative identity/delivery/recovery mileston
 workflow = "roadmap-dist-g1"
 target = "devtool"
 
+# TEST-X03 performance/runtime optimization.
+[wrapper.commands.test-x03]
+description = "Run TEST-X03 targeted performance/runtime optimization validation"
+workflow = "roadmap-test-x03"
+target = "devtool"
+
 # DIST-G2 authoritative provider parity milestone gate.
 [wrapper.commands.dist-g2]
 description = "Run the DIST-G2 authoritative distributed provider parity milestone gate"
@@ -760,6 +766,12 @@ roadmap-dist-g1 = [
   { id = "retained-federation", ref = "test:roadmap-dist-g1-retained-federation", depends_on = ["window-audit"] },
   { id = "provider-substrate", ref = "test:roadmap-dist-g1-provider-substrate", depends_on = ["retained-federation"] },
   { id = "fresh-process-proof", ref = "test:roadmap-dist-g1-real-process", depends_on = ["provider-substrate"] },
+]
+
+roadmap-test-x03 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "runtime-optimization", ref = "test:roadmap-test-x03-runtime", depends_on = ["syntax"] },
+  { id = "selection-regression", ref = "test:roadmap-test-x03-selection", depends_on = ["runtime-optimization"] },
 ]
 
 roadmap-dist-g2 = [
@@ -2671,6 +2683,20 @@ name = "DIST-G1 fresh-process replay-integrity and exact cursor-resume proof"
 runner = "command"
 timeout_seconds = 300
 command = ["python", "-m", "devtool.dist_g1_gate"]
+
+[[test]]
+id = "roadmap-test-x03-runtime"
+name = "TEST-X03 performance evidence restore-once safe sharding runtime contract"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_test_x03_runtime_optimization.py"]
+
+[[test]]
+id = "roadmap-test-x03-selection"
+name = "TEST-X03 deterministic selection and shard regression"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_test_x02_inventory_selection.py", "tests/test_test_g2_lane_selection_gate.py"]
 
 [[test]]
 id = "roadmap-dist-g2-window"
