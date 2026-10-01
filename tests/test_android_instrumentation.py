@@ -54,6 +54,19 @@ INSTRUMENTATION_STATUS_CODE: -4
         self.assertEqual(counts["skipped"], 2)
         self.assertEqual(android_instrumentation._parse_failed_ids(output), [])
 
+    def test_android_junit_runner_process_crash_is_not_a_failed_testcase(self) -> None:
+        output = """
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: shortMsg=Process crashed.
+"""
+        from devtool.android.instrumentation import _execution_classification
+        counts, failed_ids, failure_kind, _reason = _execution_classification(output, 1)
+        self.assertEqual(failure_kind, "setup-crash")
+        self.assertEqual(counts["executed"], 0)
+        self.assertEqual(counts["failed"], 0)
+        self.assertEqual(failed_ids, [])
+
     def test_android_junit_runner_real_failure_remains_failed(self) -> None:
         output = """
 INSTRUMENTATION_STATUS: numtests=1

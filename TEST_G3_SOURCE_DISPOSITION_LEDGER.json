@@ -1,0 +1,1884 @@
+{
+  "schema_version": 1,
+  "kind": "test-g3-source-disposition-ledger",
+  "roadmap_id": "TEST-G3",
+  "position": "67/76",
+  "source_audit": {
+    "name": "DEVTOOL_TEST_SYSTEM_PYTEST_AUDIT_REBASED_20260927.md",
+    "sha256": "7fc4ed772b8a5d9e6ae4011e163d9cdd20d5c152ba4cae6ea7e9a3baa1f2e2b9",
+    "promise_count": 84,
+    "regression_count": 105
+  },
+  "allowed_dispositions": [
+    "SATISFIED_BY_TEST",
+    "SUPERSEDED_BY_TEST",
+    "EXPORTED_TO_EXEC",
+    "EXPORTED_TO_RUN",
+    "EXPORTED_TO_RER",
+    "EXPORTED_TO_ENV",
+    "EXPORTED_TO_CFG",
+    "EXPORTED_TO_PRES",
+    "EXPORTED_TO_DIST",
+    "EXPORTED_TO_RMP",
+    "RETIRED_WITH_EVIDENCE"
+  ],
+  "promises": [
+    {
+      "id": "TEST-P001",
+      "text": "Every test starts from a verified process-state baseline and cannot poison later tests silently.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P002",
+      "text": "Production CLI in-process invocation no longer leaks transaction/validation repository-root environment state.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P003",
+      "text": "The autouse guard snapshots/restores all Devtool-owned environment keys rather than a permanently incomplete allowlist.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P004",
+      "text": "The state guard reports the exact leaking test and leaked keys/state before restoring them.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P005",
+      "text": "cwd and selected Devtool global overrides/caches are restored after each in-process CLI test.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P006",
+      "text": "Order-dependent validation cascades disappear; the remaining isolated failures are independently actionable.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P007",
+      "text": "The known stop\u2192pause validation control regression remains visible as one real product failure until fixed.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P008",
+      "text": "Failure summaries distinguish likely cascade, generated-contract drift, stale/brittle test and independent product regression.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P009",
+      "text": "One generated-surface synchronization contract owns parser/help/completion/guide parity.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P010",
+      "text": "Higher-level seals consume generated-surface receipt/evidence instead of independently producing duplicate root failures.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P011",
+      "text": "Console diffs for giant generated files are bounded; complete diffs are attached.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P012",
+      "text": "Large state objects use concise assertion diagnostics with full structured evidence available separately.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P013",
+      "text": "A structured final test summary is available even if the raw pytest log is truncated.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P014",
+      "text": "Default developer test output uses concise tracebacks and useful skip/xfail/failure reasons.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "tests/test_test_x01_failure_trustworthiness.py",
+        "tests/test_test_g1_isolation_trust_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P015",
+      "text": "Test lanes distinguish fast/contract, integration, external-tool, system/seal and full execution.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P016",
+      "text": "Normal editing feedback does not require running every historical final seal.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P017",
+      "text": "The current 2-second test budget becomes lane-aware and enforceable rather than purely advisory.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P018",
+      "text": "Setup, call and teardown durations are all measured.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P019",
+      "text": "Session startup and collection duration are recorded.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P020",
+      "text": "Per-file cumulative duration is recorded and budgetable.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P021",
+      "text": "Subprocess/tool/Git launch counts can be profiled for expensive tests.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P022",
+      "text": "Termux performance evidence is kept separately from desktop/CI profiles without changing correctness requirements.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P023",
+      "text": "The resolved Python test environment is qualified once and can execute multiple test shards without redundant dependency synchronization.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P024",
+      "text": "Skipping uv/environment sync is allowed only after explicit environment-readiness proof.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P025",
+      "text": "Test/development dependencies have an explicit reproducible declaration/lock contract.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P026",
+      "text": "`devtool pytest profile` or its successor streams output instead of buffering an entire failing suite in memory.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P027",
+      "text": "Test profiling consumes structured timing/result data instead of only parsing human text.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P028",
+      "text": "TestPerformanceProfile is a RUN V3 attachment/projection, not a new performance database.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P029",
+      "text": "Stable pytest markers are centrally declared and unknown markers fail.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P030",
+      "text": "Every expensive/external/stateful test is classifiable by resource/lane policy.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P031",
+      "text": "Parallel-safe and serial/stateful tests are distinguished before any xdist-style parallelism is enabled.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P032",
+      "text": "Termux worker count is adaptive and conservative rather than `-n auto`.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P033",
+      "text": "Historical campaign identifiers remain traceable after behavior-centric organization.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P034",
+      "text": "Tests are gradually organized by enduring behavior/domain rather than implementation chronology.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P035",
+      "text": "Large test modules are split only along stable behavior boundaries.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P036",
+      "text": "A shared GitRepoFactory/RepoFactory replaces repeated boilerplate where real Git is genuinely required.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P037",
+      "text": "Unit/contract tests mock repository-state boundaries rather than spawning Git unnecessarily.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P038",
+      "text": "Real Git remains covered in explicit integration/system tests.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P039",
+      "text": "ValidationSessionFactory and compact state assertions reduce duplication and giant repr failures.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P040",
+      "text": "Artifact fixture builders centralize safe overlay/bundle/snapshot construction for tests.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P041",
+      "text": "Mocks target stable boundary interfaces rather than incidental internal kwargs.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P042",
+      "text": "Public-contract and white-box tests are explicitly distinguishable.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P043",
+      "text": "Historical final seals verify historical contracts/evidence rather than blindly asserting every current generated byte.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P044",
+      "text": "Current global generated surfaces are qualified once by a current seal.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "tests/test_test_x02_inventory_selection.py",
+        "tests/test_test_g2_lane_selection_gate.py"
+      ]
+    },
+    {
+      "id": "TEST-P045",
+      "text": "Roadmap/seal tests run in an explicit system/seal lane.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P046",
+      "text": "Canonical test identity is independent of a test file's historical campaign filename.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P047",
+      "text": "Pytest/JUnit results are ingested into canonical TestResult/TestRunReceipt models.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P048",
+      "text": "Canonical JUnit/test reports live in private RUN V3 storage.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P049",
+      "text": "Repo-local test reports are optional export/latest projections only.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P050",
+      "text": "Repeated runs cannot overwrite canonical historical JUnit evidence.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P051",
+      "text": "Failure clustering never deletes or hides the underlying raw failure list.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P052",
+      "text": "A likely cascade is annotated as secondary while its tests still have recorded outcomes.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P053",
+      "text": "External-tool tests declare exact tool requirements and environment identity.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P054",
+      "text": "External/system tests have explicit timeout budgets and retain subprocess evidence on timeout.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P055",
+      "text": "Heartbeat output can identify the active test/phase/process causing a long silent interval.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P056",
+      "text": "Test inventory can explain why a test belongs to a lane and which resources it needs.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P057",
+      "text": "Roadmap test jobs reference stable test/check identities instead of duplicating long path lists where possible.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P058",
+      "text": "File moves/renames do not invalidate roadmap semantics when the stable check identity is unchanged.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P059",
+      "text": "Pytest configuration is centrally declared with strict markers, testpaths and warning policy.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P060",
+      "text": "Collection/import performance is measured and has regression visibility.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P061",
+      "text": "Per-test HOME/XDG isolation remains the safe default until lighter unit isolation is proven.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P062",
+      "text": "Fixture sharing is introduced only after leak-detection invariants are green.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P063",
+      "text": "A shuffle/repeat diagnostic lane can reproduce order-dependent failures with recorded seeds.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P064",
+      "text": "Correctness tests are never silently retried into a passing final status.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P065",
+      "text": "Any quarantine has owner/reason/expiry and remains visible to release/roadmap policy.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P066",
+      "text": "Fast lane has a measured Termux-oriented target budget and fails when structural regressions blow it up materially.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P067",
+      "text": "Integration lane preserves real process/Git/PTY semantics without dominating every edit cycle.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P068",
+      "text": "External lane preserves real compiler/toolchain coverage with explicit tool/environment qualification.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P069",
+      "text": "System/seal lane remains the authoritative broad qualification lane.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P070",
+      "text": "Full lane remains available but is partitionable/shardable rather than one giant opaque process.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P071",
+      "text": "Test sharding preserves deterministic selection and complete result aggregation.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P072",
+      "text": "Serial tests cannot accidentally execute concurrently with incompatible global resources.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "tests/test_test_x03_runtime_optimization.py"
+      ]
+    },
+    {
+      "id": "TEST-P073",
+      "text": "RER may reuse test evidence only when TestSpec/TestSelection/input/environment/output identity qualifies.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P074",
+      "text": "Historical pass alone never skips a test.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P075",
+      "text": "Roadmap gates consume RER/test evidence rather than re-running identical broad path lists by convention.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P076",
+      "text": "Test run receipts link exact environment, selection, results, timing and attachments.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P077",
+      "text": "COPY/diagnostics owns final failure-cluster presentation; Test System supplies structured facts.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P078",
+      "text": "EXO owns execution/process/attempt state for test runs.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P079",
+      "text": "RUN V3 owns durable test reports/logs/history.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P080",
+      "text": "CFG owns lane/budget/timeout policy and provenance.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P081",
+      "text": "Python Environment owns the pytest interpreter/environment qualification.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P082",
+      "text": "CLI owns test/profile/lane command syntax and completion.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P083",
+      "text": "No separate pytest-specific run store, reuse engine or execution scheduler is introduced.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    },
+    {
+      "id": "TEST-P084",
+      "text": "Final seal proves trustworthy isolation, fast feedback, complete system qualification and reproducible performance evidence.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "tests/test_test_x04_convergence.py"
+      ]
+    }
+  ],
+  "regressions": [
+    {
+      "id": "TEST-R001",
+      "source_case": 1,
+      "text": "One in-process CLI test setting DEVTOOL_VALIDATION_STATE_REPO_ROOT cannot affect the next test.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R002",
+      "source_case": 2,
+      "text": "One in-process CLI test setting DEVTOOL_TRANSACTION_REPO_ROOT cannot affect the next test.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R003",
+      "source_case": 3,
+      "text": "One in-process CLI test setting DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT cannot affect the next test.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R004",
+      "source_case": 4,
+      "text": "Process-state guard reports leaked DEVTOOL_* keys before restoring them.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R005",
+      "source_case": 5,
+      "text": "Process-state guard restores cwd after a test changes it.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R006",
+      "source_case": 6,
+      "text": "Process-state guard restores Devtool logstore override.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R007",
+      "source_case": 7,
+      "text": "Process-state guard catches a newly introduced DEVTOOL_* variable without editing an allowlist.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R008",
+      "source_case": 8,
+      "text": "Focused validation session tests produce the same result before and after unrelated CLI tests.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R009",
+      "source_case": 9,
+      "text": "Validation tests pass/fail identically under two deterministic test orders.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R010",
+      "source_case": 10,
+      "text": "Shuffle diagnostic records seed/order on failure.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R011",
+      "source_case": 11,
+      "text": "Stop\u2192pause conflict returns stable control-unavailable exit after cascade fixes.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R012",
+      "source_case": 12,
+      "text": "Dry-run validation does not create/advance durable validation state.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R013",
+      "source_case": 13,
+      "text": "Failure clustering identifies same-session/state-root cascades without hiding raw failures.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R014",
+      "source_case": 14,
+      "text": "Generated completion mismatch produces one root synchronization finding.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R015",
+      "source_case": 15,
+      "text": "Final seals can reference that generated-surface finding instead of duplicating huge diffs.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R016",
+      "source_case": 16,
+      "text": "`--preserve-dirty` appears in generated completion when parser exposes it.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R017",
+      "source_case": 17,
+      "text": "Packaged/runtime zsh completion normalization handles intentional terminal newline policy.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R018",
+      "source_case": 18,
+      "text": "Complete feature guide covers every public canonical command.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R019",
+      "source_case": 19,
+      "text": "Complete feature guide covers public root options.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R020",
+      "source_case": 20,
+      "text": "Generated guide mismatch console output is bounded.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R021",
+      "source_case": 21,
+      "text": "Full generated guide diff is saved as an attachment.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R022",
+      "source_case": 22,
+      "text": "ValidationSession assertion failure prints selected mismatched fields, not multi-thousand-character repr by default.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R023",
+      "source_case": 23,
+      "text": "Full structured ValidationSession evidence remains available.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R024",
+      "source_case": 24,
+      "text": "Raw pytest log truncation cannot remove the machine-readable final failure summary.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R025",
+      "source_case": 25,
+      "text": "Default lane uses concise traceback mode.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R026",
+      "source_case": 26,
+      "text": "Fast lane excludes system/final-seal tests.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R027",
+      "source_case": 27,
+      "text": "Fast lane excludes real external compilers unless explicitly opted in.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-trust",
+        "TEST-X01/G1"
+      ]
+    },
+    {
+      "id": "TEST-R028",
+      "source_case": 28,
+      "text": "Integration lane includes representative real Git behavior.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R029",
+      "source_case": 29,
+      "text": "External lane includes real Go/javac/Gradle tests according to tool availability.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R030",
+      "source_case": 30,
+      "text": "System/seal lane includes roadmap/federation final-seal tests.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R031",
+      "source_case": 31,
+      "text": "Full lane is the union of intended lanes.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R032",
+      "source_case": 32,
+      "text": "Unknown pytest marker fails collection.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R033",
+      "source_case": 33,
+      "text": "Slow test marker is statically declared.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R034",
+      "source_case": 34,
+      "text": "External tool requirement marker is statically declared.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R035",
+      "source_case": 35,
+      "text": "Serial/stateful marker is statically declared.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R036",
+      "source_case": 36,
+      "text": "Parallel-safe tests can run in two workers without result differences.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R037",
+      "source_case": 37,
+      "text": "Serial tests never run concurrently in the same incompatible resource pool.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R038",
+      "source_case": 38,
+      "text": "Adaptive Termux worker policy uses memory/CPU limits.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R039",
+      "source_case": 39,
+      "text": "Strict slow budget catches FRX-X04-style unmarked 3\u20135s tests.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R040",
+      "source_case": 40,
+      "text": "Slow budget includes setup duration.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R041",
+      "source_case": 41,
+      "text": "Slow budget includes teardown duration.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R042",
+      "source_case": 42,
+      "text": "Per-file cumulative budget detects many individually sub-threshold tests.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R043",
+      "source_case": 43,
+      "text": "Session report records startup/pre-pytest-launch duration.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R044",
+      "source_case": 44,
+      "text": "Session report records pytest collection duration.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R045",
+      "source_case": 45,
+      "text": "Session report records peak RSS when available.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R046",
+      "source_case": 46,
+      "text": "Profile records subprocess count per test/file where instrumentation is enabled.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R047",
+      "source_case": 47,
+      "text": "Profile records Git subprocess count for Git-heavy suites.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R048",
+      "source_case": 48,
+      "text": "Profile records external tool identities.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R049",
+      "source_case": 49,
+      "text": "Profile output is streamed, not held entirely in memory.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R050",
+      "source_case": 50,
+      "text": "Profile can complete when raw output exceeds normal terminal log cap.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R051",
+      "source_case": 51,
+      "text": "Test dependencies can be restored from an explicit declared test environment.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R052",
+      "source_case": 52,
+      "text": "Qualified test environment can rerun pytest without dependency sync.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R053",
+      "source_case": 53,
+      "text": "Unqualified/fresh uv environment does not blindly use --no-sync.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-inventory",
+        "TEST-X02/G2"
+      ]
+    },
+    {
+      "id": "TEST-R054",
+      "source_case": 54,
+      "text": "Direct qualified interpreter and uv-managed invocation agree on test collection/result identity.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R055",
+      "source_case": 55,
+      "text": "Collection performance regression is visible in TestPerformanceProfile.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R056",
+      "source_case": 56,
+      "text": "RepoFactory creates isolated repository roots with deterministic Git identity.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R057",
+      "source_case": 57,
+      "text": "GitRepoFactory can create commits/branches/worktrees without per-test boilerplate.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R058",
+      "source_case": 58,
+      "text": "Unit tests can use fake repository state without spawning Git.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R059",
+      "source_case": 59,
+      "text": "Integration tests still exercise actual Git commands.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R060",
+      "source_case": 60,
+      "text": "ValidationSessionFactory creates unique repository/session roots.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R061",
+      "source_case": 61,
+      "text": "Artifact fixture builder creates deterministic overlay/bundle/snapshot inputs.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R062",
+      "source_case": 62,
+      "text": "Mock boundary accepts new internal optional kwargs without unrelated failure.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R063",
+      "source_case": 63,
+      "text": "Tests specifically about boundary signatures still fail on incompatible signature changes.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R064",
+      "source_case": 64,
+      "text": "Historical seal fixture remains stable when unrelated current completion text changes.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R065",
+      "source_case": 65,
+      "text": "Current generated-surface seal fails when current completion is stale.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R066",
+      "source_case": 66,
+      "text": "Canonical JUnit report uses run-scoped storage.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R067",
+      "source_case": 67,
+      "text": "Two runs do not overwrite each other's JUnit evidence.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R068",
+      "source_case": 68,
+      "text": "Repo-local `.devtool/reports/pytest.xml` is optional projection, not canonical history.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R069",
+      "source_case": 69,
+      "text": "TestRunReceipt lists selected node IDs and lane.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R070",
+      "source_case": 70,
+      "text": "TestRunReceipt lists passed/failed/skipped/xfail counts.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R071",
+      "source_case": 71,
+      "text": "TestRunReceipt links failure attachments.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R072",
+      "source_case": 72,
+      "text": "TestRunReceipt links environment identity.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R073",
+      "source_case": 73,
+      "text": "TestPerformanceProfile links to the same run.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R074",
+      "source_case": 74,
+      "text": "Likely cascade annotations reference the suspected root failure/state leak.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R075",
+      "source_case": 75,
+      "text": "Cluster classification never changes pytest exit status by itself.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R076",
+      "source_case": 76,
+      "text": "Timeout kills/cancels owned child process tree and stores diagnostics.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R077",
+      "source_case": 77,
+      "text": "Heartbeat names active pytest node and phase.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R078",
+      "source_case": 78,
+      "text": "Heartbeat names active external child process/tool when available.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R079",
+      "source_case": 79,
+      "text": "Roadmap gate references stable check IDs rather than only test file paths.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-runtime",
+        "TEST-X03"
+      ]
+    },
+    {
+      "id": "TEST-R080",
+      "source_case": 80,
+      "text": "Renaming a test file with same stable check identity does not invalidate roadmap meaning.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R081",
+      "source_case": 81,
+      "text": "RER refuses reuse when test selection changes.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R082",
+      "source_case": 82,
+      "text": "RER refuses reuse when relevant source/config/environment changes.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R083",
+      "source_case": 83,
+      "text": "RER refuses reuse when required test report/evidence attachment is missing.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R084",
+      "source_case": 84,
+      "text": "RER can reuse unchanged pure contract test evidence when all identities qualify.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R085",
+      "source_case": 85,
+      "text": "System/seal test may reuse qualified child checks without faking fresh execution.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R086",
+      "source_case": 86,
+      "text": "Reused tests are clearly labeled REUSED in run/test summary.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R087",
+      "source_case": 87,
+      "text": "Repeat diagnostic exposes flaky test attempts without converting failure to ordinary pass.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R088",
+      "source_case": 88,
+      "text": "Quarantined failure remains visible.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R089",
+      "source_case": 89,
+      "text": "Expired quarantine fails policy.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R090",
+      "source_case": 90,
+      "text": "Fast lane target budget is measured on representative Termux hardware/profile.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R091",
+      "source_case": 91,
+      "text": "Desktop/CI profile has a separate baseline.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R092",
+      "source_case": 92,
+      "text": "Performance regression comparison does not compare incompatible host profiles as equivalent.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R093",
+      "source_case": 93,
+      "text": "Large test files can be split without changing stable semantic test IDs where provided.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R094",
+      "source_case": 94,
+      "text": "Historical campaign metadata remains queryable after file reorganization.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R095",
+      "source_case": 95,
+      "text": "All test lanes produce one canonical TestResult schema.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R096",
+      "source_case": 96,
+      "text": "CLI/TUI/Desktop render the same test run counts/failure clusters.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R097",
+      "source_case": 97,
+      "text": "Full suite can be partitioned into deterministic shards with complete aggregation.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R098",
+      "source_case": 98,
+      "text": "Sharded execution records each shard selection and environment.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R099",
+      "source_case": 99,
+      "text": "One shard failure cannot erase results from completed sibling shards.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R100",
+      "source_case": 100,
+      "text": "Final test-system seal includes a deliberate process-state leak fixture and proves immediate detection.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R101",
+      "source_case": 101,
+      "text": "Final test-system seal includes generated-surface drift and proves single-root clustering.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R102",
+      "source_case": 102,
+      "text": "Final test-system seal includes an intentionally slow unmarked test and proves budget enforcement.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R103",
+      "source_case": 103,
+      "text": "Final test-system seal includes an external-tool test and proves lane/tool qualification.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R104",
+      "source_case": 104,
+      "text": "Final test-system seal includes a heavy system/seal test excluded from fast lane.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    },
+    {
+      "id": "TEST-R105",
+      "source_case": 105,
+      "text": "Final test-system seal proves no canonical test history is stored only in a fixed repo-local report path.",
+      "disposition": "SATISFIED_BY_TEST",
+      "evidence": [
+        "roadmap-test-g3-convergence",
+        "TEST-X04/G3"
+      ]
+    }
+  ],
+  "closure": {
+    "unmapped_promises": 0,
+    "unmapped_regressions": 0,
+    "complete": true
+  }
+}

@@ -227,6 +227,12 @@ workflow = "roadmap-dist-g1"
 target = "devtool"
 
 # TEST-X03 performance/runtime optimization.
+# TEST-G3 final authoritative test-system seal.
+[wrapper.commands.test-g3]
+description = "Run the TEST-G3 final test-system seal"
+workflow = "roadmap-test-g3"
+target = "devtool"
+
 [wrapper.commands.test-x03]
 description = "Run TEST-X03 targeted performance/runtime optimization validation"
 workflow = "roadmap-test-x03"
@@ -961,6 +967,17 @@ roadmap-dist-g1 = [
   { id = "retained-federation", ref = "test:roadmap-dist-g1-retained-federation", depends_on = ["window-audit"] },
   { id = "provider-substrate", ref = "test:roadmap-dist-g1-provider-substrate", depends_on = ["retained-federation"] },
   { id = "fresh-process-proof", ref = "test:roadmap-dist-g1-real-process", depends_on = ["provider-substrate"] },
+]
+
+roadmap-test-g3 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "source-closure", ref = "test:roadmap-test-g3-source-closure", depends_on = ["syntax"] },
+  { id = "trust", ref = "test:roadmap-test-g3-trust", depends_on = ["source-closure"] },
+  { id = "inventory", ref = "test:roadmap-test-g3-inventory", depends_on = ["trust"] },
+  { id = "runtime", ref = "test:roadmap-test-g3-runtime", depends_on = ["inventory"] },
+  { id = "convergence", ref = "test:roadmap-test-g3-convergence", depends_on = ["runtime"] },
+  { id = "runner-semantics", ref = "test:roadmap-test-g3-runner-semantics", depends_on = ["convergence"] },
+  { id = "final-proof", ref = "test:roadmap-test-g3-final-proof", depends_on = ["runner-semantics"] },
 ]
 
 roadmap-test-x03 = [
@@ -3105,6 +3122,55 @@ name = "DIST-G1 fresh-process replay-integrity and exact cursor-resume proof"
 runner = "command"
 timeout_seconds = 300
 command = ["python", "-m", "devtool.dist_g1_gate"]
+
+[[test]]
+id = "roadmap-test-g3-source-closure"
+name = "TEST-G3 source and merged obligation closure"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_test_g3_final_seal.py", "-k", "source_and_merged"]
+
+[[test]]
+id = "roadmap-test-g3-trust"
+name = "TEST-G3 retained failure trust and isolation fixed point"
+runner = "pytest"
+timeout_seconds = 1200
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_test_x01_failure_trustworthiness.py", "tests/test_test_g1_isolation_trust_gate.py"]
+
+[[test]]
+id = "roadmap-test-g3-inventory"
+name = "TEST-G3 retained inventory lane selection and external-tool fixed point"
+runner = "pytest"
+timeout_seconds = 1200
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_test_x02_inventory_selection.py", "tests/test_test_g2_lane_selection_gate.py", "tests/test_test_g2_external_tools.py"]
+
+[[test]]
+id = "roadmap-test-g3-runtime"
+name = "TEST-G3 retained performance resource shard and RUN evidence fixed point"
+runner = "pytest"
+timeout_seconds = 1200
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_test_x03_runtime_optimization.py", "tests/test_test_runstore.py"]
+
+[[test]]
+id = "roadmap-test-g3-convergence"
+name = "TEST-G3 retained historical RER DIST PRES RMP convergence"
+runner = "pytest"
+timeout_seconds = 1200
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_test_x04_convergence.py", "tests/test_dist_g3_final_seal.py", "tests/test_pres_g2_interaction_reliability_gate.py"]
+
+[[test]]
+id = "roadmap-test-g3-runner-semantics"
+name = "TEST-G3 runner failure versus concrete testcase semantics"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_test_g3_final_seal.py", "tests/test_android_instrumentation.py", "-k", "runner_failure or android or process_crash or structured_result"]
+
+[[test]]
+id = "roadmap-test-g3-final-proof"
+name = "TEST-G3 authoritative fresh-process final chain"
+runner = "command"
+timeout_seconds = 900
+command = ["python", "-m", "devtool.test_g3_gate"]
 
 [[test]]
 id = "roadmap-test-x03-runtime"

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "TEST-G3",
+  "title": "Final test-system seal",
+  "position": "67/76",
+  "status": "candidate_pending_native_qualification",
+  "merge_window_decision": {
+    "merged": false,
+    "reason": "TEST-G3, EXEC-G3 and PRES-G3 are independent final seals."
+  },
+  "prerequisites": {
+    "DIST-G3": {
+      "run": "3f724127f02d4e538d7f526b2e76a950",
+      "commit": "572b94d",
+      "tests": 423,
+      "warnings": 0,
+      "errors": 0
+    },
+    "TEST-X04": {
+      "status": "retained-qualified-implementation"
+    }
+  },
+  "closure": {
+    "source_promises": 84,
+    "source_regressions": 105,
+    "merged_promises": 108,
+    "merged_regressions": 100,
+    "unmapped": 0
+  },
+  "folded_gap": {
+    "id": "ANDROID-TEST-RUNNER-VS-TESTCASE",
+    "owner": "TEST-G3",
+    "resolution": "legacy Android compatibility/report fallback now preserves setup/runner failure with zero concrete failed testcase count; cross-runner adapters prove nonzero process exit does not fabricate testcase failure"
+  },
+  "authoritative_final_proof": [
+    "fresh-process process-state trust and retained TEST-X01/G1",
+    "stable inventory/lane/selection and retained TEST-X02/G2",
+    "performance/resource/shard/RUN attachments and retained TEST-X03",
+    "historical/RER/DIST/PRES/RMP convergence and retained TEST-X04",
+    "84 source promise + 105 source regression dispositions",
+    "108 merged TEST promise + 100 merged regression dispositions",
+    "pytest/go/gradle/dotnet/android runner failure vs testcase failure separation",
+    "fresh-process selection -> environment qualification -> canonical adapter/RUN projection -> RER -> DIST lineage -> PRES facts -> RMP binding"
+  ],
+  "next_on_success": "EXEC-G3 68/76",
+  "remaining_in_test_before_next_scope": 0,
+  "next_major_scope": "EXEC finalization"
+}

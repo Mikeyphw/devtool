@@ -633,7 +633,7 @@ def collect_instrumentation_output(
     matches = re.findall(r"DEVTOOL_INSTRUMENTATION_RESULT\s+(\{.*\})", output or "")
     if not matches:
         issue = Issue("error", command_name, "-", "INSTRUMENTATION_RESULT", "Instrumentation runner did not emit a structured result.")
-        return ReportCollection({"framework": "android-instrumentation", "total": 0, "passed": 0, "failed": 1, "skipped": 0}, [issue])
+        return ReportCollection({"framework": "android-instrumentation", "total": 0, "passed": 0, "failed": 0, "skipped": 0, "failure_kind": "runner-error"}, [issue])
     try:
         payload = json.loads(matches[-1])
     except json.JSONDecodeError as exc:

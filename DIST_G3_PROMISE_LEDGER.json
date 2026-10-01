@@ -4,7 +4,7 @@
   "title": "Final distributed-execution seal",
   "position": "66/76",
   "gate_window_position": "2/2",
-  "status": "candidate_pending_native_qualification",
+  "status": "qualified_applied",
   "merge_window_decision": {
     "merged": false,
     "reason": "DIST-G3, TEST-G3 and EXEC-G3 are independent final seals and remain separate."
@@ -980,5 +980,18 @@
   "next_on_success": "TEST-G3 67/76",
   "remaining_in_dist_before_next_scope": 0,
   "next_major_scope": "TEST finalization",
-  "later": "EXEC-G3 68/76 then PRES-G3 69/76"
+  "later": "EXEC-G3 68/76 then PRES-G3 69/76",
+  "native_qualification": {
+    "run_id": "3f724127f02d4e538d7f526b2e76a950",
+    "commit": "572b94d",
+    "tests": {
+      "passed": 423,
+      "failed": 0,
+      "skipped": 0
+    },
+    "diagnostics": {
+      "warnings": 0,
+      "errors": 0
+    }
+  }
 }

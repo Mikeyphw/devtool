@@ -53,3 +53,7 @@ PRES-G2R qualified immediately before this gate: run `c96acfc4493f40fc818f7086e6
 ## Next on success
 
 **TEST-G3 — 67/76.** No DIST overlays remain before the next major scope. After TEST-G3: EXEC-G3 68/76, then PRES-G3 69/76.
+
+## Native qualification result
+
+Qualified/applied on native Termux: run `3f724127f02d4e538d7f526b2e76a950`, **423 passed, 0 failed, 0 skipped**, zero diagnostics, commit `572b94d`. Active item advances to **TEST-G3 67/76**.

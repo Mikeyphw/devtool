@@ -712,7 +712,12 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         command.append(runner)
         result = run(command, check=False)
         output = result.stdout + "\n" + result.stderr
-        counts = _parse_counts(output)
+        # The compatibility runner consumes the same canonical execution
+        # classification as AOPS03. A runner/setup crash may use Android's -2
+        # status code without any concrete testcase having executed; never turn
+        # that process failure into a fabricated failed testcase.
+        from .android.instrumentation import _execution_classification
+        counts, failed_ids, failure_kind, classification_reason = _execution_classification(output, result.returncode)
         payload: dict[str, Any] = {
             "framework": "android-instrumentation",
             "runner": runner,
@@ -721,19 +726,22 @@ def main(raw_args: Sequence[str] | None = None) -> int:
             "app_apk": str(app_apk),
             "test_apk": str(test_apk),
             **counts,
-            "failed_ids": _parse_failed_ids(output),
+            "failed_ids": failed_ids,
             "returncode": result.returncode,
+            "failure_kind": failure_kind,
+            "reason": classification_reason,
         }
         report = args.report or (project / ".devtool" / "reports" / "android-instrumentation.json")
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(f"DEVTOOL_INSTRUMENTATION_RESULT {json.dumps(payload, separators=(',', ':'))}")
-        if result.returncode != 0 or counts["failed"] or counts.get("executed", 0) <= 0:
-            if counts.get("executed", 0) <= 0:
-                payload["failed"] = max(1, int(payload.get("failed") or 0))
-                payload["returncode"] = 1
-                payload["error"] = "Instrumentation executed zero tests"
-                report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        if result.returncode != 0 or failure_kind or counts["failed"] or counts.get("executed", 0) <= 0:
+            if counts.get("executed", 0) <= 0 and not failure_kind:
+                payload["failure_kind"] = "setup-error"
+                payload["reason"] = "Instrumentation executed zero tests"
+            # Execution failure is represented by the action return/failure kind,
+            # not by inventing a failed testcase.
+            report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
             return result.returncode or 1
         return 0
     except InstrumentationError as exc:
@@ -749,10 +757,11 @@ def main(raw_args: Sequence[str] | None = None) -> int:
             "selected": 0,
             "executed": 0,
             "passed": 0,
-            "failed": 1,
+            "failed": 0,
             "skipped": 0,
             "total": 0,
             "failed_ids": [],
+            "failure_kind": "setup-error",
         }
         try:
             report.parent.mkdir(parents=True, exist_ok=True)
