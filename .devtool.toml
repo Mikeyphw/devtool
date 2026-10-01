@@ -299,6 +299,12 @@ description = "Run the PRES-R01 canonical Textual execution-presentation ownersh
 workflow = "roadmap-pres-r01"
 target = "devtool"
 
+# PRES-H02 in-place hotfix: main-thread Textual host for artifact apply.
+[wrapper.commands.pres-h02]
+description = "Run the PRES-H02 main-thread Textual artifact-apply host qualification"
+workflow = "roadmap-pres-h02"
+target = "devtool"
+
 # LIFE-X01 immediate lifecycle safety boundary.
 [wrapper.commands.life-x01]
 description = "Run the LIFE-X01 immediate lifecycle safety workflow"
@@ -1037,6 +1043,13 @@ roadmap-pres-r01 = [
   { id = "execution-presentation", ref = "test:roadmap-pres-r01-execution-presentation", depends_on = ["syntax"] },
   { id = "runner-regression", ref = "test:roadmap-pres-r01-runner-regression", depends_on = ["execution-presentation"] },
   { id = "real-textual-app", ref = "test:roadmap-pres-r01-real-textual-app", depends_on = ["runner-regression"] },
+]
+
+roadmap-pres-h02 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "apply-host", ref = "test:roadmap-pres-h02-textual-apply-host", depends_on = ["syntax"] },
+  { id = "artifact-regression", ref = "test:roadmap-pres-h02-artifact-regression", depends_on = ["apply-host"] },
+  { id = "real-textual-host", ref = "test:roadmap-pres-h02-real-textual-host", depends_on = ["artifact-regression"] },
 ]
 
 roadmap-life-x01 = [
@@ -3974,3 +3987,39 @@ name = "LIFE-G3 final attestation and fresh-process lifecycle proof"
 runner = "pytest"
 timeout_seconds = 600
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_g3_final_seal.py", "-k", "attestation or wrapper_workflow or cross_program_consumers or core_generated_surfaces or gate_tooling"]
+
+# PRES-H02 main-thread Textual artifact apply host hotfix.
+[[test]]
+id = "roadmap-pres-h02-textual-apply-host"
+name = "PRES-H02 Textual artifact apply host contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_h02_textual_apply_host.py",
+  "-k", "not real_apply_host_app_runs_on_textual_main_thread_when_required",
+]
+
+[[test]]
+id = "roadmap-pres-h02-artifact-regression"
+name = "PRES-H02 retained artifact lifecycle presentation contracts"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_artifact_lifecycle_ui.py",
+  "tests/test_pres_r01_execution_presentation.py",
+  "-k", "not real_textual_execution_app_updates_and_confirms_cancel",
+]
+
+[[test]]
+id = "roadmap-pres-h02-real-textual-host"
+name = "PRES-H02 real Textual main-thread apply host Pilot proof"
+runner = "command"
+timeout_seconds = 180
+env = { DEVTOOL_PRES_H02_REQUIRE_TEXTUAL = "1" }
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_h02_textual_apply_host.py",
+  "-k", "real_apply_host_app_runs_on_textual_main_thread_when_required",
+]

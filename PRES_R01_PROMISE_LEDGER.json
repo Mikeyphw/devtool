@@ -4,7 +4,7 @@
   "title": "Canonical Textual execution-presentation ownership remediation",
   "position": "61/76",
   "gate_window_position": "1/4",
-  "status": "qualified_then_reopened_by_pres_h01_main_thread_safety",
+  "status": "qualified_then_reopened_by_pres_h01_main_thread_safety_with_pres_h02_apply_host",
   "promises": [
     {
       "id": "PRES-R01-P001",
@@ -20,7 +20,7 @@
       "id": "PRES-R01-P003",
       "status": "reopened_runtime",
       "text": "Interactive TTY execution prefers Textual when available; presentation startup failure falls back to plain output without changing the process result.",
-      "reason": "The default synchronous controller cannot safely host Textual 8.2.8 in a helper thread because its Linux driver registers process signal handlers; PRES-H01 falls back to plain until a main-thread host exists."
+      "reason": "PRES-H01 forbids helper-thread Textual. PRES-H02 restores real Textual ownership specifically for artifact apply through a main-thread parent host; other normal execution commands remain reopened until the general main-thread execution host is delivered."
     },
     {
       "id": "PRES-R01-P004",
@@ -93,7 +93,7 @@
     }
   ],
   "still_open": [
-    "PRES-R01 live Textual execution main-thread host reopened by PRES-H01",
+    "PRES-R01 general normal-execution Textual main-thread host remains open outside artifact apply; PRES-H02 closes artifact apply only",
     "PRES-R02 concrete control-center pages/widgets/live providers/selection/actions/confirmations/logs/diagnostics",
     "PRES-R03 shortcut and CLI argument parity, responsive compatibility and broad concrete App.run_test/Pilot qualification",
     "PRES-G2R full remediation-window requalification and historical false-positive closure",
@@ -101,12 +101,17 @@
     "Explicit legacy terminal/studio HUD Rich Live renderers remain outside the normal-execution R01 ownership boundary; PRES-G2R/PRES-G3 must either migrate, deprecate, or explicitly qualify those cross-surface modes."
   ],
   "next": "PRES-R02 62/76",
-  "qualification_note": "PRES-R01 v2 passed native qualification, then PRES-H01 found that the live Textual terminal driver was launched in a helper thread. The safety hotfix disables that invalid live host and reopens live Textual execution until a main-thread host is implemented.",
+  "qualification_note": "PRES-R01 v2 passed native qualification. PRES-H01 then prohibited invalid helper-thread Textual startup. PRES-H02 restores a legal main-thread Textual terminal host for artifact apply by managing the canonical Devtool invocation as a child process; general invoke/validation execution remains reopened.",
   "hotfixes": [
     {
       "id": "PRES-H01",
+      "status": "qualified_applied",
+      "reason": "Native Termux qualification passed; background-thread Textual driver startup remains prohibited."
+    },
+    {
+      "id": "PRES-H02",
       "status": "implemented_pending_native_qualification",
-      "reason": "Prevent Textual LinuxDriver from running in a background thread; fail closed to plain output and reopen live Textual execution ownership."
+      "reason": "Host interactive artifact apply in a parent/main-thread Textual app while canonical apply/validation/rollback/commit runs in a managed child process and publishes existing live-state truth."
     }
   ]
 }

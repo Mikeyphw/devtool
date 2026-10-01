@@ -14288,6 +14288,18 @@ def _main_impl(argv: list[str] | None = None) -> int:
     console.quiet = bool(getattr(args, "quiet", False))
     configure_event_console(console, enabled=bool((getattr(args, "verbose", False) or getattr(args, "trace", False)) and not getattr(args, "quiet", False) and not universal_json))
 
+    # PRES-H02: a real Textual terminal driver must own the main interpreter
+    # thread. Interactive artifact apply therefore runs the canonical Devtool
+    # invocation as a managed child while the parent/main process owns Textual.
+    # Machine, redirected, CI and explicit plain modes bypass this host.
+    try:
+        from .textual_apply_host import run_apply_textual_host, select_apply_textual_host
+        apply_host = select_apply_textual_host(args, universal_json=universal_json)
+    except Exception:
+        apply_host = None
+    if apply_host is not None and apply_host.enabled:
+        return run_apply_textual_host(raw_argv, args)
+
     def _invoke() -> int:
         command = str(getattr(args, "command", "") or "devtool")
         emit_build = command in PROGRESS_CAPABLE_COMMANDS

@@ -43,11 +43,14 @@ Positions through qualified LIFE-G3 remain immutable historical evidence through
 `DIST-R01` is recorded here only for full-plan arithmetic and ordering. It remains
 DIST-owned and is not part of the PRES remediation gate window.
 
-Current runtime status: DIST-R01 has passed and is applied. PRES-R01 v2 also passed,
-but PRES-H01 subsequently reopened the live-Textual portion of R01 after proving that
-Textual's Linux terminal driver was being started from a helper thread. PRES-H01 is
-an in-place R01 incident hotfix and does not consume a new full-plan position. The
-main-thread live execution host remains an open PRES obligation before G2R.
+Current runtime status: DIST-R01 has passed and is applied. PRES-R01 v2 and
+PRES-H01 have passed and are applied. PRES-R02 v1 did not qualify: its native real-App
+Pilot exposed a confirmation-modal routing failure and the transaction rolled back
+cleanly. The same run also confirmed that PRES-H01's safety fallback left artifact
+apply without a Textual terminal surface. PRES-H02 is therefore an in-place hotfix
+with no position effect: it hosts artifact apply in a parent/main-thread Textual app
+while the canonical Devtool lifecycle runs as a managed child process. General
+normal-execution live Textual remains open for the later PRES remediation boundary.
 
 ## Next-three merge-window decision
 

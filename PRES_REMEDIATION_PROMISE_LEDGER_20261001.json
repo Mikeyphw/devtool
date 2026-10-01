@@ -90,12 +90,12 @@
         "live Textual terminal driver is hosted on the Python main interpreter thread rather than a helper thread"
       ],
       "next": "PRES-R02",
-      "hotfix": "PRES-H01 prevents invalid background-thread Textual LinuxDriver startup; live Textual execution remains open until a main-thread host is implemented."
+      "hotfix": "PRES-H01 is qualified/applied; PRES-H02 adds a legal main-thread Textual host for artifact apply while general normal-execution live Textual remains open."
     },
     {
       "id": "PRES-R02",
       "position": "62/76",
-      "status": "open",
+      "status": "open_after_v1_native_failure",
       "promises": [
         "replace the single-Static control-center prototype with concrete Textual pages/widgets",
         "consume canonical RUN/EXO/TLJ/RunStore/Tasker/diagnostic/validation/artifact/overlay/evidence authorities",
@@ -106,7 +106,8 @@
         "operational Logs and Diagnostics experiences with bounded live data",
         "responsive narrow Termux layouts and state/selection preservation"
       ],
-      "next": "PRES-R03"
+      "next": "PRES-R03",
+      "note": "PRES-R02 v1 rolled back after the real Textual Pilot confirmation-modal assertion failed; rebuild only after PRES-H02 qualification."
     },
     {
       "id": "PRES-R03",
@@ -160,7 +161,7 @@
       "id": "PRES-H01",
       "owner": "PRES-R01",
       "position_effect": "none",
-      "status": "implemented_pending_native_qualification",
+      "status": "qualified_applied",
       "delivers": [
         "no Textual terminal App.run() in a helper thread",
         "plain fail-safe for current sync execution path",
@@ -168,6 +169,24 @@
       ],
       "reopens": [
         "live normal-execution Textual host until main-thread hosting exists"
+      ]
+    },
+    {
+      "id": "PRES-H02",
+      "owner": "PRES-R01/PRES-R02 presentation runtime",
+      "position_effect": "none",
+      "status": "implemented_pending_native_qualification",
+      "delivers": [
+        "interactive apply-overlay/apply-overlays/apply-snapshot use a main-thread Textual parent host",
+        "canonical Devtool lifecycle remains in a managed child process with transaction/validation/rollback/commit authority unchanged",
+        "parent consumes existing Tasker live-state files and captured child output instead of creating a TUI-specific truth store",
+        "Ctrl+C cancellation signals the managed child process group and leaves canonical recovery/rollback to Devtool",
+        "managed child suppresses detached auto-HUD startup so the Textual host is the visible interactive surface",
+        "machine, redirected, CI, verbose/trace, explicit plain and explicit stdout-payload modes bypass Textual hosting"
+      ],
+      "does_not_close": [
+        "general normal-execution Textual hosting outside artifact apply",
+        "PRES-R02 concrete control-center qualification"
       ]
     }
   ]
