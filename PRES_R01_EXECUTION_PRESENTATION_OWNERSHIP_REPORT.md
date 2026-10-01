@@ -66,3 +66,19 @@ on the native Termux qualification host and cannot silently skip. Broader
 PRES-X04..X08/G1/G2 concrete-control-center requalification is intentionally
 **deferred to PRES-G2R** after R02 and R03; final cross-surface authority remains
 **PRES-G3**.
+
+
+## PRES-H01 runtime correction — Textual main-thread safety
+
+Native Termux runtime exposed a false-positive in R01 qualification: the concrete
+`ExecutionProgressApp` was launched by `_TextualExecutionPresenter` in a helper
+thread. Textual 8.2.8's Linux terminal driver installs process signal handlers, so
+Python raises `ValueError: signal only works in main thread of the main interpreter`.
+
+PRES-H01 removes the background `App.run()` launch entirely. The synchronous
+execution controller now fails closed to the existing plain/machine-safe stream when
+a live Textual terminal host is requested, while retaining canonical semantic
+tracking, logs, evidence and the concrete Textual app/Pilot tests. This is a safety
+hotfix, not closure of the live Textual ownership promise: PRES-R01-P003 is reopened
+until the campaign supplies a main-thread Textual host with execution work moved
+off the UI thread. Rich Live is not restored.

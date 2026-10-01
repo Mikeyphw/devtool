@@ -73,7 +73,7 @@
     {
       "id": "PRES-R01",
       "position": "61/76",
-      "status": "implemented_pending_native_qualification",
+      "status": "qualified_then_reopened_by_pres_h01",
       "promises": [
         "progress trackers are semantic/event producers and never instantiate rich.live.Live",
         "one execution presentation controller owns normal local terminal presentation",
@@ -86,9 +86,11 @@
         "a real Textual execution App is exercised with App.run_test/Pilot during native qualification",
         "quiet, JSON/machine and explicit stdout-payload modes force plain presentation even when attached to a TTY",
         "timeout and task telemetry remain captured/durable and are routed through the selected presentation surface",
-        "artifact preflight/validation/finalize hooks use the same presentation controller instead of tracker-owned Rich inspection/live UI"
+        "artifact preflight/validation/finalize hooks use the same presentation controller instead of tracker-owned Rich inspection/live UI",
+        "live Textual terminal driver is hosted on the Python main interpreter thread rather than a helper thread"
       ],
-      "next": "PRES-R02"
+      "next": "PRES-R02",
+      "hotfix": "PRES-H01 prevents invalid background-thread Textual LinuxDriver startup; live Textual execution remains open until a main-thread host is implemented."
     },
     {
       "id": "PRES-R02",
@@ -136,8 +138,8 @@
     {
       "id": "DIST-R01",
       "position": "65/76",
-      "status": "prepared_unqualified",
-      "reason": "Known DIST-P100 candidate-runtime self-refresh remediation discovered before DIST-G3; remains separate from PRES ownership."
+      "status": "qualified_applied",
+      "reason": "User confirmed DIST-R01 passed and is applied; retained only for immutable full-plan arithmetic and ordering."
     }
   ],
   "remaining_tail": [
@@ -152,5 +154,21 @@
     "74/76 RMP-G2",
     "75/76 RMP-X04",
     "76/76 RMP-G3 / GRAND DEVTOOL"
+  ],
+  "campaign_hotfixes": [
+    {
+      "id": "PRES-H01",
+      "owner": "PRES-R01",
+      "position_effect": "none",
+      "status": "implemented_pending_native_qualification",
+      "delivers": [
+        "no Textual terminal App.run() in a helper thread",
+        "plain fail-safe for current sync execution path",
+        "worker-thread regression coverage"
+      ],
+      "reopens": [
+        "live normal-execution Textual host until main-thread hosting exists"
+      ]
+    }
   ]
 }

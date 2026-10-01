@@ -4,6 +4,7 @@ from io import StringIO
 import os
 from pathlib import Path
 import sys
+import threading
 from unittest.mock import patch
 
 from rich.console import Console
@@ -114,6 +115,45 @@ def test_controller_routes_snapshots_lines_and_cancel_callback(monkeypatch) -> N
     assert cancelled == ["cancel"]
     assert controller.hides_raw_output is True
     assert [kind for kind, _ in seen] == ["start", "update", "line", "cancel", "stop"]
+
+
+def test_sync_controller_never_starts_textual_terminal_driver_in_background(monkeypatch) -> None:
+    """Regression for Termux/Linux signal registration from the R01 presenter thread."""
+    monkeypatch.setattr("devtool.execution_presentation.textual_available", lambda: True)
+    with patch("devtool.execution_presentation.build_textual_execution_app") as build_app:
+        controller = ExecutionPresentationController(_console(), env={}, stdin=_TTY())
+        controller.start({"command": "artifact validation", "detail": "running"})
+        assert controller.decision.backend == "plain"
+        assert controller.hides_raw_output is False
+        assert "main-thread presentation host" in controller.decision.reason
+        build_app.assert_not_called()
+        controller.stop()
+
+
+def test_worker_thread_presentation_fails_closed_to_plain_without_traceback(monkeypatch) -> None:
+    monkeypatch.setattr("devtool.execution_presentation.textual_available", lambda: True)
+    results: dict[str, object] = {}
+
+    def worker() -> None:
+        try:
+            controller = ExecutionPresentationController(_console(), env={}, stdin=_TTY())
+            controller.start({"command": "validator", "detail": "worker thread"})
+            results["backend"] = controller.decision.backend
+            results["reason"] = controller.decision.reason
+            results["hidden"] = controller.hides_raw_output
+            controller.stop()
+        except BaseException as exc:  # pragma: no cover - assertion below exposes it
+            results["error"] = exc
+
+    thread = threading.Thread(target=worker, name="pres-h01-artifact-validation")
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert "error" not in results
+    assert results["backend"] == "plain"
+    assert results["hidden"] is False
+    assert "main-thread presentation host" in str(results["reason"])
+    assert not any(t.name == "devtool-textual-execution" for t in threading.enumerate())
 
 
 def test_controller_failure_falls_back_to_plain_without_failing_execution(monkeypatch) -> None:

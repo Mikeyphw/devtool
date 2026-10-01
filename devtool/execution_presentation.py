@@ -214,18 +214,25 @@ def build_textual_execution_app(source: Any) -> Any:
     return ExecutionProgressApp()
 
 class _TextualExecutionPresenter:
-    """Thread-owned Textual progress surface fed by a bounded message queue."""
+    """Queue-backed source for the normal-execution Textual application.
+
+    Textual's Linux terminal driver installs process signal handlers and therefore
+    must run on the main interpreter thread.  PRES-H01 deliberately forbids this
+    synchronous presenter from spawning ``App.run()`` in a helper thread.  The
+    concrete app remains available to ``App.run_test`` and to the forthcoming
+    main-thread execution host; until that host owns the terminal event loop, the
+    controller falls back to plain streaming rather than risking a terminal-driver
+    traceback or terminal corruption.
+    """
 
     interactive = True
     hides_raw_output = True
+    terminal_host_ready = False
 
     def __init__(self, *, max_log_lines: int = 400) -> None:
         self.max_log_lines = max(50, int(max_log_lines))
         self._queue: Queue[tuple[str, object]] = Queue(maxsize=max(256, self.max_log_lines * 2))
-        self._thread: threading.Thread | None = None
         self._ready = threading.Event()
-        self._stopped = threading.Event()
-        self._failed: BaseException | None = None
         self._stop_callback: Callable[[], None] | None = None
         self._lock = threading.RLock()
 
@@ -245,19 +252,12 @@ class _TextualExecutionPresenter:
                 pass
 
     def start(self, snapshot: Mapping[str, Any] | None = None) -> None:
-        if self._thread is not None:
-            if snapshot:
-                self.update(snapshot)
-            return
         if snapshot:
             self._offer("snapshot", dict(snapshot))
-        self._thread = threading.Thread(target=self._run, name="devtool-textual-execution", daemon=True)
-        self._thread.start()
-        if not self._ready.wait(timeout=0.75):
-            self._offer("stop", None)
-            raise RuntimeError("Textual execution presenter did not become ready")
-        if self._failed is not None:
-            raise RuntimeError(f"Textual execution presenter failed to start: {self._failed}")
+        raise RuntimeError(
+            "Textual terminal execution requires the main-thread presentation host; "
+            "background App.run() is intentionally disabled"
+        )
 
     def update(self, snapshot: Mapping[str, Any]) -> None:
         self._offer("snapshot", dict(snapshot))
@@ -278,23 +278,7 @@ class _TextualExecutionPresenter:
             callback()
 
     def stop(self) -> None:
-        if self._thread is None:
-            return
-        self._offer("stop", None)
-        self._stopped.wait(timeout=1.5)
-        thread = self._thread
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=0.5)
-        self._thread = None
-
-    def _run(self) -> None:  # pragma: no cover - native Textual Pilot coverage exercises the app factory
-        try:
-            build_textual_execution_app(self).run()
-        except BaseException as exc:
-            self._failed = exc
-            self._ready.set()
-        finally:
-            self._stopped.set()
+        return None
 
 
 class ExecutionPresentationController:
@@ -338,6 +322,14 @@ class ExecutionPresentationController:
             if snapshot:
                 self.update(snapshot)
             return
+        if not bool(getattr(self._presenter, "terminal_host_ready", True)):
+            self._presenter = _PlainExecutionPresenter()
+            self.decision = ExecutionPresentationDecision(
+                "plain",
+                False,
+                False,
+                "Textual terminal driver requires the main-thread presentation host; fell back to plain",
+            )
         try:
             self._presenter.start(snapshot)
             self._started = True

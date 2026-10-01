@@ -43,6 +43,12 @@ Positions through qualified LIFE-G3 remain immutable historical evidence through
 `DIST-R01` is recorded here only for full-plan arithmetic and ordering. It remains
 DIST-owned and is not part of the PRES remediation gate window.
 
+Current runtime status: DIST-R01 has passed and is applied. PRES-R01 v2 also passed,
+but PRES-H01 subsequently reopened the live-Textual portion of R01 after proving that
+Textual's Linux terminal driver was being started from a helper thread. PRES-H01 is
+an in-place R01 incident hotfix and does not consume a new full-plan position. The
+main-thread live execution host remains an open PRES obligation before G2R.
+
 ## Next-three merge-window decision
 
 The next three PRES remediation items are intentionally **not merged**:

@@ -4,7 +4,7 @@
   "title": "Canonical Textual execution-presentation ownership remediation",
   "position": "61/76",
   "gate_window_position": "1/4",
-  "status": "implemented_pending_native_qualification",
+  "status": "qualified_then_reopened_by_pres_h01_main_thread_safety",
   "promises": [
     {
       "id": "PRES-R01-P001",
@@ -18,8 +18,9 @@
     },
     {
       "id": "PRES-R01-P003",
-      "status": "delivered",
-      "text": "Interactive TTY execution prefers Textual when available; presentation startup failure falls back to plain output without changing the process result."
+      "status": "reopened_runtime",
+      "text": "Interactive TTY execution prefers Textual when available; presentation startup failure falls back to plain output without changing the process result.",
+      "reason": "The default synchronous controller cannot safely host Textual 8.2.8 in a helper thread because its Linux driver registers process signal handlers; PRES-H01 falls back to plain until a main-thread host exists."
     },
     {
       "id": "PRES-R01-P004",
@@ -43,13 +44,15 @@
     },
     {
       "id": "PRES-R01-P008",
-      "status": "delivered",
-      "text": "Normal execution cancellation is injected from the runner; the Textual execution surface requires a second Ctrl+C within three seconds before invoking cancellation."
+      "status": "implemented_not_live_qualified",
+      "text": "Normal execution cancellation is injected from the runner; the Textual execution surface requires a second Ctrl+C within three seconds before invoking cancellation.",
+      "reason": "The concrete Textual app retains two-step Ctrl+C confirmation and runner-owned cancellation injection, but the live terminal app is intentionally not hosted by the synchronous controller after PRES-H01."
     },
     {
       "id": "PRES-R01-P009",
-      "status": "delivered",
-      "text": "The Textual execution bridge is bounded and non-blocking: presentation backpressure drops intermediate display updates instead of blocking canonical execution, and log lines are bounded."
+      "status": "implemented_not_live_qualified",
+      "text": "The Textual execution bridge is bounded and non-blocking: presentation backpressure drops intermediate display updates instead of blocking canonical execution, and log lines are bounded.",
+      "reason": "The bounded queue bridge remains implemented and Pilot-tested, but is not connected to a live terminal driver until the main-thread host is delivered."
     },
     {
       "id": "PRES-R01-P010",
@@ -90,11 +93,20 @@
     }
   ],
   "still_open": [
+    "PRES-R01 live Textual execution main-thread host reopened by PRES-H01",
     "PRES-R02 concrete control-center pages/widgets/live providers/selection/actions/confirmations/logs/diagnostics",
     "PRES-R03 shortcut and CLI argument parity, responsive compatibility and broad concrete App.run_test/Pilot qualification",
     "PRES-G2R full remediation-window requalification and historical false-positive closure",
     "PRES-G3 final cross-surface presentation seal",
     "Explicit legacy terminal/studio HUD Rich Live renderers remain outside the normal-execution R01 ownership boundary; PRES-G2R/PRES-G3 must either migrate, deprecate, or explicitly qualify those cross-surface modes."
   ],
-  "next": "PRES-R02 62/76"
+  "next": "PRES-R02 62/76",
+  "qualification_note": "PRES-R01 v2 passed native qualification, then PRES-H01 found that the live Textual terminal driver was launched in a helper thread. The safety hotfix disables that invalid live host and reopens live Textual execution until a main-thread host is implemented.",
+  "hotfixes": [
+    {
+      "id": "PRES-H01",
+      "status": "implemented_pending_native_qualification",
+      "reason": "Prevent Textual LinuxDriver from running in a background thread; fail closed to plain output and reopen live Textual execution ownership."
+    }
+  ]
 }
