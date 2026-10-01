@@ -90,12 +90,12 @@
         "live Textual terminal driver is hosted on the Python main interpreter thread rather than a helper thread"
       ],
       "next": "PRES-R02",
-      "hotfix": "PRES-H01 is qualified/applied; PRES-H02 adds a legal main-thread Textual host for artifact apply while general normal-execution live Textual remains open."
+      "hotfix": "PRES-H01 and PRES-H02 v3 are qualified/applied. H01 prevents invalid helper-thread Textual driver startup; H02 provides the legal main-thread Textual host for artifact apply. General normal-execution live Textual remains open."
     },
     {
       "id": "PRES-R02",
       "position": "62/76",
-      "status": "open_after_v1_native_failure",
+      "status": "implemented_pending_native_qualification",
       "promises": [
         "replace the single-Static control-center prototype with concrete Textual pages/widgets",
         "consume canonical RUN/EXO/TLJ/RunStore/Tasker/diagnostic/validation/artifact/overlay/evidence authorities",
@@ -107,7 +107,8 @@
         "responsive narrow Termux layouts and state/selection preservation"
       ],
       "next": "PRES-R03",
-      "note": "PRES-R02 v1 rolled back after the real Textual Pilot confirmation-modal assertion failed; rebuild only after PRES-H02 qualification."
+      "note": "PRES-R02 v1 rolled back on the real Textual confirmation-flow assertion. v2 rebases the concrete control center onto qualified PRES-H02 v3, fixes visible-page focus ownership, and proves confirmation through the actual action-button/modal path.",
+      "delivered_ledger": "PRES_R02_PROMISE_LEDGER.json"
     },
     {
       "id": "PRES-R03",
@@ -175,7 +176,7 @@
       "id": "PRES-H02",
       "owner": "PRES-R01/PRES-R02 presentation runtime",
       "position_effect": "none",
-      "status": "implemented_pending_native_qualification",
+      "status": "qualified_applied",
       "delivers": [
         "interactive apply-overlay/apply-overlays/apply-snapshot use a main-thread Textual parent host",
         "canonical Devtool lifecycle remains in a managed child process with transaction/validation/rollback/commit authority unchanged",
@@ -187,7 +188,8 @@
       "does_not_close": [
         "general normal-execution Textual hosting outside artifact apply",
         "PRES-R02 concrete control-center qualification"
-      ]
+      ],
+      "note": "PRES-H02 v3 passed native Termux qualification and is applied; artifact apply now has a legal parent/main-thread Textual host."
     }
   ]
 }

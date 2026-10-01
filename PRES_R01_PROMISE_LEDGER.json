@@ -101,7 +101,7 @@
     "Explicit legacy terminal/studio HUD Rich Live renderers remain outside the normal-execution R01 ownership boundary; PRES-G2R/PRES-G3 must either migrate, deprecate, or explicitly qualify those cross-surface modes."
   ],
   "next": "PRES-R02 62/76",
-  "qualification_note": "PRES-R01 v2 passed native qualification. PRES-H01 then prohibited invalid helper-thread Textual startup. PRES-H02 restores a legal main-thread Textual terminal host for artifact apply by managing the canonical Devtool invocation as a child process; general invoke/validation execution remains reopened.",
+  "qualification_note": "PRES-R01 v2 passed native qualification. PRES-H01 then prohibited invalid helper-thread Textual startup. PRES-H02 v3 is qualified/applied and restores a legal main-thread Textual terminal host for artifact apply by managing the canonical Devtool invocation as a child process; general invoke/validation execution remains reopened.",
   "hotfixes": [
     {
       "id": "PRES-H01",
@@ -110,8 +110,8 @@
     },
     {
       "id": "PRES-H02",
-      "status": "implemented_pending_native_qualification",
-      "reason": "Host interactive artifact apply in a parent/main-thread Textual app while canonical apply/validation/rollback/commit runs in a managed child process and publishes existing live-state truth."
+      "status": "qualified_applied",
+      "reason": "Native Termux qualification passed for the parent/main-thread Textual artifact-apply host; canonical apply/validation/rollback/commit remains child-owned."
     }
   ]
 }

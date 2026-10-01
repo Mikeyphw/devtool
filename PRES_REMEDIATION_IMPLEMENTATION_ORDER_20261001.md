@@ -43,14 +43,7 @@ Positions through qualified LIFE-G3 remain immutable historical evidence through
 `DIST-R01` is recorded here only for full-plan arithmetic and ordering. It remains
 DIST-owned and is not part of the PRES remediation gate window.
 
-Current runtime status: DIST-R01 has passed and is applied. PRES-R01 v2 and
-PRES-H01 have passed and are applied. PRES-R02 v1 did not qualify: its native real-App
-Pilot exposed a confirmation-modal routing failure and the transaction rolled back
-cleanly. The same run also confirmed that PRES-H01's safety fallback left artifact
-apply without a Textual terminal surface. PRES-H02 is therefore an in-place hotfix
-with no position effect: it hosts artifact apply in a parent/main-thread Textual app
-while the canonical Devtool lifecycle runs as a managed child process. General
-normal-execution live Textual remains open for the later PRES remediation boundary.
+Current runtime status: DIST-R01 has passed and is applied. PRES-R01 v2, PRES-H01, and PRES-H02 v3 have passed native qualification and are applied. PRES-R02 v1 did not qualify: its native Pilot exposed a confirmation-flow/focus ownership defect and the transaction rolled back cleanly. PRES-R02 v2 is the same canonical 62/76 item, rebased onto qualified H02 v3 with visible-page focus transfer and real action-button confirmation coverage. General normal-execution live Textual remains open for the later PRES remediation boundary; no new roadmap position is consumed.
 
 ## Next-three merge-window decision
 

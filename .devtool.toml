@@ -305,6 +305,13 @@ description = "Run the PRES-H02 main-thread Textual artifact-apply host qualific
 workflow = "roadmap-pres-h02"
 target = "devtool"
 
+
+# PRES-R02 concrete Textual control-center remediation.
+[wrapper.commands.pres-r02]
+description = "Run the PRES-R02 concrete Textual control-center application remediation"
+workflow = "roadmap-pres-r02"
+target = "devtool"
+
 # LIFE-X01 immediate lifecycle safety boundary.
 [wrapper.commands.life-x01]
 description = "Run the LIFE-X01 immediate lifecycle safety workflow"
@@ -1050,6 +1057,14 @@ roadmap-pres-h02 = [
   { id = "apply-host", ref = "test:roadmap-pres-h02-textual-apply-host", depends_on = ["syntax"] },
   { id = "artifact-regression", ref = "test:roadmap-pres-h02-artifact-regression", depends_on = ["apply-host"] },
   { id = "real-textual-host", ref = "test:roadmap-pres-h02-real-textual-host", depends_on = ["artifact-regression"] },
+]
+
+
+roadmap-pres-r02 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "control-center", ref = "test:roadmap-pres-r02-control-center", depends_on = ["syntax"] },
+  { id = "pres-regression", ref = "test:roadmap-pres-r02-pres-regression", depends_on = ["control-center"] },
+  { id = "real-textual-app", ref = "test:roadmap-pres-r02-real-textual-app", depends_on = ["pres-regression"] },
 ]
 
 roadmap-life-x01 = [
@@ -3987,6 +4002,46 @@ name = "LIFE-G3 final attestation and fresh-process lifecycle proof"
 runner = "pytest"
 timeout_seconds = 600
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_g3_final_seal.py", "-k", "attestation or wrapper_workflow or cross_program_consumers or core_generated_surfaces or gate_tooling"]
+
+
+# PRES-R02 concrete control-center application remediation.
+[[test]]
+id = "roadmap-pres-r02-control-center"
+name = "PRES-R02 concrete control-center provider/widget/action contracts"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r02_textual_control_center_app.py",
+  "-k", "not real_textual_control_center_pages_selection_confirmation_and_live_refresh",
+]
+
+[[test]]
+id = "roadmap-pres-r02-pres-regression"
+name = "PRES-R02 retained PRES-R01/X08/G2 runtime contracts"
+runner = "pytest"
+timeout_seconds = 360
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r01_execution_presentation.py",
+  "tests/test_pres_h02_textual_apply_host.py",
+  "tests/test_pres_x08_textual_control_center.py",
+  "tests/test_pres_g2_interaction_reliability_remediation.py",
+  "tests/test_pres_g2_interaction_reliability_gate.py",
+  "-k", "not real_textual_execution_app_updates_and_confirms_cancel and not real_apply_host_app_runs_on_textual_main_thread_when_required",
+]
+
+[[test]]
+id = "roadmap-pres-r02-real-textual-app"
+name = "PRES-R02 real Textual control-center App.run_test/Pilot proof"
+runner = "command"
+timeout_seconds = 240
+env = { DEVTOOL_PRES_R02_REQUIRE_TEXTUAL = "1" }
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r02_textual_control_center_app.py",
+  "-k", "real_textual_control_center_pages_selection_confirmation_and_live_refresh",
+]
 
 # PRES-H02 main-thread Textual artifact apply host hotfix.
 [[test]]

@@ -1022,22 +1022,30 @@ def summarize_legacy_cleanup_assumptions(selections: Sequence[TuiBackendSelectio
     return payload
 
 def run_textual_tui_runtime(args: Any, *, repo_root: Any, console: Any | None = None) -> int:
-    """Run the concrete Textual control-center shell.
+    """Run the concrete Textual control center over canonical Devtool state.
 
-    ``--once`` stays renderer-independent so bootstrap/non-interactive hosts can
-    inspect the same bounded projection without importing Textual. Interactive
-    mode remains a client over canonical RUN/EXO/LIFE/DIST/TEST authorities and
-    never reconstructs shell commands or execution truth.
+    ``--once`` remains import-safe and renderer-independent. Interactive mode
+    materializes the PRES-R02 widget tree and continuously projects canonical
+    IPC/RUN/validation/LIFE/DIST/log/evidence authorities.
     """
 
     once = bool(getattr(args, "once", False))
     page = str(getattr(args, "page", "dashboard") or "dashboard")
     width = int(getattr(args, "width", 0) or 0)
     if once:
+        from pathlib import Path
         from .textual_control_center import PAGES, TextualControlCenter
-        center = TextualControlCenter(page=page if page in PAGES else "dashboard")
+        from .textual_control_center_runtime import CanonicalControlCenterProvider
+
+        normalized = page if page in PAGES else "dashboard"
+        center = TextualControlCenter(page=normalized)
+        projection = CanonicalControlCenterProvider(Path(repo_root)).snapshot()
+        # Preserve the stable PRES-X08 renderer-independent contract while
+        # exposing the real canonical provider payload for inspection.
         payload = center.snapshot(width=width or 100, height=28)
         payload["repo_root"] = str(repo_root)
+        payload["canonical"] = projection
+        payload["owns_truth"] = False
         if console is not None:
             console.print(payload)
         else:
@@ -1053,86 +1061,20 @@ def run_textual_tui_runtime(args: Any, *, repo_root: Any, console: Any | None = 
             print(f"Error: {message}")
         return 2
     try:
-        from textual.app import App, ComposeResult  # type: ignore
-        from textual.widgets import Footer, Header, Static  # type: ignore
-    except Exception as exc:  # pragma: no cover - only exercised when Textual is installed but broken
-        message = f"Textual TUI requested, but Textual failed to import: {exc}"
+        from .textual_control_center import TerminalRestorationGuard
+        from .textual_control_center_runtime import create_textual_control_center_app
+        app = create_textual_control_center_app(repo_root=repo_root, page=page)
+    except Exception as exc:  # pragma: no cover - only exercised with broken optional Textual runtime
+        message = f"Textual TUI requested, but the concrete control center failed to initialize: {exc}"
         if console is not None:
             console.print(f"Error: {message}")
         else:
             print(f"Error: {message}")
         return 2
 
-    from .textual_control_center import (
-        NAV_KEYS,
-        PAGES,
-        TerminalRestorationGuard,
-        TextualControlCenter,
-        render_control_center_text,
-    )
-
-    class DevtoolTextualShell(App):  # type: ignore[misc]
-        TITLE = "Devtool"
-        SUB_TITLE = "Textual Control Center"
-        BINDINGS = [
-            ("q", "exit_without_cancel", "Quit"),
-            ("escape", "exit_without_cancel", "Back/Quit"),
-            ("ctrl+c", "cancel_selected", "Cancel run"),
-            ("?", "help", "Help"),
-        ] + [(key, f"page_{target}", target.title()) for key, target in NAV_KEYS.items()]
-
-        def __init__(self) -> None:
-            super().__init__()
-            self.control_center = TextualControlCenter(page=page if page in PAGES else "dashboard")
-            self.last_control_result: dict[str, Any] | None = None
-
-        def compose(self) -> ComposeResult:  # type: ignore[override]
-            yield Header()
-            yield Static("", id="devtool-textual-dashboard")
-            yield Footer()
-
-        def on_mount(self) -> None:  # pragma: no cover - requires optional Textual runtime
-            self._refresh_control_center()
-
-        def _refresh_control_center(self) -> None:  # pragma: no cover - requires optional Textual runtime
-            snapshot = self.control_center.snapshot(width=width or 100, height=28)
-            body = render_control_center_text(snapshot)
-            if self.last_control_result:
-                body += "\nLast control: " + str(self.last_control_result)
-            self.query_one("#devtool-textual-dashboard", Static).update(body)
-
-        def _navigate(self, target: str) -> None:  # pragma: no cover - requires optional Textual runtime
-            self.control_center.navigate(target)
-            self.last_control_result = {"kind": "navigate", "page": target}
-            self._refresh_control_center()
-
-        def action_cancel_selected(self) -> None:  # pragma: no cover - requires optional Textual runtime
-            self.last_control_result = self.control_center.handle_key("ctrl+c", confirmed=True)
-            self._refresh_control_center()
-
-        def action_exit_without_cancel(self) -> None:  # pragma: no cover - requires optional Textual runtime
-            self.last_control_result = self.control_center.handle_key("q")
-            self.exit()
-
-        def action_help(self) -> None:  # pragma: no cover - requires optional Textual runtime
-            self.last_control_result = {
-                "kind": "help",
-                "keys": {**NAV_KEYS, "ctrl+c": "cancel", "q/esc": "exit", "?": "help"},
-            }
-            self._refresh_control_center()
-
-    def _page_action(target: str):
-        def action(self: Any) -> None:  # pragma: no cover - requires optional Textual runtime
-            self._navigate(target)
-        action.__name__ = f"action_page_{target}"
-        return action
-
-    for _target in PAGES:
-        setattr(DevtoolTextualShell, f"action_page_{_target}", _page_action(_target))
-
     guard = TerminalRestorationGuard()
     with guard:
-        DevtoolTextualShell().run()
+        app.run()
     if not guard.restored:
         raise RuntimeError("Textual terminal ownership did not restore after exit")
     return 0

@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "overlay": "PRES-R02",
+  "title": "Concrete Textual control-center application and canonical live-state remediation",
+  "position": "62/76",
+  "gate_window_position": "2/4",
+  "implementation_position": "2/3",
+  "status": "implemented_pending_native_qualification",
+  "merge_window_decision": {
+    "window": [
+      "PRES-R01",
+      "PRES-R02",
+      "PRES-R03"
+    ],
+    "merged": false,
+    "reason": "R02 owns the concrete devtool tui application/runtime projection boundary; R01 owns execution presentation and R03 owns shortcut/CLI parity plus broad qualification."
+  },
+  "promises": [
+    {
+      "id": "PRES-R02-P001",
+      "status": "delivered",
+      "text": "Interactive devtool tui is a concrete Textual widget tree, not Header + one Static + Footer."
+    },
+    {
+      "id": "PRES-R02-P002",
+      "status": "delivered",
+      "text": "Dashboard, Runs, Logs, Diagnostics, History, Targets, Workers, Validation, Artifacts, Overlays and Evidence are concrete ContentSwitcher pages with real widgets."
+    },
+    {
+      "id": "PRES-R02-P003",
+      "status": "delivered",
+      "text": "RunList/ReferenceTable concepts are concrete DataTable widgets, NodeTree is a real Tree, logs use bounded RichLog, and confirmation/help use real modal screens."
+    },
+    {
+      "id": "PRES-R02-P004",
+      "status": "delivered",
+      "text": "The production provider projects existing IPC/execution store, RUN catalog, validation session, artifact history, SSH provider evidence, logstore and evidence roots; it declares owns_truth=false and creates no TUI-specific durable truth store."
+    },
+    {
+      "id": "PRES-R02-P005",
+      "status": "delivered",
+      "text": "The app performs timer-driven live refresh without requiring a keypress and preserves selected run/node/item frontend state across refreshes."
+    },
+    {
+      "id": "PRES-R02-P006",
+      "status": "delivered",
+      "text": "Runs and nodes are actually selectable and selection drives node trees, detail panes, log context and action availability; diagnostics/history/targets/workers/validation/artifact/overlay/evidence tables retain item selection for details."
+    },
+    {
+      "id": "PRES-R02-P007",
+      "status": "delivered",
+      "text": "Cancel/retry/rerun/resume requests leave the frontend through the existing IPC broker; validation pause/stop uses durable validation control requests; transaction rollback/recovery delegates to canonical transaction authorities."
+    },
+    {
+      "id": "PRES-R02-P008",
+      "status": "delivered",
+      "text": "Consequential cancel, validation stop, rollback and recovery actions use real Textual confirmation modals from visible controls rather than model booleans or debug dictionaries; keyboard shortcut normalization remains R03-owned."
+    },
+    {
+      "id": "PRES-R02-P009",
+      "status": "delivered",
+      "text": "The Logs page displays bounded live log contents with run/node context, follow/pause control, filter input and existing clipboard integration instead of a line count; log reads remain byte- and line-bounded."
+    },
+    {
+      "id": "PRES-R02-P010",
+      "status": "delivered",
+      "text": "The Diagnostics page displays severity, summary and canonical detail fields including failure reason/location/remediation/evidence/source/run/node/log where available."
+    },
+    {
+      "id": "PRES-R02-P011",
+      "status": "delivered",
+      "text": "Prototype last_control_result/debug echo rendering is removed from the concrete runtime; page navigation switches actual visible containers rather than rewriting one Static."
+    },
+    {
+      "id": "PRES-R02-P012",
+      "status": "delivered",
+      "text": "Interactive layout consumes Textual terminal size/resize events, drops the navigation rail in narrow layouts, keeps ContentSwitcher bounded above the global action/status region, and exposes the action controls through a horizontally scrollable strip rather than allowing them to fall outside the viewport."
+    },
+    {
+      "id": "PRES-R02-P013",
+      "status": "delivered",
+      "text": "A real Textual App.run_test/Pilot integration test covers startup, navigation, visible page changes, focus transfer, run selection, node tree, log follow/pause/filter, diagnostics, destructive confirmation through the visible action control, narrow-Termux action-strip reachability, action dispatch, help and live provider transitions; native workflow requires Textual."
+    },
+    {
+      "id": "PRES-R02-P014",
+      "status": "delivered",
+      "text": "Renderer-independent --once remains import-safe/read-only while now embedding a canonical provider snapshot instead of claiming the empty model is live runtime truth."
+    }
+  ],
+  "still_open": [
+    "PRES-R01-P003/P008/P009 live normal-execution Textual main-thread host remains reopened after PRES-H01 and must close before PRES-G2R.",
+    "PRES-R03 canonical shortcut registry/collision detection and CLI page/argument parity including --artifact.",
+    "PRES-R03 broad concrete-app qualification for focus, all page shortcuts, resize/narrow Termux, mouse claims, failure/disconnected states, Ctrl+C/escape and action failures.",
+    "Artifact/overlay apply and worker recovery action compatibility is not falsely claimed here; R03 must bind or deliberately deprecate the corresponding CLI/action surfaces before G2R.",
+    "PRES-G2R reopened X04..X08/G1/G2 concrete-runtime requalification gate.",
+    "PRES-G3 final cross-surface presentation seal including explicit legacy terminal/studio HUD disposition."
+  ],
+  "targeted_validation": {
+    "construction": "Retained PRES X01..X08/G1/G2/R01/R02/H02 construction tests pass with the real-Textual integration tests intentionally deselected on the construction host; R02 source/contracts now assert bounded ContentSwitcher plus HorizontalScroll action-strip ownership.",
+    "native_required": "./devtoolw pres-r02 requires DEVTOOL_PRES_R02_REQUIRE_TEXTUAL=1 for the concrete App.run_test/Pilot node; v3 re-proves confirmation and the native viewport/action-strip boundary at both 120x40 and 64x22.",
+    "authoritative_deferred": [
+      "PRES-G2R full reopened historical requalification",
+      "PRES-G3 final cross-surface seal"
+    ]
+  },
+  "next": "PRES-R03 63/76",
+  "remaining_before_gate": 1,
+  "next_gate": "PRES-G2R 64/76",
+  "next_major_scope": "DIST finalization (DIST-R01 already qualified/applied; next DIST item DIST-G3 66/76)",
+  "revision": "v3_after_native_v2_action_strip_out_of_bounds_failure"
+}
