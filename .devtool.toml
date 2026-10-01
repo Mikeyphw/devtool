@@ -77,6 +77,12 @@ description = "Run CORE-G3 final identity/config/wrapper/RUN seal"
 workflow = "core-g3"
 target = "devtool"
 
+
+[wrapper.commands.env-g3]
+description = "Run ENV-G3 final host/toolchain/language/Gradle seal"
+workflow = "env-g3"
+target = "devtool"
+
 [wrapper.commands.exec-x04]
 description = "Run the EXEC-X04 operational reuse adoption workflow"
 workflow = "roadmap-exec-x04"
@@ -743,6 +749,17 @@ core-g3 = [
   { id = "wrapper-federation-ssh", ref = "test:core-g3-wrapper-federation-ssh", depends_on = ["generated-fixed-point"] },
   { id = "final-fresh-process", ref = "test:core-g3-final-proof", depends_on = ["wrapper-federation-ssh"] },
 ]
+
+env-g3 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "source-dispositions", ref = "test:env-g3-source-dispositions", depends_on = ["syntax"] },
+  { id = "host-language-authority", ref = "test:env-g3-host-language", depends_on = ["source-dispositions"] },
+  { id = "gradle-authority", ref = "test:env-g3-gradle", depends_on = ["host-language-authority"] },
+  { id = "takeover-lifecycle", ref = "test:env-g3-takeover-lifecycle", depends_on = ["gradle-authority"] },
+  { id = "consumer-fixed-point", ref = "test:env-g3-consumer-fixed-point", depends_on = ["takeover-lifecycle"] },
+  { id = "final-proof", ref = "test:env-g3-final-proof", depends_on = ["consumer-fixed-point"] },
+]
+
 roadmap-env-x04 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "environment-lifecycle", ref = "test:roadmap-env-x04-environment-lifecycle", depends_on = ["syntax"] },
@@ -3665,3 +3682,46 @@ name = "CORE-G3 final fresh-process proof"
 runner = "pytest"
 timeout_seconds = 600
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_core_g3_final_seal.py"]
+
+# ENV-G3 final environment seal.
+[[test]]
+id = "env-g3-source-dispositions"
+name = "ENV-G3 source disposition closure"
+runner = "pytest"
+timeout_seconds = 120
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_env_g3_final_seal.py::test_source_dispositions_are_complete_final_and_specific", "tests/test_env_g3_final_seal.py::test_source_dispositions_preserve_canonical_identity"]
+
+[[test]]
+id = "env-g3-host-language"
+name = "ENV-G3 retained host and language authority"
+runner = "pytest"
+timeout_seconds = 300
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_env_x01_host_privilege_foundation.py", "tests/test_env_x02_language_environment_convergence.py", "tests/test_env_g1_host_language_gate.py"]
+
+[[test]]
+id = "env-g3-gradle"
+name = "ENV-G3 canonical Gradle authority"
+runner = "pytest"
+timeout_seconds = 300
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_env_x03_gradle_planner.py", "tests/test_env_x03_gradle_receipts.py", "tests/test_env_x03_gradle_callers.py", "tests/test_env_g2_gradle_gate.py"]
+
+[[test]]
+id = "env-g3-takeover-lifecycle"
+name = "ENV-G3 takeover and lifecycle authority"
+runner = "pytest"
+timeout_seconds = 300
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_env_x04_environment_lifecycle.py", "tests/test_env_x05_gradle_takeover.py"]
+
+[[test]]
+id = "env-g3-consumer-fixed-point"
+name = "ENV-G3 downstream consumer fixed point"
+runner = "pytest"
+timeout_seconds = 240
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_env_g3_final_seal.py::test_consumer_contracts_bind_environment_identity", "tests/test_env_g3_final_seal.py::test_core_generated_surfaces_remain_current"]
+
+[[test]]
+id = "env-g3-final-proof"
+name = "ENV-G3 fresh-process final proof"
+runner = "pytest"
+timeout_seconds = 180
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_env_g3_final_seal.py::test_fresh_process_wrapper_help_is_observational", "tests/test_env_g3_final_seal.py::test_attestation_is_candidate_and_complete"]

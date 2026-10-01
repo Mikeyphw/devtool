@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "gate": "ENV-G3",
+  "position": "58/70",
+  "status": "candidate-awaiting-native-termux-qualification",
+  "source_obligations": 252,
+  "workflow_nodes": 7,
+  "retained_env_tests": 186,
+  "next_gate": "ANDROID-G3 59/70",
+  "artifact_revision": "v2",
+  "source_dispositions_sha256": "be57fbbdfbc090aab0fe7a31587b8921377ba0738c976937b49c89f171522aca"
+}
