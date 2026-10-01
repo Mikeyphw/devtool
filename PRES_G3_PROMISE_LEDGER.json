@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "overlay": "PRES-G3",
+  "title": "Final cross-surface presentation seal",
+  "position": "70/77",
+  "gate_window_position": "1/1",
+  "status": "candidate_pending_native_qualification",
+  "merge_window_decision": {
+    "merged": false,
+    "window": [
+      "PRES-G3",
+      "RMP-X01",
+      "RMP-X02"
+    ],
+    "reason": "PRES-G3 is the authoritative presentation seal; RMP-X01/X02 begin a separate roadmap-policy scope."
+  },
+  "prerequisite": {
+    "EXEC-G3": {
+      "run": "b9bff06189b04df6b6f7ac4336feb94b",
+      "commit": "87baef9",
+      "tests": "341 passed, 0 failed, 896 skipped (1237 total)",
+      "diagnostics": "0 warnings, 0 errors"
+    },
+    "PRES-UX01": {
+      "run": "c2a81967b15d4c56a6044e3620cc1e68",
+      "commit": "35ea55c",
+      "tests": "157 passed, 0 failed, 0 skipped"
+    }
+  },
+  "promises": [
+    "Seal X01..X08/G1/G2 plus R01/R02/R03/G2R/UX01 at the concrete runtime fixed point.",
+    "Remove the last Rich Live terminal ownership from terminal/studio HUD modes instead of merely documenting it as legacy.",
+    "Use a Textual terminal HUD over the existing canonical HUD/RUN projection; do not create another truth store.",
+    "Keep studio as web plus the same Textual terminal projection and clean up its background HTTP server on exit.",
+    "Make terminal --once non-live and safe when TERM is unset, closing the long-standing non-interactive terminal-clear issue.",
+    "Preserve terminal/v3 and studio/v5/all CLI aliases and all machine/web/Android/desktop projection contracts.",
+    "Require native Textual App.run_test/Pilot qualification across R01, H02, R02, R03, UX01 and the new terminal HUD.",
+    "Leave no presentation-owned mutation or execution truth outside canonical RUN/EXO/LIFE/DIST/TEST/EXEC authorities."
+  ],
+  "next_on_success": "RMP-X01 71/77",
+  "remaining_after_success": 7,
+  "next_major_scope": "RMP roadmap-policy finalization",
+  "construction_evidence": {
+    "gate_contracts": "6 passed",
+    "retained_pres": "57 passed, 7 deselected",
+    "cross_surface": "94 passed, 5 subtests passed",
+    "real_textual": "7 passed under Textual 8.2.8",
+    "generated_release": "27 passed",
+    "fresh_process_final_proof": "pass",
+    "rich_live_runtime_refs": 0,
+    "v2_gate_contracts": "6 passed",
+    "v2_retained_pres": "57 passed, 7 deselected",
+    "v2_cross_surface": "94 passed, 5 subtests passed",
+    "v2_real_textual": "7 passed under Textual 8.2.8",
+    "v2_generated_release": "27 passed",
+    "v2_total_pytest": "191 passed",
+    "v2_fresh_process_final_proof": "pass"
+  },
+  "native_qualification_history": {
+    "v1_run": "04f0bfa2f1c042fd9b7b1e082ff94ad6",
+    "v1_result": "rolled_back_cleanly",
+    "v1_failure_phase": "pytest_collection",
+    "v1_failure": "tests/test_pres_g3_final_presentation_seal.py used @pytest.mark.asyncio, but the repository strict marker registry does not define asyncio; runtime stages did not execute",
+    "v2_correction": "remove the plugin-dependent asyncio marker and use the established synchronous pytest + inner async exercise + asyncio.run pattern used by retained PRES real-Textual tests"
+  }
+}

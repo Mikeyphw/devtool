@@ -57,3 +57,8 @@ Native Termux execution of `./devtoolw exec-g3` remains authoritative for applyi
 ## Next
 
 On successful qualification, EXEC finalization is closed and the next overlay is **PRES-G3 70/77**, the final cross-surface presentation seal.
+
+
+## Native closure
+
+EXEC-G3 v3 qualified/applied on native Termux in run `b9bff06189b04df6b6f7ac4336feb94b`: **341 passed, 0 failed, 896 skipped (1237 total)**, zero diagnostics, commit `87baef9`. EXEC finalization is closed at **69/77** and the active item advances to **PRES-G3 70/77**.

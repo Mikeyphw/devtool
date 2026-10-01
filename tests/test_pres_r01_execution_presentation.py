@@ -386,7 +386,7 @@ def test_pres_r01_campaign_refresh_and_reopened_ledger_are_consistent() -> None:
     assert rows["PRES-G2R"]["position"] == "64/77"
     assert rows["PRES-G2R"]["status"] == "qualified_native"
     assert rows["PRES-UX01"]["position"] == "68/77"
-    assert rows["PRES-UX01"]["status"].startswith("candidate_pending_native_qualification")
+    assert rows["PRES-UX01"]["status"] == "qualified_native"
     assert "65/77 DIST-R01" in plan
     assert "66/77 DIST-G3" in plan
     assert "67/77 TEST-G3" in plan
@@ -412,8 +412,8 @@ def test_pres_r01_campaign_refresh_and_reopened_ledger_are_consistent() -> None:
     assert "1. **PRES-R01**" in plan
     assert "2. **PRES-R02**" in plan
     assert "PRES-UX01 → EXEC-G3 → PRES-G3 are not merged" in plan
-    assert ledger["current_active"] == "PRES-UX01 68/77"
-    assert ledger["next_major_scope_after_active"] == "EXEC finalization (EXEC-G3 69/77)"
+    assert ledger["current_active"] == "PRES-G3 70/77"
+    assert ledger["next_major_scope_after_active"] == "RMP roadmap-policy finalization (71/77..77/77)"
     assert "3. **PRES-R03**" in plan
 
 

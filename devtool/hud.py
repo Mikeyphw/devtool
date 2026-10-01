@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from rich.console import Console
-from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -1929,17 +1928,84 @@ class TerminalHud:
         border_style = "green" if state.status in {"ok", "running", "idle"} else "red"
         return Panel(table, title=self.title, border_style=border_style)
 
-    def run(self, *, directory: Path, interval_s: float, once: bool = False) -> int:
-        events_path = directory / "events.jsonl"
-        refresh = max(1, min(20, int(1 / max(interval_s, 0.05))))
-        with Live(self.render(state_from_directory(directory, prefer_execution=True), _last_jsonl_events(events_path, self.recent_events)), console=self.console, refresh_per_second=refresh) as live:
-            while True:
-                state = state_from_directory(directory, prefer_execution=True)
-                events = _last_jsonl_events(events_path, self.recent_events)
-                live.update(self.render(state, events))
-                if once:
-                    return 0
-                time.sleep(interval_s)
+    def run(self, *, directory: Path, interval_s: float, once: bool = False, follow_active: bool = False) -> int:
+        current_dir = resolve_hud_directory(directory, follow_active=follow_active)
+        if once:
+            # Static rendering is deliberately non-live so redirected/non-interactive
+            # callers never trigger terminal clearing or TERM-dependent control paths.
+            self.console.print(self.render(
+                state_from_directory(current_dir, prefer_execution=True),
+                _last_jsonl_events(current_dir / "events.jsonl", self.recent_events),
+            ))
+            return 0
+        app = build_textual_terminal_hud_app(
+            directory=directory,
+            interval_s=interval_s,
+            recent_events=self.recent_events,
+            title=self.title,
+            follow_active=follow_active,
+            renderer=self,
+        )
+        app.run()
+        return 0
+
+
+
+def build_textual_terminal_hud_app(
+    *,
+    directory: Path,
+    interval_s: float,
+    recent_events: int,
+    title: str = "devtool HUD",
+    follow_active: bool = False,
+    renderer: "TerminalHud | None" = None,
+):
+    """Build the interactive Textual HUD without making Textual a hard import.
+
+    Canonical truth remains the existing HUD/RUN projection.  Textual only owns
+    the terminal presentation lifecycle and never persists execution state.
+    """
+    try:
+        from textual.app import App, ComposeResult
+        from textual.widgets import Footer, Static
+    except ImportError as exc:  # pragma: no cover - exercised by optional-dep tests
+        raise RuntimeError(
+            "Interactive terminal/studio HUD requires Textual. Install devtool[tui] "
+            "or use --mode web / --once."
+        ) from exc
+
+    terminal = renderer or TerminalHud(recent_events=recent_events, title=title)
+    poll = max(0.05, float(interval_s))
+
+    class DevtoolTextualHud(App[None]):
+        TITLE = title
+        SUB_TITLE = "canonical live projection"
+        CSS = """
+        Screen { layout: vertical; }
+        #hud-body { height: 1fr; padding: 0 1; }
+        Footer { height: 1; }
+        """
+        BINDINGS = [
+            ("q", "quit", "Quit"),
+            ("escape", "quit", "Quit"),
+            ("r", "refresh_hud", "Refresh"),
+        ]
+
+        def compose(self) -> ComposeResult:
+            yield Static(id="hud-body")
+            yield Footer()
+
+        def on_mount(self) -> None:
+            self.action_refresh_hud()
+            self.set_interval(poll, self.action_refresh_hud)
+
+        def action_refresh_hud(self) -> None:
+            current = resolve_hud_directory(directory, follow_active=follow_active)
+            state = state_from_directory(current, prefer_execution=True)
+            events = _last_jsonl_events(current / "events.jsonl", recent_events)
+            self.query_one("#hud-body", Static).update(terminal.render(state, events))
+
+    return DevtoolTextualHud()
 
 
 class AndroidAppHud:
@@ -2592,7 +2658,7 @@ class WebDashboardHud:
 
 
 class StudioHud:
-    """HUD v5: web dashboard plus local console."""
+    """HUD v5: web dashboard plus the canonical Textual terminal projection."""
 
     def __init__(self, *, host: str, port: int, recent_events: int) -> None:
         self.host = host
@@ -2610,15 +2676,18 @@ class StudioHud:
         host, port = httpd.server_address[:2]
         console.print(f"[green]devtool HUD v5 studio[/green] web=http://{host}:{port} dir={directory}")
         terminal = TerminalHud(console=console, recent_events=self.recent_events, title="devtool HUD v5 studio")
-        refresh = max(1, min(20, int(1 / max(interval_s, 0.05))))
-        current_dir = resolve_hud_directory(directory, follow_active=follow_active)
-        with Live(terminal.render(state_from_directory(current_dir, prefer_execution=True), _last_jsonl_events(current_dir / "events.jsonl", self.recent_events)), console=console, refresh_per_second=refresh) as live:
-            while True:
-                current_dir = resolve_hud_directory(directory, follow_active=follow_active)
-                state = state_from_directory(current_dir, prefer_execution=True)
-                events = _last_jsonl_events(current_dir / "events.jsonl", self.recent_events)
-                live.update(terminal.render(state, events))
-                time.sleep(interval_s)
+        try:
+            return terminal.run(
+                directory=directory,
+                interval_s=interval_s,
+                once=False,
+                follow_active=follow_active,
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                httpd.shutdown()
+            with contextlib.suppress(Exception):
+                httpd.server_close()
 
 def legacy_desktop_mode_message(requested: str) -> str:
     requested = (requested or "").strip() or "desktop"
@@ -2692,7 +2761,7 @@ def build_hud_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=["auto", "android-bridge", "android-gui", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "gtk4-window", "gtk-window", "desktop-notify", "control-center", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
         default="auto",
-        help="HUD renderer: Android app bridge, terminal/v3, web/v4, studio/v5, or GTK4 desktop/v6",
+        help="HUD renderer: Android app bridge, Textual terminal/v3, web/v4, web+Textual studio/v5, or GTK4 desktop/v6",
     )
     parser.add_argument("--host", default=DEFAULT_HUD_HOST, help="Host/IP for HUD web/studio modes")
     parser.add_argument("--port", type=int, default=DEFAULT_HUD_PORT, help="Port for HUD web/studio modes")
@@ -2747,7 +2816,7 @@ def run_hud(args: argparse.Namespace) -> int:
         )
     if mode == "desktop-notify":
         return DesktopNotificationHud(notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
-    return TerminalHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once))
+    return TerminalHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
 
 
 def main(argv: list[str] | None = None) -> int:

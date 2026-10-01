@@ -113,3 +113,22 @@ later final seal after DIST, TEST, and EXEC are finally qualified.
 - A dedicated construction regression reproduces the native sanitization case by forcing Android host detection while removing Termux markers; the three-node nested workflow succeeds and seals under the `host` selector.
 - Construction fixed point after v3 remediation: gate 6, retained foundation 58, retained validation 13, operational adoption 29, lifecycle closure 26, interruption continuation 7, generated/release 27; **166 pytest tests passed** plus the fresh-process EXEC-G3 final proof.
 - Next remains **PRES-G3 70/77** only after native EXEC-G3 v3 qualification.
+
+
+## 2026-10-01 EXEC-G3 native closure and PRES-G3 activation
+
+- EXEC-G3 v3 qualified/applied on native Termux: run `b9bff06189b04df6b6f7ac4336feb94b`, **341 passed, 0 failed, 896 skipped (1237 total)**, zero diagnostics, commit `87baef9`. EXEC finalization is closed at **69/77**.
+- The active item is now **PRES-G3 70/77**, the separate authoritative final cross-surface presentation seal.
+- Fixed-point audit carries the deliberately deferred G2R obligation: explicit terminal/studio HUD Rich `Live` ownership must be migrated, deprecated, or concretely qualified. PRES-G3 migrates it to Textual while retaining the existing canonical HUD/RUN projection.
+- The historical non-interactive `TERM environment variable not set` terminal-clear issue is also closed here by making terminal `--once` a static non-live render.
+- Next-three merge window: **PRES-G3 → RMP-X01 → RMP-X02**. No merge: PRES-G3 is a final presentation gate and RMP-X01 begins a different roadmap-policy scope.
+- On successful PRES-G3 qualification, next is **RMP-X01 71/77**; seven RMP positions remain through GRAND DEVTOOL at **77/77**.
+
+
+## 2026-10-01 PRES-G3 native v1 collection retry
+
+- PRES-G3 v1 failed and rolled back cleanly on native Termux: run `04f0bfa2f1c042fd9b7b1e082ff94ad6`; duration 108.99s; zero warnings; one validation error.
+- Failure occurred during pytest **collection**, before PRES-G3 runtime qualification: `@pytest.mark.asyncio` was not present in Devtool's strict marker registry.
+- PRES-G3 v2 remains the same **70/77** boundary. The qualification-only real Textual HUD test now uses the established synchronous pytest wrapper with an inner async `exercise()` and `asyncio.run(exercise())`; runtime presentation code is unchanged.
+- v2 construction fixed point: **191 pytest tests passed** across the seven seal layers plus the fresh-process final proof.
+- Next remains **RMP-X01 71/77** only after native PRES-G3 v2 qualification.

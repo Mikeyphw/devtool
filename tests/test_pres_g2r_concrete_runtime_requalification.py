@@ -59,7 +59,7 @@ def test_g2r_gate_ledger_covers_complete_reopened_window_and_effective_next() ->
     ledger = _json("PRES_G2R_PROMISE_LEDGER.json")
     assert ledger["position"] == "64/76"
     assert ledger["gate_window_position"] == "4/4"
-    assert ledger["status"] == "candidate_pending_native_qualification"
+    assert ledger["status"] == "qualified_applied"
     required = {
         "PRES-X04", "PRES-X05", "PRES-X06", "PRES-X07", "PRES-G1", "PRES-X08",
         "PRES-G2 remediation", "PRES-G2", "PRES-R01", "PRES-H01", "PRES-H02", "PRES-R02", "PRES-R03",
@@ -196,13 +196,19 @@ def test_g2r_fresh_process_once_projection_is_read_only_and_bounded(tmp_path: Pa
     assert _digest_tree(tmp_path) == before
 
 
-def test_g2r_legacy_rich_live_is_explicit_hud_scope_not_normal_execution() -> None:
+def test_g2r_legacy_rich_live_deferment_is_preserved_and_now_closed_by_g3() -> None:
     hud = (ROOT / "devtool" / "hud.py").read_text(encoding="utf-8")
     tasker = (ROOT / "devtool" / "tasker.py").read_text(encoding="utf-8")
     execution = (ROOT / "devtool" / "textual_execution_host.py").read_text(encoding="utf-8")
-    assert "from rich.live import Live" in hud
+    # G2R historically deferred explicit terminal/studio HUD disposition. PRES-G3
+    # closes that deferment by migrating the live terminal lifecycle to Textual.
+    assert "from rich.live import Live" not in hud
+    assert "build_textual_terminal_hud_app" in hud
     assert 'os.environ.get("DEVTOOL_AUTO_HUD_CHILD") == "1"' in tasker
     assert 'child_env["DEVTOOL_AUTO_HUD_CHILD"] = "1"' in execution
     report = (ROOT / "PRES_G2R_CONCRETE_RUNTIME_REQUALIFICATION_GATE_REPORT.md").read_text(encoding="utf-8")
     assert "PRES-G3 69/76" in report
     assert "not reclassified as normal execution presentation" in report
+    g3 = _json("PRES_G3_PROMISE_LEDGER.json")
+    assert g3["position"] == "70/77"
+    assert any("Remove the last Rich Live" in item for item in g3["promises"])

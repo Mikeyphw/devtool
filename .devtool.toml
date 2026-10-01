@@ -256,6 +256,12 @@ description = "Run the EXEC-G3 final execution, reuse, and validation seal"
 workflow = "roadmap-exec-g3"
 target = "devtool"
 
+# PRES-G3 final authoritative cross-surface presentation seal.
+[wrapper.commands.pres-g3]
+description = "Run the PRES-G3 final cross-surface presentation seal"
+workflow = "roadmap-pres-g3"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 
 # DIST-R01 pre-G3 candidate-runtime/self-refresh remediation.
@@ -902,6 +908,16 @@ roadmap-exec-g3 = [
   { id = "interruption-continuation", ref = "test:roadmap-exec-g3-interruption-continuation", depends_on = ["lifecycle-closure"] },
   { id = "generated-surfaces", ref = "test:roadmap-exec-g3-generated-surfaces", depends_on = ["interruption-continuation"] },
   { id = "final-proof", ref = "test:roadmap-exec-g3-final-proof", depends_on = ["generated-surfaces"] },
+]
+
+roadmap-pres-g3 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "gate-contracts", ref = "test:roadmap-pres-g3-gate-contracts", depends_on = ["syntax"] },
+  { id = "retained-pres", ref = "test:roadmap-pres-g3-retained-pres", depends_on = ["gate-contracts"] },
+  { id = "cross-surface", ref = "test:roadmap-pres-g3-cross-surface", depends_on = ["retained-pres"] },
+  { id = "real-textual-fixed-point", ref = "test:roadmap-pres-g3-real-textual-fixed-point", depends_on = ["cross-surface"] },
+  { id = "generated-surfaces", ref = "test:roadmap-pres-g3-generated-surfaces", depends_on = ["real-textual-fixed-point"] },
+  { id = "final-proof", ref = "test:roadmap-pres-g3-final-proof", depends_on = ["generated-surfaces"] },
 ]
 
 roadmap-gradle-takeover-g1 = [
@@ -2715,6 +2731,79 @@ name = "EXEC-G3 authoritative mixed provenance and final closure proof"
 runner = "command"
 timeout_seconds = 900
 command = ["python", "-m", "devtool.exec_g3_gate", "--repo-root", "."]
+
+# PRES-G3 authoritative final cross-surface presentation seal.
+[[test]]
+id = "roadmap-pres-g3-gate-contracts"
+name = "PRES-G3 final presentation ownership and HUD migration contracts"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_pres_g3_final_presentation_seal.py", "-k", "not real_pres_g3"]
+
+[[test]]
+id = "roadmap-pres-g3-retained-pres"
+name = "PRES-G3 retained PRES remediation and parity fixed point"
+runner = "pytest"
+timeout_seconds = 1200
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r01_execution_presentation.py",
+  "tests/test_pres_h02_textual_apply_host.py",
+  "tests/test_pres_r02_textual_control_center_app.py",
+  "tests/test_pres_r03_textual_parity_qualification.py",
+  "tests/test_pres_g2r_concrete_runtime_requalification.py",
+  "tests/test_pres_ux01_textual_workspace_revamp.py",
+  "-k", "not real_textual and not real_apply and not real_pres_g3",
+]
+
+[[test]]
+id = "roadmap-pres-g3-cross-surface"
+name = "PRES-G3 retained HUD Android desktop terminal and projection parity"
+runner = "pytest"
+timeout_seconds = 900
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_hud.py",
+  "tests/test_ui07_ui08_confirmation_notification_terminal.py",
+  "tests/test_android_live_hud.py",
+  "tests/test_desktop_gtk_phase1_2.py",
+  "tests/test_desktop_gtk_phase6.py",
+]
+
+[[test]]
+id = "roadmap-pres-g3-real-textual-fixed-point"
+name = "PRES-G3 complete native real Textual fixed point"
+runner = "command"
+timeout_seconds = 1200
+env = { DEVTOOL_PRES_R01_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_R02_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_R03_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_H02_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_G3_REQUIRE_TEXTUAL = "1" }
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r01_execution_presentation.py::test_real_textual_execution_app_updates_and_confirms_cancel",
+  "tests/test_pres_h02_textual_apply_host.py::test_real_apply_host_app_runs_on_textual_main_thread_when_required",
+  "tests/test_pres_r02_textual_control_center_app.py::test_real_textual_control_center_pages_selection_confirmation_and_live_refresh",
+  "tests/test_pres_r03_textual_parity_qualification.py::test_real_textual_r03_navigation_help_palette_failure_live_resize_and_shutdown",
+  "tests/test_pres_ux01_textual_workspace_revamp.py::test_real_textual_revamp_contextual_actions_compact_layout_and_inline_apply",
+  "tests/test_pres_ux01_textual_workspace_revamp.py::test_real_textual_apply_workspace_mobile_geometry_reflows_and_surfaces_validation_child_progress",
+  "tests/test_pres_g3_final_presentation_seal.py::test_real_pres_g3_textual_terminal_hud_refreshes_and_quits",
+]
+
+[[test]]
+id = "roadmap-pres-g3-generated-surfaces"
+name = "PRES-G3 generated CLI surfaces and release integrity"
+runner = "pytest"
+timeout_seconds = 900
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_core_x04_generated_surfaces.py",
+  "tests/test_release_verifier_final_integrity.py",
+]
+
+[[test]]
+id = "roadmap-pres-g3-final-proof"
+name = "PRES-G3 fresh-process final cross-surface proof"
+runner = "command"
+timeout_seconds = 300
+command = ["python", "-m", "devtool.pres_g3_gate", "--repo-root", "."]
 
 # GRADLE-TAKEOVER-G1 audits the complete ENV-X05 + EXEC-X05 promise window,
 # exercises real shim/launcher process choreography, and re-runs normal release

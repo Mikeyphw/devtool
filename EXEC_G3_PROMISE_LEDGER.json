@@ -4,7 +4,7 @@
   "position": "69/77",
   "scope_position": "EXEC final seal",
   "gate_window_position": "2/2 after EXEC-X04 operational adoption / post-consumer reseal",
-  "status": "candidate_v3_pending_native_termux_qualification",
+  "status": "qualified_native",
   "merge_window": {
     "items": [
       "EXEC-G3 69/77",
@@ -160,5 +160,12 @@
       "remediation": "generic nested CLI finalization probes use --execution-environment host after clearing inherited routing; host resolves to the substrate actually observed by the nested process, including sanitized Android host-android, without weakening canonical backend validation",
       "construction_fixed_point": "166 passed plus fresh-process final proof"
     }
-  ]
+  ],
+  "native_qualification": {
+    "run": "b9bff06189b04df6b6f7ac4336feb94b",
+    "tests": "341 passed, 0 failed, 896 skipped (1237 total)",
+    "diagnostics": "0 warnings, 0 errors",
+    "git_commit": "87baef9",
+    "artifact": "exec_g3_final_execution_reuse_validation_seal_v3.zip"
+  }
 }

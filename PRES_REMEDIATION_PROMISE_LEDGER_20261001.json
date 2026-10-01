@@ -199,6 +199,24 @@
         "diagnostics": "0 warnings, 0 errors",
         "git_commit": "35ea55c"
       }
+    },
+    {
+      "id": "PRES-G3",
+      "position": "70/77",
+      "status": "candidate_pending_native_qualification",
+      "promises": [
+        "Seal X01..X08/G1/G2 plus R01/R02/R03/G2R/UX01 at the concrete runtime fixed point.",
+        "Remove the last Rich Live terminal ownership from terminal/studio HUD modes instead of merely documenting it as legacy.",
+        "Use a Textual terminal HUD over the existing canonical HUD/RUN projection; do not create another truth store.",
+        "Keep studio as web plus the same Textual terminal projection and clean up its background HTTP server on exit.",
+        "Make terminal --once non-live and safe when TERM is unset, closing the long-standing non-interactive terminal-clear issue.",
+        "Preserve terminal/v3 and studio/v5/all CLI aliases and all machine/web/Android/desktop projection contracts.",
+        "Require native Textual App.run_test/Pilot qualification across R01, H02, R02, R03, UX01 and the new terminal HUD.",
+        "Leave no presentation-owned mutation or execution truth outside canonical RUN/EXO/LIFE/DIST/TEST/EXEC authorities."
+      ],
+      "next": "RMP-X01 71/77",
+      "delivered_ledger": "PRES_G3_PROMISE_LEDGER.json",
+      "gate_evidence": "PRES_G3_FINAL_CROSS_SURFACE_PRESENTATION_SEAL_REPORT.md"
     }
   ],
   "known_non_pres_insertions": [
@@ -210,7 +228,6 @@
     }
   ],
   "remaining_tail": [
-    "69/77 EXEC-G3",
     "70/77 PRES-G3",
     "71/77 RMP-X01",
     "72/77 RMP-X02",
@@ -272,25 +289,39 @@
       "tests": "246 passed, 0 failed, 4 skipped",
       "git_commit": "4269091"
     },
-    "PRES-UX01 68/77 — run c2a81967b15d4c56a6044e3620cc1e68; commit 35ea55c; 157 passed; zero diagnostics"
+    "PRES-UX01 68/77 \u2014 run c2a81967b15d4c56a6044e3620cc1e68; commit 35ea55c; 157 passed; zero diagnostics"
   ],
-  "current_active": "EXEC-G3 69/77 (v3 candidate after v1/v2 native qualification rollbacks)",
-  "next_major_scope_after_active": "PRES finalization (PRES-G3 70/77)",
+  "current_active": "PRES-G3 70/77",
+  "next_major_scope_after_active": "RMP roadmap-policy finalization (71/77..77/77)",
   "active_gate_retry": {
-    "id": "EXEC-G3",
-    "position": "69/77",
+    "id": "PRES-G3",
+    "position": "70/77",
     "failed_revisions": [
-      "v1",
-      "v2"
+      "v1"
     ],
     "failed_runs": [
-      "060a039b99fc401a97171607bcaa6111",
-      "c4ad9ed376324718a55e8ad6112de6bf"
+      "04f0bfa2f1c042fd9b7b1e082ff94ad6"
     ],
-    "failure_owner": "EXEC-G3 nested CLI qualification harness",
+    "failure_owner": "PRES-G3 pytest qualification harness",
+    "failure_phase": "collection",
     "runtime_regression": false,
-    "v3_remediation": "nested generic CLI finalization probes clear inherited routing and use the public host selector rather than forcing native-termux; sanitized Android host-android remains a diagnostic observed substrate, not a configurable backend alias",
-    "construction_fixed_point": "166 passed plus fresh-process final proof",
+    "v2_remediation": "replace the undeclared pytest asyncio marker with the established synchronous pytest wrapper and asyncio.run(exercise()) pattern; runtime migration remains unchanged",
+    "construction_fixed_point": "191 passed plus fresh-process final proof",
     "status": "candidate_pending_native_termux_qualification"
-  }
+  },
+  "active_item": "PRES-G3 70/77",
+  "qualified_cross_scope_final_seals": [
+    {
+      "id": "EXEC-G3",
+      "position": "69/77",
+      "status": "qualified_native",
+      "qualification": {
+        "run": "b9bff06189b04df6b6f7ac4336feb94b",
+        "tests": "341 passed, 0 failed, 896 skipped (1237 total)",
+        "diagnostics": "0 warnings, 0 errors",
+        "git_commit": "87baef9"
+      },
+      "next": "PRES-G3 70/77"
+    }
+  ]
 }
