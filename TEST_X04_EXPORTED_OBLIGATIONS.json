@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "TEST-X04",
+  "exports": {
+    "EXEC-X04": [
+      "consume canonical TEST TestSelection/TestResult/TestRunReceipt evidence",
+      "preserve RER qualification/source proof ownership",
+      "do not convert reused tests into fabricated execution events"
+    ],
+    "TEST-G3": [
+      "prove full TEST-X01..X04 chain from fresh process",
+      "resolve all 84 source promises, 105 source regressions, 104 merged TEST promises, and 100 merged regression cases",
+      "prove local/Termux plus supported delegated test semantics without competing truth stores"
+    ],
+    "RMP": [
+      "bind gates by stable TEST check IDs and receipts/RER refs rather than mutable pytest paths"
+    ]
+  }
+}

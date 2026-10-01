@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "TEST-X04",
+  "position": "55/70",
+  "state": "IMPLEMENTED_PENDING_NATIVE_TERMUX_QUALIFICATION",
+  "promises": [
+    {"id": "TEST-X04-01", "promise": "behavior-centric historical cleanup preserves stable campaign/check aliases", "status": "delivered", "evidence": "HistoricalTestAlias + TEST_X04_HISTORICAL_EVIDENCE_FIXTURES.json"},
+    {"id": "TEST-X04-02", "promise": "higher seals consume one generated-surface receipt/root while raw outcomes remain queryable", "status": "delivered", "evidence": "GeneratedSurfaceReceipt/generated_surface_projection"},
+    {"id": "TEST-X04-03", "promise": "historical evidence fixtures retain immutable source-run/evidence refs", "status": "delivered", "evidence": "HistoricalEvidenceFixture"},
+    {"id": "TEST-X04-04", "promise": "RER reuse requires full test/selection/input/environment/output/policy/freshness identity", "status": "delivered", "evidence": "RerTestEvidenceRequest"},
+    {"id": "TEST-X04-05", "promise": "DIST child/shard lineage does not turn transport degradation into test failure truth", "status": "delivered", "evidence": "DelegatedTestLineage"},
+    {"id": "TEST-X04-06", "promise": "shuffle/repeat is diagnostic evidence, never implicit correctness retry", "status": "delivered", "evidence": "ShuffleRepeatDiagnostic"},
+    {"id": "TEST-X04-07", "promise": "quarantine requires owner/reason/expiry and preserves final test outcome", "status": "delivered", "evidence": "QuarantineRecord"},
+    {"id": "TEST-X04-08", "promise": "PRES/COPY receives structured clusters/profile/raw-result refs without owning test truth", "status": "delivered", "evidence": "presentation_projection"},
+    {"id": "TEST-X04-09", "promise": "RMP consumes stable check IDs and receipt/RER refs rather than pytest paths", "status": "delivered", "evidence": "roadmap_evidence_binding"},
+    {"id": "TEST-X04-10", "promise": "subsequent roadmap work dogfoods explicit TEST lanes while EXO/DIST/RMP retain their authorities", "status": "delivered", "evidence": "dogfood_lane_plan"},
+    {"id": "TEST-X04-11", "promise": "source/merged obligation disposition fails closed on pending, missing evidence, or duplicates", "status": "delivered", "evidence": "obligation_disposition"},
+    {"id": "TEST-X04-12", "promise": "repo-local JUnit/report files remain replaceable projections of RUN V3 history", "status": "delivered", "evidence": "repo_local_report_projection"},
+    {"id": "TEST-X04-13", "promise": "TEST introduces no competing scheduler, run store, reuse engine, presentation truth, transport authority, or roadmap scheduler", "status": "delivered", "evidence": "module ownership boundary + regression workflow"}
+  ],
+  "exports": [
+    {"owner": "EXEC-X04", "obligation": "consume immutable TEST selection/result/receipt and RER source proof without rebuilding TEST semantics"},
+    {"owner": "TEST-G3", "obligation": "close all TEST source + merged promises/regressions from fresh local/Termux and delegated evidence"},
+    {"owner": "RMP", "obligation": "consume stable check IDs and receipt/RER evidence; never canonicalize pytest path lists"}
+  ]
+}
