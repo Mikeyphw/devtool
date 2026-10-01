@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "digest": "61c6953bcfe78b090034f445cce5d4d78edbecf388d123117362dfc86aec1bcc",
+  "digest": "608725f3f2a522164cda88dc0b1f130446cb04f3d8d1524f3210b0690b8ad4c6",
   "documents": {
     "global": {
       "allow_unknown_top_level": [
@@ -320,7 +320,7 @@
       "option_id": "cli.option.execution_environment"
     }
   ],
-  "registry_digest": "9107791dd5ab2cb39609d463b3d28a956821344419e740ed08d71899260a84ed",
+  "registry_digest": "ee588b99382be438885e2d5be7b149f247e2aa5b756f52e2592eb873648cffcd",
   "registry_schema_version": 1,
   "reserved_namespaces": [
     "devtool",

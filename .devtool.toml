@@ -67,6 +67,16 @@ target = "devtool"
 
 
 # EXEC-X04 operational reuse adoption.
+[wrapper.commands.core-g3-remediation]
+description = "Run pre-CORE-G3 generated-surface fixed-point remediation validation"
+workflow = "core-g3-remediation"
+target = "devtool"
+
+[wrapper.commands.core-g3]
+description = "Run CORE-G3 final identity/config/wrapper/RUN seal"
+workflow = "core-g3"
+target = "devtool"
+
 [wrapper.commands.exec-x04]
 description = "Run the EXEC-X04 operational reuse adoption workflow"
 workflow = "roadmap-exec-x04"
@@ -721,6 +731,18 @@ roadmap-exec-x04 = [
   { id = "test-x04-regression", ref = "test:roadmap-exec-x04-test-x04-regression", depends_on = ["g2-regression"] },
 ]
 
+core-g3-remediation = [
+  { id = "generated-surfaces", ref = "test:core-g3-remediation", depends_on = [] },
+]
+core-g3 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "source-dispositions", ref = "test:core-g3-source-dispositions", depends_on = ["syntax"] },
+  { id = "g1-identity", ref = "test:core-g3-g1-identity", depends_on = ["source-dispositions"] },
+  { id = "g2-run-store", ref = "test:core-g3-g2-run-store", depends_on = ["g1-identity"] },
+  { id = "generated-fixed-point", ref = "test:core-g3-generated-fixed-point", depends_on = ["g2-run-store"] },
+  { id = "wrapper-federation-ssh", ref = "test:core-g3-wrapper-federation-ssh", depends_on = ["generated-fixed-point"] },
+  { id = "final-fresh-process", ref = "test:core-g3-final-proof", depends_on = ["wrapper-federation-ssh"] },
+]
 roadmap-env-x04 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "environment-lifecycle", ref = "test:roadmap-env-x04-environment-lifecycle", depends_on = ["syntax"] },
@@ -3568,3 +3590,78 @@ name = "LIFE-X04 retained lifecycle authority regression"
 runner = "pytest"
 timeout_seconds = 900
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_x01_immediate_lifecycle_safety.py", "tests/test_life_x02_canonical_artifact_trust_pack.py", "tests/test_life_x03_generated_cleanup_ownership.py", "tests/test_life_g1_mutation_recovery_proof_gate.py", "tests/test_life_g2_ownership_retention_gate.py"]
+
+[[tests]]
+id = "core-g3-final-seal"
+runner = "pytest"
+paths = ["tests/test_core_g3_final_seal.py", "tests/test_core_g1_identity_authority_gate.py", "tests/test_core_g2_run_store_authority_gate.py", "tests/test_core_x04_generated_surfaces.py"]
+
+[[workflows]]
+id = "core-g3"
+description = "CORE-G3 final identity/config/wrapper/RUN seal"
+
+[[workflows.nodes]]
+id = "core-g3-syntax"
+runner = "shell"
+command = ["python", "-m", "compileall", "-q", "devtool", "tests/test_core_g3_final_seal.py"]
+
+[[workflows.nodes]]
+id = "core-g3-proof"
+runner = "pytest"
+paths = ["tests/test_core_g3_final_seal.py"]
+depends_on = ["core-g3-syntax"]
+
+[[workflows.nodes]]
+id = "core-g3-retained"
+runner = "pytest"
+paths = ["tests/test_core_g1_identity_authority_gate.py", "tests/test_core_g2_run_store_authority_gate.py", "tests/test_core_x04_generated_surfaces.py"]
+depends_on = ["core-g3-proof"]
+
+[[test]]
+id = "core-g3-remediation"
+name = "CORE-G3 generated surface remediation"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_core_x04_generated_surfaces.py"]
+
+[[test]]
+id = "core-g3-source-dispositions"
+name = "CORE-G3 source disposition audit"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_core_g3_final_seal.py", "-k", "source_disposition"]
+
+[[test]]
+id = "core-g3-g1-identity"
+name = "CORE-G3 retained G1 identity authority"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_core_g1_identity_authority_gate.py"]
+
+[[test]]
+id = "core-g3-g2-run-store"
+name = "CORE-G3 retained G2 RUN authority"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_core_g2_run_store_authority_gate.py"]
+
+[[test]]
+id = "core-g3-generated-fixed-point"
+name = "CORE-G3 generated surface fixed point"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_core_x04_generated_surfaces.py"]
+
+[[test]]
+id = "core-g3-wrapper-federation-ssh"
+name = "CORE-G3 wrapper federation SSH authority"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_frx07_wrapper_tlj_federation_bridge.py", "tests/test_ov06_ssh_contracts.py"]
+
+[[test]]
+id = "core-g3-final-proof"
+name = "CORE-G3 final fresh-process proof"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_core_g3_final_seal.py"]

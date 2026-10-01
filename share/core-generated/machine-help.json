@@ -5362,6 +5362,390 @@
     },
     {
       "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "gradle",
+      "id": "cli.command.gradle",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "gradle"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "gradle",
+      "id": "cli.command.gradle.takeover",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "gradle",
+        "takeover"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "gradle",
+      "id": "cli.command.gradle.takeover.status",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit structured JSON",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "gradle",
+        "takeover",
+        "status"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "gradle",
+      "id": "cli.command.gradle.takeover.doctor",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit structured JSON",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "gradle",
+        "takeover",
+        "doctor"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "gradle",
+      "id": "cli.command.gradle.takeover.explain",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit structured JSON",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "gradle",
+        "takeover",
+        "explain"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "gradle",
+      "id": "cli.command.gradle.takeover.disable",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit structured JSON",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "gradle",
+        "takeover",
+        "disable"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "gradle",
+      "id": "cli.command.gradle.takeover.enable",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [
+            "observe",
+            "manage",
+            "strict"
+          ],
+          "dest": "mode",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--mode"
+          ]
+        },
+        {
+          "choices": [
+            "devtool",
+            "shell",
+            "both"
+          ],
+          "dest": "scope",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--scope"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit structured JSON",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "gradle",
+        "takeover",
+        "enable"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "gradle",
+      "id": "cli.command.gradle.takeover.intercept",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [
+            "shell",
+            "devtool",
+            "wrapper",
+            "invoke",
+            "workflow",
+            "validation",
+            "testspec",
+            "artifact",
+            "android",
+            "ssh",
+            "federation"
+          ],
+          "dest": "origin",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--origin"
+          ]
+        },
+        {
+          "choices": [
+            "work",
+            "probe",
+            "control"
+          ],
+          "dest": "intent",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--intent"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "requested_launcher",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--requested-launcher"
+          ]
+        }
+      ],
+      "path": [
+        "gradle",
+        "takeover",
+        "intercept"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "gradle",
+      "id": "cli.command.gradle.real",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "launcher",
+          "help": "auto, wrapper, system, gradle, or an explicit launcher path",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--launcher"
+          ]
+        }
+      ],
+      "path": [
+        "gradle",
+        "real"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
       "aliases": [
         [
           "rs"
@@ -8574,6 +8958,17 @@
           ]
         },
         {
+          "choices": [],
+          "dest": "release_module",
+          "help": "Release module lane override",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--module"
+          ]
+        },
+        {
           "choices": [
             "disabled",
             "when-device-present",
@@ -8820,8 +9215,20 @@
         },
         {
           "choices": [],
+          "dest": "project_clean",
+          "help": "Clean project-owned outputs through the selected project runner; this is the default when no cleanup scope flag is given",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--project-clean",
+            "--project-outputs"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "caches",
-          "help": "Also prune repository-scoped devtool-managed caches and transient state",
+          "help": "Prune repository-scoped Devtool-managed caches and transient state without implicitly running project clean",
           "hidden": false,
           "nargs": 0,
           "required": false,
@@ -8832,7 +9239,7 @@
         {
           "choices": [],
           "dest": "space",
-          "help": "Prune safe global Android/toolchain caches managed by Devtool",
+          "help": "Prune Devtool-managed Android/toolchain caches without touching user-global caches",
           "hidden": false,
           "nargs": 0,
           "required": false,
@@ -8842,8 +9249,19 @@
         },
         {
           "choices": [],
+          "dest": "global_caches",
+          "help": "Explicitly include user-global Android download cache cleanup",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--global-caches"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "gradle_user_cache",
-          "help": "With --space, also prune old version-specific ~/.gradle caches and build-cache-1; modules/wrapper caches are preserved",
+          "help": "Explicitly include old version-specific ~/.gradle caches and build-cache-1; modules/wrapper caches are preserved",
           "hidden": false,
           "nargs": 0,
           "required": false,
@@ -13938,6 +14356,577 @@
     {
       "adoption_source": "argparse",
       "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "delivery"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.plan",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "public_runner",
+          "help": "Enforce public-runner fail-closed assurance",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--public-runner"
+          ]
+        },
+        {
+          "choices": [
+            "worktree",
+            "direct",
+            "none"
+          ],
+          "dest": "isolation",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--isolation"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "unsafe_authorize",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--unsafe-authorize"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit canonical plan JSON",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "plan"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.plan",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "output",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "-o",
+            "--output"
+          ]
+        },
+        {
+          "choices": [
+            "worktree",
+            "tracked",
+            "commit",
+            "handoff"
+          ],
+          "dest": "mode",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--mode"
+          ]
+        },
+        {
+          "choices": [
+            "tar.gz",
+            "tar",
+            "zip"
+          ],
+          "dest": "compression",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--compression"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "commit",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--commit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "git_bundle",
+          "help": "",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--git-bundle"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pin",
+          "help": "",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--pin"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "retention",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--retention"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "plan"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.create",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "output",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "-o",
+            "--output"
+          ]
+        },
+        {
+          "choices": [
+            "worktree",
+            "tracked",
+            "commit",
+            "handoff"
+          ],
+          "dest": "mode",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--mode"
+          ]
+        },
+        {
+          "choices": [
+            "tar.gz",
+            "tar",
+            "zip"
+          ],
+          "dest": "compression",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--compression"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "commit",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--commit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "git_bundle",
+          "help": "",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--git-bundle"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pin",
+          "help": "",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--pin"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "retention",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--retention"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "create"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "signing-identity",
+      "id": "cli.command.signing_identity",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "signing-identity"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [
+        [
+          "signing-identity",
+          "ls"
+        ]
+      ],
+      "domain": "signing-identity",
+      "id": "cli.command.signing_identity.list",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "signing-identity",
+        "list"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "signing-identity",
+      "id": "cli.command.signing_identity.register",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "provider",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--provider"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "key_reference",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--key-reference"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "alias",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--alias"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "certificate_sha256",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--certificate-sha256"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "purpose",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--purpose"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "variant",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--variant"
+          ]
+        },
+        {
+          "choices": [
+            "local",
+            "keyring",
+            "private-file",
+            "fd",
+            "stdin",
+            "external-command"
+          ],
+          "dest": "secret_provider",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--secret-provider"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "secret_reference",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--secret-reference"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "signing-identity",
+        "register"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
       "domain": "tui",
       "id": "cli.command.tui",
       "options": [
@@ -14000,6 +14989,65 @@
           "required": false,
           "spellings": [
             "--width"
+          ]
+        },
+        {
+          "choices": [
+            "auto",
+            "textual",
+            "legacy"
+          ],
+          "dest": "backend",
+          "help": "TUI backend; auto prefers Textual and falls back to legacy",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--backend"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "legacy_tui",
+          "help": "Force the legacy Rich terminal TUI backend",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--legacy-tui"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "require_textual",
+          "help": "Fail instead of falling back when Textual cannot be launched",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--require-textual"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "require_textual",
+          "help": "Alias for --require-textual; do not fall back to legacy TUI",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-tui-fallback"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "explain_backend",
+          "help": "Print the resolved TUI backend selection and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--explain-backend"
           ]
         }
       ],
@@ -22014,6 +23062,321 @@
       "adoption_source": "argparse",
       "aliases": [],
       "domain": "android",
+      "id": "cli.command.android.environment",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [
+            "build",
+            "package",
+            "release",
+            "test",
+            "lint",
+            "instrumentation",
+            "doctor",
+            "explain"
+          ],
+          "dest": "action",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--action"
+          ]
+        },
+        {
+          "choices": [
+            "text",
+            "json"
+          ],
+          "dest": "format",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--format"
+          ]
+        }
+      ],
+      "path": [
+        "android",
+        "environment"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "android",
+      "id": "cli.command.android.env",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "android",
+        "env"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "android",
+      "id": "cli.command.android.env.explain",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [
+            "build",
+            "package",
+            "release",
+            "test",
+            "lint",
+            "instrumentation",
+            "doctor",
+            "explain"
+          ],
+          "dest": "action",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--action"
+          ]
+        },
+        {
+          "choices": [
+            "text",
+            "json"
+          ],
+          "dest": "format",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--format"
+          ]
+        }
+      ],
+      "path": [
+        "android",
+        "env",
+        "explain"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "android",
+      "id": "cli.command.android.env.diff",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [
+            "build",
+            "package",
+            "release",
+            "test",
+            "lint",
+            "instrumentation",
+            "doctor",
+            "explain"
+          ],
+          "dest": "left_action",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--left-action"
+          ]
+        },
+        {
+          "choices": [
+            "build",
+            "package",
+            "release",
+            "test",
+            "lint",
+            "instrumentation",
+            "doctor",
+            "explain"
+          ],
+          "dest": "right_action",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--right-action"
+          ]
+        },
+        {
+          "choices": [
+            "text",
+            "json"
+          ],
+          "dest": "format",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--format"
+          ]
+        }
+      ],
+      "path": [
+        "android",
+        "env",
+        "diff"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "android",
+      "id": "cli.command.android.qualification",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "android",
+        "qualification"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "android",
+      "id": "cli.command.android.qualification.show",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [
+            "build",
+            "package",
+            "release",
+            "test",
+            "lint",
+            "instrumentation",
+            "doctor",
+            "explain"
+          ],
+          "dest": "action",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--action"
+          ]
+        },
+        {
+          "choices": [
+            "text",
+            "json"
+          ],
+          "dest": "format",
+          "help": "",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--format"
+          ]
+        }
+      ],
+      "path": [
+        "android",
+        "qualification",
+        "show"
+      ],
+      "stability": "adopted",
+      "summary": ""
+    },
+    {
+      "adoption_source": "argparse",
+      "aliases": [],
+      "domain": "android",
       "id": "cli.command.android.capabilities",
       "options": [
         {
@@ -22269,6 +23632,28 @@
           "required": false,
           "spellings": [
             "--format"
+          ]
+        },
+        {
+          "choices": [
+            "build",
+            "package",
+            "release",
+            "test",
+            "lint",
+            "instrumentation",
+            "doctor",
+            "explain",
+            "install",
+            "smoke"
+          ],
+          "dest": "android_doctor_for",
+          "help": "Diagnose only capabilities required by this Android action",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--for"
           ]
         }
       ],
@@ -23831,6 +25216,28 @@
           ]
         },
         {
+          "choices": [],
+          "dest": "release_variant",
+          "help": "Release variant lane override",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--variant"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "release_module",
+          "help": "Release module lane override",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--module"
+          ]
+        },
+        {
           "choices": [
             "disabled",
             "when-device-present",
@@ -23997,6 +25404,28 @@
         },
         {
           "choices": [],
+          "dest": "instrumentation_variant",
+          "help": "Instrumentation variant lane override",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--variant"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "instrumentation_module",
+          "help": "Instrumentation module lane override",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--module"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "instrumentation_classes",
           "help": "",
           "hidden": false,
@@ -24074,6 +25503,105 @@
           "required": false,
           "spellings": [
             "--skip-build"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "plan",
+          "help": "Print the ANDROID-X04 semantic plan without mutation",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--plan"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "explain",
+          "help": "Include ANDROID-X04 authority/migration explanation",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--explain"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "shards",
+          "help": "Typed AndroidJUnitRunner shard count",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--shards"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "retry_failed_attempts",
+          "help": "Export failed-only retry policy to EXO",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--retry-failed-attempts"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "quarantine",
+          "help": "Explicit evidence-only quarantined testcase ID",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--quarantine"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "orchestrator_qualification",
+          "help": "Qualified Android Test Orchestrator capability receipt ID",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--orchestrator-qualification"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "orchestrator_target",
+          "help": "Target instrumentation component for qualified Orchestrator mode",
+          "hidden": false,
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--orchestrator-target"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ui_automator",
+          "help": "Use the typed UI Automator/cross-app execution profile",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--ui-automator"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "cross_app",
+          "help": "Declare cross-app execution profile semantics",
+          "hidden": false,
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--cross-app"
           ]
         },
         {
@@ -27116,7 +28644,7 @@
       "summary": ""
     }
   ],
-  "digest": "7bf4bcf12b17830114804d158a531a3ad681d7261d381630741e8fd1bba42d86",
+  "digest": "ed23bd363d3efdadd0af128b54fecfbcf14fca724305e6e8a6fc6e9b05f341e6",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -27128,6 +28656,10 @@
       "android clear-data",
       "android devices",
       "android doctor",
+      "android env",
+      "android env diff",
+      "android env explain",
+      "android environment",
       "android install",
       "android instrumentation",
       "android launch",
@@ -27137,6 +28669,8 @@
       "android permission revoke",
       "android pull",
       "android push",
+      "android qualification",
+      "android qualification show",
       "android release",
       "android restart",
       "android screenshot",
@@ -27220,6 +28754,8 @@
       "core run-store",
       "core runtime",
       "core surfaces",
+      "delivery",
+      "delivery plan",
       "detect",
       "doctor",
       "dr",
@@ -27319,6 +28855,15 @@
       "git rerere suggest",
       "git state",
       "gr",
+      "gradle",
+      "gradle real",
+      "gradle takeover",
+      "gradle takeover disable",
+      "gradle takeover doctor",
+      "gradle takeover enable",
+      "gradle takeover explain",
+      "gradle takeover intercept",
+      "gradle takeover status",
       "groups",
       "gui",
       "handoff",
@@ -27396,6 +28941,9 @@
       "rel",
       "release",
       "release-notes",
+      "repo-pack",
+      "repo-pack create",
+      "repo-pack plan",
       "restore",
       "resume-validation",
       "rn",
@@ -27405,6 +28953,10 @@
       "runs",
       "rv",
       "seal",
+      "signing-identity",
+      "signing-identity list",
+      "signing-identity ls",
+      "signing-identity register",
       "ssh",
       "ssh add",
       "ssh bootstrap",
@@ -27502,11 +29054,11 @@
     ],
     "missing": [],
     "missing_count": 0,
-    "parser_command_count": 379,
-    "registry_command_count": 260
+    "parser_command_count": 403,
+    "registry_command_count": 283
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "9107791dd5ab2cb39609d463b3d28a956821344419e740ed08d71899260a84ed",
+  "registry_digest": "ee588b99382be438885e2d5be7b149f247e2aa5b756f52e2592eb873648cffcd",
   "registry_schema_version": 1,
   "schema_version": 1
 }

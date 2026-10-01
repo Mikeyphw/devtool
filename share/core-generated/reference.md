@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `9107791dd5ab2cb39609d463b3d28a956821344419e740ed08d71899260a84ed`
+Registry digest: `ee588b99382be438885e2d5be7b149f247e2aa5b756f52e2592eb873648cffcd`
 
 This file is generated from the CORE command/config registry and the live parser adoption boundary.
 
@@ -18,6 +18,15 @@ This file is generated from the CORE command/config registry and the live parser
 - `pytest select`
 - `core registry`
 - `core runtime`
+- `gradle`
+- `gradle takeover`
+- `gradle takeover status`
+- `gradle takeover doctor`
+- `gradle takeover explain`
+- `gradle takeover disable`
+- `gradle takeover enable`
+- `gradle takeover intercept`
+- `gradle real`
 - `restore`
 - `build`
 - `test`
@@ -58,6 +67,14 @@ This file is generated from the CORE command/config registry and the live parser
 - `artifact inspect`
 - `artifact verify`
 - `artifact prune`
+- `delivery`
+- `delivery plan`
+- `repo-pack`
+- `repo-pack plan`
+- `repo-pack create`
+- `signing-identity`
+- `signing-identity list`
+- `signing-identity register`
 - `tui`
 - `cleanup`
 - `batch`
@@ -204,6 +221,12 @@ This file is generated from the CORE command/config registry and the live parser
 - `bootstrap status`
 - `bootstrap remove`
 - `android`
+- `android environment`
+- `android env`
+- `android env explain`
+- `android env diff`
+- `android qualification`
+- `android qualification show`
 - `android capabilities`
 - `android devices`
 - `android doctor`
