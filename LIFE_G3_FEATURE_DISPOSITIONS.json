@@ -1,0 +1,1155 @@
+{
+  "feature_obligations": 45,
+  "gate": "LIFE-G3",
+  "program": "M006 LIFE",
+  "rows": [
+    {
+      "closure_reason": "RepositoryPack/Signing contracts are LIFE-owned; ToolInvocation/ToolArgumentBinding is exported.",
+      "disposition": "SPLIT",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py",
+        "ENV_G3_FINAL_SEAL_REPORT.md"
+      ],
+      "evidence_sha256": {
+        "ENV_G3_FINAL_SEAL_REPORT.md": "44836d952de2add9c5d70d4c894410daaa405a698090289fbd1ffd772d02a859",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-X00",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 858,
+      "source_row_sha256": "12ab8717cef76af93abdf64f3ba8e3863bc95b0e668a53afd2178e48124696a1",
+      "source_text": "Contracts and correctness gate — define `RepositoryPackRequest/Plan`;; define `SigningIdentityId` and registry schema;; define `ToolInvocation`/`ToolArgumentBinding`;; add tests proving current non-Gradle anonymous passthrough is not silently ignored;; make ambiguous raw tail fail closed.",
+      "subdispositions": [
+        {
+          "contract": "RepositoryPackRequest/Plan + SigningIdentityId",
+          "disposition": "SATISFIED",
+          "owner": "LIFE"
+        },
+        {
+          "contract": "ToolInvocation / ToolArgumentBinding",
+          "disposition": "EXPORTED",
+          "owner": "EXEC+ENV"
+        }
+      ]
+    },
+    {
+      "closure_reason": "Repository packing is LIFE-owned and implemented by X02/X04.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-X01",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 866,
+      "source_row_sha256": "413bf8c1afc6f78b05fc3fc20f617ac54d4e3602b07953fc2518d76195314b51",
+      "source_text": "Repository packing — implement Git-authoritative worktree member enumeration;; stage → verify → atomic publish;; pack manifest/member digests;; tar.zst + tar.gz;; multi-repo explicit selection;; integrate storage retention/pinning.",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Managed signing identity is LIFE-owned and implemented by X02/X04.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-X02",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 875,
+      "source_row_sha256": "f3bafb7a793030c3a443e80a3ac80c2a841f5cc87385c98be1de76122773ae7d",
+      "source_text": "Managed personal Android signing — named global identity registry;; automatic high-entropy secret creation/provider;; same-certificate debug+release personal profile;; `create/use/status/fingerprint/export/import` UX;; migrate current profile configuration without breaking existing repositories.",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Typed/scoped tool passthrough is exported to EXEC + ENV + TEST.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md",
+        "tests/test_exec_x04_post_consumer_convergence.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json",
+        "ENV_G3_FINAL_SEAL_REPORT.md"
+      ],
+      "evidence_sha256": {
+        "ENV_G3_FINAL_SEAL_REPORT.md": "44836d952de2add9c5d70d4c894410daaa405a698090289fbd1ffd772d02a859",
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md": "43abd4b8085cce6a9828a145fc58b76e619641e3d539e12eb69bddc94d477601",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_exec_x04_post_consumer_convergence.py": "49273ec84337ca4976d6a918270362eba873bdf73546e79fcd174b19fe3e9221"
+      },
+      "export_contract": "Typed/scoped tool passthrough is exported to EXEC + ENV + TEST.",
+      "export_owner": "EXEC",
+      "obligation_id": "FEA-X03",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 883,
+      "source_row_sha256": "3ae40e5de0f9554d6c8fb3aea54b2c296366bb86862ea05e9fbdd39d7cf1fb63",
+      "source_text": "Typed tool passthrough — preserve anonymous `--` when one logical tool is unambiguous;; `--tool-arg=TOOL=ARG`;; `--step-arg=STEP=ARG`;; runner-owned insertion slots;; protected-option conflict detection;; plan/evidence/resume hashing.",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing secret transport is LIFE-owned; generic passthrough transport is exported to DIST + EXEC.",
+      "disposition": "SPLIT",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py",
+        "DIST_X04_OPERATIONAL_ADOPTION_REPORT.md"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "DIST_X04_OPERATIONAL_ADOPTION_REPORT.md": "2a616f25cd229896f35767db80cb5de75b2d09dacf784d819b999e7cc4f88f4d",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-X04",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 892,
+      "source_row_sha256": "32fa2b78288a76626270fb1b99e699f39bdbc8708869ffc66e1b27f37024c99b",
+      "source_text": "Chroot/SSH/signing transport convergence — private runtime-file signing secret transport;; chroot bridge support;; SSH ephemeral private secret channel;; ensure no secrets enter argv/log/RunStore;; passthrough injection remains pre-transport.",
+      "subdispositions": [
+        {
+          "contract": "private signing-secret transport requirements",
+          "disposition": "SATISFIED",
+          "owner": "LIFE"
+        },
+        {
+          "contract": "generic pre-transport passthrough injection",
+          "disposition": "EXPORTED",
+          "owner": "DIST+EXEC"
+        }
+      ]
+    },
+    {
+      "closure_reason": "Repository-pack federation semantics are LIFE-owned; tool selectors/child invocation lineage are exported.",
+      "disposition": "SPLIT",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py",
+        "DIST_X04_OPERATIONAL_ADOPTION_REPORT.md"
+      ],
+      "evidence_sha256": {
+        "DIST_X04_OPERATIONAL_ADOPTION_REPORT.md": "2a616f25cd229896f35767db80cb5de75b2d09dacf784d819b999e7cc4f88f4d",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-X05",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 900,
+      "source_row_sha256": "c13e0224c683d914970768cb7281938de7c8a2d61311fb7523d41331b140417f",
+      "source_text": "Federation/workflow integration — repo pack workspace/federation groups;; tool selectors for mixed multi-target workflows;; child invocation lineage;; signing identity availability qualification on remote workers.",
+      "subdispositions": [
+        {
+          "contract": "repository-pack group semantics + remote signing availability",
+          "disposition": "SATISFIED",
+          "owner": "LIFE"
+        },
+        {
+          "contract": "mixed workflow tool selectors / child invocation lineage",
+          "disposition": "EXPORTED",
+          "owner": "DIST+EXEC+RMP"
+        }
+      ]
+    },
+    {
+      "closure_reason": "Pack/signing UX is LIFE-owned; passthrough selector UI/completion is exported to CORE + PRES + RMP.",
+      "disposition": "SPLIT",
+      "evidence": [
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py",
+        "LIFE_G2_OWNERSHIP_RETENTION_MILESTONE_GATE_REPORT.md",
+        "tests/test_life_g2_ownership_retention_gate.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_G2_OWNERSHIP_RETENTION_MILESTONE_GATE_REPORT.md": "cd4d0acec27c1ee7d07d96ecafd42e32eaca1b978980c86d305e3ee37baf2dfa",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_g2_ownership_retention_gate.py": "7e8109f7a2593cd91ee79c5e2f3de3a78f9dbdc71eb931b44104418621733ee6",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-X06",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 907,
+      "source_row_sha256": "8e368418f771d8a4c8f5c0479e62fb284f5ce53290938ab6271ab24eab373ca7",
+      "source_text": "UX/final seal — `devtool plan` shows logical tools and valid passthrough selectors;; completion for tool/step selectors;; `devtool repo pack status/list`;; signing identity doctor/backup checks;; TUI/Desktop surfaces;; final regression/seal.; **`pack_repo` → Devtool repository pack**, preserving its Git-aware atomic behavior while adding provenance, federation, compression and retention.; **BKX signing → Devtool named personal signing identities**, preserving BKX's permanent debug/release certificate UX while keeping Devtool's superior secret handling and verification.; **raw native flags → scoped tool passthrough**, keeping the simple `--` experience for unambiguous actions and adding explicit tool/step selectors for multi-binary validation/workflows.",
+      "subdispositions": [
+        {
+          "contract": "pack/signing status/doctor/UX",
+          "disposition": "SATISFIED",
+          "owner": "LIFE"
+        },
+        {
+          "contract": "passthrough selector UX/completion/final projection",
+          "disposition": "EXPORTED",
+          "owner": "CORE+PRES+RMP"
+        }
+      ]
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R01",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 924,
+      "source_row_sha256": "ee19ef24ed923df00584901e3a234b14f0694dd5eaf93c59899f7e9b88ea5dc5",
+      "source_text": "tracked clean repository packs correctly",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R02",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 925,
+      "source_row_sha256": "066f0a556a1dd49d698fdedd71bee3806e7e9e8e64a74b9ed2ee7837c27c000a",
+      "source_text": "dirty tracked file uses worktree content",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R03",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 926,
+      "source_row_sha256": "ae9ffdeef99fea526d2226d7076f163b37154d5a333e812c77ce102047d6c1ce",
+      "source_text": "untracked non-ignored file included in worktree mode",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R04",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 927,
+      "source_row_sha256": "6f9c7acb362e500d9083a5c77c99833e03a842d9e23e7fd926fc3dc21c940a83",
+      "source_text": "ignored build directory excluded",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R05",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 928,
+      "source_row_sha256": "88d2cce8680e36b07acc4e57ae141125ee3e70dcc52be4ad53d723033f0d367a",
+      "source_text": "failed archive verification never replaces last good pack",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R06",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 929,
+      "source_row_sha256": "b0ddc8b427be247b940d2c4de99e1efd25a46c052b85659d4aa8c12238e0f185",
+      "source_text": "source mutation during packing fails/retries deterministically",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R07",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 930,
+      "source_row_sha256": "09d261c5988339c942ed2db5aac8a64aabe489008ea5798d5236429db4294455",
+      "source_text": "selected multi-repo pack preserves independent identities",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R08",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 931,
+      "source_row_sha256": "1f82edc03d39bfbf47794a967a523ad1c1db13d43a59b6e223475326eb7c5ace",
+      "source_text": "parent escape rejected",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R09",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 932,
+      "source_row_sha256": "b62f8b7ea1c1bb82b71b0807911ce2878dd5b166fca73bb9fa9a16e68ce66337",
+      "source_text": "raw `.git` excluded by default",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R10",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 933,
+      "source_row_sha256": "41d8a937971fb95be8c8180484f9c0e54b3e649bd538167330e452bdd23f2a59",
+      "source_text": "git-bundle mode verifies bundle",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R11",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 934,
+      "source_row_sha256": "e0c0e68ef12d98005ddf2d61b832a568363224bfce5f3c15d23309d077f5bcd3",
+      "source_text": "pinned pack survives GC",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Repository-pack regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+        "tests/test_life_x04_lifecycle_convergence.py"
+      ],
+      "evidence_sha256": {
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md": "20c1c067f19ccef98d16d23faeb64ea0382786316337e491545e1998cf8d7830",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78",
+        "tests/test_life_x04_lifecycle_convergence.py": "f6ffcd043d7ebca0111d5c92de0bb64929cf03f09c54fcd99df7264daa5a3c7a"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R12",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 935,
+      "source_row_sha256": "94b5fd588bb7a9f359076f11b2dc1fd3aeec132537c4dbc30ec1568781af3f8d",
+      "source_text": "filenames with spaces/Unicode survive round-trip",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R13",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 939,
+      "source_row_sha256": "597fcdc2c20e6f060aea864b33f2047e5572845971b32aace3cc00980b8b955e",
+      "source_text": "personal identity created outside repo with private permissions",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R14",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 940,
+      "source_row_sha256": "b2d573b3553f2855ad137b9d9101006ef0e6cb187db849d77b2cab76a9c8139e",
+      "source_text": "repeated create refuses overwrite",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R15",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 941,
+      "source_row_sha256": "32868d866cc862ad5e85d69c361e7d0628f807bd5e6a5e22250cc59c54506428",
+      "source_text": "same identity signs debug and release when requested",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R16",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 942,
+      "source_row_sha256": "427e80c1ede8f35c64205d911b2208306407d5a5a61ff1ca3ae7aee090338644",
+      "source_text": "APK certificate fingerprint matches registry",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R17",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 943,
+      "source_row_sha256": "470bc7d45a2dc9da11323219316c1419245bf8c0ca99fac4fd95947fcd720fb0",
+      "source_text": "repo cannot specify password value",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R18",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 944,
+      "source_row_sha256": "07487e467e307bfd8ee2875a6f59df41b821b10030f6945f153f842888408178",
+      "source_text": "generated Gradle injection contains no secret",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R19",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 945,
+      "source_row_sha256": "d4a03cc23be44518be71bbecbf1293673595d4fda6987433cc6466a3d7e81a83",
+      "source_text": "secret file/provider is not logged",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R20",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 946,
+      "source_row_sha256": "4d5018bb3fa87e5fa923023bcedd29c66d21bbd0ce86956d5fb824462801e59a",
+      "source_text": "cancellation cleans ephemeral secret staging",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R21",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 947,
+      "source_row_sha256": "0bc7de4161eeb1f9f827e547a36025a39183eba2eedc8501cca587ec43e5652b",
+      "source_text": "chroot signing works without password in shell argv",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R22",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 948,
+      "source_row_sha256": "c5d631328c49b1a948c61d968e91ce2250822c7993ecd21c7deccce0003d5216",
+      "source_text": "SSH signing uses protected remote channel",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R23",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 949,
+      "source_row_sha256": "aab7ea49121f4e05f20128d0c4483a13f961179cd8420a760a8bd38b6e96deac",
+      "source_text": "identity export/import preserves certificate identity",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Signing/trust regression is LIFE-owned.",
+      "disposition": "SATISFIED",
+      "evidence": [
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py",
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ],
+      "evidence_sha256": {
+        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+        "LIFE_X02_CANONICAL_ARTIFACT_TRUST_REPOSITORY_PACK_REPORT.md": "7123416e7f7b3a7b3b5d112d54c7c78b418152b5cb734c9b97ced9af7e2c5306",
+        "tests/test_aops03_android_signing_instrumentation_operations.py": "b279242fc2a6a32f4fd7010cb911d06d3a4a6c4cff4396101fd564c37c063c9e",
+        "tests/test_life_x02_canonical_artifact_trust_pack.py": "af3c588b646ed65824bca2c981b1fe8dec83fb7b40ccd50776005b459ae24d78"
+      },
+      "export_contract": "",
+      "export_owner": "",
+      "obligation_id": "FEA-R24",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 950,
+      "source_row_sha256": "016c3c5eb4cf90a1152d959d8dd274d3470ab52f97ccc4aade2b7ce6d471451d",
+      "source_text": "accidental identity change blocks update/release evidence",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 25 exported to EXEC under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md",
+        "tests/test_exec_x04_post_consumer_convergence.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md": "43abd4b8085cce6a9828a145fc58b76e619641e3d539e12eb69bddc94d477601",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_exec_x04_post_consumer_convergence.py": "49273ec84337ca4976d6a918270362eba873bdf73546e79fcd174b19fe3e9221"
+      },
+      "export_contract": "Tool-passthrough regression 25 exported to EXEC under the M006 feature boundary.",
+      "export_owner": "EXEC",
+      "obligation_id": "FEA-R25",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 954,
+      "source_row_sha256": "79dd19cf2d913089052aca7953fed508c8967e6f8be5a7ca7a86b1f597639ec2",
+      "source_text": "Gradle single-tool `--` remains compatible",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 26 exported to EXEC under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md",
+        "tests/test_exec_x04_post_consumer_convergence.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md": "43abd4b8085cce6a9828a145fc58b76e619641e3d539e12eb69bddc94d477601",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_exec_x04_post_consumer_convergence.py": "49273ec84337ca4976d6a918270362eba873bdf73546e79fcd174b19fe3e9221"
+      },
+      "export_contract": "Tool-passthrough regression 26 exported to EXEC under the M006 feature boundary.",
+      "export_owner": "EXEC",
+      "obligation_id": "FEA-R26",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 955,
+      "source_row_sha256": "ed0297398a1fc28c70966a0b49db34a6b0e52314c4220ab4d108f60eadff7753",
+      "source_text": "Go `test -- -count=1` reaches Go rather than being dropped",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 27 exported to EXEC under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md",
+        "tests/test_exec_x04_post_consumer_convergence.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md": "43abd4b8085cce6a9828a145fc58b76e619641e3d539e12eb69bddc94d477601",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_exec_x04_post_consumer_convergence.py": "49273ec84337ca4976d6a918270362eba873bdf73546e79fcd174b19fe3e9221"
+      },
+      "export_contract": "Tool-passthrough regression 27 exported to EXEC under the M006 feature boundary.",
+      "export_owner": "EXEC",
+      "obligation_id": "FEA-R27",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 956,
+      "source_row_sha256": "f397d2546da7fe716c0124c941620f4daef603dc68cfbf9f9f6a361e5d9d75ed",
+      "source_text": "dotnet raw option reaches `dotnet test`",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 28 exported to TEST under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "TEST_X04_HISTORICAL_REUSE_DISTRIBUTED_UX_CONVERGENCE_REPORT.md",
+        "tests/test_test_x04_convergence.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "TEST_X04_HISTORICAL_REUSE_DISTRIBUTED_UX_CONVERGENCE_REPORT.md": "49ac0fe4f8924dd10534cc7038abbc771b7d1cdfd69d36e6839d27bd1c7aa8c3",
+        "tests/test_test_x04_convergence.py": "2b8c5f68be89b2bed366948ceb2b56c7bf73a9aa3dd401f0b78648869f8b935d"
+      },
+      "export_contract": "Tool-passthrough regression 28 exported to TEST under the M006 feature boundary.",
+      "export_owner": "TEST",
+      "obligation_id": "FEA-R28",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 957,
+      "source_row_sha256": "249202fd573bc46988309d36e22d427e6ae03f27cb6879ba1262fd3c01b6cfc6",
+      "source_text": "Python multi-tool validation can target pytest independently of ruff",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 29 exported to EXEC under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md",
+        "tests/test_exec_x04_post_consumer_convergence.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md": "43abd4b8085cce6a9828a145fc58b76e619641e3d539e12eb69bddc94d477601",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_exec_x04_post_consumer_convergence.py": "49273ec84337ca4976d6a918270362eba873bdf73546e79fcd174b19fe3e9221"
+      },
+      "export_contract": "Tool-passthrough regression 29 exported to EXEC under the M006 feature boundary.",
+      "export_owner": "EXEC",
+      "obligation_id": "FEA-R29",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 958,
+      "source_row_sha256": "b4a0e2de05cd7228aeb13a1ae549896b048433b9b1f68023906f671b1809f01b",
+      "source_text": "mixed Gradle+Go validation rejects anonymous raw tail",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 30 exported to ENV under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "ENV_G3_FINAL_SEAL_REPORT.md",
+        "tests/test_env_g3_final_seal.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "ENV_G3_FINAL_SEAL_REPORT.md": "44836d952de2add9c5d70d4c894410daaa405a698090289fbd1ffd772d02a859",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_env_g3_final_seal.py": "6a05f2c1bce865be23410c97f838e6bd4d983768f44a479a48326abe1cea6ca7"
+      },
+      "export_contract": "Tool-passthrough regression 30 exported to ENV under the M006 feature boundary.",
+      "export_owner": "ENV",
+      "obligation_id": "FEA-R30",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 959,
+      "source_row_sha256": "da3b29063f3493697b951487ccc9f017bf69d686d9d3813fe6dae71b9ceb72b8",
+      "source_text": "`--tool-arg=gradle=...` reaches every intended Gradle invocation only",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 31 exported to EXEC under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md",
+        "tests/test_exec_x04_post_consumer_convergence.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md": "43abd4b8085cce6a9828a145fc58b76e619641e3d539e12eb69bddc94d477601",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_exec_x04_post_consumer_convergence.py": "49273ec84337ca4976d6a918270362eba873bdf73546e79fcd174b19fe3e9221"
+      },
+      "export_contract": "Tool-passthrough regression 31 exported to EXEC under the M006 feature boundary.",
+      "export_owner": "EXEC",
+      "obligation_id": "FEA-R31",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 960,
+      "source_row_sha256": "d754a18b83b2482a5c3745fb1d24de22291f63ac0188b6d21ec83618895c2834",
+      "source_text": "step-specific argument reaches one step",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 32 exported to ENV under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "ENV_G3_FINAL_SEAL_REPORT.md",
+        "tests/test_env_g3_final_seal.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "ENV_G3_FINAL_SEAL_REPORT.md": "44836d952de2add9c5d70d4c894410daaa405a698090289fbd1ffd772d02a859",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_env_g3_final_seal.py": "6a05f2c1bce865be23410c97f838e6bd4d983768f44a479a48326abe1cea6ca7"
+      },
+      "export_contract": "Tool-passthrough regression 32 exported to ENV under the M006 feature boundary.",
+      "export_owner": "ENV",
+      "obligation_id": "FEA-R32",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 961,
+      "source_row_sha256": "216f468f6b3d437c96fbde775476ecad728add7f68ee1084de45a380b779e1c6",
+      "source_text": "protected Gradle init-script collision rejected",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 33 exported to DIST under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "DIST_X04_OPERATIONAL_ADOPTION_REPORT.md",
+        "tests/test_dist_x04_operational_adoption.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "DIST_X04_OPERATIONAL_ADOPTION_REPORT.md": "2a616f25cd229896f35767db80cb5de75b2d09dacf784d819b999e7cc4f88f4d",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_dist_x04_operational_adoption.py": "72d95cbc19c1b884d17d3eaaecd81e5c60f0badde20a5d2afbc4c0e7020e8163"
+      },
+      "export_contract": "Tool-passthrough regression 33 exported to DIST under the M006 feature boundary.",
+      "export_owner": "DIST",
+      "obligation_id": "FEA-R33",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 962,
+      "source_row_sha256": "6488045ca3466f81d592fa4a6c6abb41833ad465219239287b1fa64f4b66dc6b",
+      "source_text": "raw args survive chroot wrapping exactly",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 34 exported to DIST under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "DIST_X04_OPERATIONAL_ADOPTION_REPORT.md",
+        "tests/test_dist_x04_operational_adoption.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "DIST_X04_OPERATIONAL_ADOPTION_REPORT.md": "2a616f25cd229896f35767db80cb5de75b2d09dacf784d819b999e7cc4f88f4d",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_dist_x04_operational_adoption.py": "72d95cbc19c1b884d17d3eaaecd81e5c60f0badde20a5d2afbc4c0e7020e8163"
+      },
+      "export_contract": "Tool-passthrough regression 34 exported to DIST under the M006 feature boundary.",
+      "export_owner": "DIST",
+      "obligation_id": "FEA-R34",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 963,
+      "source_row_sha256": "7f28853a29137b484710acaf3dea05fe4495fd063bc132a082bb23309ee40f7f",
+      "source_text": "raw args survive SSH execution exactly",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 35 exported to EXEC under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md",
+        "tests/test_exec_x04_post_consumer_convergence.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md": "43abd4b8085cce6a9828a145fc58b76e619641e3d539e12eb69bddc94d477601",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_exec_x04_post_consumer_convergence.py": "49273ec84337ca4976d6a918270362eba873bdf73546e79fcd174b19fe3e9221"
+      },
+      "export_contract": "Tool-passthrough regression 35 exported to EXEC under the M006 feature boundary.",
+      "export_owner": "EXEC",
+      "obligation_id": "FEA-R35",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 964,
+      "source_row_sha256": "75ae45da5b6a99147413f5e821c864094b0e3698780b2dc23c8fc36c8cc27843",
+      "source_text": "validation resume rejects changed passthrough digest",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 36 exported to CORE under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "CORE_G3_FINAL_SEAL_REPORT.md",
+        "tests/test_core_g3_final_seal.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "CORE_G3_FINAL_SEAL_REPORT.md": "028524a461add4b1b1c67bd8479c82e569c977da91a3cecfd9fa88c9214aee1e",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_core_g3_final_seal.py": "67a673de31848574e8ab8a0c205bc6208afdafa40bec6c6ea5a90302e7665bed"
+      },
+      "export_contract": "Tool-passthrough regression 36 exported to CORE under the M006 feature boundary.",
+      "export_owner": "CORE",
+      "obligation_id": "FEA-R36",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 965,
+      "source_row_sha256": "623515dc52c3f4e475d2011f97cf24589ace69b5b374aac8269522c27926ca88",
+      "source_text": "wrapper passthrough lowers into same bindings",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 37 exported to CORE under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "CORE_G3_FINAL_SEAL_REPORT.md",
+        "tests/test_core_g3_final_seal.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "CORE_G3_FINAL_SEAL_REPORT.md": "028524a461add4b1b1c67bd8479c82e569c977da91a3cecfd9fa88c9214aee1e",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_core_g3_final_seal.py": "67a673de31848574e8ab8a0c205bc6208afdafa40bec6c6ea5a90302e7665bed"
+      },
+      "export_contract": "Tool-passthrough regression 37 exported to CORE under the M006 feature boundary.",
+      "export_owner": "CORE",
+      "obligation_id": "FEA-R37",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 966,
+      "source_row_sha256": "301f35a181d2c14f46551a43d18a227890afc0945b7287eab230197c1fcdf543",
+      "source_text": "known secret-like argv triggers warning/rejection",
+      "subdispositions": []
+    },
+    {
+      "closure_reason": "Tool-passthrough regression 38 exported to CORE under the M006 feature boundary.",
+      "disposition": "EXPORTED",
+      "evidence": [
+        "CORE_G3_FINAL_SEAL_REPORT.md",
+        "tests/test_core_g3_final_seal.py",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json"
+      ],
+      "evidence_sha256": {
+        "CORE_G3_FINAL_SEAL_REPORT.md": "028524a461add4b1b1c67bd8479c82e569c977da91a3cecfd9fa88c9214aee1e",
+        "LIFE_X04_EXPORTED_OBLIGATIONS.json": "d0f369d8312a6cb8984df0178b358d875358b382d3325fad66c9f6c05b1ca862",
+        "tests/test_core_g3_final_seal.py": "67a673de31848574e8ab8a0c205bc6208afdafa40bec6c6ea5a90302e7665bed"
+      },
+      "export_contract": "Tool-passthrough regression 38 exported to CORE under the M006 feature boundary.",
+      "export_owner": "CORE",
+      "obligation_id": "FEA-R38",
+      "source_audit": "DEVTOOL_REPO_PACK_SIGNING_TOOL_PASSTHROUGH_AUDIT_REBASED_20260926.md",
+      "source_audit_sha256": "5eea4df3056aa3be06858477773bdb9224288a00792728d6d834679ad4fd6e40",
+      "source_line": 967,
+      "source_row_sha256": "2431a667e64f0b644bc9a3af2b5d78e37b3665ee14c3b1fea188a33f77c3831f",
+      "source_text": "RunStore stores redacted exact invocation metadata",
+      "subdispositions": []
+    }
+  ],
+  "schema_version": 1
+}

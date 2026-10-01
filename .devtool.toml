@@ -161,6 +161,12 @@ description = "Run the LIFE-X04 lifecycle convergence/adoption workflow"
 workflow = "roadmap-life-x04"
 target = "devtool"
 
+# LIFE-G3 final artifact/recovery/signing/cleanup seal.
+[wrapper.commands.life-g3]
+description = "Run the LIFE-G3 final artifact/recovery/signing/cleanup seal"
+workflow = "roadmap-life-g3"
+target = "devtool"
+
 # DIST-X01 canonical delegation and external-ingest identity foundation.
 [wrapper.commands.dist-x01]
 description = "Run the DIST-X01 delegation/external-ingest integrity workflow"
@@ -906,6 +912,17 @@ roadmap-life-x04 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "convergence", ref = "test:roadmap-life-x04-convergence", depends_on = ["syntax"] },
   { id = "retained-authority", ref = "test:roadmap-life-x04-retained-authority", depends_on = ["convergence"] },
+]
+
+roadmap-life-g3 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "source-dispositions", ref = "test:roadmap-life-g3-source-dispositions", depends_on = ["syntax"] },
+  { id = "feature-dispositions", ref = "test:roadmap-life-g3-feature-dispositions", depends_on = ["source-dispositions"] },
+  { id = "mutation-recovery-authority", ref = "test:roadmap-life-g3-mutation-recovery", depends_on = ["feature-dispositions"] },
+  { id = "ownership-retention-authority", ref = "test:roadmap-life-g3-ownership-retention", depends_on = ["mutation-recovery-authority"] },
+  { id = "pack-signing-adoption", ref = "test:roadmap-life-g3-pack-signing", depends_on = ["ownership-retention-authority"] },
+  { id = "cross-program-fixed-point", ref = "test:roadmap-life-g3-cross-program", depends_on = ["pack-signing-adoption"] },
+  { id = "final-fresh-process", ref = "test:roadmap-life-g3-final-proof", depends_on = ["cross-program-fixed-point"] },
 ]
 
 roadmap-pres-x01 = [
@@ -3785,3 +3802,54 @@ name = "ENV-G3 fresh-process final proof"
 runner = "pytest"
 timeout_seconds = 180
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_env_g3_final_seal.py::test_fresh_process_wrapper_help_is_observational", "tests/test_env_g3_final_seal.py::test_attestation_is_candidate_and_complete"]
+
+
+# LIFE-G3 final lifecycle seal.
+[[test]]
+id = "roadmap-life-g3-source-dispositions"
+name = "LIFE-G3 formal source disposition closure"
+runner = "pytest"
+timeout_seconds = 300
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_g3_final_seal.py", "-k", "formal_source_dispositions or explicit_cross_program_ownership"]
+
+[[test]]
+id = "roadmap-life-g3-feature-dispositions"
+name = "LIFE-G3 legacy feature-audit disposition closure"
+runner = "pytest"
+timeout_seconds = 300
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_g3_final_seal.py", "-k", "legacy_feature_audit"]
+
+[[test]]
+id = "roadmap-life-g3-mutation-recovery"
+name = "LIFE-G3 retained mutation/recovery authority"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_x01_immediate_lifecycle_safety.py", "tests/test_life_x01_transaction_lifecycle_recovery.py", "tests/test_life_x02_canonical_artifact_trust_pack.py", "tests/test_life_g1_mutation_recovery_proof_gate.py"]
+
+[[test]]
+id = "roadmap-life-g3-ownership-retention"
+name = "LIFE-G3 retained ownership/retention authority"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_x03_generated_cleanup_ownership.py", "tests/test_life_g2_ownership_retention_gate.py"]
+
+[[test]]
+id = "roadmap-life-g3-pack-signing"
+name = "LIFE-G3 repository-pack/signing/adoption convergence"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_x02_canonical_artifact_trust_pack.py", "tests/test_life_x04_lifecycle_convergence.py"]
+
+[[test]]
+id = "roadmap-life-g3-cross-program"
+name = "LIFE-G3 downstream consumer fixed point"
+runner = "pytest"
+timeout_seconds = 1200
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_android_x04_advanced_execution.py", "tests/test_dist_x04_operational_adoption.py", "tests/test_test_x04_convergence.py", "tests/test_exec_x04_post_consumer_convergence.py", "tests/test_pres_g2_interaction_reliability_gate.py"]
+
+[[test]]
+id = "roadmap-life-g3-final-proof"
+name = "LIFE-G3 final attestation and fresh-process lifecycle proof"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_g3_final_seal.py", "-k", "attestation or wrapper_workflow or cross_program_consumers or core_generated_surfaces or gate_tooling"]

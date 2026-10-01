@@ -1,0 +1,27 @@
+{
+  "defined_life_promises": 122,
+  "feature_dispositions_sha256": "2b1bb5e4c0698d5d82980a1601baf320501e51bd797f3bf6304905fd41c62e70",
+  "feature_evidence_bindings": 169,
+  "feature_evidence_root_sha256": "a158e3d39805a482000451a5ae15621f65fad9b1f0a2a27243698821535518f7",
+  "feature_obligations": 45,
+  "gate": "LIFE-G3",
+  "native_qualification": "./devtoolw life-g3",
+  "next_gate": "DIST-G3 61/70",
+  "position": "60/70",
+  "prior_seals": {
+    "ANDROID_G3_FINAL_ATTESTATION.json": "4d7683423dfb90cc6824d0907f054af9baae3f7f47c00231448c4b2c9e423184",
+    "CORE_G3_FINAL_ATTESTATION.json": "e548fa9bb3cbd5596fe285c7744d3c0c63f14ce68e0153dbf62a3bc85402448f",
+    "ENV_G3_FINAL_ATTESTATION.json": "78fb1d0c17f86d59dbae79f1415358f9add32b58e782eca0843c74fe1431de68"
+  },
+  "program": "M006 LIFE",
+  "promise_dispositions_sha256": "da7dc2d8499bcbf1ff2e8ff656f80207623cb43944fc35935952903ca99d72b5",
+  "promise_evidence_bindings": 538,
+  "promise_evidence_root_sha256": "64460f3827897d8e4c70c88eeaa68b822d3fa8567606f2161125d6c3947f88b0",
+  "schema_version": 1,
+  "source_dispositions_sha256": "1dca71a8b2aae3890749c8a5f0b3a97992374d9fe4ef108b7ce719837a15b451",
+  "source_evidence_bindings": 633,
+  "source_evidence_root_sha256": "9d99b9a1eaedf5d04e9803431ed4a62b541f5065aa1f62f56265fd02c377e86d",
+  "source_obligations": 168,
+  "status": "candidate-awaiting-native-termux-qualification",
+  "workflow_nodes": 8
+}
