@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "overlay": "LIFE-X01",
+  "campaign_position": {"gate_window": "1/3", "full_plan": "31/70"},
+  "status": "implementation",
+  "delivered": [
+    "Rollback preflight failure is distinct from partially-applied resumable rollback.",
+    "Resume identity is mandatory only after a persisted live-target mutation checkpoint is required.",
+    "A repaired preflight/staging failure can retry without permanent transaction self-blocking.",
+    "Post-mutation user drift remains fail-closed and protected."
+  ],
+  "incident_links": ["LIFE-P123", "LIFE-P124", "rollback reservation deadlock"],
+  "gate_deferred": ["LIFE-P125", "LIFE-P126", "LIFE-P127", "fresh-process full-boundary qualification"],
+  "next_overlay": "LIFE-X02",
+  "remaining_before_next_scope": 2,
+  "next_major_scope": "GRADLE TAKEOVER / ENV-X05 after LIFE-G1 in the refreshed 70-position campaign"
+}
