@@ -716,7 +716,9 @@ roadmap-exec-g2 = [
 roadmap-exec-x04 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "operational-adoption", ref = "test:roadmap-exec-x04-operational-adoption", depends_on = ["syntax"] },
-  { id = "g2-regression", ref = "test:roadmap-exec-x04-g2-regression", depends_on = ["operational-adoption"] },
+  { id = "post-consumer-convergence", ref = "test:roadmap-exec-x04-post-consumer-convergence", depends_on = ["operational-adoption"] },
+  { id = "g2-regression", ref = "test:roadmap-exec-x04-g2-regression", depends_on = ["post-consumer-convergence"] },
+  { id = "test-x04-regression", ref = "test:roadmap-exec-x04-test-x04-regression", depends_on = ["g2-regression"] },
 ]
 
 roadmap-env-x04 = [
@@ -2224,6 +2226,16 @@ command = [
 ]
 
 [[test]]
+id = "roadmap-exec-x04-post-consumer-convergence"
+name = "EXEC-X04 post-consumer convergence contracts"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x04_post_consumer_convergence.py",
+]
+
+[[test]]
 id = "roadmap-exec-x04-g2-regression"
 name = "EXEC-X04 retained one-graph proof regression"
 runner = "pytest"
@@ -2232,6 +2244,16 @@ command = [
   "python", "-m", "pytest", "-q", "--tb=short",
   "tests/test_exec_g2_validation_proof_gate.py",
   "tests/test_exec_x03_validation_convergence.py",
+]
+
+[[test]]
+id = "roadmap-exec-x04-test-x04-regression"
+name = "EXEC-X04 qualified TEST-X04 consumer regression"
+runner = "pytest"
+timeout_seconds = 180
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_test_x04_convergence.py",
 ]
 
 [[test]]

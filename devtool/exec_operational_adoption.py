@@ -71,6 +71,7 @@ class SourceProofRef:
     evidence_digest: str
     pinned: bool = False
     unavailable_reason: str = ""
+    proof_refs: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +80,7 @@ class SourceProofRef:
             "evidence_digest": self.evidence_digest,
             "pinned": self.pinned,
             "unavailable_reason": self.unavailable_reason,
+            "proof_refs": list(self.proof_refs),
         }
 
 
@@ -141,12 +143,13 @@ class SourceProofRetentionIndex:
             evidence_digest=proof.evidence_digest,
             pinned=True,
             unavailable_reason=proof.unavailable_reason,
+            proof_refs=proof.proof_refs,
         )
         self._refs[(pinned.run_id, pinned.node_id, pinned.evidence_digest)] = pinned
         return pinned
 
     def record_unavailable(self, *, run_id: str, node_id: str, reason: str) -> SourceProofRef:
-        proof = SourceProofRef(run_id=run_id, node_id=node_id, evidence_digest="", pinned=False, unavailable_reason=reason)
+        proof = SourceProofRef(run_id=run_id, node_id=node_id, evidence_digest="", pinned=False, unavailable_reason=reason, proof_refs=())
         self._refs[(proof.run_id, proof.node_id, proof.evidence_digest)] = proof
         return proof
 
@@ -242,10 +245,18 @@ def _proof_eligible(context: OperationalContext, disposition: str) -> bool:
 def _source_proof_for(entry: ReusePlanEntry, *, retention: SourceProofRetentionIndex | None) -> SourceProofRef | None:
     if str(entry.disposition).lower() not in {"reuse", "materialize"}:
         return None
+    proof_refs = tuple(str(ref) for ref in entry.proof_refs if str(ref).strip())
+    if not entry.source_run_id or not entry.source_node_id or not proof_refs:
+        return retention.record_unavailable(
+            run_id=entry.source_run_id or "unknown-source-run",
+            node_id=entry.source_node_id or entry.node_definition_id,
+            reason="canonical source proof refs unavailable",
+        ) if retention else None
     proof = SourceProofRef(
-        run_id=entry.source_run_id or "unknown-source-run",
-        node_id=entry.node_definition_id,
-        evidence_digest=hashlib.sha256(f"{entry.node_definition_id}:{entry.reason}".encode("utf-8")).hexdigest(),
+        run_id=entry.source_run_id,
+        node_id=entry.source_node_id,
+        evidence_digest=stable_digest(list(proof_refs)),
+        proof_refs=proof_refs,
     )
     return retention.pin(proof) if retention else proof
 
@@ -346,3 +357,46 @@ def rebuild_reuse_index_from_history(history_payloads: Sequence[Mapping[str, Any
                     "reason": str(row.get("reason") or ""),
                 }
     return {"schema_version": 1, "kind": "rebuildable-reuse-index", "records": records}
+
+
+@dataclass(frozen=True, slots=True)
+class ConsumerQualification:
+    authority: str
+    identity: str
+    evidence_refs: tuple[str, ...] = ()
+    portable: bool = True
+    equivalent: bool = True
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"authority": self.authority, "identity": self.identity, "evidence_refs": list(self.evidence_refs), "portable": self.portable, "equivalent": self.equivalent}
+
+
+def qualify_consumer_reuse(*, context: OperationalContext, consumers: Sequence[ConsumerQualification]) -> dict[str, Any]:
+    """Fail-closed post-consumer qualification without taking over consumer truth."""
+    rows = [c.as_dict() for c in consumers]
+    by_authority = {c.authority: c for c in consumers}
+    required: set[str] = set()
+    domain = context.domain.lower()
+    if domain in {"transaction", "artifact", "lifecycle"}: required.add("LIFE")
+    if domain in {"remote", "federation", "delegated"}: required.add("DIST")
+    if domain in {"selected-test", "test", "pytest"}: required.add("TEST")
+    if domain in {"roadmap", "gate", "seal"}: required.add("RMP")
+    if context.device_identity: required.add("ANDROID")
+    missing = sorted(a for a in required if a not in by_authority)
+    invalid = sorted(c.authority for c in consumers if not c.identity or not c.equivalent or not c.evidence_refs)
+    nonportable = sorted(c.authority for c in consumers if not c.portable and domain in {"remote", "federation", "delegated"})
+    qualified = not missing and not invalid and not nonportable
+    return {
+        "schema_version": 1, "kind": "exec-consumer-qualification",
+        "context_digest": context_digest(context), "required_authorities": sorted(required),
+        "consumers": rows, "missing": missing, "invalid": invalid, "nonportable": nonportable,
+        "qualified": qualified, "disposition": "eligible" if qualified else "run",
+        "authority": "EXEC",
+    }
+
+
+def source_proof_gc_barrier(proofs: Sequence[SourceProofRef], *, referenced_digests: Sequence[str]) -> dict[str, Any]:
+    refs = {str(x) for x in referenced_digests if str(x)}
+    protected = sorted(p.evidence_digest for p in proofs if p.evidence_digest and (p.pinned or p.evidence_digest in refs))
+    unavailable = sorted({p.run_id + ":" + p.node_id for p in proofs if p.unavailable_reason or not p.evidence_digest})
+    return {"schema_version": 1, "kind": "exec-source-proof-gc-barrier", "protected_digests": protected, "unavailable": unavailable, "can_prune_all": not protected}
