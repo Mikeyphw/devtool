@@ -149,6 +149,12 @@ description = "Run the ANDROID-X04 advanced Android execution/adoption workflow"
 workflow = "roadmap-android-x04"
 target = "devtool"
 
+# ANDROID-G3 final Android environment/device/instrumentation seal.
+[wrapper.commands.android-g3]
+description = "Run the ANDROID-G3 final Android environment/device/instrumentation seal"
+workflow = "roadmap-android-g3"
+target = "devtool"
+
 # LIFE-X04 final lifecycle convergence/adoption.
 [wrapper.commands.life-x04]
 description = "Run the LIFE-X04 lifecycle convergence/adoption workflow"
@@ -828,6 +834,16 @@ roadmap-android-x04 = [
   { id = "retained-android", ref = "test:roadmap-android-x04-retained-android", depends_on = ["advanced-execution"] },
   { id = "ux-runner-parity", ref = "test:roadmap-android-x04-ux-runner-parity", depends_on = ["retained-android"] },
   { id = "test-runtime-adoption", ref = "test:roadmap-android-x04-test-runtime-adoption", depends_on = ["ux-runner-parity"] },
+]
+
+roadmap-android-g3 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "source-dispositions", ref = "test:roadmap-android-g3-source-dispositions", depends_on = ["syntax"] },
+  { id = "environment-device-authority", ref = "test:roadmap-android-g3-environment-device", depends_on = ["source-dispositions"] },
+  { id = "instrumentation-authority", ref = "test:roadmap-android-g3-instrumentation", depends_on = ["environment-device-authority"] },
+  { id = "advanced-adoption", ref = "test:roadmap-android-g3-advanced-adoption", depends_on = ["instrumentation-authority"] },
+  { id = "cross-program-fixed-point", ref = "test:roadmap-android-g3-cross-program", depends_on = ["advanced-adoption"] },
+  { id = "final-fresh-process", ref = "test:roadmap-android-g3-final-proof", depends_on = ["cross-program-fixed-point"] },
 ]
 
 roadmap-dist-x01 = [
@@ -2715,6 +2731,50 @@ command = [
   "tests/test_test_g2_lane_selection_gate.py::test_unclassified_discovery_is_conservatively_serial",
   "tests/test_test_g2_lane_selection_gate.py::test_declared_test_without_parallel_qualification_defaults_serial",
 ]
+
+
+# ANDROID-G3 final program seal: no product logic, only final evidence composition.
+[[test]]
+id = "roadmap-android-g3-source-dispositions"
+name = "ANDROID-G3 complete M005 source-disposition and attestation integrity audit"
+runner = "pytest"
+timeout_seconds = 300
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_android_g3_final_seal.py", "-k", "source_dispositions or explicit_exported or attestation"]
+
+[[test]]
+id = "roadmap-android-g3-environment-device"
+name = "ANDROID-G3 retained environment/device/release authority"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_android_x01_environment_release.py", "tests/test_android_x02_execution_snapshot_device_fabric.py", "tests/test_android_g1_environment_device_gate.py", "tests/test_aops02_android_execution_device_fabric.py", "tests/test_aops04_android_release_evidence_final_seal.py"]
+
+[[test]]
+id = "roadmap-android-g3-instrumentation"
+name = "ANDROID-G3 retained instrumentation/result/lifecycle authority"
+runner = "pytest"
+timeout_seconds = 1200
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_android_x03_instrumentation_lifecycle.py", "tests/test_android_g2_instrumentation_device_gate.py", "tests/test_android_instrumentation.py", "tests/test_android_runner.py", "tests/test_aops03_android_signing_instrumentation_operations.py"]
+
+[[test]]
+id = "roadmap-android-g3-advanced-adoption"
+name = "ANDROID-G3 advanced sharding/orchestrator/matrix/TEST runtime adoption"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_android_x04_advanced_execution.py", "tests/test_test_x03_runtime_optimization.py", "tests/test_test_g2_lane_selection_gate.py::test_selection_and_shards_are_deterministic_explainable_and_immutable"]
+
+[[test]]
+id = "roadmap-android-g3-cross-program"
+name = "ANDROID-G3 downstream TEST/EXEC/DIST/LIFE/PRES fixed-point adoption"
+runner = "pytest"
+timeout_seconds = 1200
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_android_g3_final_seal.py", "-k", "cross_program or wrapper_workflow or core_generated", "tests/test_test_x04_convergence.py", "tests/test_exec_x04_post_consumer_convergence.py", "tests/test_dist_x04_operational_adoption.py", "tests/test_life_x04_lifecycle_convergence.py", "tests/test_pres_g2_interaction_reliability_gate.py"]
+
+[[test]]
+id = "roadmap-android-g3-final-proof"
+name = "ANDROID-G3 authoritative native-Termux fresh-process fixed-point proof"
+runner = "command"
+timeout_seconds = 1200
+command = ["python", "-m", "devtool.android_g3_gate"]
 
 # DIST-X01 owns the non-Gradle delegation/external-ingest identity boundary.
 # Async transport/cursor recovery is deferred to DIST-X02 and broad distributed
