@@ -398,7 +398,7 @@ def test_pres_r01_campaign_refresh_and_reopened_ledger_are_consistent() -> None:
     r01 = json.loads((ROOT / "PRES_R01_PROMISE_LEDGER.json").read_text(encoding="utf-8"))
     assert r01["position"] == "61/76"
     assert r01["gate_window_position"] == "1/4"
-    assert r01["next"] == "PRES-R02 62/76"
+    assert r01["next"] == "PRES-G2R 64/76 after PRES-R03 native qualification"
     promises = {row["id"] for row in r01["promises"]}
     assert "PRES-R01-P013" in promises
 

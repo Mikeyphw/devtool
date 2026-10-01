@@ -109,10 +109,13 @@ def test_domain_actions_retain_owner_and_confirmation_policy() -> None:
     retry = center.action_request("retry")
     assert retry.authority == "EXO/RUN" and retry.confirmation_required is False
     center.navigate("overlays")
-    with pytest.raises(PermissionError, match="canonical confirmation"):
+    # PRES-R03 adopts overlay apply as a concrete delegated action while keeping
+    # lifecycle ownership in LIFE and requiring canonical confirmation.
+    with pytest.raises(PermissionError, match="requires canonical confirmation"):
         center.action_request("overlay.apply")
     apply = center.action_request("overlay.apply", confirmed=True)
     assert apply.authority == "LIFE" and apply.confirmation_required is True
+    assert {row["id"] for row in center.visible_actions()} == {"overlay.apply", "rollback", "recover"}
 
 
 def test_ctrl_c_q_and_escape_have_truthful_non_overlapping_semantics() -> None:
@@ -148,7 +151,7 @@ def test_plain_text_projection_exposes_authority_and_disabled_actions() -> None:
     text = render_control_center_text(center.snapshot(term="dumb"))
     assert "Page: workers" in text
     assert "authority=DIST/SSH" in text
-    assert "worker.cancel" in text
+    assert "worker.cancel" not in text
     assert "ctrl+c=cancel" in text
 
 
@@ -173,4 +176,4 @@ def test_snapshot_has_no_shell_command_layer() -> None:
     encoded = repr(center.snapshot()).lower()
     assert "shell_command" not in encoded
     assert "command_string" not in encoded
-    assert {row["authority"] for row in center.visible_actions()} == {"EXEC/WRAP", "EXEC/WRAP/TEST"}
+    assert center.visible_actions() == []

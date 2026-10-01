@@ -1075,8 +1075,9 @@ def build_parser() -> argparse.ArgumentParser:
     signing_register.add_argument("--secret-reference", default="")
     signing_register.add_argument("--json", action="store_true")
 
+    from .ui_core.shortcuts import TUI_PAGE_CHOICES
     tui_cmd = subparsers.add_parser("tui", help="Open the responsive terminal dashboard")
-    tui_cmd.add_argument("--page", choices=["dashboard", "build", "overlays", "workers"], default="dashboard", help="Initial terminal dashboard page")
+    tui_cmd.add_argument("--page", choices=TUI_PAGE_CHOICES, default="dashboard", help="Initial Textual control-center page (legacy aliases remain accepted)")
     tui_cmd.add_argument("--artifact", default="", help="Overlay artifact to preflight on the overlays page")
     tui_cmd.add_argument("--once", action="store_true", help="Render one frame and exit")
     tui_cmd.add_argument("--width", type=int, default=0, help="Override terminal width for rendering/debugging")
@@ -14299,6 +14300,17 @@ def _main_impl(argv: list[str] | None = None) -> int:
         apply_host = None
     if apply_host is not None and apply_host.enabled:
         return run_apply_textual_host(raw_argv, args)
+
+    # PRES-R03: ordinary interactive execution uses the same legal main-thread
+    # ownership shape as H02. The managed child retains all execution/RUN truth;
+    # the parent Textual app is only a live presentation/control projection.
+    try:
+        from .textual_execution_host import run_execution_textual_host, select_execution_textual_host
+        execution_host = select_execution_textual_host(args, universal_json=universal_json)
+    except Exception:
+        execution_host = None
+    if execution_host is not None and execution_host.enabled:
+        return run_execution_textual_host(raw_argv, args)
 
     def _invoke() -> int:
         command = str(getattr(args, "command", "") or "devtool")

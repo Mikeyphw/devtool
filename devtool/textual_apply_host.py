@@ -394,7 +394,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
     class ApplyConfirmationModal(ModalScreen[bool]):
         DEFAULT_CSS = """
         ApplyConfirmationModal { align: center middle; }
-        #apply-confirm-box { width: min(72, 92%); height: auto; border: round $warning; padding: 1 2; background: $surface; }
+        #apply-confirm-box { width: 92%; max-width: 72; height: auto; border: round $warning; padding: 1 2; background: $surface; }
         #apply-confirm-actions { height: auto; align-horizontal: right; margin-top: 1; }
         #apply-confirm-actions Button { margin-left: 1; }
         """

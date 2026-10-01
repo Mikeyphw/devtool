@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "overlay": "PRES-R03",
+  "title": "Textual shortcut/CLI parity, main-thread normal execution host, and concrete-app qualification",
+  "position": "63/76",
+  "gate_window_position": "3/4",
+  "implementation_position": "3/3",
+  "status": "implemented_v6_pending_native_qualification",
+  "merge_window_decision": {
+    "window": [
+      "PRES-R01",
+      "PRES-R02",
+      "PRES-R03"
+    ],
+    "merged": false,
+    "reason": "R03 is the final implementation boundary: interface/shortcut parity, normal execution main-thread host, and real-app qualification. PRES-G2R remains a separate authoritative gate."
+  },
+  "promises": [
+    {
+      "id": "PRES-R03-P001",
+      "status": "delivered",
+      "text": "One canonical shortcut registry owns Textual navigation/run/global bindings, legacy TUI derivation and UI-Core navigation shortcuts; collisions fail closed and Workers is present in the discoverable map."
+    },
+    {
+      "id": "PRES-R03-P002",
+      "status": "delivered",
+      "text": "devtool tui and the standalone Textual runtime accept all 11 canonical pages plus deliberate compatibility aliases; legacy build maps visibly to Runs, and interactive --width is explicitly reported as a --once/legacy-only override instead of being silently ignored."
+    },
+    {
+      "id": "PRES-R03-P003",
+      "status": "delivered",
+      "text": "--artifact is consumed by Textual and renderer-independent --once: it performs canonical overlay preflight, opens Overlays when appropriate, and surfaces structural/source/conflict/rebaseability truth without creating a TUI store; auto/textual --once does not silently fall back to legacy merely because the optional Textual package is unavailable."
+    },
+    {
+      "id": "PRES-R03-P004",
+      "status": "delivered",
+      "text": "Static zsh completion page choices are synchronized with the canonical page/alias contract."
+    },
+    {
+      "id": "PRES-R03-P005",
+      "status": "delivered",
+      "text": "Normal interactive invoke/build/test/lint/validate/run/package/CI/OCI execution now has a legal main-thread Textual host: parent owns Textual, managed child owns execution/RUN truth, Tasker live state and bounded child output feed the existing R01 execution app, and Ctrl+C delegates to the child process group."
+    },
+    {
+      "id": "PRES-R03-P006",
+      "status": "delivered",
+      "text": "Machine JSON, quiet, verbose/trace, redirected/non-TTY, CI, explicit plain/stdout-payload and managed-child paths bypass the Textual execution host; H02 remains the specialized artifact-apply host."
+    },
+    {
+      "id": "PRES-R03-P007",
+      "status": "delivered",
+      "text": "The concrete control center derives BINDINGS from the canonical registry and includes a real shortcut-table help modal and command palette."
+    },
+    {
+      "id": "PRES-R03-P008",
+      "status": "delivered",
+      "text": "Overlay apply and stale SSH worker recovery are concrete, confirmed controls that delegate to canonical Devtool CLI/domain authorities; generic artifact.apply, target.launch and worker cancel/resume remain explicitly unadvertised rather than preserved as fake metadata."
+    },
+    {
+      "id": "PRES-R03-P009",
+      "status": "delivered",
+      "text": "Broad real App.run_test/Pilot qualification covers every page shortcut, visible page changes, mouse navigation, help/palette, run selection/action failure, confirmed overlay apply and worker recovery dispatch, live logs, diagnostics, narrow Termux resize, Escape/back, Ctrl+C no-run behavior and clean quit; retained R02/R01/H02 real-app tests are rerun natively."
+    },
+    {
+      "id": "PRES-R03-P010",
+      "status": "delivered",
+      "text": "Prototype debug echo is absent and the reopened PRES-X04..X08/G1/G2 qualification record distinguishes concrete delivered controls from historical model-only promises."
+    }
+  ],
+  "deliberate_compatibility_transitions": [
+    "Legacy page build -> runs with visible compatibility notice.",
+    "Interactive Textual ignores no dimensions silently: --width is explicitly documented/notified as a --once/legacy rendering override because live Textual follows actual terminal resize events.",
+    "Generic artifact.apply, target.launch and worker cancel/resume remain deliberately unadvertised because they do not have a safe concrete control-center contract. Overlay apply and worker recovery are adopted through canonical CLI/domain authorities instead of TUI-owned lifecycle logic."
+  ],
+  "still_open": [
+    "PRES-G2R must audit the entire reopened R01/R02/R03/H01/H02 window plus historical X04..X08/G1/G2 claims against concrete runtime tests.",
+    "PRES-G3 final cross-surface presentation seal must explicitly dispose of legacy terminal/studio Rich Live HUD modes."
+  ],
+  "targeted_validation": {
+    "construction": "PRES-R03 contracts plus retained PRES R01/R02/H02/X08/G2 suites; concrete Textual tests are mandatory only on native/Textual validation host.",
+    "native_required": "./devtoolw pres-r03 sets DEVTOOL_PRES_R03_REQUIRE_TEXTUAL=1 and executes R03 plus retained R01/R02/H02 concrete App.run_test/Pilot proofs.",
+    "authoritative_deferred": [
+      "PRES-G2R reopened historical qualification gate",
+      "PRES-G3 final cross-surface seal"
+    ]
+  },
+  "next": "PRES-G2R 64/76",
+  "remaining_before_gate": 0,
+  "next_gate": "PRES-G2R 64/76",
+  "next_major_scope": "DIST finalization (DIST-R01 already qualified/applied; next DIST item DIST-G3 66/76)",
+  "native_retry_history": {
+    "v1_run_id": "381b4e609f324c408ab30287ea8e8e9a",
+    "v1_result": "rolled_back_cleanly",
+    "v1_blockers": [
+      "packaged R03/G2 assertions lagged the authoritative contract and falsely rejected concrete overlay.apply / worker.recover controls",
+      "PRES-H02 ApplyConfirmationModal used Textual-invalid CSS width: min(72, 92%)"
+    ],
+    "v2_correction": "same PRES-R03 63/76 boundary; synchronize tests/ledger with concrete delegated controls, use parser-safe responsive CSS, and retain mandatory native real-App qualification",
+    "v3_correction": "same PRES-R03 63/76 boundary; correct the R03 real-App test to import ContentSwitcher from textual.widgets, matching the runtime and retained R02 qualification surface on the installed Textual API",
+    "v3_run_id": "881acebe9965432aa5420b05f530f97f",
+    "v3_result": "rolled_back_cleanly",
+    "v3_blockers": [
+      "real Pilot overlay-apply click targeted a horizontally off-screen action without first scrolling it visible",
+      "control-center periodic refresh timer could fire during App.run_test/App.exit teardown and turn detached-DOM NoMatches into a runtime failure"
+    ],
+    "v4_correction": "same PRES-R03 63/76 boundary; reuse the retained R02 scroll_visible Pilot pattern for overlay apply and the qualified H02 timer-stop/NoMatches/on_unmount lifecycle pattern for control-center refresh shutdown safety",
+    "v4_run_id": "9bbd9be6985f43f5b11fc2fd35023c70",
+    "v4_result": "rolled_back_cleanly",
+    "v4_blockers": [
+      "queued DataTable RowHighlighted callbacks could outlive the default Screen and call _render_details outside refresh_from_provider, bypassing the timer-only NoMatches guard",
+      "projection render helpers lacked one shared mounted/shutdown lifecycle barrier, allowing detached-DOM query_one calls such as #dashboard-detail during App.exit/run_test teardown"
+    ],
+    "v5_correction": "same PRES-R03 63/76 boundary; add a projection-wide lifecycle barrier shared by timer callbacks and queued table/tree/input/navigation events, detach idempotently before quit/unmount, and make render helpers swallow teardown NoMatches while preserving canonical runtime truth",
+    "v5_run_id": "3cf0cbb98ed744bfb9caeb80e3820007",
+    "v5_result": "rolled_back_cleanly",
+    "v5_blockers": [
+      "Textual 8.2.8 enables its own built-in Ctrl+P command palette by default and injects a priority command_palette binding, preempting Devtool R03 show_command_palette",
+      "the native Pilot therefore opened Textual CommandPalette instead of the canonical Devtool CommandPaletteModal even though the Devtool binding and modal were both present"
+    ],
+    "v6_correction": "same PRES-R03 63/76 boundary; disable Textual built-in command-palette injection on DevtoolTextualControlCenter so the canonical R03 Ctrl+P shortcut exclusively owns the concrete Devtool CommandPaletteModal, with static and native assertions for that ownership"
+  }
+}

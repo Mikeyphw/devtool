@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 import json
 import os
+import subprocess
+import sys
+import threading
 import time
 
 from .artifacts import load_history
@@ -22,26 +25,19 @@ from .core.events import get_execution_store, tui_event_snapshot
 from .core_runtime import private_run_root
 from .ipc import request_run_action, request_run_cancel
 from .logstore import logs_dir
+from .overlay import check_overlay
 from .run_store import RunCatalog, RunQuery
 from .ssh_provider_evidence import load_all_provider_evidence
 from .validation_control import status_api_payload
 from .validation_sessions import load_active_session, write_control_request
 from .transactions import list_active_transaction_records, rollback_transaction, resume_transaction_result_publication
 from .xdg import state_dir
-
-CONTROL_CENTER_PAGES: tuple[str, ...] = (
-    "dashboard",
-    "runs",
-    "logs",
-    "diagnostics",
-    "history",
-    "targets",
-    "workers",
-    "validation",
-    "artifacts",
-    "overlays",
-    "evidence",
+from .ui_core.shortcuts import (
+    TUI_NAV_SHORTCUTS, TUI_PAGES, normalize_tui_page, shortcut_rows,
+    textual_control_center_bindings,
 )
+
+CONTROL_CENTER_PAGES: tuple[str, ...] = TUI_PAGES
 
 RUN_ACTION_MAP: dict[str, str] = {
     "retry": "operation.retry",
@@ -342,6 +338,41 @@ def _log_path_for_run(runs: Sequence[Mapping[str, Any]], selected_run: str) -> P
     return _latest_log_path()
 
 
+def _startup_overlay_preflight(repo_root: Path, artifact: str) -> dict[str, Any] | None:
+    path = str(artifact or "").strip()
+    if not path:
+        return None
+    try:
+        result = check_overlay(repo_root, path)
+        return {
+            "history_id": "startup-artifact",
+            "artifact": result.artifact,
+            "status": "ready" if result.ok else "blocked",
+            "operation": "preflight",
+            "kind": "startup-overlay-preflight",
+            "structural_ok": result.structural_ok,
+            "source_state_ok": result.source_state_ok,
+            "conflict_count": len(result.conflicts),
+            "rebaseable": result.rebaseable,
+            "message": result.messages[-1] if result.messages else ("Overlay preflight passed." if result.ok else "Overlay preflight requires attention."),
+            "messages": list(result.messages),
+            "preview": _safe(result.preview),
+            "manifest": _safe(result.manifest),
+            "startup": True,
+        }
+    except Exception as exc:
+        return {
+            "history_id": "startup-artifact",
+            "artifact": path,
+            "status": "unavailable",
+            "operation": "preflight",
+            "kind": "startup-overlay-preflight",
+            "error": str(exc),
+            "message": f"Overlay preflight unavailable: {exc}",
+            "startup": True,
+        }
+
+
 class ControlCenterProvider(Protocol):
     def snapshot(self, *, selected_run: str = "", selected_node: str = "") -> dict[str, Any]: ...
 
@@ -351,6 +382,7 @@ class CanonicalControlCenterProvider:
     repo_root: Path
     history_limit: int = 100
     log_line_limit: int = 1200
+    startup_artifact: str = ""
 
     def __post_init__(self) -> None:
         self.repo_root = Path(self.repo_root).expanduser().resolve(strict=False)
@@ -390,6 +422,9 @@ class CanonicalControlCenterProvider:
         history = _history_rows(self.repo_root, self.history_limit)
         artifacts = _artifact_rows(history, execution)
         overlays = _overlay_rows(history, self.repo_root)
+        startup_overlay = _startup_overlay_preflight(self.repo_root, self.startup_artifact)
+        if startup_overlay is not None:
+            overlays.insert(0, startup_overlay)
         validation = _validation_snapshot(self.repo_root)
         workers = _worker_rows()
         targets = _target_rows(self.repo_root)
@@ -461,6 +496,8 @@ class ControlActionDispatcher(Protocol):
 @dataclass(slots=True)
 class CanonicalControlActionDispatcher:
     repo_root: Path
+    popen_factory: Callable[..., subprocess.Popen[Any]] = subprocess.Popen
+    python_executable: str = sys.executable
 
     def __post_init__(self) -> None:
         self.repo_root = Path(self.repo_root).expanduser().resolve(strict=False)
@@ -474,6 +511,27 @@ class CanonicalControlActionDispatcher:
             return request_run_cancel(run_id, reason="Textual Control Center request")
         if action in RUN_ACTION_MAP:
             return request_run_action(run_id, RUN_ACTION_MAP[action], payload=data, reason="Textual Control Center request")
+        if action == "overlay.apply":
+            artifact = _text(data.get("artifact") or data.get("path")).strip()
+            if not artifact:
+                return False, "Select an overlay artifact first."
+            return self._spawn_cli(
+                ["--yes", "apply-overlay", artifact],
+                label=f"overlay apply {artifact}",
+                apply_child=True,
+            )
+        if action == "worker.recover":
+            profile = _text(data.get("profile") or data.get("name")).strip()
+            if not profile:
+                return False, "Select an SSH worker profile first."
+            argv = ["ssh", "recover", profile]
+            worker_run_id = _text(data.get("run_id")).strip()
+            worker_node_id = _text(data.get("node_id")).strip()
+            if worker_run_id:
+                argv.extend(["--run-id", worker_run_id])
+            if worker_node_id:
+                argv.extend(["--node-id", worker_node_id])
+            return self._spawn_cli(argv, label=f"SSH worker recovery {profile}")
         if action in {"rollback", "recover"}:
             transaction_path = _text(data.get("transaction_path") or data.get("path")).strip()
             if not transaction_path:
@@ -498,6 +556,42 @@ class CanonicalControlActionDispatcher:
         if action == "validation.resume-control":
             return self._validation_control("cancel-pause")
         return False, f"Action {action_id} is not wired to a canonical control authority."
+
+    def _spawn_cli(self, argv: Sequence[str], *, label: str, apply_child: bool = False) -> tuple[bool, str]:
+        """Request a domain mutation through the canonical Devtool CLI.
+
+        The control center owns no apply/SSH lifecycle.  It only starts the same
+        structured CLI authority a shell user would invoke, then returns to live
+        projection.  Child output remains in canonical Devtool logs/evidence and
+        Tasker/RUN state rather than being duplicated in a TUI-owned store.
+        """
+
+        env = dict(os.environ)
+        env["DEVTOOL_TEXTUAL_EXECUTION_CHILD"] = "1"
+        env["DEVTOOL_AUTO_HUD_CHILD"] = "1"
+        env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
+        if apply_child:
+            env["DEVTOOL_TEXTUAL_APPLY_CHILD"] = "1"
+        command = [self.python_executable, "-m", "devtool", "--repo", str(self.repo_root), *[str(item) for item in argv]]
+        try:
+            proc = self.popen_factory(
+                command,
+                cwd=str(self.repo_root),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception as exc:
+            return False, f"Could not request {label}: {exc}"
+
+        # Reap the child without making UI lifetime or truth depend on it.
+        try:
+            threading.Thread(target=proc.wait, name=f"devtool-tui-request-{getattr(proc, 'pid', 'child')}", daemon=True).start()
+        except Exception:
+            pass
+        return True, f"Requested {label} through canonical Devtool CLI (pid {getattr(proc, 'pid', '?')})."
 
     def _validation_control(self, control: str) -> tuple[bool, str]:
         try:
@@ -530,6 +624,8 @@ def create_textual_control_center_app(
     *,
     repo_root: str | Path,
     page: str = "dashboard",
+    artifact: str = "",
+    compatibility_notice: str = "",
     provider: ControlCenterProvider | None = None,
     dispatcher: ControlActionDispatcher | None = None,
     refresh_interval: float = 0.5,
@@ -543,13 +639,22 @@ def create_textual_control_center_app(
     from textual import events  # type: ignore
     from textual.app import App, ComposeResult  # type: ignore
     from textual.containers import Container, Horizontal, HorizontalScroll, Vertical  # type: ignore
+    from textual.css.query import NoMatches  # type: ignore
     from textual.screen import ModalScreen  # type: ignore
     from textual.widgets import Button, ContentSwitcher, DataTable, Footer, Header, Input, Label, ListItem, ListView, RichLog, Static, Tree  # type: ignore
 
     root = Path(repo_root).expanduser().resolve(strict=False)
-    source = provider or CanonicalControlCenterProvider(root)
+    normalized_page, alias_notice = normalize_tui_page(page)
+    startup_artifact = str(artifact or "").strip()
+    if startup_artifact and normalized_page == "dashboard":
+        normalized_page = "overlays"
+        artifact_notice = "Opened Overlays for --artifact preflight."
+    else:
+        artifact_notice = ""
+    source = provider or CanonicalControlCenterProvider(root, startup_artifact=startup_artifact)
     actions = dispatcher or CanonicalControlActionDispatcher(root)
-    initial_page = page if page in CONTROL_CENTER_PAGES else "dashboard"
+    initial_page = normalized_page
+    startup_notice = " ".join(value for value in (str(compatibility_notice or "").strip(), alias_notice, artifact_notice) if value).strip()
 
     class ConfirmationModal(ModalScreen):
         DEFAULT_CSS = """
@@ -576,27 +681,83 @@ def create_textual_control_center_app(
     class HelpModal(ModalScreen):
         DEFAULT_CSS = """
         HelpModal { align: center middle; }
-        #help-box { width: 86%; max-width: 100; height: 80%; border: round $accent; padding: 1 2; background: $surface; }
-        #help-list { height: 1fr; }
+        #help-box { width: 90%; max-width: 110; height: 86%; border: round $accent; padding: 1 2; background: $surface; }
+        #shortcut-table { height: 1fr; }
+        #help-note { height: auto; margin-top: 1; }
         """
 
         def compose(self) -> ComposeResult:
             with Vertical(id="help-box"):
-                yield Label("Devtool Textual Control Center", id="help-title")
+                yield Label("Devtool Textual Control Center shortcuts", id="help-title")
+                yield DataTable(id="shortcut-table")
                 yield Static(
-                    "Navigation: d dashboard · u runs · l logs · g diagnostics · h history · t targets · w workers · v validation · s artifacts · o overlays · e evidence\n"
-                    "Run actions: c cancel · y retry · r rerun · m resume · ? help · q quit · Esc back/quit\n"
-                    "Selection follows the focused table/tree row. Destructive actions require a modal confirmation.",
-                    id="help-list",
+                    "Selection follows the focused table/tree row. Consequential actions use real confirmation modals. "
+                    "Ctrl+P opens the command palette.",
+                    id="help-note",
                 )
                 yield Button("Close", id="help-close")
+
+        def on_mount(self) -> None:
+            table = self.query_one("#shortcut-table", DataTable)
+            table.cursor_type = "row"
+            table.zebra_stripes = True
+            table.add_columns("Key", "Action", "Scope")
+            for row in shortcut_rows():
+                table.add_row(row.key, row.label, row.scope)
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             self.dismiss()
 
+    class CommandPaletteModal(ModalScreen[str | None]):
+        DEFAULT_CSS = """
+        CommandPaletteModal { align: center middle; }
+        #palette-box { width: 82%; max-width: 90; height: 78%; border: round $accent; padding: 1 2; background: $surface; }
+        #palette-list { height: 1fr; }
+        #palette-note { height: auto; color: $text-muted; }
+        """
+        BINDINGS = [("escape", "dismiss_palette", "Close")]
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.commands: list[tuple[str, str]] = [
+                *[(f"page:{page}", f"Open {page.title()}") for page in CONTROL_CENTER_PAGES],
+                ("run:cancel", "Cancel selected run"),
+                ("run:retry", "Retry selected run"),
+                ("run:rerun", "Rerun selected run"),
+                ("run:resume", "Resume selected run"),
+                ("help", "Open shortcut help"),
+            ]
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="palette-box"):
+                yield Label("Command palette", id="palette-title")
+                yield ListView(
+                    *[ListItem(Label(label), id=f"palette-{index}") for index, (_intent, label) in enumerate(self.commands)],
+                    id="palette-list",
+                )
+                yield Static("↑/↓ select · Enter run · Esc close", id="palette-note")
+
+        def on_list_view_selected(self, event: ListView.Selected) -> None:
+            item_id = event.item.id or ""
+            if not item_id.startswith("palette-"):
+                return
+            try:
+                index = int(item_id[len("palette-"):])
+                intent = self.commands[index][0]
+            except (ValueError, IndexError):
+                return
+            self.dismiss(intent)
+
+        def action_dismiss_palette(self) -> None:
+            self.dismiss(None)
+
     class DevtoolTextualControlCenter(App):
         TITLE = "Devtool"
         SUB_TITLE = "Textual Control Center"
+        # Devtool owns Ctrl+P through the canonical R03 shortcut registry.
+        # Textual 8.x otherwise injects its own priority Ctrl+P command-palette
+        # binding during App initialization, preempting show_command_palette.
+        ENABLE_COMMAND_PALETTE = False
         CSS = """
         #body { height: 1fr; }
         #navigation { width: 20; min-width: 15; border-right: solid $primary; }
@@ -618,27 +779,8 @@ def create_textual_control_center_app(
         #status-line { height: 1; padding: 0 1; color: $text-muted; }
         #navigation.-narrow { display: none; }
         """
-        BINDINGS = [
-            ("q", "quit_control_center", "Quit"),
-            ("escape", "back_or_quit", "Back"),
-            ("?", "show_help", "Help"),
-            ("d", "page('dashboard')", "Dashboard"),
-            ("u", "page('runs')", "Runs"),
-            ("l", "page('logs')", "Logs"),
-            ("g", "page('diagnostics')", "Diagnostics"),
-            ("h", "page('history')", "History"),
-            ("t", "page('targets')", "Targets"),
-            ("w", "page('workers')", "Workers"),
-            ("v", "page('validation')", "Validation"),
-            ("s", "page('artifacts')", "Artifacts"),
-            ("o", "page('overlays')", "Overlays"),
-            ("e", "page('evidence')", "Evidence"),
-            ("c", "run_action('cancel')", "Cancel"),
-            ("y", "run_action('retry')", "Retry"),
-            ("r", "run_action('rerun')", "Rerun"),
-            ("m", "run_action('resume')", "Resume"),
-            ("ctrl+c", "cancel_selected", "Cancel selected run"),
-        ]
+        # One canonical shortcut registry owns the actual Textual bindings.
+        BINDINGS = textual_control_center_bindings()
 
         def __init__(self) -> None:
             super().__init__()
@@ -653,6 +795,12 @@ def create_textual_control_center_app(
             self._log_follow = True
             self._log_filter = ""
             self._refresh_interval = max(0.1, float(refresh_interval))
+            self._refresh_timer: Any | None = None
+            # True only while the control-center projection tree is mounted.
+            # Timer ticks and queued Textual events may outlive the default
+            # Screen during App.exit()/run_test() teardown, so every render
+            # boundary gates itself on this lifecycle bit.
+            self._projection_live = False
 
         def compose(self) -> ComposeResult:
             yield Header()
@@ -718,18 +866,24 @@ def create_textual_control_center_app(
                         yield Button("Retry", id="action-retry")
                         yield Button("Rerun", id="action-rerun")
                         yield Button("Resume", id="action-resume")
+                        yield Button("Recover worker", id="action-worker-recover", variant="warning")
                         yield Button("Pause validation", id="action-validation-pause")
                         yield Button("Stop validation", id="action-validation-stop", variant="warning")
+                        yield Button("Apply overlay", id="action-overlay-apply", variant="primary")
                         yield Button("Rollback transaction", id="action-rollback", variant="error")
                         yield Button("Recover transaction", id="action-recover", variant="warning")
                     yield Static("Connecting to canonical Devtool state…", id="status-line")
             yield Footer()
 
         def on_mount(self) -> None:
+            self._projection_live = True
             self._configure_tables()
             self.action_page(self.current_page)
             self.refresh_from_provider()
-            self.set_interval(self._refresh_interval, self.refresh_from_provider)
+            if self._projection_live:
+                self._refresh_timer = self.set_interval(self._refresh_interval, self.refresh_from_provider)
+            if startup_notice:
+                self.notify(startup_notice, severity="information")
 
         def _configure_tables(self) -> None:
             specs = {
@@ -754,16 +908,51 @@ def create_textual_control_center_app(
         def _rows(payload: Any) -> list[dict[str, Any]]:
             return [dict(item) for item in payload if isinstance(item, Mapping)] if isinstance(payload, list) else []
 
+        def _stop_refresh(self) -> None:
+            timer = self._refresh_timer
+            if timer is not None:
+                try:
+                    timer.stop()
+                finally:
+                    self._refresh_timer = None
+
+        def _detach_projection(self) -> None:
+            # Idempotent shutdown barrier shared by timer callbacks and queued
+            # widget events. Textual may still deliver RowHighlighted / input /
+            # tree events after the default Screen begins unmounting.
+            self._projection_live = False
+            self._stop_refresh()
+
         def refresh_from_provider(self) -> None:
+            # Textual can deliver one final interval tick while run_test()/App.exit()
+            # is tearing down the default Screen. Table replacement can also queue
+            # RowHighlighted events which run after this callback returns. Gate the
+            # whole projection lifecycle, not only the interval callback.
+            if not self._projection_live:
+                return
             try:
                 payload = self.provider.snapshot(selected_run=self.selected_run, selected_node=self.selected_node)
                 self.snapshot_data = dict(payload)
                 self._render_snapshot()
+                if not self._projection_live:
+                    return
                 self.query_one("#status-line", Static).update(
                     f"Live · page={self.current_page} · run={self.selected_run or '-'} · node={self.selected_node or '-'} · owns_truth=false"
                 )
+            except NoMatches:
+                self._detach_projection()
+                return
             except Exception as exc:
-                self.query_one("#status-line", Static).update(f"Projection degraded: {exc}")
+                if not self._projection_live:
+                    return
+                try:
+                    self.query_one("#status-line", Static).update(f"Projection degraded: {exc}")
+                except NoMatches:
+                    self._detach_projection()
+                    return
+
+        def on_unmount(self) -> None:
+            self._detach_projection()
 
         def _replace_table(self, widget_id: str, rows: Sequence[Sequence[Any]], keys: Sequence[str]) -> None:
             table = self.query_one(f"#{widget_id}", DataTable)
@@ -853,7 +1042,13 @@ def create_textual_control_center_app(
             return "-"
 
         def _render_node_tree(self) -> None:
-            tree = self.query_one("#node-tree", Tree)
+            if not self._projection_live:
+                return
+            try:
+                tree = self.query_one("#node-tree", Tree)
+            except NoMatches:
+                self._detach_projection()
+                return
             tree.clear()
             tree.root.set_label(f"Nodes · {self.selected_run or 'select a run'}")
             nodes_by_run = self.snapshot_data.get("nodes_by_run") if isinstance(self.snapshot_data.get("nodes_by_run"), Mapping) else {}
@@ -884,7 +1079,13 @@ def create_textual_control_center_app(
             tree.root.expand()
 
         def _render_logs(self, *, force: bool = False) -> None:
-            log = self.query_one("#logs-view", RichLog)
+            if not self._projection_live:
+                return
+            try:
+                log = self.query_one("#logs-view", RichLog)
+            except NoMatches:
+                self._detach_projection()
+                return
             payload = self.snapshot_data.get("logs") if isinstance(self.snapshot_data.get("logs"), Mapping) else {}
             raw_lines = [_text(item) for item in payload.get("lines", [])] if isinstance(payload.get("lines"), list) else []
             needle = self._log_filter.casefold().strip()
@@ -903,9 +1104,12 @@ def create_textual_control_center_app(
             follow = "following" if self._log_follow else "paused"
             context = f"run={self.selected_run or '-'} · node={self.selected_node or '-'}"
             filter_note = f" · filter={self._log_filter!r}" if self._log_filter else ""
-            self.query_one("#logs-status", Static).update(
-                f"{payload.get('path') or 'No log'} · {len(raw_lines)} bounded lines · {len(lines)} visible · {follow} · {context}{filter_note}"
-            )
+            try:
+                self.query_one("#logs-status", Static).update(
+                    f"{payload.get('path') or 'No log'} · {len(raw_lines)} bounded lines · {len(lines)} visible · {follow} · {context}{filter_note}"
+                )
+            except NoMatches:
+                self._detach_projection()
 
         def _toggle_log_follow(self) -> None:
             self._log_follow = not self._log_follow
@@ -934,31 +1138,46 @@ def create_textual_control_center_app(
             return {}
 
         def _render_details(self) -> None:
-            runs = self._rows(self.snapshot_data.get("runs"))
-            run = next((item for item in runs if _run_id(item) == self.selected_run), {})
-            run_text = self._detail_text(run) if run else "Select a run."
-            self.query_one("#dashboard-detail", Static).update(run_text)
-            self.query_one("#run-detail", Static).update((run_text + (f"\nSelected node: {self.selected_node}" if self.selected_node else "")))
-            diag = self._selected_row("diagnostics", ("diagnostic_id", "event_id"))
-            self.query_one("#diagnostic-detail", Static).update(self._diagnostic_text(diag) if diag else "Select a diagnostic.")
-            mappings = (
-                ("history", "#history-detail", ("history_id", "operation_id", "sha256")),
-                ("targets", "#target-detail", ("name",)),
-                ("workers", "#worker-detail", ("profile", "name")),
-                ("artifacts", "#artifact-detail", ("artifact_id", "path")),
-                ("overlays", "#overlay-detail", ("history_id", "operation_id", "sha256")),
-                ("evidence", "#evidence-detail", ("evidence_id",)),
-            )
-            for collection, widget_id, keys in mappings:
-                row = self._selected_row(collection, keys)
-                self.query_one(widget_id, Static).update(self._detail_text(row) if row else f"Select a {collection.rstrip('s')} item.")
-            validation = self.snapshot_data.get("validation") if isinstance(self.snapshot_data.get("validation"), Mapping) else {}
-            self.query_one("#validation-detail", Static).update(self._detail_text(validation) if validation else "No active validation session.")
+            if not self._projection_live:
+                return
+            try:
+                runs = self._rows(self.snapshot_data.get("runs"))
+                run = next((item for item in runs if _run_id(item) == self.selected_run), {})
+                run_text = self._detail_text(run) if run else "Select a run."
+                self.query_one("#dashboard-detail", Static).update(run_text)
+                self.query_one("#run-detail", Static).update((run_text + (f"\nSelected node: {self.selected_node}" if self.selected_node else "")))
+                diag = self._selected_row("diagnostics", ("diagnostic_id", "event_id"))
+                self.query_one("#diagnostic-detail", Static).update(self._diagnostic_text(diag) if diag else "Select a diagnostic.")
+                mappings = (
+                    ("history", "#history-detail", ("history_id", "operation_id", "sha256")),
+                    ("targets", "#target-detail", ("name",)),
+                    ("workers", "#worker-detail", ("profile", "name")),
+                    ("artifacts", "#artifact-detail", ("artifact_id", "path")),
+                    ("overlays", "#overlay-detail", ("history_id", "operation_id", "sha256")),
+                    ("evidence", "#evidence-detail", ("evidence_id",)),
+                )
+                for collection, widget_id, keys in mappings:
+                    row = self._selected_row(collection, keys)
+                    self.query_one(widget_id, Static).update(self._detail_text(row) if row else f"Select a {collection.rstrip('s')} item.")
+                validation = self.snapshot_data.get("validation") if isinstance(self.snapshot_data.get("validation"), Mapping) else {}
+                self.query_one("#validation-detail", Static).update(self._detail_text(validation) if validation else "No active validation session.")
+            except NoMatches:
+                self._detach_projection()
 
         @staticmethod
         def _detail_text(row: Mapping[str, Any]) -> str:
             if not row:
                 return ""
+            if row.get("kind") == "startup-overlay-preflight":
+                return "\n".join([
+                    f"Artifact: {_text(row.get('artifact'))}",
+                    f"Status: {_text(row.get('status'))}",
+                    f"Structural: {'ok' if row.get('structural_ok') else 'blocked'}",
+                    f"Source state: {'ok' if row.get('source_state_ok') else 'blocked'}",
+                    f"Conflicts: {_text(row.get('conflict_count'))}",
+                    f"Rebaseable: {_text(row.get('rebaseable'))}",
+                    f"Message: {_text(row.get('message'))}",
+                ])
             important = ("run_id", "status", "state", "command", "project", "phase", "path", "name", "kind", "runner", "platform", "message", "error", "session_id", "revision")
             parts = [f"{key}: {row.get(key)}" for key in important if row.get(key) not in (None, "", [], {})]
             if not parts:
@@ -976,23 +1195,38 @@ def create_textual_control_center_app(
             return "\n".join(f"{label}: {row.get(key)}" for key, label in fields if row.get(key) not in (None, "", [], {})) or "Diagnostic has no detail fields."
 
         def _update_action_state(self) -> None:
-            has_run = bool(self.selected_run)
-            for action in ("cancel", "retry", "rerun", "resume"):
-                self.query_one(f"#action-{action}", Button).disabled = not has_run
-            validation = self.snapshot_data.get("validation") if isinstance(self.snapshot_data.get("validation"), Mapping) else {}
-            active = bool(validation.get("active"))
-            self.query_one("#action-validation-pause", Button).disabled = not active
-            self.query_one("#action-validation-stop", Button).disabled = not active
-            overlay = self._selected_row("overlays", ("history_id", "operation_id", "sha256"))
-            has_transaction = bool(overlay.get("transaction_path"))
-            self.query_one("#action-rollback", Button).disabled = not has_transaction
-            self.query_one("#action-recover", Button).disabled = not has_transaction
+            if not self._projection_live:
+                return
+            try:
+                has_run = bool(self.selected_run)
+                for action in ("cancel", "retry", "rerun", "resume"):
+                    self.query_one(f"#action-{action}", Button).disabled = not has_run
+                validation = self.snapshot_data.get("validation") if isinstance(self.snapshot_data.get("validation"), Mapping) else {}
+                active = bool(validation.get("active"))
+                self.query_one("#action-validation-pause", Button).disabled = not active
+                self.query_one("#action-validation-stop", Button).disabled = not active
+                worker = self._selected_row("workers", ("profile", "name"))
+                worker_name = _text(worker.get("profile") or worker.get("name")).strip()
+                worker_status = _text(worker.get("status") or worker.get("state")).strip().lower()
+                worker_recoverable = bool(worker.get("recoverable")) or worker_status in {"stale", "failed", "error", "blocked", "disconnected", "recoverable", "unknown"}
+                self.query_one("#action-worker-recover", Button).disabled = not bool(worker_name and worker_recoverable)
+                overlay = self._selected_row("overlays", ("history_id", "operation_id", "sha256"))
+                artifact = _text(overlay.get("artifact") or overlay.get("path") or overlay.get("artifact_path")).strip()
+                overlay_ready = _text(overlay.get("status")).strip().lower() in {"ready", "ok", "verified", "qualified", "pass", "passed"}
+                self.query_one("#action-overlay-apply", Button).disabled = not bool(artifact and overlay_ready)
+                has_transaction = bool(overlay.get("transaction_path"))
+                self.query_one("#action-rollback", Button).disabled = not has_transaction
+                self.query_one("#action-recover", Button).disabled = not has_transaction
+            except NoMatches:
+                self._detach_projection()
 
         def _focus_page_primary(self, target: str) -> None:
+            if not self._projection_live:
+                return
             selectors = {
                 "dashboard": "#dashboard-runs",
                 "runs": "#run-table",
-                "logs": "#log-filter",
+                "logs": "#log-follow-toggle",
                 "diagnostics": "#diagnostics-table",
                 "history": "#history-table",
                 "targets": "#targets-table",
@@ -1013,17 +1247,26 @@ def create_textual_control_center_app(
                 pass
 
         def action_page(self, target: str) -> None:
+            if not self._projection_live:
+                return
+            target, notice = normalize_tui_page(target)
+            if notice:
+                self.notify(notice, severity="information")
             if target not in CONTROL_CENTER_PAGES:
                 return
             self.current_page = target
-            switcher = self.query_one("#page-switcher", ContentSwitcher)
-            switcher.current = target
-            nav = self.query_one("#navigation", ListView)
             try:
-                nav.index = CONTROL_CENTER_PAGES.index(target)
-            except Exception:
-                pass
-            self.query_one("#status-line", Static).update(f"Page: {target}")
+                switcher = self.query_one("#page-switcher", ContentSwitcher)
+                switcher.current = target
+                nav = self.query_one("#navigation", ListView)
+                try:
+                    nav.index = CONTROL_CENTER_PAGES.index(target)
+                except Exception:
+                    pass
+                self.query_one("#status-line", Static).update(f"Page: {target}")
+            except NoMatches:
+                self._detach_projection()
+                return
             # A hidden widget must never retain keyboard ownership after navigation.
             # Defer until ContentSwitcher has refreshed so the newly visible page is
             # eligible for focus on the native Textual runtime.
@@ -1032,14 +1275,31 @@ def create_textual_control_center_app(
         def action_show_help(self) -> None:
             self.push_screen(HelpModal())
 
+        def action_show_command_palette(self) -> None:
+            self.push_screen(CommandPaletteModal(), self._handle_palette_intent)
+
+        def _handle_palette_intent(self, intent: str | None) -> None:
+            value = str(intent or "").strip()
+            if not value:
+                return
+            if value == "help":
+                self.action_show_help()
+                return
+            if value.startswith("page:"):
+                self.action_page(value.split(":", 1)[1])
+                return
+            if value.startswith("run:"):
+                self._request_action(value.split(":", 1)[1])
+
         def action_quit_control_center(self) -> None:
+            self._detach_projection()
             self.exit()
 
         def action_back_or_quit(self) -> None:
             if self.current_page != "dashboard":
                 self.action_page("dashboard")
             else:
-                self.exit()
+                self.action_quit_control_center()
 
         def action_cancel_selected(self) -> None:
             self._request_action("cancel")
@@ -1091,7 +1351,48 @@ def create_textual_control_center_app(
             self.notify(message, severity="information" if ok else "error")
             self.refresh_from_provider()
 
+        def _request_overlay_apply(self) -> None:
+            overlay = self._selected_row("overlays", ("history_id", "operation_id", "sha256"))
+            artifact = _text(overlay.get("artifact") or overlay.get("path") or overlay.get("artifact_path")).strip()
+            if not artifact:
+                self.notify("Select an overlay artifact first.", severity="warning")
+                return
+            self.push_screen(
+                ConfirmationModal(f"Apply overlay {artifact}?"),
+                lambda confirmed: self._dispatch_overlay_apply(artifact) if confirmed else None,
+            )
+
+        def _dispatch_overlay_apply(self, artifact: str) -> None:
+            ok, message = self.dispatcher.dispatch("overlay.apply", payload={"artifact": artifact})
+            self.notify(message, severity="information" if ok else "error")
+            self.refresh_from_provider()
+
+        def _request_worker_recovery(self) -> None:
+            worker = self._selected_row("workers", ("profile", "name"))
+            profile = _text(worker.get("profile") or worker.get("name")).strip()
+            if not profile:
+                self.notify("Select an SSH worker first.", severity="warning")
+                return
+            self.push_screen(
+                ConfirmationModal(f"Recover stale SSH worker state for {profile}?"),
+                lambda confirmed: self._dispatch_worker_recovery(worker) if confirmed else None,
+            )
+
+        def _dispatch_worker_recovery(self, worker: Mapping[str, Any]) -> None:
+            ok, message = self.dispatcher.dispatch(
+                "worker.recover",
+                payload={
+                    "profile": worker.get("profile") or worker.get("name") or "",
+                    "run_id": worker.get("run_id") or "",
+                    "node_id": worker.get("node_id") or "",
+                },
+            )
+            self.notify(message, severity="information" if ok else "error")
+            self.refresh_from_provider()
+
         def on_button_pressed(self, event: Button.Pressed) -> None:
+            if not self._projection_live:
+                return
             button_id = event.button.id or ""
             if button_id == "log-follow-toggle":
                 self._toggle_log_follow()
@@ -1105,22 +1406,32 @@ def create_textual_control_center_app(
                     self._request_validation_action("validation.pause", destructive=False)
                 elif action_id == "validation-stop":
                     self._request_validation_action("validation.stop", destructive=True)
+                elif action_id == "overlay-apply":
+                    self._request_overlay_apply()
+                elif action_id == "worker-recover":
+                    self._request_worker_recovery()
                 elif action_id in {"rollback", "recover"}:
                     self._request_transaction_action(action_id)
                 else:
                     self._request_action(action_id)
 
         def on_input_changed(self, event: Input.Changed) -> None:
+            if not self._projection_live:
+                return
             if (event.input.id or "") == "log-filter":
                 self._log_filter = str(event.value or "")
                 self._render_logs(force=True)
 
         def on_list_view_selected(self, event: ListView.Selected) -> None:
+            if not self._projection_live:
+                return
             item_id = event.item.id or ""
             if item_id.startswith("nav-"):
                 self.action_page(item_id[len("nav-"):])
 
         def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+            if not self._projection_live:
+                return
             table_id = event.data_table.id or ""
             key = _text(getattr(event.row_key, "value", event.row_key))
             if table_id in {"run-table", "dashboard-runs"}:
@@ -1147,6 +1458,8 @@ def create_textual_control_center_app(
                 self._render_details()
 
         def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+            if not self._projection_live:
+                return
             data = getattr(event.node, "data", None)
             if isinstance(data, Mapping):
                 node_id = _text(data.get("node_id")).strip()

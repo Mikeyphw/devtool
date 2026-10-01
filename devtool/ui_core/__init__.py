@@ -16,6 +16,7 @@ from .actions import ACTION_REGISTRY, ActionContext, ActionSpec, action_catalog,
 from .copy import COPY_REGISTRY, COPY_SCHEMA_VERSION, CopySpec, copy_catalog, copy_spec, copy_text
 from .icons import ICON_REGISTRY, ICON_SCHEMA_VERSION, IconSpec, icon_catalog, icon_spec, resolve_icon
 from .navigation import NAVIGATION_REGISTRY, NavigationSpec, navigation_catalog, navigation_for_surface, navigation_icon_map, navigation_shortcut_map
+from .shortcuts import TUI_NAV_SHORTCUTS, TUI_PAGE_ALIASES, TUI_PAGE_CHOICES, TUI_PAGES, assert_tui_shortcuts_collision_free, normalize_tui_page, shortcut_rows, textual_control_center_bindings
 from .preferences import (
     UI_PROFILE_NAMES,
     UI_SURFACES,
@@ -56,6 +57,7 @@ __all__ = [
     "action_catalog", "action_spec", "action_text", "actions_for_context",
     "copy_catalog", "copy_spec", "copy_text", "icon_catalog", "icon_spec", "resolve_icon",
     "navigation_catalog", "navigation_for_surface", "navigation_icon_map", "navigation_shortcut_map",
+    "TUI_NAV_SHORTCUTS", "TUI_PAGE_ALIASES", "TUI_PAGE_CHOICES", "TUI_PAGES", "assert_tui_shortcuts_collision_free", "normalize_tui_page", "shortcut_rows", "textual_control_center_bindings",
     "load_user_ui_config", "normalize_surface", "profile_catalog", "resolve_ui_preferences", "resolve_user_ui_preferences", "user_ui_config_path", "validate_ui_config",
     "runtime_state_to_ui_snapshot", "token_catalog", "token_for_severity", "token_for_status",
     "capability_catalog", "capabilities_for_surface", "negotiate_capabilities", "resolve_responsive_layout", "responsive_policy_catalog",

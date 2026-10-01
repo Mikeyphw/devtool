@@ -193,7 +193,10 @@ def test_android_navigation_surface_matches_existing_top_level_destinations() ->
 
 
 def test_tui_shortcuts_are_central_navigation_contract() -> None:
-    assert navigation_shortcut_map("tui") == {"d": "dashboard", "b": "build", "o": "overlays", "w": "workers"}
+    from devtool.ui_core.shortcuts import TUI_NAV_SHORTCUTS
+    assert navigation_shortcut_map("tui") == TUI_NAV_SHORTCUTS
+    assert TUI_NAV_SHORTCUTS["w"] == "workers"
+    assert set(TUI_NAV_SHORTCUTS.values()) == {"dashboard", "runs", "logs", "diagnostics", "history", "targets", "workers", "validation", "artifacts", "overlays", "evidence"}
 
 
 def test_android_hud_bridge_payload_carries_ui_contract(tmp_path: Path) -> None:

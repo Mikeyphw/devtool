@@ -29,6 +29,7 @@ from .artifacts import load_history
 from .console_utils import create_console, detect_console_width, is_termux_environment
 from .core.events import tui_event_snapshot
 from .ui_core.navigation import navigation_label_for_route, navigation_shortcut_map
+from .ui_core.shortcuts import TUI_UI_ACTION_SHORTCUTS, normalize_tui_page
 from .ui_core.copy import copy_text
 from .ui_core.icons import resolve_icon
 from .ui_core.viewmodels import runtime_state_to_ui_snapshot
@@ -138,17 +139,8 @@ def _repo_snapshot(repo_root: Path) -> dict[str, Any]:
 
 
 
-_TERMINAL_ACTION_KEYS = {
-    "operation.cancel": "c",
-    "operation.retry": "y",
-    "operation.rerun": "y",
-    "validation.retry_failed": "f",
-    "validation.resume": "v",
-    "logs.open": "l",
-    "summary.copy": "s",
-    "diagnostics.copy": "x",
-    "workflow.inspect": "i",
-}
+_TERMINAL_ACTION_KEYS = dict(TUI_UI_ACTION_SHORTCUTS)
+
 
 
 def _semantic_snapshot(snapshot: dict[str, Any], profile: TerminalProfile):
@@ -541,14 +533,18 @@ def _workers_page(snapshot: dict[str, Any], profile: TerminalProfile, *, repo_ro
 def render_page(repo_root: Path, *, page: str, width: int | None = None, height: int | None = None, artifact: str = "") -> tuple[Group, TerminalProfile]:
     profile = terminal_profile(width=width, height=height)
     snapshot = _repo_snapshot(repo_root)
-    normalized = str(page or "dashboard").lower()
-    if normalized == "build":
+    raw_page = str(page or "dashboard").lower()
+    normalized, _notice = normalize_tui_page(raw_page)
+    if raw_page == "build":
+        # Compatibility-only legacy renderer. The canonical Textual page is Runs.
         renderable = _build_page(snapshot, profile)
-    elif normalized in {"overlay", "overlays"}:
+    elif normalized == "overlays":
         renderable = _overlay_page(snapshot, profile, repo_root=repo_root, artifact=artifact)
-    elif normalized in {"worker", "workers", "ssh"}:
+    elif normalized == "workers":
         renderable = _workers_page(snapshot, profile, repo_root=repo_root)
     else:
+        # Legacy Rich TUI is explicitly fenced; unsupported concrete Textual
+        # pages degrade to the dashboard rather than pretending to be that page.
         renderable = _dashboard(snapshot, profile)
     return renderable, profile
 
@@ -558,6 +554,13 @@ def _header(page: str, profile: TerminalProfile) -> Text:
     suffix = " · Termux" if profile.termux else ""
     return Text(f"Devtool · {label}{suffix}", style="bold")
 
+
+
+def _legacy_navigation_shortcuts() -> dict[str, str]:
+    """Derived subset of the canonical TUI navigation map supported by Rich fallback."""
+
+    supported = {"dashboard", "overlays", "workers"}
+    return {key: route for key, route in navigation_shortcut_map("tui").items() if route in supported}
 
 def run_tui(args: Any, *, repo_root: Path, console: Console | None = None) -> int:
     console = console or create_console()
@@ -573,7 +576,7 @@ def run_tui(args: Any, *, repo_root: Path, console: Console | None = None) -> in
         renderable, profile = render_page(repo_root, page=page, width=current_width, height=console.height, artifact=artifact)
         console.print(_header(page, profile))
         console.print(renderable)
-        nav_shortcuts = navigation_shortcut_map("tui")
+        nav_shortcuts = _legacy_navigation_shortcuts()
         if profile.compact:
             bits = [f"{key} {navigation_label_for_route('tui', route).lower()[:5]}" for key, route in nav_shortcuts.items()]
             console.print(Text(" · ".join([*bits, "q quit"]), style="dim"))
@@ -587,7 +590,7 @@ def run_tui(args: Any, *, repo_root: Path, console: Console | None = None) -> in
         return 0
 
     while True:
-        nav_shortcuts = navigation_shortcut_map("tui")
+        nav_shortcuts = _legacy_navigation_shortcuts()
         current_profile = terminal_profile(width=width_override or detect_console_width(console.width), height=console.height)
         current_snapshot = _repo_snapshot(repo_root)
         ui = _semantic_snapshot(current_snapshot, current_profile)

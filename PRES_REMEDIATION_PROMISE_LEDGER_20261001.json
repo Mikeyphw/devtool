@@ -95,7 +95,7 @@
     {
       "id": "PRES-R02",
       "position": "62/76",
-      "status": "implemented_pending_native_qualification",
+      "status": "qualified_native",
       "promises": [
         "replace the single-Static control-center prototype with concrete Textual pages/widgets",
         "consume canonical RUN/EXO/TLJ/RunStore/Tasker/diagnostic/validation/artifact/overlay/evidence authorities",
@@ -108,20 +108,29 @@
       ],
       "next": "PRES-R03",
       "note": "PRES-R02 v1 rolled back on the real Textual confirmation-flow assertion. v2 rebases the concrete control center onto qualified PRES-H02 v3, fixes visible-page focus ownership, and proves confirmation through the actual action-button/modal path.",
-      "delivered_ledger": "PRES_R02_PROMISE_LEDGER.json"
+      "delivered_ledger": "PRES_R02_PROMISE_LEDGER.json",
+      "qualification": {
+        "run": "fe5a24147492422c842ade6317d66fab",
+        "tests": "120 passed, 0 failed, 2 skipped",
+        "git_commit": "1ce109d"
+      }
     },
     {
       "id": "PRES-R03",
       "position": "63/76",
-      "status": "open",
+      "status": "implemented_v5_pending_native_qualification",
       "promises": [
         "unify shortcut/action authority and collision detection",
         "normalize devtool tui page names and compatibility aliases",
-        "honor or explicitly deprecate every supported tui CLI argument including --artifact",
+        "honor or explicitly transition every supported tui CLI argument including --artifact and --width; renderer-independent --once must retain canonical projection/preflight even when Textual is unavailable",
+        "close the normal-execution main-thread Textual host reopened by PRES-H01",
+        "wire safe overlay apply and SSH worker recovery through canonical authorities while removing fake mutation metadata",
         "remove prototype debug/control-result echo behavior",
         "exercise the concrete control center with Textual App.run_test/Pilot across navigation, focus, selection, actions, resize, logs, diagnostics, failures and live transitions"
       ],
-      "next": "PRES-G2R"
+      "next": "PRES-G2R",
+      "delivered_ledger": "PRES_R03_PROMISE_LEDGER.json",
+      "note": "v1 native run 381b4e609f324c408ab30287ea8e8e9a rolled back on stale action-parity assertions and Textual-invalid H02 confirmation CSS; v2 folded both into 63/76. v2 native run d976675c392d4a62ac4eada61506250f passed 3/4 real Textual cases and exposed the qualification-only ContentSwitcher import mismatch; v3 corrected that import. v3 native run 881acebe9965432aa5420b05f530f97f passed all non-Textual/retained stages and 3/4 real Textual cases, then exposed an off-screen overlay action Pilot click plus a real shutdown race where the periodic control-center refresh queried a detached Screen. v4 keeps the same 63/76 boundary, scrolls the action visible before mouse activation, and adopts the already-qualified H02 timer-stop/NoMatches/on_unmount lifecycle pattern. v4 native run 9bbd9be6985f43f5b11fc2fd35023c70 passed construction/retained stages and again reached the real Textual lane, then exposed queued DataTable RowHighlighted teardown outside refresh_from_provider. v5 keeps 63/76 and introduces one projection-wide lifecycle barrier for timer/deferred/event/render shutdown safety."
     },
     {
       "id": "PRES-G2R",

@@ -24,7 +24,7 @@ Positions through qualified LIFE-G3 remain immutable historical evidence through
 ```text
 61/76 PRES-R01   normal execution presentation ownership
 62/76 PRES-R02   concrete Textual control-center application + live truth/actions
-63/76 PRES-R03   shortcut/CLI parity + broad real-app integration qualification
+63/76 PRES-R03   shortcut/CLI parity + normal execution main-thread host + broad real-app qualification
 64/76 PRES-G2R   reopened concrete-runtime requalification gate
 65/76 DIST-R01   known DIST-P100 candidate-runtime self-refresh remediation
 66/76 DIST-G3    final distributed-execution seal
@@ -43,7 +43,7 @@ Positions through qualified LIFE-G3 remain immutable historical evidence through
 `DIST-R01` is recorded here only for full-plan arithmetic and ordering. It remains
 DIST-owned and is not part of the PRES remediation gate window.
 
-Current runtime status: DIST-R01 has passed and is applied. PRES-R01 v2, PRES-H01, and PRES-H02 v3 have passed native qualification and are applied. PRES-R02 v1 did not qualify: its native Pilot exposed a confirmation-flow/focus ownership defect and the transaction rolled back cleanly. PRES-R02 v2 is the same canonical 62/76 item, rebased onto qualified H02 v3 with visible-page focus transfer and real action-button confirmation coverage. General normal-execution live Textual remains open for the later PRES remediation boundary; no new roadmap position is consumed.
+Current runtime status: DIST-R01 has passed and is applied. PRES-R01 v2, PRES-H01, PRES-H02 v3, and PRES-R02 v3 have passed native qualification and are applied. PRES-R02 v1/v2 native failures were folded into the same canonical 62/76 item; v3 closed both the modal/focus and narrow action-strip viewport defects. PRES-R03 is now the final implementation boundary before PRES-G2R and closes the reopened general normal-execution live Textual host plus shortcut/CLI/concrete-app parity. R03 v1 native run `381b4e609f324c408ab30287ea8e8e9a` rolled back cleanly on stale packaged action-parity assertions and exposed a Textual-invalid H02 confirmation stylesheet expression; R03 v2 folded both corrections into the same 63/76 boundary. Native v2 run `d976675c392d4a62ac4eada61506250f` then passed three real Textual cases and rolled back on the fourth solely because the new qualification test imported `ContentSwitcher` from `textual.containers`; the runtime and retained R02 tests use `textual.widgets.ContentSwitcher`. R03 v3 corrected that qualification-only compatibility mismatch. Native v3 run `881acebe9965432aa5420b05f530f97f` passed every non-Textual/retained stage and 3/4 real Textual cases, then exposed a horizontally off-screen overlay-action Pilot click and a genuine refresh-timer teardown race (`NoMatches` after the default Screen detached). R03 v4 reuses the retained R02 `scroll_visible()` mouse-proof pattern and the qualified H02 timer-stop/`NoMatches`/`on_unmount` lifecycle pattern in the same 63/76 boundary. No hotfix consumes a new roadmap position.
 
 ## Next-three merge-window decision
 
@@ -55,8 +55,11 @@ The next three PRES remediation items are intentionally **not merged**:
 2. **PRES-R02** owns the concrete `devtool tui` widget/page/live-authority/action
    implementation. It is a different application/composition boundary.
 3. **PRES-R03** owns shortcut/CLI argument parity, compatibility/responsive behavior,
-   and broad concrete Textual `App.run_test()`/Pilot qualification.
+   the legal main-thread Textual host for ordinary execution, and broad concrete
+   Textual `App.run_test()`/Pilot qualification.
 
 `PRES-G2R` remains a separate fourth item in the gate window and audits all
 R01..R03 work plus the reopened PRES-X04..X08/G1/G2 claims. `PRES-G3` remains the
 later final seal after DIST, TEST, and EXEC are finally qualified.
+
+- PRES-R03 v5 retry remains full-plan 63/76: native v4 exposed queued Textual row-highlight teardown after the default Screen detached; v5 adds a projection-wide lifecycle barrier. PRES-G2R remains next at 64/76. Native v5 then exposed Textual 8.2.8 built-in Ctrl+P command-palette precedence; v6 disables the framework palette so the canonical Devtool CommandPaletteModal owns Ctrl+P. PRES-G2R remains next at 64/76.

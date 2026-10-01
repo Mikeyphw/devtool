@@ -312,6 +312,12 @@ description = "Run the PRES-R02 concrete Textual control-center application reme
 workflow = "roadmap-pres-r02"
 target = "devtool"
 
+# PRES-R03 final implementation remediation before reopened gate.
+[wrapper.commands.pres-r03]
+description = "Run PRES-R03 Textual shortcut/CLI parity and concrete runtime qualification"
+workflow = "roadmap-pres-r03"
+target = "devtool"
+
 # LIFE-X01 immediate lifecycle safety boundary.
 [wrapper.commands.life-x01]
 description = "Run the LIFE-X01 immediate lifecycle safety workflow"
@@ -1065,6 +1071,13 @@ roadmap-pres-r02 = [
   { id = "control-center", ref = "test:roadmap-pres-r02-control-center", depends_on = ["syntax"] },
   { id = "pres-regression", ref = "test:roadmap-pres-r02-pres-regression", depends_on = ["control-center"] },
   { id = "real-textual-app", ref = "test:roadmap-pres-r02-real-textual-app", depends_on = ["pres-regression"] },
+]
+
+roadmap-pres-r03 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "parity-contracts", ref = "test:roadmap-pres-r03-parity-contracts", depends_on = ["syntax"] },
+  { id = "pres-regression", ref = "test:roadmap-pres-r03-pres-regression", depends_on = ["parity-contracts"] },
+  { id = "real-textual-apps", ref = "test:roadmap-pres-r03-real-textual-apps", depends_on = ["pres-regression"] },
 ]
 
 roadmap-life-x01 = [
@@ -4003,6 +4016,50 @@ runner = "pytest"
 timeout_seconds = 600
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_g3_final_seal.py", "-k", "attestation or wrapper_workflow or cross_program_consumers or core_generated_surfaces or gate_tooling"]
 
+
+# PRES-R03 final implementation remediation before PRES-G2R.
+[[test]]
+id = "roadmap-pres-r03-parity-contracts"
+name = "PRES-R03 shortcut CLI execution-host and parity contracts"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r03_textual_parity_qualification.py",
+  "-k", "not real_textual_r03_navigation_help_palette_failure_live_resize_and_shutdown",
+]
+
+[[test]]
+id = "roadmap-pres-r03-pres-regression"
+name = "PRES-R03 retained PRES remediation fixed point"
+runner = "pytest"
+timeout_seconds = 600
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r01_execution_presentation.py",
+  "tests/test_pres_r02_textual_control_center_app.py",
+  "tests/test_pres_h02_textual_apply_host.py",
+  "tests/test_pres_x08_textual_control_center.py",
+  "tests/test_pres_g2_interaction_reliability_remediation.py",
+  "tests/test_pres_g2_interaction_reliability_gate.py",
+  "tests/test_pres_r03_textual_parity_qualification.py",
+  "-k", "not real_textual_execution_app_updates_and_confirms_cancel and not real_apply_host_app_runs_on_textual_main_thread_when_required and not real_textual_control_center_pages_selection_confirmation_and_live_refresh and not real_textual_r03_navigation_help_palette_failure_live_resize_and_shutdown",
+]
+
+[[test]]
+id = "roadmap-pres-r03-real-textual-apps"
+name = "PRES-R03 real Textual App.run_test Pilot matrix"
+runner = "command"
+timeout_seconds = 600
+env = { DEVTOOL_PRES_R01_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_R02_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_R03_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_H02_REQUIRE_TEXTUAL = "1" }
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r01_execution_presentation.py",
+  "tests/test_pres_r02_textual_control_center_app.py",
+  "tests/test_pres_h02_textual_apply_host.py",
+  "tests/test_pres_r03_textual_parity_qualification.py",
+  "-k", "real_textual_execution_app_updates_and_confirms_cancel or real_apply_host_app_runs_on_textual_main_thread_when_required or real_textual_control_center_pages_selection_confirmation_and_live_refresh or real_textual_r03_navigation_help_palette_failure_live_resize_and_shutdown",
+]
 
 # PRES-R02 concrete control-center application remediation.
 [[test]]

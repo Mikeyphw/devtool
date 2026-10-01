@@ -11,8 +11,10 @@ from hashlib import sha256
 import json
 from typing import Any, Iterable, Mapping, Sequence
 
-PAGES = ("dashboard", "runs", "logs", "diagnostics", "history", "targets", "workers", "validation", "artifacts", "overlays", "evidence")
-NAV_KEYS = {"d":"dashboard", "u":"runs", "l":"logs", "g":"diagnostics", "h":"history", "t":"targets", "w":"workers", "v":"validation", "s":"artifacts", "o":"overlays", "e":"evidence"}
+from .ui_core.shortcuts import TUI_NAV_SHORTCUTS, TUI_PAGES
+
+PAGES = TUI_PAGES
+NAV_KEYS = dict(TUI_NAV_SHORTCUTS)
 TERMINAL_STATES = {"passed", "failed", "cancelled", "blocked", "error", "complete", "completed"}
 
 PANEL_AUTHORITIES: dict[str, str] = {
@@ -47,30 +49,33 @@ ACTION_SPECS: dict[str, OperatorActionSpec] = {
     "rerun": OperatorActionSpec("rerun", "EXO/RUN", requires_run=True),
     "resume": OperatorActionSpec("resume", "EXO/RUN", requires_run=True),
     "logs.open": OperatorActionSpec("logs.open", "RUN", requires_run=True),
-    "workflow.inspect": OperatorActionSpec("workflow.inspect", "EXEC/WRAP"),
-    "target.launch": OperatorActionSpec("target.launch", "EXEC/WRAP/TEST"),
-    "artifact.apply": OperatorActionSpec("artifact.apply", "LIFE", destructive=True),
     "overlay.apply": OperatorActionSpec("overlay.apply", "LIFE", destructive=True),
     "rollback": OperatorActionSpec("rollback", "LIFE", destructive=True),
     "recover": OperatorActionSpec("recover", "LIFE", destructive=True),
-    "worker.cancel": OperatorActionSpec("worker.cancel", "DIST/SSH", destructive=True),
-    "worker.resume": OperatorActionSpec("worker.resume", "DIST/SSH"),
     "worker.recover": OperatorActionSpec("worker.recover", "DIST/SSH", destructive=True),
+    "validation.pause": OperatorActionSpec("validation.pause", "validation"),
+    "validation.stop": OperatorActionSpec("validation.stop", "validation", destructive=True),
 }
 
+# This registry advertises only controls the concrete Textual application wires.
+# Generic ``artifact.apply`` and target launch / worker cancel+resume were old
+# spec-only claims and remain intentionally absent. Overlay apply and SSH worker
+# recovery are different: both have canonical CLI/domain authorities and R03
+# delegates to those authorities rather than reimplementing lifecycle logic.
 PAGE_ACTIONS: dict[str, tuple[str, ...]] = {
     "dashboard": (),
     "runs": ("cancel", "retry", "rerun", "resume"),
     "logs": ("logs.open",),
     "diagnostics": ("logs.open",),
     "history": ("rerun",),
-    "targets": ("workflow.inspect", "target.launch"),
-    "workers": ("worker.cancel", "worker.resume", "worker.recover"),
-    "validation": (),
-    "artifacts": ("artifact.apply",),
+    "targets": (),
+    "workers": ("worker.recover",),
+    "validation": ("validation.pause", "validation.stop"),
+    "artifacts": (),
     "overlays": ("overlay.apply", "rollback", "recover"),
     "evidence": (),
 }
+
 
 @dataclass(frozen=True)
 class ControlCenterCapabilities:

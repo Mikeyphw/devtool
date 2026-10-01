@@ -281,6 +281,16 @@ class _TextualExecutionPresenter:
         return None
 
 
+def create_textual_execution_source(*, max_log_lines: int = 400) -> Any:
+    """Return the queue-backed source used by the main-thread execution host.
+
+    The source owns presentation queues only. Canonical execution remains in the
+    managed child process and Tasker/RUN stores.
+    """
+
+    return _TextualExecutionPresenter(max_log_lines=max_log_lines)
+
+
 class ExecutionPresentationController:
     """Own the selected normal-execution presentation backend."""
 

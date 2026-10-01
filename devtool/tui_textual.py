@@ -1031,19 +1031,28 @@ def run_textual_tui_runtime(args: Any, *, repo_root: Any, console: Any | None = 
 
     once = bool(getattr(args, "once", False))
     page = str(getattr(args, "page", "dashboard") or "dashboard")
+    artifact = str(getattr(args, "artifact", "") or "").strip()
     width = int(getattr(args, "width", 0) or 0)
+    from .ui_core.shortcuts import normalize_tui_page
+    normalized, compatibility_notice = normalize_tui_page(page)
+    if artifact and normalized == "dashboard":
+        normalized = "overlays"
+        compatibility_notice = " ".join(value for value in (compatibility_notice, "Opened Overlays for --artifact preflight.") if value)
     if once:
         from pathlib import Path
-        from .textual_control_center import PAGES, TextualControlCenter
+        from .textual_control_center import TextualControlCenter
         from .textual_control_center_runtime import CanonicalControlCenterProvider
 
-        normalized = page if page in PAGES else "dashboard"
         center = TextualControlCenter(page=normalized)
-        projection = CanonicalControlCenterProvider(Path(repo_root)).snapshot()
+        projection = CanonicalControlCenterProvider(Path(repo_root), startup_artifact=artifact).snapshot()
         # Preserve the stable PRES-X08 renderer-independent contract while
         # exposing the real canonical provider payload for inspection.
         payload = center.snapshot(width=width or 100, height=28)
         payload["repo_root"] = str(repo_root)
+        payload["requested_page"] = page
+        payload["page"] = normalized
+        payload["compatibility_notice"] = compatibility_notice
+        payload["artifact"] = artifact
         payload["canonical"] = projection
         payload["owns_truth"] = False
         if console is not None:
@@ -1063,7 +1072,12 @@ def run_textual_tui_runtime(args: Any, *, repo_root: Any, console: Any | None = 
     try:
         from .textual_control_center import TerminalRestorationGuard
         from .textual_control_center_runtime import create_textual_control_center_app
-        app = create_textual_control_center_app(repo_root=repo_root, page=page)
+        app = create_textual_control_center_app(
+            repo_root=repo_root,
+            page=normalized,
+            artifact=artifact,
+            compatibility_notice=compatibility_notice,
+        )
     except Exception as exc:  # pragma: no cover - only exercised with broken optional Textual runtime
         message = f"Textual TUI requested, but the concrete control center failed to initialize: {exc}"
         if console is not None:

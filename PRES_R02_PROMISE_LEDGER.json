@@ -5,7 +5,7 @@
   "position": "62/76",
   "gate_window_position": "2/4",
   "implementation_position": "2/3",
-  "status": "implemented_pending_native_qualification",
+  "status": "qualified_native",
   "merge_window_decision": {
     "window": [
       "PRES-R01",
@@ -107,5 +107,11 @@
   "remaining_before_gate": 1,
   "next_gate": "PRES-G2R 64/76",
   "next_major_scope": "DIST finalization (DIST-R01 already qualified/applied; next DIST item DIST-G3 66/76)",
-  "revision": "v3_after_native_v2_action_strip_out_of_bounds_failure"
+  "revision": "v3_after_native_v2_action_strip_out_of_bounds_failure",
+  "native_qualification": {
+    "run": "fe5a24147492422c842ade6317d66fab",
+    "tests": "120 passed, 0 failed, 2 skipped",
+    "diagnostics": "0 warnings, 0 errors",
+    "git_commit": "1ce109d"
+  }
 }

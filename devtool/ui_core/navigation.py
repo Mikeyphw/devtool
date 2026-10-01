@@ -45,19 +45,20 @@ def _nav(nav_id: str, icon: str, order: int, *, section: str = "primary", routes
 
 NAVIGATION_REGISTRY: tuple[NavigationSpec, ...] = (
     _nav("dashboard", "nav.dashboard", 10, routes=(("desktop", "overview"), ("tui", "dashboard"), ("android", "overview"), ("machine", "dashboard")), shortcuts=(("tui", "d"),)),
-    _nav("operations", "nav.operations", 20, routes=(("desktop", "runs"), ("machine", "operations"))),
-    _nav("history", "nav.history", 30, routes=(("desktop", "history"), ("machine", "history"))),
-    _nav("artifacts", "nav.artifacts", 40, routes=(("desktop", "artifacts"), ("machine", "artifacts"))),
-    _nav("diagnostics", "nav.diagnostics", 50, routes=(("desktop", "diagnostics"), ("machine", "diagnostics"))),
+    _nav("operations", "nav.operations", 20, routes=(("desktop", "runs"), ("tui", "runs"), ("machine", "operations")), shortcuts=(("tui", "u"),)),
+    _nav("history", "nav.history", 30, routes=(("desktop", "history"), ("tui", "history"), ("machine", "history")), shortcuts=(("tui", "h"),)),
+    _nav("artifacts", "nav.artifacts", 40, routes=(("desktop", "artifacts"), ("tui", "artifacts"), ("machine", "artifacts")), shortcuts=(("tui", "s"),)),
+    _nav("diagnostics", "nav.diagnostics", 50, routes=(("desktop", "diagnostics"), ("tui", "diagnostics"), ("machine", "diagnostics")), shortcuts=(("tui", "g"),)),
     _nav("projects", "nav.projects", 60, routes=(("desktop", "repositories"), ("android", "repos"), ("machine", "projects"))),
-    _nav("targets", "nav.targets", 70, routes=(("desktop", "targets"), ("machine", "targets"))),
-    _nav("validation", "nav.validation", 80, routes=(("desktop", "run"), ("android", "run"), ("machine", "validation"))),
+    _nav("targets", "nav.targets", 70, routes=(("desktop", "targets"), ("tui", "targets"), ("machine", "targets")), shortcuts=(("tui", "t"),)),
+    _nav("validation", "nav.validation", 80, routes=(("desktop", "run"), ("tui", "validation"), ("android", "run"), ("machine", "validation")), shortcuts=(("tui", "v"),)),
     _nav("workflows", "nav.workflows", 90, routes=(("machine", "workflows"),)),
-    _nav("logs", "nav.logs", 100, routes=(("android", "logs"), ("machine", "logs"))),
+    _nav("logs", "nav.logs", 100, routes=(("tui", "logs"), ("android", "logs"), ("machine", "logs")), shortcuts=(("tui", "l"),)),
     _nav("environment", "nav.environment", 110, routes=(("machine", "environment"),)),
     _nav("settings", "nav.settings", 120, section="secondary", routes=(("desktop", "settings"), ("android", "settings"), ("machine", "settings"))),
-    _nav("build", "nav.build", 130, routes=(("tui", "build"),), shortcuts=(("tui", "b"),)),
+    _nav("build", "nav.build", 130, routes=()),
     _nav("workers", "nav.environment", 135, routes=(("tui", "workers"),), shortcuts=(("tui", "w"),)),
+    _nav("evidence", "nav.evidence", 138, routes=(("tui", "evidence"),), shortcuts=(("tui", "e"),)),
     _nav("overlays", "nav.overlays", 140, routes=(("tui", "overlays"),), shortcuts=(("tui", "o"),)),
 )
 
@@ -96,6 +97,10 @@ def navigation_shortcut_map(surface: str) -> dict[str, str]:
         route = spec.route_for(normalized)
         if shortcut and route:
             result[str(shortcut)] = route
+    if normalized == "tui":
+        from .shortcuts import TUI_NAV_SHORTCUTS
+        if result != TUI_NAV_SHORTCUTS:
+            raise AssertionError(f"UI Core TUI navigation drift: registry={result!r} canonical={TUI_NAV_SHORTCUTS!r}")
     return result
 
 

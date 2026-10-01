@@ -6,6 +6,7 @@ from typing import Any, Mapping
 from .copy import copy_text
 from .confirmations import confirmation_decision
 from .state import UIActionState
+from .shortcuts import shortcut_for_ui_action
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,21 +116,21 @@ def _action(
 ACTION_REGISTRY: dict[str, ActionSpec] = {
     spec.id: spec
     for spec in (
-        _action("operation.cancel", "action.stop", "operation", "cancel", True, "Ctrl+C"),
-        _action("operation.retry", "action.retry", "operation", "retry"),
-        _action("operation.rerun", "action.rerun", "operation", "rerun"),
-        _action("logs.open", "action.logs", "logs", "open-log", False, "L"),
+        _action("operation.cancel", "action.stop", "operation", "cancel", True, shortcut_for_ui_action("operation.cancel")),
+        _action("operation.retry", "action.retry", "operation", "retry", False, shortcut_for_ui_action("operation.retry")),
+        _action("operation.rerun", "action.rerun", "operation", "rerun", False, shortcut_for_ui_action("operation.rerun")),
+        _action("logs.open", "action.logs", "logs", "open-log"),
         _action("summary.copy", "action.copy", "sharing", "copy-summary"),
-        _action("diagnostics.copy", "action.copy-diagnostics", "diagnostics", "copy-diagnostics"),
+        _action("diagnostics.copy", "action.copy-diagnostics", "diagnostics", "copy-diagnostics", False, shortcut_for_ui_action("diagnostics.copy")),
         _action("artifact.apply", "action.apply", "artifact", "apply-artifact"),
         _action("artifact.rollback", "action.rollback", "artifact", "rollback", True),
-        _action("validation.retry_failed", "action.retry-failed", "validation", "validation-retry-failed"),
-        _action("validation.resume", "action.resume", "validation", "validation-resume"),
+        _action("validation.retry_failed", "action.retry-failed", "validation", "validation-retry-failed", False, shortcut_for_ui_action("validation.retry_failed")),
+        _action("validation.resume", "action.resume", "validation", "validation-resume", False, shortcut_for_ui_action("validation.resume")),
         _action("target.build", "action.build", "target", "target-build"),
         _action("target.test", "action.test", "target", "target-test"),
         _action("target.validate", "action.validate", "target", "target-validate"),
         _action("target.package", "action.package", "target", "target-package"),
-        _action("workflow.inspect", "action.inspect", "workflow", "workflow-inspect"),
+        _action("workflow.inspect", "action.inspect", "workflow", "workflow-inspect", False, shortcut_for_ui_action("workflow.inspect")),
         _action("workflow.retry_node", "action.retry-node", "workflow", "workflow-retry-node"),
         _action("tests.select", "action.tests", "tests", "tests-select"),
         _action("tests.clear_selection", "action.clear", "tests", "tests-clear-selection"),

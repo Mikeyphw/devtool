@@ -41,9 +41,9 @@ def test_actions_are_requests_not_success_and_use_domain_authority():
     c=TextualControlCenter(); c.select(run_id="run-1",node_id="node-2")
     retry=c.action_request("retry")
     assert retry.status == "requested" and retry.authority == "EXO/RUN"
-    with pytest.raises(PermissionError): c.action_request("artifact.apply")
-    apply=c.action_request("artifact.apply",confirmed=True)
-    assert apply.confirmation_required and apply.authority == "LIFE"
+    # PRES-R03 removed historical spec-only mutation claims from concrete parity.
+    with pytest.raises(KeyError, match="unsupported control-center action"):
+        c.action_request("artifact.apply", confirmed=True)
 
 
 def test_responsive_accessible_capabilities_are_truthful():

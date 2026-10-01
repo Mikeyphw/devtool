@@ -6,11 +6,13 @@ import argparse
 from pathlib import Path
 
 from .tui_textual import run_textual_tui_runtime
+from .ui_core.shortcuts import TUI_PAGE_CHOICES
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the Devtool Textual TUI runtime")
-    parser.add_argument("--page", default="dashboard")
+    parser.add_argument("--page", choices=TUI_PAGE_CHOICES, default="dashboard")
+    parser.add_argument("--artifact", default="", help="Overlay artifact to preflight on the overlays page")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--width", type=int, default=0)
     return parser

@@ -159,7 +159,7 @@ def test_r02_campaign_ledger_and_workflow_match_delivered_boundary() -> None:
     assert ledger["position"] == "62/76"
     assert ledger["gate_window_position"] == "2/4"
     assert ledger["implementation_position"] == "2/3"
-    assert ledger["status"] == "implemented_pending_native_qualification"
+    assert ledger["status"] == "qualified_native"
     assert ledger["promises"] and all(row["status"] == "delivered" for row in ledger["promises"])
     assert any("main-thread host" in item for item in ledger["still_open"])
     assert any("PRES-R03" in item and "shortcut" in item for item in ledger["still_open"])

@@ -61,6 +61,7 @@ _DEF = (
     IconSpec("nav.settings", "⚙", "[SET]", "󰒓", "emblem-system-symbolic"),
     IconSpec("nav.build", "▶", "[BUILD]", "󰣪", "system-run-symbolic"),
     IconSpec("nav.overlays", "◇", "[OVL]", "󰏗", "package-x-generic-symbolic"),
+    IconSpec("nav.evidence", "◈", "[EVID]", "󰈙", "text-x-generic-symbolic"),
 )
 ICON_REGISTRY = {item.id: item for item in _DEF}
 
