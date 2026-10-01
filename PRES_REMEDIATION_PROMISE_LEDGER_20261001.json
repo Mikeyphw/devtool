@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "campaign": "PRES/Textual",
+  "amendment": "2026-10-01-runtime-remediation",
+  "active_denominator": 76,
+  "historical_labels_immutable": true,
+  "reopened_history": [
+    {
+      "overlay": "PRES-X04",
+      "genuinely_delivered": [
+        "Textual backend substrate/selection contracts and projection-facing model groundwork"
+      ],
+      "reopened_or_undelivered": [
+        "Concrete operational page/widget tree was not proven by the historical qualification"
+      ]
+    },
+    {
+      "overlay": "PRES-X05",
+      "genuinely_delivered": [
+        "Feature-parity model/spec contracts"
+      ],
+      "reopened_or_undelivered": [
+        "Spec records did not prove concrete Textual widget implementations"
+      ]
+    },
+    {
+      "overlay": "PRES-X06",
+      "genuinely_delivered": [
+        "devtool tui Textual-preferred backend selection/fallback contract"
+      ],
+      "reopened_or_undelivered": [
+        "Normal invoke/validation/apply execution remained owned by Rich Live trackers"
+      ]
+    },
+    {
+      "overlay": "PRES-X07",
+      "genuinely_delivered": [
+        "Legacy backend fencing and backend diagnostics"
+      ],
+      "reopened_or_undelivered": [
+        "Normal execution renderer migration was outside the exercised runtime boundary"
+      ]
+    },
+    {
+      "overlay": "PRES-X08",
+      "genuinely_delivered": [
+        "Canonical control-center projection/model/action contracts and bounded once-mode projections"
+      ],
+      "reopened_or_undelivered": [
+        "Concrete Textual app remained substantially a single-Static/prototype shell; real selection/widgets/live actions were not sufficiently proven"
+      ]
+    },
+    {
+      "overlay": "PRES-G1",
+      "genuinely_delivered": [
+        "Historical selector/model/spec proof"
+      ],
+      "reopened_or_undelivered": [
+        "Gate did not prove normal execution Textual ownership or concrete runtime widget behavior"
+      ]
+    },
+    {
+      "overlay": "PRES-G2",
+      "genuinely_delivered": [
+        "Projection/reliability contracts that were actually exercised"
+      ],
+      "reopened_or_undelivered": [
+        "Model-level key/action/page assertions were false-positive evidence for concrete Textual runtime behavior"
+      ]
+    }
+  ],
+  "remediation": [
+    {
+      "id": "PRES-R01",
+      "position": "61/76",
+      "status": "implemented_pending_native_qualification",
+      "promises": [
+        "progress trackers are semantic/event producers and never instantiate rich.live.Live",
+        "one execution presentation controller owns normal local terminal presentation",
+        "interactive TTY execution prefers Textual while non-TTY/CI/verbose/plain modes stream safely",
+        "Tasker/HUD remains a parallel canonical-state projection and does not preempt local Textual ownership",
+        "runner output capture/logging/structured events remain authoritative and complete",
+        "Textual presentation failure falls back to plain output without failing execution",
+        "cancel requests dispatch to the existing runner process authority rather than UI-owned lifecycle logic",
+        "normal execution Textual log buffering is bounded",
+        "a real Textual execution App is exercised with App.run_test/Pilot during native qualification",
+        "quiet, JSON/machine and explicit stdout-payload modes force plain presentation even when attached to a TTY",
+        "timeout and task telemetry remain captured/durable and are routed through the selected presentation surface",
+        "artifact preflight/validation/finalize hooks use the same presentation controller instead of tracker-owned Rich inspection/live UI"
+      ],
+      "next": "PRES-R02"
+    },
+    {
+      "id": "PRES-R02",
+      "position": "62/76",
+      "status": "open",
+      "promises": [
+        "replace the single-Static control-center prototype with concrete Textual pages/widgets",
+        "consume canonical RUN/EXO/TLJ/RunStore/Tasker/diagnostic/validation/artifact/overlay/evidence authorities",
+        "live refresh/subscription without keypress-driven refresh",
+        "real run/node/item selection and page-specific detail panes",
+        "dispatch retry/rerun/resume/cancel/recover/rollback and related actions through canonical authorities",
+        "real Textual confirmation modals for consequential actions",
+        "operational Logs and Diagnostics experiences with bounded live data",
+        "responsive narrow Termux layouts and state/selection preservation"
+      ],
+      "next": "PRES-R03"
+    },
+    {
+      "id": "PRES-R03",
+      "position": "63/76",
+      "status": "open",
+      "promises": [
+        "unify shortcut/action authority and collision detection",
+        "normalize devtool tui page names and compatibility aliases",
+        "honor or explicitly deprecate every supported tui CLI argument including --artifact",
+        "remove prototype debug/control-result echo behavior",
+        "exercise the concrete control center with Textual App.run_test/Pilot across navigation, focus, selection, actions, resize, logs, diagnostics, failures and live transitions"
+      ],
+      "next": "PRES-G2R"
+    },
+    {
+      "id": "PRES-G2R",
+      "position": "64/76",
+      "status": "open_gate",
+      "promises": [
+        "audit all R01..R03 work and reopened X04..X08/G1/G2 claims",
+        "reject spec/model-only evidence for user-visible concrete-app promises",
+        "prove normal execution and control-center Textual runtime boundaries in fresh processes",
+        "leave PRES-G3 as the later final cross-surface seal"
+      ],
+      "next": "DIST-R01"
+    }
+  ],
+  "known_non_pres_insertions": [
+    {
+      "id": "DIST-R01",
+      "position": "65/76",
+      "status": "prepared_unqualified",
+      "reason": "Known DIST-P100 candidate-runtime self-refresh remediation discovered before DIST-G3; remains separate from PRES ownership."
+    }
+  ],
+  "remaining_tail": [
+    "66/76 DIST-G3",
+    "67/76 TEST-G3",
+    "68/76 EXEC-G3",
+    "69/76 PRES-G3",
+    "70/76 RMP-X01",
+    "71/76 RMP-X02",
+    "72/76 RMP-G1",
+    "73/76 RMP-X03",
+    "74/76 RMP-G2",
+    "75/76 RMP-X04",
+    "76/76 RMP-G3 / GRAND DEVTOOL"
+  ]
+}

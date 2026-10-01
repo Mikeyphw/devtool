@@ -61,7 +61,7 @@ class DotnetProgressTests(unittest.TestCase):
         self.assertEqual(plan.command, "build")
         self.assertEqual(plan.total, 1)
 
-    def test_tracker_can_render_a_progress_line(self) -> None:
+    def test_tracker_publishes_semantic_progress_without_rendering(self) -> None:
         from io import StringIO
         from rich.console import Console
         from devtool.dotnet_progress import DotnetProgressTracker
@@ -69,15 +69,20 @@ class DotnetProgressTests(unittest.TestCase):
         buffer = StringIO()
         console = Console(file=buffer, force_terminal=True, width=100)
         tracker = DotnetProgressTracker(["dotnet", "build", "App.csproj"], "/tmp", "build", console)
+        updates: list[dict] = []
+        tracker.update_callback = updates.append
 
         with tracker:
             tracker.update_from_line("  App -> /tmp/bin/App.dll")
             tracker.finish(0)
 
-        output = buffer.getvalue()
-        self.assertIn(".NET", output)
-        self.assertIn("1/1 projects", output)
-        self.assertIn("build ok", output)
+        snapshot = tracker.snapshot()
+        self.assertEqual(buffer.getvalue(), "")
+        self.assertTrue(updates)
+        self.assertEqual(snapshot["completed"], 1)
+        self.assertEqual(snapshot["total"], 1)
+        self.assertEqual(snapshot["returncode"], 0)
+        self.assertIn("build ok", snapshot["detail"])
 
 
 if __name__ == "__main__":
@@ -197,13 +202,14 @@ class DotnetProgressSeparateCommandTests(unittest.TestCase):
             tracker.update_from_line("  Restored /tmp/App.csproj (in 1 ms).")
             tracker.finish(0)
 
-        output = buffer.getvalue()
-        self.assertIn("Step 1 of 3 · Restore · 33% overall", output)
-        self.assertIn(".NET", output)
-        self.assertNotIn("dotnet restore", output)
-        self.assertIn("restore ok", tracker.snapshot()["detail"])
+        snapshot = tracker.snapshot()
+        self.assertEqual(buffer.getvalue(), "")
+        self.assertEqual(snapshot["phase_index"], 1)
+        self.assertEqual(snapshot["phase_total"], 3)
+        self.assertEqual(snapshot["phase_name"], "restore")
+        self.assertIn("restore ok", snapshot["detail"])
 
-    def test_tracker_collapses_completed_panels_to_compact_rows(self) -> None:
+    def test_trackers_are_semantic_producers_not_live_renderers(self) -> None:
         from io import StringIO
         from rich.console import Console
         from devtool.dotnet_progress import DotnetProgressTracker
@@ -220,18 +226,13 @@ class DotnetProgressSeparateCommandTests(unittest.TestCase):
             build.update_from_line("  App -> /tmp/bin/Debug/net8.0/App.dll")
             build.finish(0)
 
-        output = buffer.getvalue()
-        self.assertIn("Step 1 of 2", output)
-        self.assertIn("Step 2 of 2", output)
-        self.assertIn("✓ Restore", output)
-        self.assertIn("✓ Build", output)
-        self.assertIsNotNone(restore.live)
-        self.assertIsNotNone(build.live)
-        assert restore.live is not None and build.live is not None
-        self.assertTrue(restore.live.transient)
-        self.assertTrue(build.live.transient)
-        self.assertNotIn("dotnet restore", output)
-        self.assertNotIn("dotnet build", output)
+        self.assertEqual(buffer.getvalue(), "")
+        self.assertFalse(hasattr(restore, "live"))
+        self.assertFalse(hasattr(build, "live"))
+        self.assertEqual(restore.snapshot()["returncode"], 0)
+        self.assertEqual(build.snapshot()["returncode"], 0)
+        self.assertEqual(restore.snapshot()["phase_name"], "restore")
+        self.assertIn("App.dll", build.snapshot()["detail"])
 
 class DotnetProgressFalseIssueCountTests(unittest.TestCase):
     def test_successful_build_summary_does_not_count_zero_error_warning_lines_as_issues(self) -> None:
@@ -345,13 +346,13 @@ class DotnetProgressStructuredUiTests(unittest.TestCase):
                 )
             tracker.finish(0)
 
-        output = buffer.getvalue()
         snapshot = tracker.snapshot()
-        self.assertIn("target-a", output)
-        self.assertIn("target phase 3/3", output)
-        self.assertIn("Step 3 of 6 · Test[target a] · 50% overall", output)
-        self.assertIn("test assemblies", output)
-        self.assertIn("225 passed", output)
+        self.assertEqual(buffer.getvalue(), "")
+        self.assertEqual(snapshot["completion_target"], "target-a")
+        self.assertEqual(snapshot["target_phase_index"], 3)
+        self.assertEqual(snapshot["target_phase_total"], 3)
+        self.assertEqual(snapshot["phase_index"], 3)
+        self.assertEqual(snapshot["phase_total"], 6)
         self.assertEqual(snapshot["completed"], 3)
         self.assertEqual(snapshot["total"], 3)
         self.assertEqual(snapshot["unit_label"], "test assemblies")

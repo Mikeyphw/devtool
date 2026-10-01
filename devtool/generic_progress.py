@@ -6,8 +6,6 @@ import time
 from typing import Any, Callable
 
 from rich.console import Console
-from rich.errors import LiveError
-from rich.live import Live
 from rich.panel import Panel
 from rich.progress import ProgressColumn, Task
 from rich.text import Text
@@ -15,10 +13,8 @@ from rich.text import Text
 from .rich_progress import (
     ThreeLineProgressBody,
     ThreeLineProgressState,
-    TuiInspectionController,
     active_panel_title,
     compact_display_target,
-    completion_line,
     project_live_output_line,
 )
 from .tui_icons import activity_icon
@@ -51,9 +47,6 @@ class GenericProgressTracker:
     display_target: str = ""
     target_phase_index: int | None = None
     target_phase_total: int | None = None
-    progress_body: ThreeLineProgressBody | None = field(init=False, default=None)
-    inspection: TuiInspectionController = field(init=False)
-    live: Live | None = field(init=False, default=None)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
     detail: str = field(init=False, default="Starting")
@@ -67,48 +60,21 @@ class GenericProgressTracker:
     tests_failed: int = field(init=False, default=0)
     tests_skipped: int = field(init=False, default=0)
     tests_total: int = field(init=False, default=0)
-    _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
     _test_counts: TestCountAccumulator = field(init=False)
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
-        self.inspection = TuiInspectionController(self.console)
         self._test_counts = TestCountAccumulator.for_argv(self.argv)
 
     def __enter__(self) -> "GenericProgressTracker":
-        if not self.enabled:
-            return self
         self._started_at = time.monotonic()
-        self.progress_body = ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
-        self.live = Live(
-            self._renderable(),
-            console=self.console,
-            refresh_per_second=8,
-            transient=True,
-            vertical_overflow="ellipsis",
-        )
-        try:
-            self.live.start()
-        except LiveError:
-            self.live = None
-            self.progress_body = None
-        if self.live is not None:
-            self.inspection.bind_refresh(self.live.refresh)
-            self.inspection.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
-        self.inspection.stop()
-        self.inspection.bind_refresh(None)
-        if self.live is not None:
-            self.live.stop()
-
-    def set_stop_callback(self, callback: Callable[[], None] | None) -> None:
-        self.inspection.set_stop_callback(callback)
+        return None
 
     def update_from_line(self, line: str) -> None:
-        self.inspection.append_line(line)
         text = line.strip()
         if not text:
             return
@@ -134,7 +100,6 @@ class GenericProgressTracker:
         else:
             self.detail = status
         self._publish(force=True)
-        self._print_completion_once()
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -211,23 +176,8 @@ class GenericProgressTracker:
                 self.unit_label = "percent"
 
     def _publish(self, *, force: bool = False) -> None:
-        if self.live is not None:
-            self.live.update(self._renderable())
         if self.update_callback is not None:
             self.update_callback(self.snapshot())
-
-    def _print_completion_once(self) -> None:
-        if not self.enabled or self._completion_printed or self.returncode is None:
-            return
-        self._completion_printed = True
-        self.console.print(
-            completion_line(
-                command=self.command_name,
-                returncode=self.returncode,
-                started_at=self._started_at,
-                snapshot=self.snapshot(),
-            )
-        )
 
     def _description(self) -> str:
         if self.phase_index is not None and self.phase_total:
@@ -289,5 +239,5 @@ class GenericProgressTracker:
             width=self.console.width,
         )
         title.stylize(title_style)
-        body = self.progress_body or ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
+        body = ThreeLineProgressBody(self._progress_state)
         return Panel(body, title=title, border_style=border, padding=(0, 1))

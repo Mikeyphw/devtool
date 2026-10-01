@@ -26,6 +26,7 @@ from ..artifacts import (
 )
 from ..console_utils import create_console
 from ..generic_progress import GenericProgressTracker
+from ..execution_presentation import ExecutionPresentationController
 from ..logstore import write_log
 from ..models import Issue, OperationResult
 from ..federation_ownership import federation_operational_owner_from_environment
@@ -78,9 +79,10 @@ def _run_live_with_events(
     child_env["DEVTOOL_TEST_EVENT_FD"] = str(event_w)
     child_env["DEVTOOL_TEST_PROTOCOL"] = "devtool.test/v1"
 
-    # Artifact hooks use the exact same Rich progress surface as normal generic
-    # Devtool commands.  The hook runner owns no spinner/status UI of its own.
+    # Artifact hooks share the normal execution presentation controller. The
+    # tracker is a semantic producer only; it must never own a terminal renderer.
     tracker: GenericProgressTracker | None = None
+    presentation: ExecutionPresentationController | None = None
     if render_progress:
         tracker = GenericProgressTracker(
             list(command),
@@ -89,12 +91,20 @@ def _run_live_with_events(
             console,
             display_target=progress_target or str(cwd),
         )
-        # GenericProgressTracker decides whether Rich Live is appropriate from
-        # the same Console capability checks used by normal Devtool commands.
-        # Do not force-enable it: redirected/CI output must retain the standard
-        # raw-stream fallback.
         tracker.detail = f"Running {progress_target or progress_label or activity_label}".strip()
         tracker.__enter__()
+        presentation_env = dict(env)
+        if stream_output:
+            # Explicit hook streaming is intentionally plain/raw even on a TTY.
+            presentation_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
+        presentation = ExecutionPresentationController(
+            console,
+            verbose=stream_output,
+            external_surface=False,
+            env=presentation_env,
+        )
+        tracker.update_callback = presentation.update
+        presentation.start(tracker.snapshot())
 
     try:
         proc = subprocess.Popen(
@@ -114,7 +124,21 @@ def _run_live_with_events(
             execution_adapter.process_started(pid=proc.pid, argv=command, cwd=str(cwd))
     except OSError as exc:
         os.close(event_r); os.close(event_w)
+        if presentation is not None:
+            presentation.stop()
         return 127, str(exc), tracker, test_events
+
+    if presentation is not None:
+        def _cancel_hook_process() -> None:
+            if proc.poll() is not None:
+                return
+            try:
+                os.killpg(proc.pid, signal.SIGINT)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    proc.send_signal(signal.SIGINT)
+
+        presentation.set_stop_callback(_cancel_hook_process)
 
     def reader_fn() -> None:
         try:
@@ -147,16 +171,17 @@ def _run_live_with_events(
 
     def append(text: str) -> None:
         output_parts.append(text)
-        # Raw hook output belongs in the durable log/inspection surface while a
-        # progress UI is active.  Verbose/non-UI callers can explicitly request
-        # streaming instead.
+        if presentation is not None:
+            for raw_line in text.splitlines():
+                if raw_line:
+                    presentation.output_line(raw_line)
         if tracker is not None:
             for raw_line in text.splitlines():
                 if raw_line:
-                    tracker.inspection.append_line(raw_line)
-        # Match _run_process_live: non-interactive progress falls back to raw
-        # observable stdout, while an active Rich UI owns the terminal.
-        if stream_output or (tracker is not None and not tracker.enabled):
+                    tracker.update_from_line(raw_line)
+        # Match _run_process_live: an interactive presentation may hide the raw
+        # stream, but redirected/plain/verbose execution remains fully observable.
+        if stream_output or (render_progress and (presentation is None or not presentation.hides_raw_output)):
             print(text, end="", flush=True)
 
     while True:
@@ -164,8 +189,6 @@ def _run_live_with_events(
         if timeout_seconds > 0 and (now - started) >= timeout_seconds and proc.poll() is None:
             timeout_message = f"{script_label} script timed out after {timeout_seconds} seconds."
             append(f"\n{timeout_message}\n")
-            if tracker is not None:
-                tracker.update_from_line(timeout_message)
             with contextlib.suppress(Exception):
                 os.killpg(proc.pid, signal.SIGTERM)
             with contextlib.suppress(Exception):
@@ -187,6 +210,10 @@ def _run_live_with_events(
             if execution_adapter is not None:
                 execution_adapter.process_exited(exit_code=124, duration_seconds=max(0.0, time.monotonic() - started), failure_kind="timeout")
                 execution_adapter.progress(detail=timeout_message)
+            if tracker is not None:
+                tracker.finish(124)
+            if presentation is not None:
+                presentation.stop()
             return 124, "".join(output_parts), tracker, test_events
         try:
             item = lines.get(timeout=0.1)
@@ -209,8 +236,6 @@ def _run_live_with_events(
                 "The process was not stopped; set DEVTOOL_COMMAND_HEARTBEAT_SECONDS=0 to disable this heartbeat."
             )
             append("\n" + heartbeat + "\n")
-            if tracker is not None:
-                tracker.update_from_line(f"Still running · {elapsed}s without output")
             if execution_adapter is not None:
                 execution_adapter.progress(detail=f"Still running · {elapsed}s without output")
     try:
@@ -228,6 +253,10 @@ def _run_live_with_events(
             proc.stdout.close()
     if execution_adapter is not None:
         execution_adapter.process_exited(exit_code=rc, duration_seconds=max(0.0, time.monotonic() - started), failure_kind="" if rc == 0 else "hook_process_failure")
+    if tracker is not None:
+        tracker.finish(rc)
+    if presentation is not None:
+        presentation.stop()
     return rc, "".join(output_parts), tracker, test_events
 
 

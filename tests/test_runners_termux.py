@@ -246,10 +246,10 @@ class RunnersQuietModeTests(unittest.TestCase):
             tracker.update_from_line("removing stale cache")
             tracker.finish(0)
 
-        output = buffer.getvalue()
-        self.assertIn("Clean", output)
-        self.assertNotIn("cleaning", output)
-        self.assertIn("removing stale cache", output)
+        snapshot = tracker.snapshot()
+        self.assertEqual(buffer.getvalue(), "")
+        self.assertEqual(snapshot["command"], "clean")
+        self.assertIn("removing stale cache", snapshot["detail"])
 
     def test_generic_progress_uses_running_command_for_arbitrary_commands(self) -> None:
         from io import StringIO
@@ -264,10 +264,10 @@ class RunnersQuietModeTests(unittest.TestCase):
             tracker.update_from_line("syncing remote state")
             tracker.finish(0)
 
-        output = buffer.getvalue()
-        self.assertIn("Sync", output)
-        self.assertNotIn("running command", output)
-        self.assertIn("syncing remote state", output)
+        snapshot = tracker.snapshot()
+        self.assertEqual(buffer.getvalue(), "")
+        self.assertEqual(snapshot["command"], "sync")
+        self.assertIn("syncing remote state", snapshot["detail"])
 
 
 if __name__ == "__main__":

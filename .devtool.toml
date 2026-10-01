@@ -293,6 +293,12 @@ description = "Run the PRES-G2 interaction/reliability milestone gate"
 workflow = "roadmap-pres-g2"
 target = "devtool"
 
+# PRES-R01 reopened runtime remediation: normal execution presentation ownership.
+[wrapper.commands.pres-r01]
+description = "Run the PRES-R01 canonical Textual execution-presentation ownership remediation"
+workflow = "roadmap-pres-r01"
+target = "devtool"
+
 # LIFE-X01 immediate lifecycle safety boundary.
 [wrapper.commands.life-x01]
 description = "Run the LIFE-X01 immediate lifecycle safety workflow"
@@ -1024,6 +1030,13 @@ roadmap-pres-g2 = [
   { id = "remediation-regression", ref = "test:roadmap-pres-g2-remediation-interaction", depends_on = ["gate-proof"] },
   { id = "pres-window-regression", ref = "test:roadmap-pres-g2-pres-window-regression", depends_on = ["remediation-regression"] },
   { id = "fresh-process-once", ref = "test:roadmap-pres-g2-fresh-process-once", depends_on = ["pres-window-regression"] },
+]
+
+roadmap-pres-r01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "execution-presentation", ref = "test:roadmap-pres-r01-execution-presentation", depends_on = ["syntax"] },
+  { id = "runner-regression", ref = "test:roadmap-pres-r01-runner-regression", depends_on = ["execution-presentation"] },
+  { id = "real-textual-app", ref = "test:roadmap-pres-r01-real-textual-app", depends_on = ["runner-regression"] },
 ]
 
 roadmap-life-x01 = [
@@ -3452,6 +3465,52 @@ runner = "command"
 timeout_seconds = 600
 command = ["./devtoolw", "pres-g2"]
 
+
+# PRES-R01 normal execution presentation ownership remediation.
+[[test]]
+id = "roadmap-pres-r01-execution-presentation"
+name = "PRES-R01 execution presentation ownership contracts"
+runner = "pytest"
+timeout_seconds = 240
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r01_execution_presentation.py",
+  "-k", "not real_textual_execution_app",
+]
+
+[[test]]
+id = "roadmap-pres-r01-runner-regression"
+name = "PRES-R01 retained progress and runner semantic contracts"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_gradle_progress.py",
+  "tests/test_npm_progress.py",
+  "tests/test_dotnet_progress.py",
+  "tests/test_rich_progress_layout.py",
+  "tests/test_tui_inspection.py",
+  "tests/test_project_runners.py",
+  "tests/test_exo05_runner_progress_events.py",
+  "tests/test_validation_phase_progress.py",
+  "tests/test_ov05_logs_diagnostics_progress_contracts.py",
+  "tests/test_runners_termux.py",
+  "tests/test_exo04_truthful_accounting_progress.py",
+  "tests/test_artifact_lifecycle_ui.py",
+  "tests/test_tsys04_artifact_test_protocol.py",
+]
+
+[[test]]
+id = "roadmap-pres-r01-real-textual-app"
+name = "PRES-R01 concrete Textual execution app Pilot proof"
+runner = "command"
+timeout_seconds = 180
+env = { DEVTOOL_PRES_R01_REQUIRE_TEXTUAL = "1" }
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r01_execution_presentation.py",
+  "-k", "real_textual_execution_app_updates_and_confirms_cancel",
+]
 
 # LIFE-X01 immediate lifecycle safety. LIFE-X02 owns the complete canonical
 # artifact/trust/repository-pack object model and remains a separate overlay.

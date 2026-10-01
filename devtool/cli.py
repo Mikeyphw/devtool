@@ -6055,6 +6055,23 @@ def _maybe_apply_test_no_build_flag(specs: list[CommandSpec], args: argparse.Nam
     return updated
 
 
+def _machine_safe_execution_presentation(args: argparse.Namespace) -> bool:
+    """Return whether this invocation requires stream/machine-safe presentation.
+
+    A command may request structured output while still attached to a TTY.  TTY
+    presence therefore cannot by itself authorize an interactive Textual surface.
+    """
+
+    return bool(
+        getattr(args, "quiet", False)
+        or getattr(args, "json", False)
+        or getattr(args, "_devtool_json", False)
+        or str(getattr(args, "machine", "") or "").strip()
+        or str(getattr(args, "format", "") or "").strip().lower() == "json"
+        or str(getattr(args, "stdout_payload", "auto") or "auto").strip().lower() != "auto"
+    )
+
+
 def _run_specs_for_args(
     config: ProjectConfig,
     specs: list[CommandSpec],
@@ -6069,6 +6086,9 @@ def _run_specs_for_args(
     progress_callback=None,
 ) -> tuple[list[OperationResult], str]:
     prepared_specs = _prepare_specs_for_execution(config, specs, args)
+    if _machine_safe_execution_presentation(args):
+        for prepared_spec in prepared_specs:
+            prepared_spec.metadata["execution_presentation"] = "plain"
     termux_options = config.runner_options.get("termux", {})
     termux_options = dict(termux_options) if isinstance(termux_options, dict) else {}
     wake_mode = str(termux_options.get("wake_lock") or "auto")

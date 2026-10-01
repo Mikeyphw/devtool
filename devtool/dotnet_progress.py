@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from rich.console import Console
-from rich.live import Live
-from rich.errors import LiveError
 from rich.panel import Panel
 from rich.text import Text
 
@@ -18,9 +16,7 @@ from .rich_progress import (
     active_panel_title,
     ThreeLineProgressBody,
     ThreeLineProgressState,
-    TuiInspectionController,
     compact_display_target,
-    completion_line,
     human_command_label,
 )
 from .tui_icons import activity_icon
@@ -71,9 +67,6 @@ class DotnetProgressTracker:
     target_phase_index: int | None = None
     target_phase_total: int | None = None
     plan: DotnetProgressPlan | None = field(init=False, default=None)
-    progress_body: ThreeLineProgressBody | None = field(init=False, default=None)
-    inspection: TuiInspectionController = field(init=False)
-    live: Live | None = field(init=False, default=None)
     seen_units: set[str] = field(init=False, default_factory=set)
     errors: int = field(init=False, default=0)
     warnings: int = field(init=False, default=0)
@@ -90,48 +83,21 @@ class DotnetProgressTracker:
     tests_total: int = field(init=False, default=0)
     seen_test_results: set[str] = field(init=False, default_factory=set)
     current_test_assembly: str = field(init=False, default="")
-    _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
         self.plan = dotnet_progress_plan(self.argv, self.cwd)
         self.total = self.plan.total if self.plan else None
         self.enabled = bool(self.plan and (self.console.is_terminal or self.console.is_interactive))
-        self.inspection = TuiInspectionController(self.console)
 
     def __enter__(self) -> "DotnetProgressTracker":
-        if not self.enabled or self.plan is None:
-            return self
         self._started_at = time.monotonic()
-        self.progress_body = ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
-        self.live = Live(
-            self._renderable(),
-            console=self.console,
-            refresh_per_second=8,
-            transient=True,
-            vertical_overflow="ellipsis",
-        )
-        try:
-            self.live.start()
-        except LiveError:
-            self.live = None
-            self.progress_body = None
-        if self.live is not None:
-            self.inspection.bind_refresh(self.live.refresh)
-            self.inspection.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
-        self.inspection.stop()
-        self.inspection.bind_refresh(None)
-        if self.live is not None:
-            self.live.stop()
-
-    def set_stop_callback(self, callback: Callable[[], None] | None) -> None:
-        self.inspection.set_stop_callback(callback)
+        return None
 
     def update_from_line(self, line: str) -> None:
-        self.inspection.append_line(line)
         if self.plan is None or (not self.enabled and self.update_callback is None and self.unit_event_callback is None):
             return
         text = line.strip()
@@ -238,20 +204,6 @@ class DotnetProgressTracker:
             if self.detail and self.detail != status:
                 final_detail = f"{status} • {self.detail}"
         self._set_progress(detail=final_detail, force_callback=True)
-        self._print_completion_once()
-
-    def _print_completion_once(self) -> None:
-        if not self.enabled or self._completion_printed or self.returncode is None:
-            return
-        self._completion_printed = True
-        self.console.print(
-            completion_line(
-                command=self.command_name or (self.plan.command if self.plan else "dotnet"),
-                returncode=self.returncode,
-                started_at=self._started_at,
-                snapshot=self.snapshot(),
-            )
-        )
 
     def _update_issue_counts(self, text: str) -> None:
         warning_summary = _MSBUILD_WARNING_SUMMARY_RE.match(text)
@@ -300,6 +252,8 @@ class DotnetProgressTracker:
             "phase_index": self.phase_index,
             "phase_total": self.phase_total,
             "phase_label": human_command_label(self.command_name),
+            "phase_name": self.plan.command if self.plan is not None else self.command_name,
+            "returncode": self.returncode,
             "target_phase_index": self.target_phase_index,
             "target_phase_total": self.target_phase_total,
             "completion_status": self.detail,
@@ -324,8 +278,6 @@ class DotnetProgressTracker:
             self.total = total
         if detail is not None:
             self.detail = detail
-        if self.live is not None:
-            self.live.update(self._renderable())
         if self.update_callback is not None and (force_callback or completed is not None or detail):
             self.update_callback(self.snapshot())
 
@@ -402,7 +354,7 @@ class DotnetProgressTracker:
         if self.target_phase_index is not None and self.target_phase_total:
             phase_bits.append(f"target phase {self.target_phase_index}/{self.target_phase_total}")
         subtitle = Text(" • ".join(phase_bits), style="dim") if phase_bits else None
-        body = self.progress_body or ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
+        body = ThreeLineProgressBody(self._progress_state)
         return Panel(
             body,
             title=title,

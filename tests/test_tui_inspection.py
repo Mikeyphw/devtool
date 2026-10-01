@@ -128,7 +128,6 @@ def test_huge_single_line_is_bounded_only_in_live_tui_projection() -> None:
 def test_generic_tracker_does_not_publish_unbounded_machine_output_detail() -> None:
     console, _ = _console()
     tracker = GenericProgressTracker(["python3"], "/repo", "audit", console)
-    tracker.inspection = TuiInspectionController(console, force_interactive=True)
     huge = '{"capability_count":98,"results":[' + ('{"id":"XGO"},' * 20000) + ']}'
 
     tracker.update_from_line(huge)
@@ -341,7 +340,7 @@ def test_shortcuts_can_be_explicitly_disabled_even_on_interactive_console() -> N
 
 
 @pytest.mark.parametrize("kind", ["generic", "gradle", "npm", "dotnet"])
-def test_all_live_progress_trackers_feed_the_shared_verbose_buffer(tmp_path: Path, kind: str) -> None:
+def test_progress_trackers_publish_semantic_updates_without_tui_ownership(tmp_path: Path, kind: str) -> None:
     console, _ = _console()
     if kind == "generic":
         tracker = GenericProgressTracker(["python", "-m", "pytest"], str(tmp_path), "test", console)
@@ -352,9 +351,13 @@ def test_all_live_progress_trackers_feed_the_shared_verbose_buffer(tmp_path: Pat
     else:
         tracker = DotnetProgressTracker(["dotnet", "build"], str(tmp_path), "build", console)
 
-    tracker.inspection = TuiInspectionController(console, force_interactive=True)
+    updates = []
+    tracker.update_callback = updates.append
     tracker.update_from_line("shared verbose output line\n")
-    assert tracker.inspection.lines()[-1] == "shared verbose output line"
+    tracker.finish(0)
+    assert updates
+    assert not hasattr(tracker, "inspection")
+    assert not hasattr(tracker, "live")
 
 
 
@@ -377,16 +380,20 @@ def test_runner_keeps_full_output_while_live_projection_is_bounded(tmp_path: Pat
     assert len(output) > 12000
 
 
-def test_runner_binds_existing_interrupt_path_to_tui_tracker(tmp_path: Path) -> None:
+def test_runner_binds_existing_interrupt_path_to_presentation_controller(tmp_path: Path) -> None:
     console, _ = _console()
     callbacks = []
-    original = GenericProgressTracker.set_stop_callback
 
-    def capture(self, callback):  # type: ignore[no-untyped-def]
-        callbacks.append(callback)
-        return original(self, callback)
+    class Controller:
+        hides_raw_output = False
+        def __init__(self, *args, **kwargs): pass
+        def start(self, snapshot=None): pass
+        def update(self, snapshot): pass
+        def output_line(self, line): pass
+        def set_stop_callback(self, callback): callbacks.append(callback)
+        def stop(self): pass
 
-    with patch("devtool.runners.console", console), patch.object(GenericProgressTracker, "set_stop_callback", capture):
+    with patch("devtool.runners.console", console), patch("devtool.runners.ExecutionPresentationController", Controller):
         code, output = _run_process_live(
             ["python3", "-S", "-c", "print('runner-binding-ok')"],
             cwd=str(tmp_path),

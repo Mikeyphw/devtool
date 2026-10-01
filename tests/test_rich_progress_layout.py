@@ -390,7 +390,7 @@ def test_run_specs_forwards_overall_validation_phase_metadata(tmp_path: Path) ->
     assert run.call_args.kwargs["display_target"] == str(tmp_path)
 
 
-def test_generic_live_panel_is_transient_and_viewport_bounded() -> None:
+def test_generic_tracker_is_renderer_neutral_and_keeps_semantic_snapshot() -> None:
     buffer = StringIO()
     tracker = GenericProgressTracker(
         ["pytest"],
@@ -400,8 +400,14 @@ def test_generic_live_panel_is_transient_and_viewport_bounded() -> None:
         phase_index=4,
         phase_total=8,
     )
+    updates: list[dict] = []
+    tracker.update_callback = updates.append
     with tracker:
-        assert tracker.live is not None
-        assert tracker.live.transient is True
-        assert tracker.live.vertical_overflow == "ellipsis"
+        tracker.update_from_line("collected 10 items")
+        tracker.update_from_line(".......... [100%]")
         tracker.finish(0)
+    assert not hasattr(tracker, "live")
+    assert buffer.getvalue() == ""
+    assert updates
+    assert tracker.snapshot()["returncode"] == 0
+    assert tracker.snapshot()["tests_total"] == 10

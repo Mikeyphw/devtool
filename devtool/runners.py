@@ -50,6 +50,7 @@ from .dotnet_progress import DotnetProgressTracker, dotnet_progress_plan
 from .generic_progress import GenericProgressTracker
 from .npm_progress import NpmProgressTracker, npm_progress_plan
 from .gradle_progress import GradleProgressTracker
+from .execution_presentation import ExecutionPresentationController
 from .progress_events import RunnerExecutionAdapter
 from .gradle_reports import collect_report_metadata
 from .test_adapters import (
@@ -1593,6 +1594,7 @@ def _run_process_live(
     progress_callback: Callable[[dict], None] | None = None,
     structured_state: dict[str, object] | None = None,
     execution_adapter: RunnerExecutionAdapter | None = None,
+    presentation_mode: str = "",
 ) -> tuple[int, str]:
     live_log_handle = None
     if live_log_path is not None:
@@ -1630,9 +1632,10 @@ def _run_process_live(
     parser_argv = list(progress_argv or argv)
     parser_cwd = progress_cwd or cwd
     tracker = None
-    # Gradle/chroot startup can be quiet for several seconds. Start its Rich
-    # surface before spawning the child so users see progress immediately, not
-    # only after Popen and the first Gradle line complete.
+    presentation: ExecutionPresentationController | None = None
+    # Gradle/chroot startup can be quiet for several seconds. Create its semantic
+    # tracker before spawning the child; presentation ownership is attached by
+    # the controller after process creation and never lives in the parser.
     if (not verbose or tasker_progress is not None) and progress_parser == "gradle":
         tracker = GradleProgressTracker(
             parser_argv,
@@ -1648,7 +1651,6 @@ def _run_process_live(
         )
         if verbose:
             tracker.enabled = False
-        tracker.__enter__()
 
     try:
         proc = subprocess.Popen(
@@ -1737,8 +1739,6 @@ def _run_process_live(
                 pass
 
     assert proc.stdout is not None
-    if isinstance(tracker, GradleProgressTracker):
-        tracker.mark_process_started()
     if not verbose or tasker_progress is not None:
         if progress_parser == "gradle":
             if tracker is None:
@@ -1802,12 +1802,29 @@ def _run_process_live(
             tracker.unit_event_callback = execution_adapter.dotnet_unit_event
 
     if tracker is not None and verbose:
-        # In verbose mode stdout is already streamed as raw text. Keep the
-        # parser active only for Tasker/progress events; do not render a second
-        # Rich live display over the raw output.
+        # In verbose mode stdout is already streamed as raw text. Keep semantic
+        # parsing active while the presentation controller deliberately selects
+        # the plain/non-owning surface.
         tracker.enabled = False
-    if tracker is not None and (tasker_progress is not None or progress_callback is not None or execution_adapter is not None):
+    if tracker is not None:
+        # Tasker/HUD publication is a parallel projection of canonical execution
+        # truth, not ownership of the local terminal.  Normal interactive TTY
+        # execution must still select the Textual presenter while Tasker/HUD
+        # consumers receive the same semantic snapshots out-of-band.
+        presentation_env = dict(env)
+        requested_presentation = str(presentation_mode or "").strip().lower()
+        if requested_presentation in {"plain", "textual"}:
+            presentation_env["DEVTOOL_EXECUTION_PRESENTATION"] = requested_presentation
+        presentation = ExecutionPresentationController(
+            console,
+            verbose=verbose,
+            external_surface=False,
+            env=presentation_env,
+        )
+    if tracker is not None and (presentation is not None or tasker_progress is not None or progress_callback is not None or execution_adapter is not None):
         def _progress_update(snapshot: dict) -> None:
+            if presentation is not None:
+                presentation.update(snapshot)
             if execution_adapter is not None:
                 try:
                     execution_adapter.progress_snapshot(dict(snapshot))
@@ -1847,6 +1864,10 @@ def _run_process_live(
                 except Exception:
                     pass
         tracker.update_callback = _progress_update
+    if tracker is not None and presentation is not None:
+        presentation.start(tracker.snapshot())
+        if isinstance(tracker, GradleProgressTracker):
+            tracker.mark_process_started()
     interrupted_by_devtool = threading.Event()
     timed_out_by_devtool = threading.Event()
 
@@ -1880,10 +1901,8 @@ def _run_process_live(
         interrupted_by_devtool.set()
         _terminate_process()
 
-    if tracker is not None:
-        set_stop_callback = getattr(tracker, "set_stop_callback", None)
-        if callable(set_stop_callback):
-            set_stop_callback(_interrupt_process)
+    if presentation is not None:
+        presentation.set_stop_callback(_interrupt_process)
 
     cancel_watch_stop = threading.Event()
     cancel_watcher: threading.Thread | None = None
@@ -1986,6 +2005,8 @@ def _run_process_live(
                     continue
                 output_parts.append(line)
                 _append_live_log(line)
+                if presentation is not None:
+                    presentation.output_line(line)
                 surface_decision = tracker.update_from_line(line)
                 # Existing progress trackers return None. Only the Gradle tracker
                 # opts into line collapsing by returning an explicit boolean.
@@ -1994,11 +2015,10 @@ def _run_process_live(
                 # in captured output/evidence, but collapses Gradle's repeated
                 # bare task headers in the human-facing stream. With --verbose,
                 # users explicitly requested the raw stream, so nothing is hidden.
-                visible_heartbeat = line.lstrip().startswith("Devtool heartbeat:")
-                if verbose or ((not tracker.enabled or visible_heartbeat) and surface_line):
-                    # Non-interactive/CI output must remain observable even
-                    # when a parser is active; Rich progress is a TTY-only
-                    # presentation layer, never a replacement for stdout.
+                if verbose or ((presentation is None or not presentation.hides_raw_output) and surface_line):
+                    # Non-interactive/CI/redirected output remains observable.
+                    # Only the presentation controller may suppress the raw TTY
+                    # stream, and only while its Textual surface is active.
                     print(line, end="", flush=True)
             returncode = _wait_process_returncode(proc)
             has_task_telemetry = getattr(tracker, "has_task_telemetry", None)
@@ -2006,12 +2026,18 @@ def _run_process_live(
             if callable(has_task_telemetry) and callable(task_telemetry_line) and has_task_telemetry():
                 telemetry_line = task_telemetry_line() + "\n"
                 _append_live_log(telemetry_line)
-                print(telemetry_line, end="", flush=True)
+                if presentation is not None:
+                    presentation.output_line(telemetry_line)
+                if presentation is None or not presentation.hides_raw_output:
+                    print(telemetry_line, end="", flush=True)
             if timed_out_by_devtool.is_set():
                 timeout_message = f"\nDevtool command timeout: exceeded configured timeout of {timeout_seconds:g}s.\n"
                 output_parts.append(timeout_message)
                 _append_live_log(timeout_message)
-                print(timeout_message, end="", flush=True)
+                if presentation is not None:
+                    presentation.output_line(timeout_message)
+                if presentation is None or not presentation.hides_raw_output:
+                    print(timeout_message, end="", flush=True)
                 returncode = 124
             elif interrupted_by_devtool.is_set() or (tasker_progress is not None and tasker_progress.cancel_requested()):
                 returncode = 130
@@ -2034,6 +2060,8 @@ def _run_process_live(
         _finalize_structured_state()
         return 130, "".join(output_parts)
     finally:
+        if presentation is not None:
+            presentation.stop()
         cancel_watch_stop.set()
         timeout_watch_stop.set()
         if cancel_watcher is not None and cancel_watcher is not threading.current_thread():
@@ -2686,6 +2714,7 @@ def run_specs(
                     progress_callback=_capture_progress,
                     structured_state=structured_process_state,
                     execution_adapter=execution_adapter,
+                    presentation_mode=str(spec.metadata.get("execution_presentation") or ""),
                 )
             else:
                 if progress_parser == "gradle" or dotnet_plan:
@@ -2714,6 +2743,7 @@ def run_specs(
                         progress_callback=_capture_progress,
                         structured_state=structured_process_state,
                         execution_adapter=execution_adapter,
+                        presentation_mode=str(spec.metadata.get("execution_presentation") or ""),
                     )
                 else:
                     returncode, output = _run_process_live(
@@ -2747,6 +2777,7 @@ def run_specs(
                         progress_callback=_capture_progress,
                         structured_state=structured_process_state,
                         execution_adapter=execution_adapter,
+                        presentation_mode=str(spec.metadata.get("execution_presentation") or ""),
                     )
         finally:
             if cleanup_dir:

@@ -13,8 +13,6 @@ import time
 from typing import Any, Callable, Sequence
 
 from rich.console import Console, Group
-from rich.errors import LiveError
-from rich.live import Live
 from rich.panel import Panel
 from rich.progress import ProgressColumn, Task
 from rich.text import Text
@@ -23,9 +21,7 @@ from .rich_progress import (
     active_panel_title,
     ThreeLineProgressBody,
     ThreeLineProgressState,
-    TuiInspectionController,
     compact_display_target,
-    completion_line,
     project_live_output_line,
 )
 from .tui_icons import activity_icon
@@ -95,9 +91,6 @@ class GradleProgressTracker:
     target_phase_index: int | None = None
     target_phase_total: int | None = None
     requested_tasks: Sequence[str] = field(default_factory=tuple)
-    progress_body: ThreeLineProgressBody | None = field(init=False, default=None)
-    inspection: TuiInspectionController = field(init=False)
-    live: Live | None = field(init=False, default=None)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
     structured_event_callback: Callable[[dict[str, Any]], None] | None = None
@@ -140,7 +133,6 @@ class GradleProgressTracker:
     structured_task_start_counts: dict[str, int] = field(init=False, default_factory=dict)
     duplicate_execution_start_count: int = field(init=False, default=0)
     duplicate_terminal_header_count: int = field(init=False, default=0)
-    _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
     _process_started_at: float | None = field(init=False, default=None)
     _synthetic_stop: threading.Event = field(init=False, default_factory=threading.Event)
@@ -148,7 +140,6 @@ class GradleProgressTracker:
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
-        self.inspection = TuiInspectionController(self.console)
         self.expected_run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
         raw_requested = tuple(str(task).strip() for task in self.requested_tasks if str(task).strip())
         requested_counts = Counter(raw_requested)
@@ -157,28 +148,11 @@ class GradleProgressTracker:
         self.requested_tasks = tuple(dict.fromkeys(raw_requested))
 
     def __enter__(self) -> "GradleProgressTracker":
-        if not self.enabled or self.live is not None:
+        if self._synthetic_thread is not None:
             return self
         self._started_at = time.monotonic()
         self._synthetic_stop.clear()
-        if self.requested_tasks:
-            self.console.print(self._requested_tasks_renderable())
-        self.progress_body = ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
-        self.live = Live(
-            self._renderable(),
-            console=self.console,
-            refresh_per_second=8,
-            transient=True,
-            vertical_overflow="ellipsis",
-        )
-        try:
-            self.live.start()
-        except LiveError:
-            self.live = None
-            self.progress_body = None
-        if self.live is not None:
-            self.inspection.bind_refresh(self.live.refresh)
-            self.inspection.start()
+        if self.enabled or self.update_callback is not None:
             self._synthetic_thread = threading.Thread(
                 target=self._synthetic_progress_loop,
                 name="devtool-gradle-startup-progress",
@@ -193,11 +167,6 @@ class GradleProgressTracker:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=0.5)
         self._synthetic_thread = None
-        self.inspection.stop()
-        self.inspection.bind_refresh(None)
-        if self.live is not None:
-            self.live.stop()
-            self.live = None
 
     def mark_process_started(self) -> None:
         """Advance startup feedback as soon as the Gradle/chroot child exists."""
@@ -270,11 +239,7 @@ class GradleProgressTracker:
             return None
         return payload
 
-    def set_stop_callback(self, callback: Callable[[], None] | None) -> None:
-        self.inspection.set_stop_callback(callback)
-
     def update_from_line(self, line: str) -> bool:
-        self.inspection.append_line(line)
         prefixed = line.strip().startswith(_EVENT_PREFIX)
         event = self.parse_event(line)
         if event is None:
@@ -550,7 +515,6 @@ class GradleProgressTracker:
             )
         self.detail = status
         self._publish(force=True)
-        self._print_completion_once()
 
     def snapshot(self) -> dict[str, Any]:
         percent = None
@@ -624,25 +588,10 @@ class GradleProgressTracker:
         )
 
     def _publish(self, *, force: bool = False) -> None:
-        if self.live is not None:
-            self.live.update(self._renderable())
         if self.update_callback is not None:
             snapshot = self.snapshot()
             snapshot["force"] = force
             self.update_callback(snapshot)
-
-    def _print_completion_once(self) -> None:
-        if not self.enabled or self._completion_printed or self.returncode is None:
-            return
-        self._completion_printed = True
-        self.console.print(
-            completion_line(
-                command=self.command_name,
-                returncode=self.returncode,
-                started_at=self._started_at,
-                snapshot=self.snapshot(),
-            )
-        )
 
     def _merge_total(self, value: Any) -> None:
         try:
@@ -768,5 +717,5 @@ class GradleProgressTracker:
             width=self.console.width,
         )
         title.stylize(style)
-        body = self.progress_body or ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
+        body = ThreeLineProgressBody(self._progress_state)
         return Panel(body, title=title, border_style=border, padding=(0, 1))

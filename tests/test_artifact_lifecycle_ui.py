@@ -16,14 +16,35 @@ class _TTY(io.StringIO):
         return True
 
 
-def test_hook_child_output_is_captured_not_echoed_by_shared_progress_ui(monkeypatch, tmp_path: Path) -> None:
+def test_hook_child_output_is_captured_and_projected_without_raw_echo(monkeypatch, tmp_path: Path) -> None:
     terminal = io.StringIO()
-    monkeypatch.setattr(
-        "devtool.hooks.engine.console",
-        Console(file=terminal, force_terminal=True, width=100),
-    )
+    events: dict[str, list] = {"snapshots": [], "lines": []}
+
+    class FakePresentation:
+        def __init__(self, *args, **kwargs) -> None:
+            self.hides_raw_output = True
+            self._stop = None
+
+        def start(self, snapshot=None) -> None:
+            if snapshot is not None:
+                events["snapshots"].append(dict(snapshot))
+
+        def update(self, snapshot) -> None:
+            events["snapshots"].append(dict(snapshot))
+
+        def output_line(self, line: str) -> None:
+            events["lines"].append(line)
+
+        def set_stop_callback(self, callback) -> None:
+            self._stop = callback
+
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr("devtool.hooks.engine.ExecutionPresentationController", FakePresentation)
+    monkeypatch.setattr("sys.stdout", terminal)
     rc, output, tracker = _run_live(
-        ["bash", "-lc", "printf '{\"ok\": true, \"message\": \"hook-json\"}\\n'"],
+        ["bash", "-lc", "printf '{\"ok\": true, \"message\": \"hook-json\"}\n'"],
         cwd=tmp_path,
         env={},
         timeout_seconds=10,
@@ -35,14 +56,10 @@ def test_hook_child_output_is_captured_not_echoed_by_shared_progress_ui(monkeypa
     )
     assert rc == 0
     assert tracker is not None
-    tracker.finish(rc)
-    tracker.__exit__(None, None, None)
-    rendered = terminal.getvalue()
     assert "hook-json" in output
-    assert "Artifact preflight" in rendered
-    assert "before extract" in rendered
-    assert "hook-json" not in rendered
-    assert "█" in rendered or "░" in rendered
+    assert any("hook-json" in line for line in events["lines"])
+    assert any("hook-json" in str(snapshot.get("detail", "")) for snapshot in events["snapshots"])
+    assert "hook-json" not in terminal.getvalue()
 
 
 def test_noninteractive_shared_progress_falls_back_to_raw_stream(monkeypatch, tmp_path: Path) -> None:
@@ -70,6 +87,26 @@ def test_noninteractive_shared_progress_falls_back_to_raw_stream(monkeypatch, tm
     tracker.__exit__(None, None, None)
     assert "hook-ci-output" in output
     assert "hook-ci-output" in terminal.getvalue()
+
+
+def test_hook_no_progress_no_stream_captures_without_echo(monkeypatch, tmp_path: Path) -> None:
+    stream = _TTY()
+    monkeypatch.setattr("sys.stdout", stream)
+    rc, output, tracker = _run_live(
+        ["bash", "-lc", "printf 'hook-quiet-captured\n'"],
+        cwd=tmp_path,
+        env={},
+        timeout_seconds=10,
+        activity_label="artifact validation",
+        script_label="Validation",
+        stdin_text=None,
+        render_progress=False,
+        stream_output=False,
+    )
+    assert rc == 0
+    assert tracker is None
+    assert "hook-quiet-captured" in output
+    assert "hook-quiet-captured" not in stream.getvalue()
 
 
 def test_hook_verbose_stream_is_explicit_and_does_not_start_progress(monkeypatch, tmp_path: Path) -> None:
