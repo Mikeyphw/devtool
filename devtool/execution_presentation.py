@@ -21,6 +21,8 @@ from typing import Any, Callable, Mapping
 
 from rich.console import Console
 
+from .textual_ux import TEXTUAL_SHARED_CSS, fit_middle, progress_counter, progress_percent, responsive_class_names, status_label
+
 
 _TRUE = {"1", "true", "yes", "on"}
 
@@ -116,49 +118,91 @@ class _PlainExecutionPresenter:
 def build_textual_execution_app(source: Any) -> Any:
     """Build the concrete normal-execution Textual app.
 
-    Kept as a factory so native campaign validation can exercise the real widget
-    tree with ``App.run_test`` / ``Pilot`` without starting a second terminal
-    driver. The source is the queue-backed presenter and remains non-authoritative.
+    The app is intentionally a projection over the queue-backed source.  The
+    revamp keeps the long-running command, current stage, progress and raw output
+    visible in one responsive workspace while leaving execution truth in RUN/EXO.
     """
 
     from textual.app import App, ComposeResult
-    from textual.containers import Vertical
-    from textual.widgets import Footer, Header, ProgressBar, RichLog, Static
+    from textual.containers import Horizontal, Vertical
+    from textual.widgets import Button, Footer, Header, ProgressBar, RichLog, Static
 
     class ExecutionProgressApp(App):
         TITLE = "Devtool"
-        SUB_TITLE = "Execution"
+        SUB_TITLE = "Live execution"
         BINDINGS = [
             ("ctrl+c", "request_cancel", "Cancel"),
             ("l", "toggle_logs", "Logs"),
         ]
-        CSS = """
-        #execution-root { height: 1fr; }
-        #execution-status { height: auto; padding: 0 1; text-style: bold; }
-        #execution-detail { height: auto; padding: 0 1; }
-        #execution-progress { margin: 0 1; }
-        #execution-log { height: 1fr; border-top: solid $surface-lighten-2; }
-        #execution-cancel { height: auto; padding: 0 1; color: $warning; }
+        CSS = TEXTUAL_SHARED_CSS + """
+        #execution-root { height: 1fr; min-height: 0; }
+        #execution-context { height: auto; min-height: 3; }
+        #execution-status { height: 1; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
+        #execution-meta { height: 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
+        #execution-progress-row { height: 1; min-height: 1; padding: 0 1; }
+        #execution-progress { width: 1fr; height: 1; margin-right: 1; }
+        #execution-progress-meta { width: auto; min-width: 8; height: 1; content-align: right middle; color: $text-muted; }
+        #execution-detail { height: auto; min-height: 1; max-height: 2; padding: 0 1; overflow-x: hidden; overflow-y: hidden; }
+        #execution-log-toolbar { height: 3; min-height: 3; padding: 0 1; border-top: solid $panel; }
+        #execution-log-title { width: 1fr; height: 1; content-align: left middle; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
+        #execution-log-toggle { width: auto; min-width: 10; }
+        #execution-log { height: 1fr; min-height: 1; border-top: solid $surface-lighten-2; }
+        #execution-cancel { height: auto; min-height: 0; max-height: 1; padding: 0 1; color: $warning; overflow-x: hidden; overflow-y: hidden; }
+        .compact #execution-progress-row,
+        .compact #execution-detail,
+        .compact #execution-log-toolbar,
+        .compact #execution-cancel { padding-left: 0; padding-right: 0; }
+        .compact #execution-progress-meta { min-width: 6; }
+        .short #execution-context { min-height: 2; }
+        .short #execution-detail { max-height: 1; }
+        .short #execution-log-toolbar { height: 1; min-height: 1; }
+        .short #execution-log-toggle { display: none; }
+        .tiny #execution-meta { display: none; }
         """
 
         def __init__(self) -> None:
             super().__init__()
             self._cancel_armed_until = 0.0
             self._logs_visible = True
+            self._last_snapshot: dict[str, Any] = {}
 
         def compose(self) -> ComposeResult:
             yield Header()
             with Vertical(id="execution-root"):
-                yield Static("Starting…", id="execution-status")
-                yield ProgressBar(total=100, show_eta=False, id="execution-progress")
+                with Vertical(id="execution-context", classes="ux-context"):
+                    yield Static("DEVTOOL EXECUTION", classes="ux-kicker")
+                    yield Static("Starting…", id="execution-status", classes="ux-title")
+                    yield Static("Canonical RUN/EXO progress", id="execution-meta")
+                with Horizontal(id="execution-progress-row"):
+                    yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="execution-progress")
+                    yield Static("—", id="execution-progress-meta")
                 yield Static("Preparing command", id="execution-detail")
                 yield Static("", id="execution-cancel")
+                with Horizontal(id="execution-log-toolbar"):
+                    yield Static("Live output", id="execution-log-title")
+                    yield Button("Hide logs", id="execution-log-toggle")
                 yield RichLog(id="execution-log", wrap=True, highlight=False, markup=False, max_lines=source.max_log_lines)
             yield Footer()
 
+        def _apply_responsive_geometry(self, width: int, height: int) -> None:
+            desired = set(responsive_class_names(width, height))
+            for name in ("compact", "ultra-compact", "short", "tiny"):
+                if name in desired:
+                    self.screen.add_class(name)
+                else:
+                    self.screen.remove_class(name)
+            try:
+                self.screen.refresh(layout=True)
+            except Exception:
+                pass
+
         def on_mount(self) -> None:
+            self._apply_responsive_geometry(self.size.width, self.size.height)
             source._ready.set()
             self.set_interval(1 / 12, self._drain_updates)
+
+        def on_resize(self, event: Any) -> None:
+            self._apply_responsive_geometry(event.size.width, event.size.height)
 
         def _drain_updates(self) -> None:
             for _ in range(128):
@@ -177,35 +221,43 @@ def build_textual_execution_app(source: Any) -> Any:
                     self._apply_snapshot(payload)
 
         def _apply_snapshot(self, snapshot: Mapping[str, Any]) -> None:
+            self._last_snapshot = dict(snapshot)
             command = str(snapshot.get("command") or "Command")
             phase = str(snapshot.get("phase_name") or "")
             target = str(snapshot.get("target") or "")
             title = command if not phase or phase == command else f"{command} · {phase}"
             if target:
                 title += f" · {target}"
-            self.query_one("#execution-status", Static).update(title)
+            self.query_one("#execution-status", Static).update(fit_middle(title, max(24, self.size.width - 2)))
+            completion = status_label(snapshot.get("completion_status") or "running")
+            meta = f"{completion} · canonical RUN/EXO projection"
+            self.query_one("#execution-meta", Static).update(meta)
             detail = str(snapshot.get("detail") or snapshot.get("completion_status") or "Working…")
-            self.query_one("#execution-detail", Static).update(detail)
-            percent = snapshot.get("percent")
-            completed = snapshot.get("completed")
-            total = snapshot.get("total")
-            if percent is None and isinstance(completed, (int, float)) and isinstance(total, (int, float)) and total:
-                percent = float(completed) * 100.0 / float(total)
-            bar = self.query_one("#execution-progress", ProgressBar)
-            if isinstance(percent, (int, float)):
-                bar.update(progress=max(0.0, min(100.0, float(percent))))
+            self.query_one("#execution-detail", Static).update(fit_middle(detail, max(24, self.size.width - 2)))
+            percent = progress_percent(snapshot)
+            counter = progress_counter(snapshot)
+            progress = self.query_one("#execution-progress", ProgressBar)
+            progress.display = percent is not None
+            if percent is not None:
+                progress.update(progress=percent)
+            self.query_one("#execution-progress-meta", Static).update(counter or "working")
 
         def action_toggle_logs(self) -> None:
             log = self.query_one("#execution-log", RichLog)
             self._logs_visible = not self._logs_visible
             log.display = self._logs_visible
+            self.query_one("#execution-log-toggle", Button).label = "Hide logs" if self._logs_visible else "Show logs"
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if (event.button.id or "") == "execution-log-toggle":
+                self.action_toggle_logs()
 
         def action_request_cancel(self) -> None:
             now = time.monotonic()
             notice = self.query_one("#execution-cancel", Static)
             if now <= self._cancel_armed_until:
                 self._cancel_armed_until = 0.0
-                notice.update("Cancelling current command…")
+                notice.update("Cancellation requested · waiting for canonical recovery/finalization")
                 source._request_cancel()
                 return
             self._cancel_armed_until = now + 3.0

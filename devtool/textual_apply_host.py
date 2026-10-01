@@ -22,9 +22,15 @@ import sys
 import threading
 import time
 from typing import Any, Callable, Mapping, Sequence
+from types import SimpleNamespace
 import uuid
 
 from .tasker import DEFAULT_TASKER_DIR, resolve_cli_path
+from .textual_ux import (
+    ArtifactActivityTracker, TEXTUAL_SHARED_CSS, artifact_display_progress,
+    artifact_review_text, artifact_running_summary, artifact_stage_compact_line,
+    artifact_stage_line, fit_middle, responsive_class_names, status_label,
+)
 
 _TRUE = {"1", "true", "yes", "on"}
 _APPLY_COMMANDS = {"apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as"}
@@ -265,6 +271,12 @@ class ArtifactApplyHostSource:
     def cancel_requested(self) -> bool:
         return self._cancel_requested
 
+    @property
+    def elapsed_seconds(self) -> float:
+        if not self._started_at:
+            return 0.0
+        return max(0.0, time.monotonic() - self._started_at)
+
     def _offer_line(self, line: str) -> None:
         text = str(line or "").rstrip("\r\n")
         if not text:
@@ -382,8 +394,44 @@ class ArtifactApplyHostSource:
         return status, log_path
 
 
+
+def create_overlay_apply_source(
+    repo_root: str | Path,
+    artifact: str,
+    *,
+    target: str = "",
+    env: Mapping[str, str] | None = None,
+    popen_factory: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
+    live_state_dir: Path | None = None,
+) -> ArtifactApplyHostSource:
+    """Create the canonical managed-child source used by in-TUI overlay apply.
+
+    The returned object still runs the ordinary ``devtool apply-overlay`` CLI in
+    a child process.  This helper only makes that H02 host reusable by the
+    control center without creating a second lifecycle implementation.
+    """
+
+    root = Path(repo_root).expanduser().resolve(strict=False)
+    artifact_text = str(artifact or "").strip()
+    args = SimpleNamespace(
+        command="apply-overlay", artifact=artifact_text, target=str(target or ""),
+        yes=True, force=False, quiet=False, verbose=False, trace=False,
+        stdout_payload="auto", json=False, _devtool_json=False,
+    )
+    return ArtifactApplyHostSource(
+        ["--repo", str(root), "--yes", "apply-overlay", artifact_text],
+        args, env=env, cwd=root, popen_factory=popen_factory, live_state_dir=live_state_dir,
+    )
+
 def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required: bool) -> Any:
-    """Build the real main-thread Textual apply host."""
+    """Build the real main-thread Textual artifact workspace.
+
+    The workspace is intentionally mobile-first. Once execution starts the large
+    review card collapses, canonical/semantic activity occupies only a few rows,
+    and the log flexes into every remaining terminal row. Raw child output is
+    retained locally and can be toggled without making pytest dots/heartbeats the
+    primary UI. The child process remains the sole mutation/validation authority.
+    """
 
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical
@@ -394,15 +442,15 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
     class ApplyConfirmationModal(ModalScreen[bool]):
         DEFAULT_CSS = """
         ApplyConfirmationModal { align: center middle; }
-        #apply-confirm-box { width: 92%; max-width: 72; height: auto; border: round $warning; padding: 1 2; background: $surface; }
+        #apply-confirm-box { width: 92%; max-width: 72; height: auto; max-height: 92%; border: round $warning; padding: 1 2; background: $surface; }
         #apply-confirm-actions { height: auto; align-horizontal: right; margin-top: 1; }
         #apply-confirm-actions Button { margin-left: 1; }
         """
 
         def compose(self) -> ComposeResult:
             with Vertical(id="apply-confirm-box"):
-                yield Static("Apply this artifact?", id="apply-confirm-title")
-                yield Static(source.review.get("artifact") or source.review.get("path") or "artifact")
+                yield Static("Apply this artifact?", id="apply-confirm-title", classes="ux-title")
+                yield Static(artifact_review_text(source.review))
                 with Horizontal(id="apply-confirm-actions"):
                     yield Button("Cancel", id="apply-confirm-no")
                     yield Button("Apply", variant="warning", id="apply-confirm-yes")
@@ -415,7 +463,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
 
         def compose(self) -> ComposeResult:
             with Vertical(id="apply-confirm-box"):
-                yield Static("Cancel the active artifact apply?", id="apply-confirm-title")
+                yield Static("Cancel the active artifact apply?", id="apply-confirm-title", classes="ux-title")
                 yield Static("Devtool will signal the managed apply process and preserve canonical rollback/recovery behavior.")
                 with Horizontal(id="apply-confirm-actions"):
                     yield Button("Keep running", id="apply-confirm-no")
@@ -430,59 +478,160 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
         BINDINGS = [
             ("ctrl+c", "request_cancel", "Cancel"),
             ("l", "toggle_logs", "Logs"),
+            ("d", "toggle_details", "Details"),
+            ("r", "toggle_raw", "Raw log"),
         ]
-        CSS = """
-        #apply-root { height: 1fr; }
-        #apply-review { height: auto; border: round $accent; padding: 0 1; margin: 0 1; }
-        #apply-status { height: auto; padding: 0 1; text-style: bold; }
-        #apply-phase { height: auto; padding: 0 1; }
-        #apply-progress { margin: 0 1; }
-        #apply-log { height: 1fr; border-top: solid $surface-lighten-2; }
-        #apply-notice { height: auto; min-height: 1; padding: 0 1; color: $warning; }
-        .narrow #apply-review { margin: 0; border: none; border-bottom: solid $accent; }
-        .narrow #apply-progress { margin: 0; }
+        CSS = TEXTUAL_SHARED_CSS + """
+        #apply-root { height: 1fr; min-height: 0; }
+        #apply-context { height: auto; min-height: 3; }
+        #apply-status { height: 1; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
+        #apply-meta { height: 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
+        #apply-review { height: auto; max-height: 8; margin: 0 1; }
+        #apply-stage { height: 1; padding: 0 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
+        #apply-progress-row { height: 1; min-height: 1; padding: 0 1; }
+        #apply-progress { width: 1fr; height: 1; margin-right: 1; }
+        #apply-progress-meta { width: auto; min-width: 8; height: 1; content-align: right middle; color: $text-muted; }
+        #apply-phase { height: auto; min-height: 1; max-height: 2; padding: 0 1; overflow-x: hidden; overflow-y: hidden; }
+        #apply-activity { height: auto; min-height: 0; max-height: 3; padding: 0 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
+        #apply-notice { height: auto; min-height: 0; max-height: 2; padding: 0 1; color: $warning; overflow-x: hidden; overflow-y: hidden; }
+        #apply-log-toolbar { height: 3; min-height: 3; padding: 0 1; border-top: solid $panel; }
+        #apply-log-title { width: 1fr; height: 1; content-align: left middle; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
+        #apply-log-toggle, #apply-raw-toggle { width: auto; min-width: 10; margin-left: 1; }
+        #apply-log { height: 1fr; min-height: 1; border-top: solid $surface-lighten-2; }
+        .compact #apply-review, .narrow #apply-review { margin-left: 0; margin-right: 0; border-left: none; border-right: none; }
+        .compact #apply-stage,
+        .compact #apply-progress-row,
+        .compact #apply-phase,
+        .compact #apply-activity,
+        .compact #apply-notice,
+        .compact #apply-log-toolbar { padding-left: 0; padding-right: 0; }
+        .compact #apply-progress-meta { min-width: 6; }
+        .short #apply-context { min-height: 2; }
+        .short #apply-review { display: none; }
+        .short #apply-phase { max-height: 1; }
+        .short #apply-activity { max-height: 1; }
+        .short #apply-log-toolbar { height: 1; min-height: 1; }
+        .short #apply-log-toggle, .short #apply-raw-toggle { display: none; }
+        .tiny #apply-meta { display: none; }
+        .tiny #apply-notice { max-height: 1; }
         """
 
         def __init__(self) -> None:
             super().__init__()
             self._logs_visible = True
+            self._show_raw = False
+            self._details_visible = False
             self._finish_seen_at: float | None = None
             self._started_child = False
+            self._started_at = 0.0
             self._poll_timer: Any | None = None
+            self._last_state: dict[str, Any] = {}
+            self._last_semantic_phase: str = ""
+            self._activity = ArtifactActivityTracker()
+            self._raw_lines: list[str] = []
 
         def compose(self) -> ComposeResult:
             review = source.review
-            review_text = (
-                f"Artifact   {review.get('artifact') or '-'}\n"
-                f"Target     {review.get('target') or '-'}\n"
-                f"Changes    {review.get('changes') or '-'}\n"
-                f"Validate   {review.get('validation') or '-'}\n"
-                f"Lifecycle  {review.get('lifecycle') or '-'}\n"
-                f"Apply      {review.get('apply') or '-'}"
-            )
             yield Header()
             with Vertical(id="apply-root"):
-                yield Static(review_text, id="apply-review")
-                yield Static("Waiting to start…", id="apply-status")
-                yield ProgressBar(total=100, show_eta=False, id="apply-progress")
+                with Vertical(id="apply-context", classes="ux-context"):
+                    yield Static("DEVTOOL · ARTIFACT APPLY", classes="ux-kicker")
+                    yield Static(str(review.get("artifact") or review.get("path") or "Artifact"), id="apply-status", classes="ux-title")
+                    yield Static("Review canonical artifact contract", id="apply-meta")
+                yield Static(artifact_review_text(review), id="apply-review", classes="ux-card")
+                yield Static(artifact_stage_line({}), id="apply-stage")
+                with Horizontal(id="apply-progress-row"):
+                    yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="apply-progress")
+                    yield Static("working", id="apply-progress-meta")
                 yield Static("Canonical artifact qualification pending", id="apply-phase")
+                yield Static("", id="apply-activity")
                 yield Static("", id="apply-notice")
+                with Horizontal(id="apply-log-toolbar"):
+                    yield Static("Activity log · l hide · r raw · d details", id="apply-log-title")
+                    yield Button("Hide", id="apply-log-toggle")
+                    yield Button("Raw", id="apply-raw-toggle")
                 yield RichLog(id="apply-log", wrap=True, highlight=False, markup=False, max_lines=source.max_log_lines)
             yield Footer()
 
-        def _apply_responsive_width(self, width: int) -> None:
-            # Textual 8.x does not support the CSS media-query syntax used here. Keep responsive
-            # state in the real widget tree instead of relying on unsupported
-            # stylesheet syntax. The Screen owns the class so descendant
-            # selectors apply to every artifact-host widget consistently.
+        def _apply_responsive_geometry(self, width: int, height: int) -> None:
             screen = self.screen
-            if int(width) < 70:
+            desired = set(responsive_class_names(width, height))
+            # Compatibility class retained for H02 qualification and historical CSS.
+            if "compact" in desired:
+                desired.add("narrow")
+            for name in ("compact", "ultra-compact", "short", "tiny"):
+                if name in desired:
+                    screen.add_class(name)
+                else:
+                    screen.remove_class(name)
+            if "narrow" in desired:
                 screen.add_class("narrow")
             else:
                 screen.remove_class("narrow")
+            self._sync_details_visibility()
+            self._refresh_stage_line()
+            self._refresh_context_summary()
+            self._refresh_activity()
+            try:
+                screen.refresh(layout=True)
+            except Exception:
+                pass
+
+        def _sync_details_visibility(self) -> None:
+            try:
+                review = self.query_one("#apply-review", Static)
+            except NoMatches:
+                return
+            constrained = self.screen.has_class("short") or self.screen.has_class("tiny")
+            review.display = bool((not self._started_child or self._details_visible) and not constrained)
+
+        def _refresh_context_summary(self) -> None:
+            if not self._started_child:
+                return
+            width = max(24, self.size.width - 2)
+            self.query_one("#apply-status", Static).update(
+                artifact_running_summary(source.review, width=width)
+            )
+
+        def _refresh_stage_line(self) -> None:
+            state = self._last_state
+            rc = source.returncode
+            compact = self.screen.has_class("compact") or self.screen.has_class("short")
+            if compact:
+                text = artifact_stage_compact_line(state, returncode=rc, tiny=self.screen.has_class("tiny"))
+            else:
+                text = artifact_stage_line(state, returncode=rc)
+            try:
+                self.query_one("#apply-stage", Static).update(text)
+            except NoMatches:
+                pass
+
+        def _elapsed(self) -> float:
+            value = getattr(source, "elapsed_seconds", None)
+            if isinstance(value, (int, float)):
+                return max(0.0, float(value))
+            if self._started_at:
+                return max(0.0, time.monotonic() - self._started_at)
+            return 0.0
+
+        def _refresh_activity(self) -> None:
+            try:
+                max_lines = 1 if self.screen.has_class("short") else 2
+                text = self._activity.activity_text(
+                    elapsed_seconds=self._elapsed() if self._started_child else None,
+                    max_lines=max_lines,
+                    width=max(28, self.size.width - 2),
+                )
+                self.query_one("#apply-activity", Static).update(text)
+                mode = "raw log" if self._show_raw else "activity log"
+                self.query_one("#apply-log-title", Static).update(
+                    f"{mode} · {len(self._raw_lines)} lines · l hide · r {'activity' if self._show_raw else 'raw'} · d details"
+                )
+            except NoMatches:
+                pass
 
         def on_mount(self) -> None:
-            self._apply_responsive_width(self.size.width)
+            self._apply_responsive_geometry(self.size.width, self.size.height)
             self._poll_timer = self.set_interval(0.10, self._poll_child)
             if confirm_required:
                 self.push_screen(ApplyConfirmationModal(), self._after_initial_confirmation)
@@ -490,7 +639,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                 self._start_child(force_yes=True)
 
         def on_resize(self, event: Any) -> None:
-            self._apply_responsive_width(event.size.width)
+            self._apply_responsive_geometry(event.size.width, event.size.height)
 
         def _after_initial_confirmation(self, confirmed: bool | None) -> None:
             if not confirmed:
@@ -502,33 +651,40 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             if self._started_child:
                 return
             self._started_child = True
-            self.query_one("#apply-status", Static).update("Starting canonical Devtool apply…")
+            self._started_at = time.monotonic()
+            self.screen.add_class("running")
+            self.query_one("#apply-meta", Static).update("STARTING · canonical LIFE/RUN child")
+            self._sync_details_visibility()
+            self._refresh_context_summary()
             try:
                 source.start(force_yes=force_yes)
             except Exception as exc:
-                self.query_one("#apply-status", Static).update("Failed to start artifact apply")
+                self.query_one("#apply-meta", Static).update("FAILED · could not start canonical child")
+                self.query_one("#apply-phase", Static).update(f"{type(exc).__name__}: {exc}")
                 self.query_one("#apply-log", RichLog).write(f"{type(exc).__name__}: {exc}")
                 self._finish_seen_at = time.monotonic()
 
         def _apply_state(self, state: Mapping[str, Any]) -> None:
+            self._last_state = dict(state)
             status = str(state.get("status") or "running")
             message = str(state.get("message") or "Working…")
-            self.query_one("#apply-status", Static).update(f"{status.upper()} · {message}")
-            progress = state.get("progress") if isinstance(state.get("progress"), Mapping) else {}
-            # Preserve the last meaningful phase when a terminal state omits
-            # phase metadata. Canonical live-state writers are allowed to emit
-            # a compact final status/progress record.
+            percent, counter, scope = artifact_display_progress(state, self._activity, returncode=source.returncode)
+            meta_scope = "canonical LIFE/RUN" if scope == "overall" else ("validation child" if scope == "validation child" else "canonical LIFE/RUN · progress indeterminate")
+            self.query_one("#apply-meta", Static).update(f"{status_label(status)} · {meta_scope}")
             phase_line = apply_phase_text(state)
             if phase_line is not None:
-                self.query_one("#apply-phase", Static).update(phase_line)
-            percent = progress.get("percent")
-            if percent is None:
-                current = state.get("current")
-                total = state.get("total")
-                if isinstance(current, (int, float)) and isinstance(total, (int, float)) and total:
-                    percent = 100.0 * float(current) / float(total)
-            if isinstance(percent, (int, float)):
-                self.query_one("#apply-progress", ProgressBar).update(progress=max(0.0, min(100.0, float(percent))))
+                self._last_semantic_phase = str(phase_line)
+                width = max(24, self.size.width - 2)
+                self.query_one("#apply-phase", Static).update(fit_middle(phase_line, width))
+            progress_widget = self.query_one("#apply-progress", ProgressBar)
+            progress_widget.display = percent is not None
+            if percent is not None:
+                progress_widget.update(progress=percent)
+            self.query_one("#apply-progress-meta", Static).update(counter)
+            self._refresh_stage_line()
+            if message and message not in {phase_line, status}:
+                self.query_one("#apply-notice", Static).update(fit_middle(message, max(24, self.size.width - 2)))
+            self._refresh_activity()
 
         def _stop_polling(self) -> None:
             timer = self._poll_timer
@@ -538,34 +694,66 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                 finally:
                     self._poll_timer = None
 
+        def _remember_line(self, line: str) -> bool:
+            text = str(line or "").rstrip("\r\n")
+            if not text:
+                return False
+            self._raw_lines.append(text)
+            if len(self._raw_lines) > source.max_log_lines:
+                del self._raw_lines[: len(self._raw_lines) - source.max_log_lines]
+            return self._activity.observe(text)
+
+        def _emit_line(self, line: str, surfaced: bool) -> None:
+            if not self._logs_visible:
+                return
+            if self._show_raw or surfaced:
+                self.query_one("#apply-log", RichLog).write(line)
+
+        def _drain_source_lines(self) -> None:
+            for line in source.drain_lines():
+                surfaced = self._remember_line(line)
+                self._emit_line(str(line), surfaced)
+            self._refresh_activity()
+
         def _poll_child(self) -> None:
-            # Textual may deliver one final interval tick while run_test()/App.exit()
-            # is tearing down the default Screen. Any widget query in this whole
-            # poll can therefore race with child detachment, not only the first
-            # query. Treat NoMatches as normal shutdown and stop polling.
             try:
-                log = self.query_one("#apply-log", RichLog)
-                for line in source.drain_lines():
-                    if self._logs_visible:
-                        log.write(line)
+                self._drain_source_lines()
                 state = source.read_state()
                 if state:
                     self._apply_state(state)
+                elif self._started_child:
+                    # Do not pin a fake 0% while a validator subprocess is alive.
+                    percent, counter, _scope = artifact_display_progress({}, self._activity, returncode=source.returncode)
+                    progress_widget = self.query_one("#apply-progress", ProgressBar)
+                    progress_widget.display = percent is not None
+                    if percent is not None:
+                        progress_widget.update(progress=percent)
+                    self.query_one("#apply-progress-meta", Static).update(counter)
+                    self._refresh_activity()
                 rc = source.returncode
                 if rc is None:
                     return
-                # Drain any final child output before restoring the terminal.
-                for line in source.drain_lines():
-                    if self._logs_visible:
-                        log.write(line)
+                self._drain_source_lines()
                 if self._finish_seen_at is None:
                     self._finish_seen_at = time.monotonic()
                     label = "completed successfully" if rc == 0 else ("cancelled" if rc == 130 else f"failed · exit {rc}")
-                    self.query_one("#apply-status", Static).update(f"Devtool {label}")
+                    self.query_one("#apply-meta", Static).update(status_label("completed" if rc == 0 else "cancelled" if rc == 130 else "failed") + " · canonical lifecycle finished")
+                    self._refresh_stage_line()
+                    # Completion is lifecycle state, not a replacement phase.
+                    # Preserve the last canonical semantic phase so operators
+                    # can still see what completed after the child exits.
+                    if self._last_semantic_phase:
+                        self.query_one("#apply-phase", Static).update(
+                            fit_middle(self._last_semantic_phase, max(24, self.size.width - 2))
+                        )
+                    else:
+                        self.query_one("#apply-phase", Static).update(f"Devtool {label}")
                     if rc == 0:
+                        self.query_one("#apply-progress", ProgressBar).display = True
                         self.query_one("#apply-progress", ProgressBar).update(progress=100.0)
+                        self.query_one("#apply-progress-meta", Static).update("100%")
                     return
-                if time.monotonic() - self._finish_seen_at >= 0.35:
+                if time.monotonic() - self._finish_seen_at >= 0.45:
                     self._stop_polling()
                     self.exit(int(rc))
             except NoMatches:
@@ -576,6 +764,38 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             log = self.query_one("#apply-log", RichLog)
             self._logs_visible = not self._logs_visible
             log.display = self._logs_visible
+            self.query_one("#apply-log-toggle", Button).label = "Hide" if self._logs_visible else "Show"
+
+        def action_toggle_details(self) -> None:
+            self._details_visible = not self._details_visible
+            self._sync_details_visibility()
+            try:
+                self.screen.refresh(layout=True)
+            except Exception:
+                pass
+
+        def action_toggle_raw(self) -> None:
+            self._show_raw = not self._show_raw
+            log = self.query_one("#apply-log", RichLog)
+            log.clear()
+            if self._logs_visible:
+                if self._show_raw:
+                    for line in self._raw_lines:
+                        log.write(line)
+                else:
+                    replay = ArtifactActivityTracker()
+                    for line in self._raw_lines:
+                        if replay.observe(line):
+                            log.write(line)
+            self.query_one("#apply-raw-toggle", Button).label = "Activity" if self._show_raw else "Raw"
+            self._refresh_activity()
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            button_id = event.button.id or ""
+            if button_id == "apply-log-toggle":
+                self.action_toggle_logs()
+            elif button_id == "apply-raw-toggle":
+                self.action_toggle_raw()
 
         def action_request_cancel(self) -> None:
             if not source.running:
@@ -586,7 +806,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             if not confirmed:
                 return
             source.request_cancel()
-            self.query_one("#apply-notice", Static).update("Cancellation requested; waiting for Devtool recovery/rollback…")
+            self.query_one("#apply-notice", Static).update("Cancellation requested · waiting for Devtool recovery/rollback…")
 
         def on_unmount(self) -> None:
             self._stop_polling()
@@ -594,7 +814,6 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                 source.terminate()
 
     return ArtifactApplyApp()
-
 
 def run_apply_textual_host(raw_argv: Sequence[str], args: Any) -> int:
     """Run one interactive artifact apply under a main-thread Textual host."""
@@ -626,6 +845,7 @@ __all__ = [
     "artifact_review_snapshot",
     "build_apply_textual_app",
     "child_argv",
+    "create_overlay_apply_source",
     "run_apply_textual_host",
     "select_apply_textual_host",
     "textual_available",

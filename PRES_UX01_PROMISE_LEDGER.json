@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "overlay": "PRES-UX01",
+  "revision": 5,
+  "title": "Mobile-responsive Textual workspace and inline artifact-apply UX convergence",
+  "position": "68/77",
+  "gate_window_position": "1/1 implementation remediation; native targeted validation owned by this overlay",
+  "status": "candidate_pending_native_qualification_runtime_interaction_v5",
+  "supersedes": "pres_ux01_textual_workspace_revamp_v4.zip (applied transactionally, native validation failed, rolled back cleanly; real Textual interaction regressions reproduced locally under Textual 8.2.8)",
+  "merge_window_decision": {
+    "merged": true,
+    "reason": "Normal execution, standalone control-center interaction, and artifact-apply presentation share the same concrete Textual boundary. The changes converge presentation only and preserve canonical execution/lifecycle authority. Screenshot evidence from the pre-UX01 apply host is folded into this same overlay rather than creating a premature UX02."
+  },
+  "promises": [
+    {
+      "id": "PRES-UX01-P001",
+      "status": "candidate",
+      "text": "Give normal execution and artifact application a shared responsive Textual workspace hierarchy instead of unrelated one-off layouts."
+    },
+    {
+      "id": "PRES-UX01-P002",
+      "status": "candidate",
+      "text": "Make artifact apply launched from the control center visible inline by reusing the canonical H02 managed-child source rather than spawning a detached invisible apply process."
+    },
+    {
+      "id": "PRES-UX01-P003",
+      "status": "candidate",
+      "text": "Replace the permanently crowded global action strip with page-contextual actions and preserve keyboard discoverability."
+    },
+    {
+      "id": "PRES-UX01-P004",
+      "status": "candidate",
+      "text": "Keep the TUI usable on compact Termux terminals through shared width and height breakpoints, including keyboard-constrained mobile viewports, while preserving state and cancellation access."
+    },
+    {
+      "id": "PRES-UX01-P005",
+      "status": "candidate",
+      "text": "Preserve RUN/EXO/LIFE/validation/transaction truth ownership; stage rails, counters, summaries, parsed pytest child progress, and status labels remain renderer-only projections."
+    },
+    {
+      "id": "PRES-UX01-P006",
+      "status": "candidate",
+      "text": "Require targeted native Textual App.run_test/Pilot validation for all modified concrete surfaces before the artifact may qualify."
+    },
+    {
+      "id": "PRES-UX01-P007",
+      "status": "candidate",
+      "text": "Collapse the six-row artifact review after execution begins, bound long artifact/path/test text, and let the live log flex into all remaining vertical space without overlapping or stale resize geometry."
+    },
+    {
+      "id": "PRES-UX01-P008",
+      "status": "candidate",
+      "text": "Do not pin artifact apply at a deceptive 0% while validation is active: show canonical progress when known, explicit pytest validation-child progress when observed, otherwise render progress as indeterminate."
+    },
+    {
+      "id": "PRES-UX01-P009",
+      "status": "candidate",
+      "text": "Keep raw validator output recoverable while defaulting the primary log to an activity view that suppresses repetitive pytest dots/separators/heartbeat spam; provide a raw/activity toggle without discarding captured lines."
+    },
+    {
+      "id": "PRES-UX01-P010",
+      "status": "candidate",
+      "text": "Exercise realistic phone/tmux/keyboard terminal sizes in the mandatory native Textual matrix, including 48x14, 52x20, and a wider recovery size, and prove log geometry remains non-overlapping after live resize."
+    }
+  ],
+  "required_native_environment": {
+    "DEVTOOL_PRES_R01_REQUIRE_TEXTUAL": "1",
+    "DEVTOOL_PRES_R02_REQUIRE_TEXTUAL": "1",
+    "DEVTOOL_PRES_R03_REQUIRE_TEXTUAL": "1",
+    "DEVTOOL_PRES_H02_REQUIRE_TEXTUAL": "1",
+    "DEVTOOL_PRES_UX01_REQUIRE_TEXTUAL": "1"
+  },
+  "validation_entrypoint": "./devtoolw pres-ux01",
+  "next_on_success": "EXEC-G3 69/77",
+  "next_major_scope": "EXEC finalization",
+  "active_denominator": 77,
+  "rebase": {
+    "failed_preapply_run": "65f1321911fc48afabdafb73575ac944",
+    "old_base": "PRES-G2R commit 3ffbf98",
+    "new_base": "post-TEST-G3 commit 4269091",
+    "reason": "Only .devtool.toml drifted; all three touched Textual runtime source hashes still matched the v2 base exactly.",
+    "campaign_effect": "insert PRES-UX01 at 68/77; shift EXEC-G3 and later tail by one position"
+  },
+  "native_attempts": [
+    {
+      "revision": 3,
+      "run": "133a137ff8bd49ddb37d5dfb0b21cd47",
+      "status": "failed_rolled_back",
+      "reason": "Textual stylesheet parsing rejected border-radius: 0; downstream H02/R03 real-App assertions were cascading mount failures",
+      "diagnostics": "0 warnings, 1 error"
+    },
+    {
+      "revision": 4,
+      "run": "2f219c2e83ce4da3a1170c8c75ed3b5c",
+      "status": "failed_rolled_back",
+      "reason": "Real Textual matrix exposed H02 semantic phase overwrite plus control-center action-state/compact action-bar interaction regressions; 3 failed, 3 passed, 49 deselected in the mandatory real-App slice",
+      "diagnostics": "0 warnings, 1 error",
+      "rollback": "restored 7 paths, removed 4 added paths, rollback_verified=true"
+    }
+  ],
+  "v4_correction": {
+    "scope": "same PRES-UX01 68/77 boundary; no new roadmap position",
+    "changes": [
+      "remove unsupported border-radius from shared compact card CSS",
+      "remove unsupported border-radius from standalone artifact-apply compact review CSS",
+      "remove unsupported border-radius from inline apply compact review CSS",
+      "add static compatibility regression contract"
+    ],
+    "authority": "layout-only; no RUN/EXO/LIFE/validation/transaction authority changes"
+  },
+  "v5_correction": {
+    "scope": "same PRES-UX01 68/77 boundary; no new roadmap position",
+    "changes": [
+      "preserve the last semantic artifact phase after canonical child completion instead of overwriting it with a generic success string",
+      "retain selected-run actions on Logs/Diagnostics inspection surfaces so contextual actions do not remove canonical run controls while investigating a run",
+      "recompute action enabled-state immediately when a table row becomes selected, including Overlays and Workers",
+      "keep the short control-center action bar at three rows so Textual 8.2.8 default-height buttons remain fully visible and clickable at 64x22 and 52x20",
+      "add regression assertions for compact action geometry and selected-overlay enabled-state"
+    ],
+    "local_real_textual_replay": {
+      "textual": "8.2.8",
+      "rich": "15.0.0",
+      "result": "6 passed, 49 deselected in full mandatory real-Textual slice",
+      "note": "Native Termux remains authoritative; supplied bundle reproduced the v4 failures and verified the v5 corrections locally."
+    },
+    "authority": "presentation/interaction-state only; no RUN/EXO/LIFE/validation/transaction authority changes"
+  }
+}

@@ -32,6 +32,12 @@ from .validation_control import status_api_payload
 from .validation_sessions import load_active_session, write_control_request
 from .transactions import list_active_transaction_records, rollback_transaction, resume_transaction_result_publication
 from .xdg import state_dir
+from .textual_ux import (
+    ArtifactActivityTracker, TEXTUAL_SHARED_CSS, artifact_display_progress,
+    artifact_review_text, artifact_running_summary, artifact_stage_compact_line,
+    artifact_stage_line, fit_middle, is_compact_width, progress_counter,
+    progress_percent, responsive_class_names, status_label,
+)
 from .ui_core.shortcuts import (
     TUI_NAV_SHORTCUTS, TUI_PAGES, normalize_tui_page, shortcut_rows,
     textual_control_center_bindings,
@@ -629,6 +635,8 @@ def create_textual_control_center_app(
     provider: ControlCenterProvider | None = None,
     dispatcher: ControlActionDispatcher | None = None,
     refresh_interval: float = 0.5,
+    inline_overlay_apply: bool | None = None,
+    apply_source_factory: Callable[[str], Any] | None = None,
 ):
     """Build the real Textual control-center App.
 
@@ -641,7 +649,7 @@ def create_textual_control_center_app(
     from textual.containers import Container, Horizontal, HorizontalScroll, Vertical  # type: ignore
     from textual.css.query import NoMatches  # type: ignore
     from textual.screen import ModalScreen  # type: ignore
-    from textual.widgets import Button, ContentSwitcher, DataTable, Footer, Header, Input, Label, ListItem, ListView, RichLog, Static, Tree  # type: ignore
+    from textual.widgets import Button, ContentSwitcher, DataTable, Footer, Header, Input, Label, ListItem, ListView, ProgressBar, RichLog, Static, Tree  # type: ignore
 
     root = Path(repo_root).expanduser().resolve(strict=False)
     normalized_page, alias_notice = normalize_tui_page(page)
@@ -653,6 +661,14 @@ def create_textual_control_center_app(
         artifact_notice = ""
     source = provider or CanonicalControlCenterProvider(root, startup_artifact=startup_artifact)
     actions = dispatcher or CanonicalControlActionDispatcher(root)
+    use_inline_overlay_apply = (dispatcher is None) if inline_overlay_apply is None else bool(inline_overlay_apply)
+
+    def make_apply_source(artifact_path: str) -> Any:
+        if apply_source_factory is not None:
+            return apply_source_factory(artifact_path)
+        from .textual_apply_host import create_overlay_apply_source
+        return create_overlay_apply_source(root, artifact_path)
+
     initial_page = normalized_page
     startup_notice = " ".join(value for value in (str(compatibility_notice or "").strip(), alias_notice, artifact_notice) if value).strip()
 
@@ -751,6 +767,321 @@ def create_textual_control_center_app(
         def action_dismiss_palette(self) -> None:
             self.dismiss(None)
 
+    class ApplyWorkspaceScreen(ModalScreen[int | None]):
+        """Full-screen artifact workspace hosted by the control center.
+
+        It reuses the H02 managed-child source and the same mobile-first
+        presentation contract as shell apply: compact running summary, semantic
+        validation-child progress, activity-filtered logs, and full-height flex.
+        """
+
+        BINDINGS = [
+            ("escape", "back", "Back"),
+            ("q", "back", "Back"),
+            ("l", "toggle_logs", "Logs"),
+            ("d", "toggle_details", "Details"),
+            ("r", "toggle_raw", "Raw log"),
+            ("ctrl+c", "request_cancel", "Cancel"),
+        ]
+        DEFAULT_CSS = TEXTUAL_SHARED_CSS + """
+        ApplyWorkspaceScreen { background: $surface; }
+        #inline-apply-root { width: 100%; height: 100%; min-height: 0; }
+        #inline-apply-context { height: auto; min-height: 3; }
+        #inline-apply-title { height: 1; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
+        #inline-apply-meta { height: 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
+        #inline-apply-review { height: auto; max-height: 8; margin: 0 1; }
+        #inline-apply-stage { height: 1; padding: 0 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
+        #inline-apply-progress-row { height: 1; min-height: 1; padding: 0 1; }
+        #inline-apply-progress { width: 1fr; height: 1; margin-right: 1; }
+        #inline-apply-progress-meta { width: auto; min-width: 8; height: 1; content-align: right middle; color: $text-muted; }
+        #inline-apply-phase { height: auto; min-height: 1; max-height: 2; padding: 0 1; overflow-x: hidden; overflow-y: hidden; }
+        #inline-apply-activity { height: auto; min-height: 0; max-height: 3; padding: 0 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
+        #inline-apply-notice { height: auto; min-height: 0; max-height: 2; padding: 0 1; color: $warning; overflow-x: hidden; overflow-y: hidden; }
+        #inline-apply-log-toolbar { height: 3; min-height: 3; padding: 0 1; border-top: solid $panel; }
+        #inline-apply-log-title { width: 1fr; height: 1; content-align: left middle; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
+        #inline-apply-log-toggle, #inline-apply-raw-toggle, #inline-apply-close { width: auto; min-width: 8; margin-left: 1; }
+        #inline-apply-log { height: 1fr; min-height: 1; border-top: solid $surface-lighten-2; }
+        .compact #inline-apply-review { margin-left: 0; margin-right: 0; border-left: none; border-right: none; }
+        .compact #inline-apply-stage,
+        .compact #inline-apply-progress-row,
+        .compact #inline-apply-phase,
+        .compact #inline-apply-activity,
+        .compact #inline-apply-notice,
+        .compact #inline-apply-log-toolbar { padding-left: 0; padding-right: 0; }
+        .compact #inline-apply-progress-meta { min-width: 6; }
+        .short #inline-apply-context { min-height: 2; }
+        .short #inline-apply-review { display: none; }
+        .short #inline-apply-phase { max-height: 1; }
+        .short #inline-apply-activity { max-height: 1; }
+        .short #inline-apply-log-toolbar { height: 1; min-height: 1; }
+        .short #inline-apply-log-toggle, .short #inline-apply-raw-toggle { display: none; }
+        .tiny #inline-apply-meta { display: none; }
+        .tiny #inline-apply-notice { max-height: 1; }
+        """
+
+        def __init__(self, apply_source: Any) -> None:
+            super().__init__()
+            self.apply_source = apply_source
+            self._timer: Any | None = None
+            self._logs_visible = True
+            self._show_raw = False
+            self._details_visible = False
+            self._returncode: int | None = None
+            self._started_at = 0.0
+            self._last_state: dict[str, Any] = {}
+            self._activity = ArtifactActivityTracker()
+            self._raw_lines: list[str] = []
+
+        def compose(self) -> ComposeResult:
+            review = self.apply_source.review
+            with Vertical(id="inline-apply-root"):
+                with Vertical(id="inline-apply-context", classes="ux-context"):
+                    yield Static("DEVTOOL · ARTIFACT APPLY", classes="ux-kicker")
+                    yield Static(str(review.get("artifact") or review.get("path") or "Artifact"), id="inline-apply-title", classes="ux-title")
+                    yield Static("STARTING · canonical LIFE/RUN child", id="inline-apply-meta")
+                yield Static(artifact_review_text(review), id="inline-apply-review", classes="ux-card")
+                yield Static(artifact_stage_line({}), id="inline-apply-stage")
+                with Horizontal(id="inline-apply-progress-row"):
+                    yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="inline-apply-progress")
+                    yield Static("working", id="inline-apply-progress-meta")
+                yield Static("Canonical artifact qualification pending", id="inline-apply-phase")
+                yield Static("", id="inline-apply-activity")
+                yield Static("", id="inline-apply-notice")
+                with Horizontal(id="inline-apply-log-toolbar"):
+                    yield Static("Activity log · l hide · r raw · d details", id="inline-apply-log-title")
+                    yield Button("Hide", id="inline-apply-log-toggle")
+                    yield Button("Raw", id="inline-apply-raw-toggle")
+                    yield Button("Back", id="inline-apply-close", disabled=True)
+                yield RichLog(id="inline-apply-log", wrap=True, highlight=False, markup=False, max_lines=self.apply_source.max_log_lines)
+
+        def _apply_responsive_geometry(self, width: int, height: int) -> None:
+            desired = set(responsive_class_names(width, height))
+            for name in ("compact", "ultra-compact", "short", "tiny"):
+                if name in desired:
+                    self.add_class(name)
+                else:
+                    self.remove_class(name)
+            self._sync_details_visibility()
+            self._refresh_stage_line()
+            self._refresh_context_summary()
+            self._refresh_activity()
+            try:
+                self.refresh(layout=True)
+            except Exception:
+                pass
+
+        def _sync_details_visibility(self) -> None:
+            try:
+                review = self.query_one("#inline-apply-review", Static)
+            except NoMatches:
+                return
+            constrained = self.has_class("short") or self.has_class("tiny")
+            review.display = bool(self._details_visible and not constrained)
+
+        def _refresh_context_summary(self) -> None:
+            try:
+                self.query_one("#inline-apply-title", Static).update(
+                    artifact_running_summary(self.apply_source.review, width=max(24, self.size.width - 2))
+                )
+            except NoMatches:
+                pass
+
+        def _refresh_stage_line(self) -> None:
+            try:
+                if self.has_class("compact") or self.has_class("short"):
+                    text = artifact_stage_compact_line(self._last_state, returncode=self._returncode, tiny=self.has_class("tiny"))
+                else:
+                    text = artifact_stage_line(self._last_state, returncode=self._returncode)
+                self.query_one("#inline-apply-stage", Static).update(text)
+            except NoMatches:
+                pass
+
+        def _elapsed(self) -> float:
+            value = getattr(self.apply_source, "elapsed_seconds", None)
+            if isinstance(value, (int, float)):
+                return max(0.0, float(value))
+            if self._started_at:
+                return max(0.0, time.monotonic() - self._started_at)
+            return 0.0
+
+        def _refresh_activity(self) -> None:
+            try:
+                max_lines = 1 if self.has_class("short") else 2
+                text = self._activity.activity_text(
+                    elapsed_seconds=self._elapsed(), max_lines=max_lines, width=max(28, self.size.width - 2)
+                )
+                self.query_one("#inline-apply-activity", Static).update(text)
+                mode = "raw log" if self._show_raw else "activity log"
+                self.query_one("#inline-apply-log-title", Static).update(
+                    f"{mode} · {len(self._raw_lines)} lines · l hide · r {'activity' if self._show_raw else 'raw'} · d details"
+                )
+            except NoMatches:
+                pass
+
+        def on_mount(self) -> None:
+            self._started_at = time.monotonic()
+            self._apply_responsive_geometry(self.size.width, self.size.height)
+            self._timer = self.set_interval(0.10, self._poll_apply)
+            try:
+                self.apply_source.start(force_yes=True)
+            except Exception as exc:
+                self._returncode = 1
+                self.query_one("#inline-apply-meta", Static).update("FAILED · could not start canonical child")
+                self.query_one("#inline-apply-phase", Static).update(f"{type(exc).__name__}: {exc}")
+                self.query_one("#inline-apply-close", Button).disabled = False
+
+        def on_resize(self, event: events.Resize) -> None:
+            self._apply_responsive_geometry(event.size.width, event.size.height)
+
+        def _stop_timer(self) -> None:
+            if self._timer is not None:
+                try:
+                    self._timer.stop()
+                finally:
+                    self._timer = None
+
+        def _remember_line(self, line: str) -> bool:
+            text = str(line or "").rstrip("\r\n")
+            if not text:
+                return False
+            self._raw_lines.append(text)
+            limit = int(getattr(self.apply_source, "max_log_lines", 1200))
+            if len(self._raw_lines) > limit:
+                del self._raw_lines[: len(self._raw_lines) - limit]
+            return self._activity.observe(text)
+
+        def _drain_source_lines(self) -> None:
+            log = self.query_one("#inline-apply-log", RichLog)
+            for line in self.apply_source.drain_lines():
+                surfaced = self._remember_line(line)
+                if self._logs_visible and (self._show_raw or surfaced):
+                    log.write(line)
+            self._refresh_activity()
+
+        def _apply_state(self, state: Mapping[str, Any], rc: int | None) -> None:
+            self._last_state = dict(state)
+            percent, counter, scope = artifact_display_progress(state, self._activity, returncode=rc)
+            status = status_label(state.get("status") or "running")
+            meta_scope = "canonical LIFE/RUN" if scope == "overall" else ("validation child" if scope == "validation child" else "canonical LIFE/RUN · progress indeterminate")
+            self.query_one("#inline-apply-meta", Static).update(f"{status} · {meta_scope}")
+            phase = state.get("phase")
+            if isinstance(phase, Mapping):
+                phase_name = _text(phase.get("name") or phase.get("label"))
+                detail = _text(phase.get("detail"))
+            else:
+                phase_name, detail = _text(phase), ""
+            progress = state.get("progress") if isinstance(state.get("progress"), Mapping) else {}
+            if not detail:
+                detail = _text(progress.get("detail") or state.get("message"))
+            phase_text = " · ".join(value for value in (phase_name, detail) if value) or "Working…"
+            self.query_one("#inline-apply-phase", Static).update(fit_middle(phase_text, max(24, self.size.width - 2)))
+            progress_widget = self.query_one("#inline-apply-progress", ProgressBar)
+            progress_widget.display = percent is not None
+            if percent is not None:
+                progress_widget.update(progress=percent)
+            self.query_one("#inline-apply-progress-meta", Static).update(counter)
+            self._refresh_stage_line()
+            self._refresh_activity()
+
+        def _poll_apply(self) -> None:
+            try:
+                self._drain_source_lines()
+                state = self.apply_source.read_state()
+                rc = self.apply_source.returncode
+                if state:
+                    self._apply_state(state, rc)
+                elif rc is None:
+                    percent, counter, _scope = artifact_display_progress({}, self._activity)
+                    progress_widget = self.query_one("#inline-apply-progress", ProgressBar)
+                    progress_widget.display = percent is not None
+                    if percent is not None:
+                        progress_widget.update(progress=percent)
+                    self.query_one("#inline-apply-progress-meta", Static).update(counter)
+                if rc is None:
+                    return
+                self._returncode = int(rc)
+                self._drain_source_lines()
+                outcome = "COMPLETED" if rc == 0 else "CANCELLED" if rc == 130 else "FAILED"
+                self.query_one("#inline-apply-meta", Static).update(f"{outcome} · canonical lifecycle finished")
+                self._refresh_stage_line()
+                self.query_one("#inline-apply-phase", Static).update(
+                    "Artifact applied successfully." if rc == 0 else ("Artifact apply cancelled." if rc == 130 else f"Artifact apply failed · exit {rc}")
+                )
+                if rc == 0:
+                    self.query_one("#inline-apply-progress", ProgressBar).display = True
+                    self.query_one("#inline-apply-progress", ProgressBar).update(progress=100.0)
+                    self.query_one("#inline-apply-progress-meta", Static).update("100%")
+                self.query_one("#inline-apply-close", Button).disabled = False
+                self._stop_timer()
+            except NoMatches:
+                self._stop_timer()
+
+        def action_toggle_logs(self) -> None:
+            log = self.query_one("#inline-apply-log", RichLog)
+            self._logs_visible = not self._logs_visible
+            log.display = self._logs_visible
+            self.query_one("#inline-apply-log-toggle", Button).label = "Hide" if self._logs_visible else "Show"
+
+        def action_toggle_details(self) -> None:
+            self._details_visible = not self._details_visible
+            self._sync_details_visibility()
+            try:
+                self.refresh(layout=True)
+            except Exception:
+                pass
+
+        def action_toggle_raw(self) -> None:
+            self._show_raw = not self._show_raw
+            log = self.query_one("#inline-apply-log", RichLog)
+            log.clear()
+            if self._logs_visible:
+                if self._show_raw:
+                    for line in self._raw_lines:
+                        log.write(line)
+                else:
+                    replay = ArtifactActivityTracker()
+                    for line in self._raw_lines:
+                        if replay.observe(line):
+                            log.write(line)
+            self.query_one("#inline-apply-raw-toggle", Button).label = "Activity" if self._show_raw else "Raw"
+            self._refresh_activity()
+
+        def action_request_cancel(self) -> None:
+            if not self.apply_source.running:
+                return
+            self.app.push_screen(
+                ConfirmationModal("Cancel this artifact apply? Devtool will preserve canonical rollback/recovery behavior."),
+                lambda confirmed: self._confirm_cancel() if confirmed else None,
+            )
+
+        def _confirm_cancel(self) -> None:
+            self.apply_source.request_cancel()
+            self.query_one("#inline-apply-notice", Static).update(
+                "Cancellation requested · waiting for Devtool recovery/rollback…"
+            )
+
+        def action_back(self) -> None:
+            if self.apply_source.running:
+                self.query_one("#inline-apply-notice", Static).update(
+                    "Artifact apply is still running. Use Ctrl+C to cancel, or wait for completion before returning."
+                )
+                return
+            self.dismiss(self._returncode)
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            button_id = event.button.id or ""
+            if button_id == "inline-apply-log-toggle":
+                self.action_toggle_logs()
+            elif button_id == "inline-apply-raw-toggle":
+                self.action_toggle_raw()
+            elif button_id == "inline-apply-close":
+                self.action_back()
+
+        def on_unmount(self) -> None:
+            self._stop_timer()
+            if self.apply_source.running:
+                self.apply_source.terminate()
+
     class DevtoolTextualControlCenter(App):
         TITLE = "Devtool"
         SUB_TITLE = "Textual Control Center"
@@ -758,27 +1089,67 @@ def create_textual_control_center_app(
         # Textual 8.x otherwise injects its own priority Ctrl+P command-palette
         # binding during App initialization, preempting show_command_palette.
         ENABLE_COMMAND_PALETTE = False
-        CSS = """
-        #body { height: 1fr; }
-        #navigation { width: 20; min-width: 15; border-right: solid $primary; }
-        #content { width: 1fr; height: 1fr; }
+        CSS = TEXTUAL_SHARED_CSS + """
+        #body { height: 1fr; min-height: 0; }
+        #navigation { width: 18; min-width: 15; border-right: solid $primary; }
+        #content { width: 1fr; height: 1fr; min-height: 0; }
+        #page-context { height: auto; min-height: 3; }
         #page-switcher { height: 1fr; min-height: 0; }
         .page { height: 1fr; min-height: 0; padding: 0 1; }
-        .page-title { text-style: bold; height: 1; margin-bottom: 1; }
-        .table { height: 1fr; }
-        .detail { height: auto; max-height: 12; border-top: solid $panel; padding: 0 1; }
-        #runs-main { height: 1fr; }
+        .page-title { text-style: bold; height: 1; margin-bottom: 0; }
+        .table { height: 1fr; min-height: 0; }
+        .detail { height: auto; max-height: 10; border-top: solid $panel; padding: 0 1; }
+        #dashboard-summary { min-height: 3; margin-bottom: 1; }
+        #runs-main { height: 1fr; min-height: 0; }
         #run-table { width: 2fr; height: 1fr; }
         #node-tree { width: 1fr; height: 1fr; border-left: solid $panel; }
         #logs-controls { height: auto; }
         #log-filter { width: 1fr; }
         #logs-controls Button { margin-left: 1; }
-        #logs-view { height: 1fr; border: round $panel; }
-        #action-bar { height: 4; min-height: 4; padding: 0 1; border-top: solid $panel; overflow-x: auto; overflow-y: hidden; }
+        #logs-view { height: 1fr; min-height: 0; border: round $panel; }
+        #action-bar { height: auto; min-height: 3; padding: 0 1; border-top: solid $panel; overflow-x: auto; overflow-y: hidden; }
+        #action-bar.-empty { display: none; }
         #action-bar Button { margin-right: 1; }
-        #status-line { height: 1; padding: 0 1; color: $text-muted; }
+        #status-line { height: auto; min-height: 1; padding: 0 1; color: $text-muted; }
         #navigation.-narrow { display: none; }
+        .compact .page { padding-left: 0; padding-right: 0; }
+        .compact .detail { padding-left: 0; padding-right: 0; }
+        .compact #action-bar, .compact #status-line { padding-left: 0; padding-right: 0; }
+        .short #page-context { min-height: 1; max-height: 1; overflow-x: hidden; overflow-y: hidden; }
+        .short .page-title { display: none; }
+        .short .detail { max-height: 3; }
+        .short #dashboard-summary { min-height: 1; max-height: 1; margin-bottom: 0; overflow-x: hidden; overflow-y: hidden; }
+        .short #action-bar { height: 3; min-height: 3; max-height: 3; }
+        .short #status-line { display: none; }
+        .tiny .detail { display: none; }
+        .tiny #action-bar { display: none; }
         """
+        PAGE_CONTEXT = {
+            "dashboard": "Overview · live runs, validation and worker health",
+            "runs": "Runs · select a run, inspect nodes and request canonical controls",
+            "logs": "Logs · bounded canonical output for the selected run",
+            "diagnostics": "Diagnostics · actionable failures and remediation evidence",
+            "history": "History · recent artifact and operation lineage",
+            "targets": "Targets · configured execution surfaces and workflows",
+            "workers": "Workers · distributed/SSH provider state and recovery",
+            "validation": "Validation · active session phases and controls",
+            "artifacts": "Artifacts · produced and verified outputs",
+            "overlays": "Overlays · preflight, apply and transaction recovery",
+            "evidence": "Evidence · durable run and qualification material",
+        }
+        ACTIONS_BY_PAGE = {
+            "dashboard": ("cancel", "retry", "rerun", "resume"),
+            "runs": ("cancel", "retry", "rerun", "resume"),
+            # Logs and diagnostics are still selected-run inspection surfaces.
+            # Contextual actions must not make canonical run controls disappear
+            # merely because the operator moved from Runs to investigate output.
+            "logs": ("cancel", "retry", "rerun", "resume"),
+            "diagnostics": ("cancel", "retry", "rerun", "resume"),
+            "workers": ("worker-recover",),
+            "validation": ("validation-pause", "validation-stop"),
+            "overlays": ("overlay-apply", "rollback", "recover"),
+        }
+
         # One canonical shortcut registry owns the actual Textual bindings.
         BINDINGS = textual_control_center_bindings()
 
@@ -810,9 +1181,11 @@ def create_textual_control_center_app(
                     id="navigation",
                 )
                 with Vertical(id="content"):
+                    yield Static("Dashboard · canonical overview", id="page-context", classes="ux-context")
                     with ContentSwitcher(initial=self.current_page, id="page-switcher"):
                         with Vertical(id="dashboard", classes="page"):
                             yield Label("Dashboard", classes="page-title")
+                            yield Static("Runs — · Attention — · Validation — · Workers —", id="dashboard-summary", classes="ux-summary")
                             yield DataTable(id="dashboard-runs", classes="table")
                             yield Static("No run selected.", id="dashboard-detail", classes="detail")
                         with Vertical(id="runs", classes="page"):
@@ -877,6 +1250,7 @@ def create_textual_control_center_app(
 
         def on_mount(self) -> None:
             self._projection_live = True
+            self._apply_responsive_geometry(self.size.width, self.size.height)
             self._configure_tables()
             self.action_page(self.current_page)
             self.refresh_from_provider()
@@ -884,6 +1258,68 @@ def create_textual_control_center_app(
                 self._refresh_timer = self.set_interval(self._refresh_interval, self.refresh_from_provider)
             if startup_notice:
                 self.notify(startup_notice, severity="information")
+
+        def _apply_responsive_geometry(self, width: int, height: int) -> None:
+            try:
+                nav = self.query_one("#navigation", ListView)
+                desired = set(responsive_class_names(width, height))
+                for name in ("compact", "ultra-compact", "short", "tiny"):
+                    if name in desired:
+                        self.screen.add_class(name)
+                    else:
+                        self.screen.remove_class(name)
+                if "compact" in desired:
+                    nav.add_class("-narrow")
+                else:
+                    nav.remove_class("-narrow")
+                self.screen.refresh(layout=True)
+            except Exception:
+                pass
+
+        def _render_page_context(self) -> None:
+            if not self._projection_live:
+                return
+            try:
+                text = self.PAGE_CONTEXT.get(self.current_page, self.current_page.title())
+                compact_hint = " · keys stay active · ? help" if self.screen.has_class("compact") else " · Ctrl+P commands · ? help"
+                self.query_one("#page-context", Static).update(text + compact_hint)
+            except NoMatches:
+                self._detach_projection()
+
+        def _render_dashboard_summary(self) -> None:
+            runs = self._rows(self.snapshot_data.get("runs"))
+            active = sum(1 for row in runs if _status(row) in {"running", "queued", "starting", "pending"})
+            attention = sum(1 for row in runs if _status(row) in {"failed", "error", "blocked", "cancelled"})
+            validation = self.snapshot_data.get("validation") if isinstance(self.snapshot_data.get("validation"), Mapping) else {}
+            validation_state = _text(validation.get("state") or ("active" if validation.get("active") else "idle"))
+            workers = self._rows(self.snapshot_data.get("workers"))
+            worker_attention = sum(1 for row in workers if _status(row) in {"failed", "error", "blocked", "stale", "disconnected"})
+            worker_text = f"{len(workers)}" + (f" / {worker_attention} attention" if worker_attention else "")
+            try:
+                self.query_one("#dashboard-summary", Static).update(
+                    f"Runs {len(runs)} · Active {active} · Attention {attention} · Validation {validation_state} · Workers {worker_text}"
+                )
+            except NoMatches:
+                self._detach_projection()
+
+        def _apply_contextual_action_visibility(self) -> None:
+            if not self._projection_live:
+                return
+            visible = set(self.ACTIONS_BY_PAGE.get(self.current_page, ()))
+            try:
+                bar = self.query_one("#action-bar", HorizontalScroll)
+                all_actions = (
+                    "cancel", "retry", "rerun", "resume", "worker-recover",
+                    "validation-pause", "validation-stop", "overlay-apply", "rollback", "recover",
+                )
+                for action in all_actions:
+                    self.query_one(f"#action-{action}", Button).display = action in visible
+                if visible:
+                    bar.remove_class("-empty")
+                else:
+                    bar.add_class("-empty")
+            except NoMatches:
+                self._detach_projection()
 
         def _configure_tables(self) -> None:
             specs = {
@@ -936,8 +1372,10 @@ def create_textual_control_center_app(
                 self._render_snapshot()
                 if not self._projection_live:
                     return
+                ipc = self.snapshot_data.get("ipc") if isinstance(self.snapshot_data.get("ipc"), Mapping) else {}
+                ipc_state = "IPC connected" if ipc.get("ok") else "IPC degraded"
                 self.query_one("#status-line", Static).update(
-                    f"Live · page={self.current_page} · run={self.selected_run or '-'} · node={self.selected_node or '-'} · owns_truth=false"
+                    f"LIVE · {ipc_state} · run {self.selected_run or '-'} · node {self.selected_node or '-'} · renderer only"
                 )
             except NoMatches:
                 self._detach_projection()
@@ -978,6 +1416,7 @@ def create_textual_control_center_app(
             run_keys = [_run_id(item) or f"run-{i}" for i, item in enumerate(runs)]
             self._replace_table("dashboard-runs", run_rows[:25], run_keys[:25])
             self._replace_table("run-table", run_rows, run_keys)
+            self._render_dashboard_summary()
             self._render_node_tree()
 
             diagnostics = self._rows(self.snapshot_data.get("diagnostics"))
@@ -1182,7 +1621,7 @@ def create_textual_control_center_app(
             parts = [f"{key}: {row.get(key)}" for key in important if row.get(key) not in (None, "", [], {})]
             if not parts:
                 parts = [json.dumps(_safe(row), ensure_ascii=False, sort_keys=True, default=str)[:1200]]
-            return " · ".join(parts)
+            return "\n".join(parts)
 
         @staticmethod
         def _diagnostic_text(row: Mapping[str, Any]) -> str:
@@ -1263,7 +1702,10 @@ def create_textual_control_center_app(
                     nav.index = CONTROL_CENTER_PAGES.index(target)
                 except Exception:
                     pass
-                self.query_one("#status-line", Static).update(f"Page: {target}")
+                self.query_one("#status-line", Static).update(f"Page · {target}")
+                self._render_page_context()
+                self._apply_contextual_action_visibility()
+                self._update_action_state()
             except NoMatches:
                 self._detach_projection()
                 return
@@ -1363,8 +1805,29 @@ def create_textual_control_center_app(
             )
 
         def _dispatch_overlay_apply(self, artifact: str) -> None:
+            if use_inline_overlay_apply:
+                try:
+                    apply_source = make_apply_source(artifact)
+                except Exception as exc:
+                    self.notify(f"Could not prepare artifact workspace: {exc}", severity="error")
+                    return
+                self.push_screen(
+                    ApplyWorkspaceScreen(apply_source),
+                    lambda rc: self._after_inline_overlay_apply(apply_source, rc),
+                )
+                return
             ok, message = self.dispatcher.dispatch("overlay.apply", payload={"artifact": artifact})
             self.notify(message, severity="information" if ok else "error")
+            self.refresh_from_provider()
+
+        def _after_inline_overlay_apply(self, apply_source: Any, returncode: int | None) -> None:
+            rc = int(returncode) if isinstance(returncode, int) else apply_source.returncode
+            if rc == 0:
+                self.notify("Artifact apply completed successfully.", severity="information")
+            elif rc == 130:
+                self.notify("Artifact apply cancelled; canonical recovery state is preserved.", severity="warning")
+            elif rc is not None:
+                self.notify(f"Artifact apply failed with exit {rc}. Open Runs or Diagnostics for evidence.", severity="error")
             self.refresh_from_provider()
 
         def _request_worker_recovery(self) -> None:
@@ -1456,6 +1919,11 @@ def create_textual_control_center_app(
             if collection:
                 self.selected_items[collection] = key
                 self._render_details()
+                # Selection is part of action authority: overlay/worker/
+                # transaction controls derive enabled-state from the selected
+                # canonical row. Recompute immediately rather than waiting for
+                # the next provider refresh tick.
+                self._update_action_state()
 
         def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
             if not self._projection_live:
@@ -1468,14 +1936,8 @@ def create_textual_control_center_app(
                     self._render_details()
 
         def on_resize(self, event: events.Resize) -> None:
-            try:
-                nav = self.query_one("#navigation", ListView)
-                if int(event.size.width) < 72:
-                    nav.add_class("-narrow")
-                else:
-                    nav.remove_class("-narrow")
-            except Exception:
-                pass
+            self._apply_responsive_geometry(event.size.width, event.size.height)
+            self._render_page_context()
 
     return DevtoolTextualControlCenter()
 

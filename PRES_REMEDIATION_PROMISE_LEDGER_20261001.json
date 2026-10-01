@@ -2,7 +2,7 @@
   "schema_version": 1,
   "campaign": "PRES/Textual",
   "amendment": "2026-10-01-runtime-remediation",
-  "active_denominator": 76,
+  "active_denominator": 77,
   "historical_labels_immutable": true,
   "reopened_history": [
     {
@@ -72,7 +72,7 @@
   "remediation": [
     {
       "id": "PRES-R01",
-      "position": "61/76",
+      "position": "61/77",
       "status": "qualified_native_runtime_closed_by_pres_r03",
       "promises": [
         "progress trackers are semantic/event producers and never instantiate rich.live.Live",
@@ -94,7 +94,7 @@
     },
     {
       "id": "PRES-R02",
-      "position": "62/76",
+      "position": "62/77",
       "status": "qualified_native",
       "promises": [
         "replace the single-Static control-center prototype with concrete Textual pages/widgets",
@@ -117,7 +117,7 @@
     },
     {
       "id": "PRES-R03",
-      "position": "63/76",
+      "position": "63/77",
       "status": "qualified_native",
       "promises": [
         "unify shortcut/action authority and collision detection",
@@ -140,7 +140,7 @@
     },
     {
       "id": "PRES-G2R",
-      "position": "64/76",
+      "position": "64/77",
       "status": "qualified_native",
       "promises": [
         "audit all R01..R03 work and reopened X04..X08/G1/G2 claims",
@@ -148,7 +148,7 @@
         "prove normal execution and control-center Textual runtime boundaries in fresh processes",
         "leave PRES-G3 as the later final cross-surface seal"
       ],
-      "next": "DIST-G3 66/76 (active candidate; DIST-R01 65/76 already qualified/applied)",
+      "next": "PRES-UX01 68/77 (DIST-G3 66/77 and TEST-G3 67/77 qualified/applied)",
       "audit_window": [
         "PRES-X04",
         "PRES-X05",
@@ -170,29 +170,50 @@
         "tests": "302 passed, 0 failed, 0 skipped",
         "diagnostics": "0 warnings, 0 errors",
         "git_commit": "3ffbf98"
-      }
+      },
+      "historical_next_at_qualification": "DIST-G3 66/76 (DIST-R01 65/76 already qualified/applied)"
+    },
+    {
+      "id": "PRES-UX01",
+      "position": "68/77",
+      "status": "candidate_pending_native_qualification_v5",
+      "promises": [
+        "Give normal execution and artifact application a shared responsive Textual workspace hierarchy instead of unrelated one-off layouts.",
+        "Make artifact apply launched from the control center visible inline by reusing the canonical H02 managed-child source rather than spawning a detached invisible apply process.",
+        "Replace the permanently crowded global action strip with page-contextual actions and preserve keyboard discoverability.",
+        "Keep the TUI usable on compact Termux terminals through shared width and height breakpoints, including keyboard-constrained mobile viewports, while preserving state and cancellation access.",
+        "Preserve RUN/EXO/LIFE/validation/transaction truth ownership; stage rails, counters, summaries, parsed pytest child progress, and status labels remain renderer-only projections.",
+        "Require targeted native Textual App.run_test/Pilot validation for all modified concrete surfaces before the artifact may qualify.",
+        "Collapse the six-row artifact review after execution begins, bound long artifact/path/test text, and let the live log flex into all remaining vertical space without overlapping or stale resize geometry.",
+        "Do not pin artifact apply at a deceptive 0% while validation is active: show canonical progress when known, explicit pytest validation-child progress when observed, otherwise render progress as indeterminate.",
+        "Keep raw validator output recoverable while defaulting the primary log to an activity view that suppresses repetitive pytest dots/separators/heartbeat spam; provide a raw/activity toggle without discarding captured lines.",
+        "Exercise realistic phone/tmux/keyboard terminal sizes in the mandatory native Textual matrix, including 48x14, 52x20, and a wider recovery size, and prove log geometry remains non-overlapping after live resize."
+      ],
+      "next": "EXEC-G3 69/77",
+      "delivered_ledger": "PRES_UX01_PROMISE_LEDGER.json",
+      "gate_window": "1/1 implementation remediation; targeted native Textual qualification owned by the overlay",
+      "note": "v3 failed/rolled back on unsupported Textual CSS. v4 removed that CSS but native run 2f219c2e83ce4da3a1170c8c75ed3b5c exposed real interaction regressions: H02 phase overwrite, contextual run-action disappearance, stale selected-row enabled-state, and a 2-row short action bar clipping 3-row Textual buttons. v5 fixes those at the same 68/77 boundary and passes all six mandatory real-App/Pilot tests locally under Textual 8.2.8; native Termux remains authoritative."
     }
   ],
   "known_non_pres_insertions": [
     {
       "id": "DIST-R01",
-      "position": "65/76",
+      "position": "65/77",
       "status": "qualified_applied",
       "reason": "User confirmed DIST-R01 passed and is applied; retained only for immutable full-plan arithmetic and ordering."
     }
   ],
   "remaining_tail": [
-    "66/76 DIST-G3",
-    "67/76 TEST-G3",
-    "68/76 EXEC-G3",
-    "69/76 PRES-G3",
-    "70/76 RMP-X01",
-    "71/76 RMP-X02",
-    "72/76 RMP-G1",
-    "73/76 RMP-X03",
-    "74/76 RMP-G2",
-    "75/76 RMP-X04",
-    "76/76 RMP-G3 / GRAND DEVTOOL"
+    "68/77 PRES-UX01",
+    "69/77 EXEC-G3",
+    "70/77 PRES-G3",
+    "71/77 RMP-X01",
+    "72/77 RMP-X02",
+    "73/77 RMP-G1",
+    "74/77 RMP-X03",
+    "75/77 RMP-G2",
+    "76/77 RMP-X04",
+    "77/77 RMP-G3 / GRAND DEVTOOL"
   ],
   "campaign_hotfixes": [
     {
@@ -228,5 +249,25 @@
       ],
       "note": "PRES-H02 v3 passed native Termux qualification and is applied; artifact apply now has a legal parent/main-thread Textual host."
     }
-  ]
+  ],
+  "qualified_downstream_seals": [
+    {
+      "id": "DIST-G3",
+      "position": "66/77",
+      "status": "qualified_applied",
+      "run": "3f724127f02d4e538d7f526b2e76a950",
+      "tests": "423 passed, 0 failed, 0 skipped",
+      "git_commit": "572b94d"
+    },
+    {
+      "id": "TEST-G3",
+      "position": "67/77",
+      "status": "qualified_applied",
+      "run": "2ba456d3f6024b3eaa65885646eefbbf",
+      "tests": "246 passed, 0 failed, 4 skipped",
+      "git_commit": "4269091"
+    }
+  ],
+  "current_active": "PRES-UX01 68/77",
+  "next_major_scope_after_active": "EXEC finalization (EXEC-G3 69/77)"
 }

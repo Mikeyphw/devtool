@@ -368,6 +368,12 @@ description = "Run the PRES-G2R concrete Textual runtime requalification gate"
 workflow = "roadmap-pres-g2r"
 target = "devtool"
 
+# PRES-UX01 post-G2R Textual workspace and artifact-apply UX convergence.
+[wrapper.commands.pres-ux01]
+description = "Run PRES-UX01 mobile-responsive Textual workspace, semantic apply-progress, and inline-apply qualification"
+workflow = "roadmap-pres-ux01"
+target = "devtool"
+
 # LIFE-X01 immediate lifecycle safety boundary.
 [wrapper.commands.life-x01]
 description = "Run the LIFE-X01 immediate lifecycle safety workflow"
@@ -1156,6 +1162,13 @@ roadmap-pres-g2r = [
   { id = "historical-window", ref = "test:roadmap-pres-g2r-historical-window", depends_on = ["audit-contracts"] },
   { id = "remediation-window", ref = "test:roadmap-pres-g2r-remediation-window", depends_on = ["historical-window"] },
   { id = "real-textual-fixed-point", ref = "test:roadmap-pres-g2r-real-textual-fixed-point", depends_on = ["remediation-window"] },
+]
+
+roadmap-pres-ux01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "workspace-contracts", ref = "test:roadmap-pres-ux01-workspace-contracts", depends_on = ["syntax"] },
+  { id = "pres-regression", ref = "test:roadmap-pres-ux01-pres-regression", depends_on = ["workspace-contracts"] },
+  { id = "real-textual-workspaces", ref = "test:roadmap-pres-ux01-real-textual-workspaces", depends_on = ["pres-regression"] },
 ]
 
 roadmap-life-x01 = [
@@ -4244,6 +4257,50 @@ command = [
   "tests/test_pres_r02_textual_control_center_app.py",
   "tests/test_pres_r03_textual_parity_qualification.py",
   "-k", "real_textual_execution_app_updates_and_confirms_cancel or real_apply_host_app_runs_on_textual_main_thread_when_required or real_textual_control_center_pages_selection_confirmation_and_live_refresh or real_textual_r03_navigation_help_palette_failure_live_resize_and_shutdown",
+]
+
+# PRES-UX01 responsive Textual workspace and artifact-apply UX convergence.
+[[test]]
+id = "roadmap-pres-ux01-workspace-contracts"
+name = "PRES-UX01 responsive workspace mobile geometry semantic-progress contracts"
+runner = "pytest"
+timeout_seconds = 300
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_ux01_textual_workspace_revamp.py",
+  "-k", "not real_textual",
+]
+
+[[test]]
+id = "roadmap-pres-ux01-pres-regression"
+name = "PRES-UX01 retained execution control-center and artifact-host fixed point"
+runner = "pytest"
+timeout_seconds = 900
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r01_execution_presentation.py",
+  "tests/test_pres_h02_textual_apply_host.py",
+  "tests/test_pres_r02_textual_control_center_app.py",
+  "tests/test_pres_r03_textual_parity_qualification.py",
+  "tests/test_pres_g2_interaction_reliability_remediation.py",
+  "tests/test_pres_ux01_textual_workspace_revamp.py",
+  "-k", "not real_textual_execution_app_updates_and_confirms_cancel and not real_apply_host_app_runs_on_textual_main_thread_when_required and not real_textual_control_center_pages_selection_confirmation_and_live_refresh and not real_textual_r03_navigation_help_palette_failure_live_resize_and_shutdown and not real_textual_revamp_contextual_actions_compact_layout_and_inline_apply and not real_textual_apply_workspace_mobile_geometry_reflows_and_surfaces_validation_child_progress",
+]
+
+[[test]]
+id = "roadmap-pres-ux01-real-textual-workspaces"
+name = "PRES-UX01 mandatory native Textual execution/apply/control-center mobile resize matrix"
+runner = "command"
+timeout_seconds = 1200
+env = { DEVTOOL_PRES_R01_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_R02_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_R03_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_H02_REQUIRE_TEXTUAL = "1", DEVTOOL_PRES_UX01_REQUIRE_TEXTUAL = "1" }
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_pres_r01_execution_presentation.py",
+  "tests/test_pres_h02_textual_apply_host.py",
+  "tests/test_pres_r02_textual_control_center_app.py",
+  "tests/test_pres_r03_textual_parity_qualification.py",
+  "tests/test_pres_ux01_textual_workspace_revamp.py",
+  "-k", "real_textual_execution_app_updates_and_confirms_cancel or real_apply_host_app_runs_on_textual_main_thread_when_required or real_textual_control_center_pages_selection_confirmation_and_live_refresh or real_textual_r03_navigation_help_palette_failure_live_resize_and_shutdown or real_textual_revamp_contextual_actions_compact_layout_and_inline_apply or real_textual_apply_workspace_mobile_geometry_reflows_and_surfaces_validation_child_progress",
 ]
 
 # PRES-R02 concrete control-center application remediation.

@@ -377,20 +377,23 @@ def test_pres_r01_campaign_refresh_and_reopened_ledger_are_consistent() -> None:
     ledger = json.loads((ROOT / "PRES_REMEDIATION_PROMISE_LEDGER_20261001.json").read_text(encoding="utf-8"))
     report = (ROOT / "PRES_R01_EXECUTION_PRESENTATION_OWNERSHIP_REPORT.md").read_text(encoding="utf-8")
 
-    assert ledger["active_denominator"] == 76
+    assert ledger["active_denominator"] == 77
     assert ledger["historical_labels_immutable"] is True
     rows = {row["id"]: row for row in ledger["remediation"]}
-    assert rows["PRES-R01"]["position"] == "61/76"
-    assert rows["PRES-R02"]["position"] == "62/76"
-    assert rows["PRES-R03"]["position"] == "63/76"
-    assert rows["PRES-G2R"]["position"] == "64/76"
-    assert rows["PRES-G2R"]["status"] == "candidate_pending_native_qualification"
-    assert "65/76 DIST-R01" in plan
-    assert "66/76 DIST-G3" in plan
-    assert "67/76 TEST-G3" in plan
-    assert "68/76 EXEC-G3" in plan
-    assert "69/76 PRES-G3" in plan
-    assert "76/76 RMP-G3 / GRAND DEVTOOL" in plan
+    assert rows["PRES-R01"]["position"] == "61/77"
+    assert rows["PRES-R02"]["position"] == "62/77"
+    assert rows["PRES-R03"]["position"] == "63/77"
+    assert rows["PRES-G2R"]["position"] == "64/77"
+    assert rows["PRES-G2R"]["status"] == "qualified_native"
+    assert rows["PRES-UX01"]["position"] == "68/77"
+    assert rows["PRES-UX01"]["status"].startswith("candidate_pending_native_qualification")
+    assert "65/77 DIST-R01" in plan
+    assert "66/77 DIST-G3" in plan
+    assert "67/77 TEST-G3" in plan
+    assert "68/77 PRES-UX01" in plan
+    assert "69/77 EXEC-G3" in plan
+    assert "70/77 PRES-G3" in plan
+    assert "77/77 RMP-G3 / GRAND DEVTOOL" in plan
     assert "gate-window overlay 1 of 4; implementation 1 of 3; full-plan 61/76" in report
 
     reopened = {row["overlay"] for row in ledger["reopened_history"]}
@@ -408,6 +411,9 @@ def test_pres_r01_campaign_refresh_and_reopened_ledger_are_consistent() -> None:
     assert "The next three PRES remediation items are intentionally **not merged**" in plan
     assert "1. **PRES-R01**" in plan
     assert "2. **PRES-R02**" in plan
+    assert "PRES-UX01 → EXEC-G3 → PRES-G3 are not merged" in plan
+    assert ledger["current_active"] == "PRES-UX01 68/77"
+    assert ledger["next_major_scope_after_active"] == "EXEC finalization (EXEC-G3 69/77)"
     assert "3. **PRES-R03**" in plan
 
 

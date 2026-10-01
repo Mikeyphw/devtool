@@ -13,8 +13,10 @@ position.
 
 The newly reopened PRES runtime work adds three implementation overlays and one
 separate requalification gate. A previously discovered DIST-P100 gap also adds the
-separate `DIST-R01` remediation before DIST-G3. The active plan therefore has
-**76 positions**.
+separate `DIST-R01` remediation before DIST-G3. The active plan therefore had **76 positions** before the later PRES-UX01 insertion.
+
+After TEST-G3 qualified, the previously prepared PRES-UX01 mobile Textual workspace revamp was rebased onto the current repository and inserted as a real implementation boundary before EXEC-G3. That adds one position without rewriting already-applied historical evidence, so the active plan now has
+**77 positions**.
 
 ## Refreshed active tail
 
@@ -22,22 +24,23 @@ Positions through qualified LIFE-G3 remain immutable historical evidence through
 `60/70`. New active reporting starts here:
 
 ```text
-61/76 PRES-R01   normal execution presentation ownership
-62/76 PRES-R02   concrete Textual control-center application + live truth/actions
-63/76 PRES-R03   shortcut/CLI parity + normal execution main-thread host + broad real-app qualification
-64/76 PRES-G2R   reopened concrete-runtime requalification gate
-65/76 DIST-R01   known DIST-P100 candidate-runtime self-refresh remediation
-66/76 DIST-G3    final distributed-execution seal
-67/76 TEST-G3    final test-system seal
-68/76 EXEC-G3    final execution/reuse/validation seal
-69/76 PRES-G3    final cross-surface presentation seal
-70/76 RMP-X01
-71/76 RMP-X02
-72/76 RMP-G1
-73/76 RMP-X03
-74/76 RMP-G2
-75/76 RMP-X04
-76/76 RMP-G3 / GRAND DEVTOOL
+61/77 PRES-R01   normal execution presentation ownership
+62/77 PRES-R02   concrete Textual control-center application + live truth/actions
+63/77 PRES-R03   shortcut/CLI parity + normal execution main-thread host + broad real-app qualification
+64/77 PRES-G2R   reopened concrete-runtime requalification gate
+65/77 DIST-R01   known DIST-P100 candidate-runtime self-refresh remediation
+66/77 DIST-G3    final distributed-execution seal
+67/77 TEST-G3    final test-system seal
+68/77 PRES-UX01  mobile-responsive Textual workspace + inline artifact-apply UX convergence
+69/77 EXEC-G3    final execution/reuse/validation seal
+70/77 PRES-G3    final cross-surface presentation seal
+71/77 RMP-X01
+72/77 RMP-X02
+73/77 RMP-G1
+74/77 RMP-X03
+75/77 RMP-G2
+76/77 RMP-X04
+77/77 RMP-G3 / GRAND DEVTOOL
 ```
 
 `DIST-R01` is recorded here only for full-plan arithmetic and ordering. It remains
@@ -69,3 +72,19 @@ later final seal after DIST, TEST, and EXEC are finally qualified.
 - PRES-G2R qualified/applied on native Termux: run `c96acfc4493f40fc818f7086e6a68611`, **302 passed, 0 failed, 0 skipped**, zero diagnostics, commit `3ffbf98`. DIST-R01 65/76 was already complete, so the active item is now **DIST-G3 66/76**.
 
 - DIST-G3 qualified/applied on native Termux: run `3f724127f02d4e538d7f526b2e76a950`, **423 passed, 0 failed, 0 skipped**, zero diagnostics, commit `572b94d`. DIST finalization is closed; the active item is now **TEST-G3 67/76**.
+
+
+## 2026-10-01 post-TEST-G3 PRES-UX01 insertion
+
+- TEST-G3 qualified/applied on native Termux: run `2ba456d3f6024b3eaa65885646eefbbf`, **246 passed, 0 failed, 4 skipped**, zero diagnostics, commit `4269091`.
+- The previously prepared `pres_ux01_textual_workspace_revamp_v2.zip` was based on PRES-G2R commit `3ffbf98`. It was **not applied**: pre-apply source qualification run `65f1321911fc48afabdafb73575ac944` failed only because `.devtool.toml` had legitimately advanced through DIST-G3 and TEST-G3. The three touched Textual runtime sources still matched their declared source hashes exactly.
+- PRES-UX01 is therefore inserted now as **68/77**, rebased onto the exact post-TEST-G3 tree. It remains a one-overlay presentation remediation with targeted native Textual validation.
+- Next-three merge-window decision after this insertion: **PRES-UX01 → EXEC-G3 → PRES-G3 are not merged**. PRES-UX01 is concrete presentation implementation; EXEC-G3 and PRES-G3 are separate authoritative seals over different ownership boundaries.
+- On successful PRES-UX01 qualification, next is **EXEC-G3 69/77**. After EXEC-G3, **PRES-G3 70/77** remains the cross-surface presentation seal; the RMP tail then occupies **71/77..77/77**.
+### PRES-UX01 revision-5 native interaction correction
+
+- Native run `133a137ff8bd49ddb37d5dfb0b21cd47` applied PRES-UX01 revision 3 transactionally, then failed required validation because Textual 8.2.8 rejected `border-radius: 0` in the new workspace stylesheet. The transaction rolled back, so campaign source state returned to the post-TEST-G3 base.
+- Revision 4 removed the unsupported CSS and reached the real-App matrix in native run `2f219c2e83ce4da3a1170c8c75ed3b5c`, where 3 concrete interaction proofs failed and the transaction rolled back cleanly. The failures were reproduced under Textual 8.2.8 locally: H02 overwrote its last semantic phase on completion; Diagnostics hid selected-run controls; selected overlay rows did not immediately refresh action enabled-state; and the 2-row short action strip clipped Textual's 3-row buttons.
+- This remains remediation inside **PRES-UX01 68/77**, not a new roadmap position. Revision 5 preserves semantic phase context, keeps run controls on run-inspection pages, refreshes selection-derived action state immediately, and restores a full 3-row clickable short action strip. The six mandatory real Textual App/Pilot tests pass locally under Textual 8.2.8; native Termux remains authoritative.
+- On successful revision-5 qualification the next item remains **EXEC-G3 69/77**, followed by **PRES-G3 70/77** and RMP **71/77..77/77**.
+
