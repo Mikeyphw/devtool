@@ -1,0 +1,28 @@
+{
+  "closure_rule": "DIST-G3 may close DIST-P100 only as REMEDIATED_AFTER_HISTORICAL_DEVIATION after DIST-R01 has committed through its two-phase candidate-install/promotion-rebind lifecycle; it must retain the historical deviation record and must not rewrite history as originally satisfied.",
+  "exported_upstream_issues": [
+    "DEVTOOL-OVERLAY-CHECK-SHA256-FILE-NAMEERROR"
+  ],
+  "historical_evidence": "DIST_R01_HISTORICAL_ARTIFACT_AUDIT.json",
+  "historical_status": "VIOLATED_BY_PRESERVED_DIST_X01_X02_ARTIFACTS",
+  "kind": "dist-r01-promise-remediation-ledger",
+  "next_gate": "DIST-G3",
+  "original_promise": "Every DIST implementation overlay retains the before-commit editable-install refresh hook so subsequent overlays and gates exercise the transaction candidate Devtool rather than a stale installed CLI.",
+  "promise_id": "DIST-P100",
+  "remediation_contract": {
+    "artifact_validation": "required native-Termux Devtool workflow before finalize/commit",
+    "candidate_binding_proof": "importlib.metadata direct_url.json must be editable and resolve exactly to the validation checkout root; under canonical apply-overlay that checkout is DEVTOOL_TRANSACTION_REPO_ROOT, while child tests need not receive the control environment variable",
+    "candidate_install": "python -m pip --disable-pip-version-check install --no-index --no-build-isolation --no-deps -e .",
+    "candidate_runtime_environment": "DEVTOOL_TRANSACTION_REPO_ROOT",
+    "editable_install": "python -m pip install --no-build-isolation --no-deps -e \"$ROOT\"",
+    "fallback_root": "$HOME/Code/devtool",
+    "finalize_phase": "before_commit",
+    "metadata_restoration": "devtool.egg-info is snapshotted/restored so the hook does not create undeclared repository writes",
+    "network_policy": "candidate install passes --no-index/--no-deps/--no-build-isolation and disables pip version checks; promotion rebind uses local editable source with --no-deps/--no-build-isolation under PIP_NO_INDEX=1 and PIP_DISABLE_PIP_VERSION_CHECK=1",
+    "primary_root_environment": "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
+    "promotion_rebind": "before_commit hook resolves DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT and re-points editable Devtool there before transaction integration/cleanup"
+  },
+  "remediation_status": "CURRENT_CAMPAIGN_TWO_PHASE_INVARIANT_RESTORED",
+  "roadmap_id": "DIST-R01",
+  "schema_version": 1
+}

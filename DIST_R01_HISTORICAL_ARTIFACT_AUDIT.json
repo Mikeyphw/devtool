@@ -1,0 +1,28 @@
+{
+  "historical_deviation_confirmed": true,
+  "kind": "dist-r01-historical-artifact-audit",
+  "promise": "DIST-P100",
+  "rows": [
+    {
+      "artifact_name": "dist_x01_delegation_external_ingest_integrity_v1.zip",
+      "artifact_sha256": "02e1575119189258844be7a78ad9f9a1e9271003ca059c0f82b0ff325294104e",
+      "before_commit_present": false,
+      "finalize_present": false,
+      "finding": "DIST-P100 historical lifecycle promise missing from preserved artifact",
+      "manifest_sha256": "e05d34c2f5fd5efcddb9d3cd0ce65e7c7df7b68efd43109f86995c6422a5a05e",
+      "required_validation": true,
+      "roadmap_id": "DIST-X01"
+    },
+    {
+      "artifact_name": "dist_x02_async_transport_cursor_recovery_v1.zip",
+      "artifact_sha256": "3e84ca0fca044f4631d6506196c2daaf5c08e177819e022375e765cec2e873aa",
+      "before_commit_present": false,
+      "finalize_present": false,
+      "finding": "DIST-P100 historical lifecycle promise missing from preserved artifact",
+      "manifest_sha256": "1e75c5aaed024e0044780bb6c6b13c9e128fca9b8de2ad09b35245b6e045b911",
+      "required_validation": true,
+      "roadmap_id": "DIST-X02"
+    }
+  ],
+  "schema_version": 1
+}

@@ -214,6 +214,13 @@ workflow = "roadmap-dist-g2"
 target = "devtool"
 
 # PRES-X01 presentation projection foundation.
+
+# DIST-R01 pre-G3 candidate-runtime/self-refresh remediation.
+[wrapper.commands.dist-r01]
+description = "Run DIST-R01 candidate-runtime self-refresh remediation qualification"
+workflow = "roadmap-dist-r01"
+target = "devtool"
+
 [wrapper.commands.pres-x01]
 description = "Run the PRES-X01 presentation projection workflow"
 workflow = "roadmap-pres-x01"
@@ -684,6 +691,13 @@ command = ["python", "-m", "devtool.ssh_roadmap_fixtures", "gate-install-final",
 inputs = ["pyproject.toml", "devtool/ssh_roadmap_fixtures.py"]
 metadata = { read_only = false, roadmap_id = "SSH-03", transaction_root_aware = true }
 
+# DIST-R01 explicit transaction-candidate editable runtime qualification.
+[targets.devtool.jobs.dist-r01-candidate-editable-install]
+runner = "command"
+command = ["python", "-m", "pip", "--disable-pip-version-check", "install", "--no-index", "--no-build-isolation", "--no-deps", "-e", "."]
+inputs = ["pyproject.toml", "devtool/**"]
+metadata = { read_only = false, roadmap_id = "DIST-R01", transaction_root_aware = true, purpose = "candidate-runtime-binding" }
+
 [targets.devtool.workflows]
 roadmap-env-x01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -906,6 +920,17 @@ roadmap-dist-x04 = [
   { id = "operational-adoption", ref = "test:roadmap-dist-x04-operational-adoption", depends_on = ["syntax"] },
   { id = "retained-distribution", ref = "test:roadmap-dist-x04-retained-distribution", depends_on = ["operational-adoption"] },
   { id = "provider-dogfood", ref = "test:roadmap-dist-x04-provider-dogfood", depends_on = ["retained-distribution"] },
+]
+
+
+roadmap-dist-r01 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "candidate-install", ref = "job:dist-r01-candidate-editable-install", depends_on = ["syntax"] },
+  { id = "candidate-binding", ref = "test:roadmap-dist-r01-candidate-binding", depends_on = ["candidate-install"] },
+  { id = "remediation-contract", ref = "test:roadmap-dist-r01-contract", depends_on = ["candidate-binding"] },
+  { id = "artifact-finalize", ref = "test:roadmap-dist-r01-artifact-finalize", depends_on = ["remediation-contract"] },
+  { id = "transaction-self-refresh", ref = "test:roadmap-dist-r01-transaction-self-refresh", depends_on = ["artifact-finalize"] },
+  { id = "exo-hook-convergence", ref = "test:roadmap-dist-r01-exo-hook-convergence", depends_on = ["transaction-self-refresh"] },
 ]
 
 roadmap-life-x04 = [
@@ -3669,6 +3694,43 @@ runner = "pytest"
 timeout_seconds = 900
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_ssh01_transport_environment_worker_preparation.py", "tests/test_ssh02_execution_history_recovery_convergence.py", "tests/test_ssh03_lifecycle_hardening_final_qualification.py", "tests/test_oci01_execution_provider_foundation.py", "tests/test_termux_chroot_runner.py", "tests/test_termux_runtime_proot.py"]
 
+
+
+# DIST-R01 pre-G3 candidate-runtime/self-refresh remediation.
+[[test]]
+id = "roadmap-dist-r01-candidate-binding"
+name = "DIST-R01 transaction-candidate editable binding proof"
+runner = "pytest"
+timeout_seconds = 300
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_dist_r01_candidate_runtime_self_refresh.py", "-k", "candidate_editable_binding_points_at_transaction_root"]
+
+[[test]]
+id = "roadmap-dist-r01-contract"
+name = "DIST-R01 historical deviation and remediation contract"
+runner = "pytest"
+timeout_seconds = 300
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_dist_r01_candidate_runtime_self_refresh.py"]
+
+[[test]]
+id = "roadmap-dist-r01-artifact-finalize"
+name = "DIST-R01 retained artifact finalization semantics"
+runner = "pytest"
+timeout_seconds = 420
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_artifact_finalize.py"]
+
+[[test]]
+id = "roadmap-dist-r01-transaction-self-refresh"
+name = "DIST-R01 transaction primary-root and self-refresh contract"
+runner = "pytest"
+timeout_seconds = 420
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_git_frx03_isolated_worktree_transactions.py", "-k", "self_refresh_root or transaction_execution_root"]
+
+[[test]]
+id = "roadmap-dist-r01-exo-hook-convergence"
+name = "DIST-R01 EXO lifecycle hook convergence"
+runner = "pytest"
+timeout_seconds = 420
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_exo_lifecycle_hook_convergence.py"]
 
 # LIFE-X04 final lifecycle convergence/adoption.
 [[test]]

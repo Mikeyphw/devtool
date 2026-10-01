@@ -1,0 +1,14 @@
+{
+  "dist_g3_blocking": false,
+  "issue_id": "DEVTOOL-OVERLAY-CHECK-SHA256-FILE-NAMEERROR",
+  "kind": "dist-r01-exported-upstream-issue",
+  "next_owner_action": "Import/use the canonical sha256_file helper and add overlay-check add-existing regression coverage under the owning CORE/ARTIFACT campaign boundary.",
+  "owner": "CORE/ARTIFACT",
+  "qualification_note": "Canonical apply-overlay qualification remains functional; DIST-R01 disposable apply, before_commit finalize and commit succeeded. Fix belongs to artifact/overlay ownership, not DIST.",
+  "root_cause": "detect_inventory_conflicts calls sha256_file(target) for add-existing conflicts but the module imports artifact_inventory_entries and path_source_sha256, not sha256_file.",
+  "schema_version": 1,
+  "source_path": "devtool/overlay/conflicts.py",
+  "source_sha256": "77181389944685e65ec26b9c932be4ce21f5bf70a07a38330e1d28d3aa245b62",
+  "status": "EXPORTED_PENDING_OWNER",
+  "symptom": "devtool overlay check crashes with NameError: sha256_file is not defined when evaluating an existing add-path conflict"
+}
