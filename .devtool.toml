@@ -250,6 +250,12 @@ description = "Run the DIST-G2 authoritative distributed provider parity milesto
 workflow = "roadmap-dist-g2"
 target = "devtool"
 
+# EXEC-G3 final authoritative execution/reuse/validation seal.
+[wrapper.commands.exec-g3]
+description = "Run the EXEC-G3 final execution, reuse, and validation seal"
+workflow = "roadmap-exec-g3"
+target = "devtool"
+
 # PRES-X01 presentation projection foundation.
 
 # DIST-R01 pre-G3 candidate-runtime/self-refresh remediation.
@@ -884,6 +890,18 @@ roadmap-exec-x05 = [
   { id = "ingress-convergence", ref = "test:roadmap-exec-x05-gradle-ingress", depends_on = ["syntax"] },
   { id = "takeover-regression", ref = "test:roadmap-exec-x05-takeover-regression", depends_on = ["ingress-convergence"] },
   { id = "caller-regression", ref = "test:roadmap-exec-x05-caller-regression", depends_on = ["takeover-regression"] },
+]
+
+roadmap-exec-g3 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "gate-contracts", ref = "test:roadmap-exec-g3-gate-contracts", depends_on = ["syntax"] },
+  { id = "retained-foundation", ref = "test:roadmap-exec-g3-retained-foundation", depends_on = ["gate-contracts"] },
+  { id = "retained-validation", ref = "test:roadmap-exec-g3-retained-validation", depends_on = ["retained-foundation"] },
+  { id = "operational-adoption", ref = "test:roadmap-exec-g3-operational-adoption", depends_on = ["retained-validation"] },
+  { id = "lifecycle-closure", ref = "test:roadmap-exec-g3-lifecycle-closure", depends_on = ["operational-adoption"] },
+  { id = "interruption-continuation", ref = "test:roadmap-exec-g3-interruption-continuation", depends_on = ["lifecycle-closure"] },
+  { id = "generated-surfaces", ref = "test:roadmap-exec-g3-generated-surfaces", depends_on = ["interruption-continuation"] },
+  { id = "final-proof", ref = "test:roadmap-exec-g3-final-proof", depends_on = ["generated-surfaces"] },
 ]
 
 roadmap-gradle-takeover-g1 = [
@@ -2613,6 +2631,90 @@ name = "EXEC-X05 artifact bootstrap into canonical wrapper workflow"
 runner = "command"
 timeout_seconds = 600
 command = ["./devtoolw", "exec-x05"]
+
+# EXEC-G3 authoritative final execution/reuse/validation seal.
+[[test]]
+id = "roadmap-exec-g3-gate-contracts"
+name = "EXEC-G3 incident closure and final gate contracts"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_exec_g3_final_execution_seal.py"]
+
+[[test]]
+id = "roadmap-exec-g3-retained-foundation"
+name = "EXEC-G3 retained execution identity reuse and evidence fixed point"
+runner = "pytest"
+timeout_seconds = 1200
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x01_execution_validation_foundation.py",
+  "tests/test_exec_x02_reuse_qualification.py",
+  "tests/test_exec_g1_reuse_identity_gate.py",
+  "tests/test_exec_g1_reuse_evidence_gate.py",
+  "tests/test_exec_g1_artifact_workflow_refs.py",
+]
+
+[[test]]
+id = "roadmap-exec-g3-retained-validation"
+name = "EXEC-G3 retained one-graph validation convergence fixed point"
+runner = "pytest"
+timeout_seconds = 1200
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x03_validation_convergence.py",
+  "tests/test_exec_g2_validation_proof_gate.py",
+]
+
+[[test]]
+id = "roadmap-exec-g3-operational-adoption"
+name = "EXEC-G3 retained operational reuse and Gradle ingress fixed point"
+runner = "pytest"
+timeout_seconds = 1200
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exec_x04_operational_adoption.py",
+  "tests/test_exec_x04_post_consumer_convergence.py",
+  "tests/test_exec_x05_gradle_ingress.py",
+]
+
+[[test]]
+id = "roadmap-exec-g3-lifecycle-closure"
+name = "EXEC-G3 scheduler and EXO finalization closure fixed point"
+runner = "pytest"
+timeout_seconds = 1200
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_exo_p0_cli_run_finalization.py",
+  "tests/test_rem04_execution_scheduler.py",
+]
+
+[[test]]
+id = "roadmap-exec-g3-interruption-continuation"
+name = "EXEC-G3 same-run interrupted validation continuation proof"
+runner = "pytest"
+timeout_seconds = 900
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_validation_sessions.py", "-k", "interrupted or resume",
+]
+
+[[test]]
+id = "roadmap-exec-g3-generated-surfaces"
+name = "EXEC-G3 canonical generated surfaces and release-integrity fixed point"
+runner = "pytest"
+timeout_seconds = 900
+command = [
+  "python", "-m", "pytest", "-q", "--tb=short",
+  "tests/test_core_x04_generated_surfaces.py",
+  "tests/test_release_verifier_final_integrity.py",
+]
+
+[[test]]
+id = "roadmap-exec-g3-final-proof"
+name = "EXEC-G3 authoritative mixed provenance and final closure proof"
+runner = "command"
+timeout_seconds = 900
+command = ["python", "-m", "devtool.exec_g3_gate", "--repo-root", "."]
 
 # GRADLE-TAKEOVER-G1 audits the complete ENV-X05 + EXEC-X05 promise window,
 # exercises real shim/launcher process choreography, and re-runs normal release

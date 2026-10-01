@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
-
 import pytest
 
 from devtool import cli
@@ -36,6 +36,18 @@ def _workflow_repo(root: Path, *, first_exit: int = 0, nodes: int = 3) -> None:
     (root / ".devtool.toml").write_text(text, encoding="utf-8")
 
 
+def _nested_execution_environment() -> str:
+    """Keep generic nested CLI probes on their observed host substrate.
+
+    These tests exercise CLI execution/finalization semantics, not backend
+    routing. Artifact validation may intentionally sanitize Termux markers,
+    leaving Android as the observable host identity (``host-android``). Using
+    the public ``host`` selector lets Devtool resolve that observed substrate
+    without falsely forcing native-Termux preflight.
+    """
+    return "host"
+
+
 def _run_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, first_exit: int = 0, nodes: int = 3):
     repo = tmp_path / "repo"
     state = tmp_path / "state"
@@ -46,12 +58,46 @@ def _run_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, first_exit: int
     monkeypatch.setenv("DEVTOOL_NO_AUTO_HUD", "1")
     monkeypatch.delenv("DEVTOOL_NO_HUD", raising=False)
     monkeypatch.delenv("DEVTOOL_RUN_ID", raising=False)
-    rc = cli.main(["-r", str(repo), "--target", "demo", "build"])
+    # Nested CLI probes must not inherit the validator's routing identity.  In
+    # native Termux artifact validation that can be the legacy diagnostic token
+    # ``host-android``, which current execution-environment parsing correctly
+    # rejects.
+    monkeypatch.delenv("DEVTOOL_PROJECT_EXECUTION_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("DEVTOOL_EXECUTION_ENVIRONMENT", raising=False)
+    rc = cli.main([
+        "-r", str(repo),
+        "--target", "demo",
+        "--execution-environment", _nested_execution_environment(),
+        "build",
+    ])
     document = json.loads((state / "execution.json").read_text(encoding="utf-8"))
     run_id = document["run_id"]
     history = state / "history" / run_id / "execution.json"
     journal = [json.loads(line) for line in (state / "execution-events.jsonl").read_text(encoding="utf-8").splitlines()]
     return rc, document, history, journal
+
+
+def test_nested_cli_finalization_probe_uses_host_selector_not_backend_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEVTOOL_PROJECT_EXECUTION_ENVIRONMENT", "host-android")
+    monkeypatch.setenv("DEVTOOL_EXECUTION_ENVIRONMENT", "host-android")
+    assert _nested_execution_environment() == "host"
+
+
+def test_nested_cli_finalization_probe_survives_sanitized_android_host(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Reproduce native artifact-validation sanitization: Android remains the
+    # host OS, but Termux markers are absent, so the observed substrate is the
+    # diagnostic ``host-android`` identity. The generic nested workflow must
+    # still execute because it selects the public ``host`` backend.
+    import devtool.host_context as host_context
+
+    monkeypatch.setattr(host_context.platform, "system", lambda: "Android")
+    monkeypatch.delenv("TERMUX_VERSION", raising=False)
+    monkeypatch.delenv("PREFIX", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    rc, document, history, _journal = _run_cli(tmp_path, monkeypatch)
+    assert rc == 0
+    assert document["execution"]["status"] == "succeeded"
+    assert history.is_file()
 
 
 def test_generic_three_node_cli_workflow_seals_and_persists_terminal_success(tmp_path, monkeypatch):
@@ -100,7 +146,7 @@ def test_finalizer_rejects_nonterminal_nodes_and_active_processes(tmp_path):
     bus.publish(NodeDiscovered(run_id="unfinished", node_id="a", label="A"))
     bus.publish(NodeStarted(run_id="unfinished", node_id="a", label="A"))
     bus.publish(ProcessStarted(run_id="unfinished", node_id="a", process_id="p", pid=123, argv=("tool",), cwd="/repo"))
-    with pytest.raises(ExecutionLifecycleError, match="nonterminal node"):
+    with pytest.raises(ExecutionLifecycleError, match="active process"):
         finalize_execution_run("unfinished", status="succeeded", exit_code=0, bus=bus)
 
     bus.publish(ProcessExited(run_id="unfinished", node_id="a", process_id="p", exit_code=0))

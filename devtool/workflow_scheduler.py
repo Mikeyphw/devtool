@@ -824,6 +824,26 @@ def run_workflow_specs(
             metadata["workflow_node_state"] = "failed"
             metadata["workflow_worker_exception"] = type(exc).__name__
             message = f"Workflow worker failed: {type(exc).__name__}: {exc}"
+            # The full workflow plan was published before worker execution. If
+            # run_specs aborts before its TaskFinished event, explicitly close
+            # this scheduled node so CLI finalization never inherits a dangling
+            # RUNNING/PLANNED descendant.
+            from .core.events import NodeFinished, get_execution_store, publish_event
+            snapshot = get_execution_store().snapshot(workflow_run_id)
+            node = snapshot.node(key) if snapshot is not None else None
+            if node is not None and node.status not in {"succeeded", "failed", "blocked", "skipped", "cancelled"}:
+                publish_event(NodeFinished(
+                    run_id=workflow_run_id,
+                    node_id=key,
+                    parent_id=node.parent_id,
+                    status="failed",
+                    exit_code=1,
+                    failure_kind="workflow_worker_exception",
+                    source="workflow-scheduler",
+                    transition_origin="scheduler_inferred",
+                    transition_reason=message,
+                    metadata={"workflow_worker_exception": type(exc).__name__},
+                ))
             result = OperationResult(
                 name=f"workflow:{key}",
                 argv=[],

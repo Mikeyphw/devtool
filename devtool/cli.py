@@ -14351,7 +14351,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
                     )
                 raise
             if emit_build:
-                finalize_execution_run(
+                final_snapshot = finalize_execution_run(
                     event_run_id,
                     status="succeeded" if code == 0 else ("cancelled" if code == 130 else "failed"),
                     exit_code=code,
@@ -14360,6 +14360,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
                     seal_reason="CLI execution discovery complete",
                     publish=publish_event,
                 )
+                if code == 0 and final_snapshot is not None and final_snapshot.status != "succeeded":
+                    code = int(final_snapshot.exit_code or 1) or 1
             return code
         finally:
             sink = getattr(args, "_devtool_live_progress_sink", None)

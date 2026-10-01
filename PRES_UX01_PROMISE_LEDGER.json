@@ -5,7 +5,7 @@
   "title": "Mobile-responsive Textual workspace and inline artifact-apply UX convergence",
   "position": "68/77",
   "gate_window_position": "1/1 implementation remediation; native targeted validation owned by this overlay",
-  "status": "candidate_pending_native_qualification_runtime_interaction_v5",
+  "status": "qualified_native_applied",
   "supersedes": "pres_ux01_textual_workspace_revamp_v4.zip (applied transactionally, native validation failed, rolled back cleanly; real Textual interaction regressions reproduced locally under Textual 8.2.8)",
   "merge_window_decision": {
     "merged": true,
@@ -14,52 +14,52 @@
   "promises": [
     {
       "id": "PRES-UX01-P001",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Give normal execution and artifact application a shared responsive Textual workspace hierarchy instead of unrelated one-off layouts."
     },
     {
       "id": "PRES-UX01-P002",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Make artifact apply launched from the control center visible inline by reusing the canonical H02 managed-child source rather than spawning a detached invisible apply process."
     },
     {
       "id": "PRES-UX01-P003",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Replace the permanently crowded global action strip with page-contextual actions and preserve keyboard discoverability."
     },
     {
       "id": "PRES-UX01-P004",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Keep the TUI usable on compact Termux terminals through shared width and height breakpoints, including keyboard-constrained mobile viewports, while preserving state and cancellation access."
     },
     {
       "id": "PRES-UX01-P005",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Preserve RUN/EXO/LIFE/validation/transaction truth ownership; stage rails, counters, summaries, parsed pytest child progress, and status labels remain renderer-only projections."
     },
     {
       "id": "PRES-UX01-P006",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Require targeted native Textual App.run_test/Pilot validation for all modified concrete surfaces before the artifact may qualify."
     },
     {
       "id": "PRES-UX01-P007",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Collapse the six-row artifact review after execution begins, bound long artifact/path/test text, and let the live log flex into all remaining vertical space without overlapping or stale resize geometry."
     },
     {
       "id": "PRES-UX01-P008",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Do not pin artifact apply at a deceptive 0% while validation is active: show canonical progress when known, explicit pytest validation-child progress when observed, otherwise render progress as indeterminate."
     },
     {
       "id": "PRES-UX01-P009",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Keep raw validator output recoverable while defaulting the primary log to an activity view that suppresses repetitive pytest dots/separators/heartbeat spam; provide a raw/activity toggle without discarding captured lines."
     },
     {
       "id": "PRES-UX01-P010",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Exercise realistic phone/tmux/keyboard terminal sizes in the mandatory native Textual matrix, including 48x14, 52x20, and a wider recovery size, and prove log geometry remains non-overlapping after live resize."
     }
   ],
@@ -124,5 +124,13 @@
       "note": "Native Termux remains authoritative; supplied bundle reproduced the v4 failures and verified the v5 corrections locally."
     },
     "authority": "presentation/interaction-state only; no RUN/EXO/LIFE/validation/transaction authority changes"
-  }
+  },
+  "qualification": {
+    "run": "c2a81967b15d4c56a6044e3620cc1e68",
+    "tests": "157 passed, 0 failed, 0 skipped",
+    "diagnostics": "0 warnings, 0 errors",
+    "git_commit": "35ea55c",
+    "duration_seconds": 303.93
+  },
+  "next": "EXEC-G3 69/77"
 }

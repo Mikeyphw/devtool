@@ -176,7 +176,7 @@
     {
       "id": "PRES-UX01",
       "position": "68/77",
-      "status": "candidate_pending_native_qualification_v5",
+      "status": "qualified_native",
       "promises": [
         "Give normal execution and artifact application a shared responsive Textual workspace hierarchy instead of unrelated one-off layouts.",
         "Make artifact apply launched from the control center visible inline by reusing the canonical H02 managed-child source rather than spawning a detached invisible apply process.",
@@ -192,7 +192,13 @@
       "next": "EXEC-G3 69/77",
       "delivered_ledger": "PRES_UX01_PROMISE_LEDGER.json",
       "gate_window": "1/1 implementation remediation; targeted native Textual qualification owned by the overlay",
-      "note": "v3 failed/rolled back on unsupported Textual CSS. v4 removed that CSS but native run 2f219c2e83ce4da3a1170c8c75ed3b5c exposed real interaction regressions: H02 phase overwrite, contextual run-action disappearance, stale selected-row enabled-state, and a 2-row short action bar clipping 3-row Textual buttons. v5 fixes those at the same 68/77 boundary and passes all six mandatory real-App/Pilot tests locally under Textual 8.2.8; native Termux remains authoritative."
+      "note": "v3 failed/rolled back on unsupported Textual CSS. v4 removed that CSS but native run 2f219c2e83ce4da3a1170c8c75ed3b5c exposed real interaction regressions: H02 phase overwrite, contextual run-action disappearance, stale selected-row enabled-state, and a 2-row short action bar clipping 3-row Textual buttons. v5 fixes those at the same 68/77 boundary and passes all six mandatory real-App/Pilot tests locally under Textual 8.2.8; native Termux remains authoritative.",
+      "qualification": {
+        "run": "c2a81967b15d4c56a6044e3620cc1e68",
+        "tests": "157 passed, 0 failed, 0 skipped",
+        "diagnostics": "0 warnings, 0 errors",
+        "git_commit": "35ea55c"
+      }
     }
   ],
   "known_non_pres_insertions": [
@@ -204,7 +210,6 @@
     }
   ],
   "remaining_tail": [
-    "68/77 PRES-UX01",
     "69/77 EXEC-G3",
     "70/77 PRES-G3",
     "71/77 RMP-X01",
@@ -266,8 +271,26 @@
       "run": "2ba456d3f6024b3eaa65885646eefbbf",
       "tests": "246 passed, 0 failed, 4 skipped",
       "git_commit": "4269091"
-    }
+    },
+    "PRES-UX01 68/77 — run c2a81967b15d4c56a6044e3620cc1e68; commit 35ea55c; 157 passed; zero diagnostics"
   ],
-  "current_active": "PRES-UX01 68/77",
-  "next_major_scope_after_active": "EXEC finalization (EXEC-G3 69/77)"
+  "current_active": "EXEC-G3 69/77 (v3 candidate after v1/v2 native qualification rollbacks)",
+  "next_major_scope_after_active": "PRES finalization (PRES-G3 70/77)",
+  "active_gate_retry": {
+    "id": "EXEC-G3",
+    "position": "69/77",
+    "failed_revisions": [
+      "v1",
+      "v2"
+    ],
+    "failed_runs": [
+      "060a039b99fc401a97171607bcaa6111",
+      "c4ad9ed376324718a55e8ad6112de6bf"
+    ],
+    "failure_owner": "EXEC-G3 nested CLI qualification harness",
+    "runtime_regression": false,
+    "v3_remediation": "nested generic CLI finalization probes clear inherited routing and use the public host selector rather than forcing native-termux; sanitized Android host-android remains a diagnostic observed substrate, not a configurable backend alias",
+    "construction_fixed_point": "166 passed plus fresh-process final proof",
+    "status": "candidate_pending_native_termux_qualification"
+  }
 }

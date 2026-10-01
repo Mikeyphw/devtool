@@ -88,3 +88,28 @@ later final seal after DIST, TEST, and EXEC are finally qualified.
 - This remains remediation inside **PRES-UX01 68/77**, not a new roadmap position. Revision 5 preserves semantic phase context, keeps run controls on run-inspection pages, refreshes selection-derived action state immediately, and restores a full 3-row clickable short action strip. The six mandatory real Textual App/Pilot tests pass locally under Textual 8.2.8; native Termux remains authoritative.
 - On successful revision-5 qualification the next item remains **EXEC-G3 69/77**, followed by **PRES-G3 70/77** and RMP **71/77..77/77**.
 
+
+## 2026-10-01 PRES-UX01 native closure and EXEC-G3 activation
+
+- PRES-UX01 revision 5 qualified/applied on native Termux: run `c2a81967b15d4c56a6044e3620cc1e68`, **157 passed, 0 failed, 0 skipped**, zero diagnostics, commit `35ea55c`. PRES-UX01 is closed at **68/77**.
+- The next-three merge window is **EXEC-G3 → PRES-G3 → RMP-X01**. No merge is permitted: EXEC-G3 and PRES-G3 are independent authoritative final seals, while RMP-X01 begins the final roadmap-policy scope.
+- The active item is **EXEC-G3 69/77**, owning the final execution/reuse/validation seal and the observed nonterminal-descendant finalization incident (`xdm_modern.validate.$runner`, `xgo_final_wave12.validate.wave12_final_gate`).
+- On successful EXEC-G3 qualification, next is **PRES-G3 70/77**, followed by RMP **71/77..77/77**.
+
+## 2026-10-01 EXEC-G3 native v1 qualification retry
+
+- EXEC-G3 v1 failed and rolled back cleanly on native Termux: run `060a039b99fc401a97171607bcaa6111`; duration 212.85s; zero warnings; one validation error. Runtime incident closure was not implicated.
+- Root cause: retained EXO-P0 tests launch nested Devtool CLI runs and did not isolate the validator's execution-routing context. Under native artifact validation the nested process could resolve the diagnostic-only substrate `host-android`, which is intentionally not in the canonical execution-environment registry.
+- EXEC-G3 v2 remains the same **69/77** boundary. It clears inherited `DEVTOOL_PROJECT_EXECUTION_ENVIRONMENT` and `DEVTOOL_EXECUTION_ENVIRONMENT` for the nested probes and explicitly binds them to a supported parent substrate, using the Termux Python executable path when HOME/PREFIX markers were sanitized. No alias for `host-android` is introduced.
+- Construction fixed point after remediation: gate 6, retained foundation 58, retained validation 13, operational adoption 29, lifecycle closure 25, interruption continuation 7, generated/release 27; **165 pytest tests passed** plus the fresh-process EXEC-G3 final proof.
+- Next remains **PRES-G3 70/77** only after native EXEC-G3 v2 qualification.
+
+
+## 2026-10-01 EXEC-G3 native v2 qualification retry
+
+- EXEC-G3 v2 failed and rolled back cleanly on native Termux: run `c4ad9ed376324718a55e8ad6112de6bf`; duration 208.28s; zero warnings; one validation error. The runtime incident closure was not implicated.
+- v2 removed inherited routing variables correctly but still forced the nested generic EXO-P0 workflow to `native-termux`. Artifact validation had sanitized Termux HOME/PREFIX markers, so canonical host detection observed the Android host as `host-android`; native-Termux preflight correctly rejected the mismatch (`termux: host-android`).
+- EXEC-G3 v3 remains the same **69/77** boundary. Generic nested CLI finalization probes now clear inherited routing overrides and use the public `--execution-environment host` selector, which resolves to the substrate the nested process actually observes. No `host-android` alias is added to the canonical execution-environment registry.
+- A dedicated construction regression reproduces the native sanitization case by forcing Android host detection while removing Termux markers; the three-node nested workflow succeeds and seals under the `host` selector.
+- Construction fixed point after v3 remediation: gate 6, retained foundation 58, retained validation 13, operational adoption 29, lifecycle closure 26, interruption continuation 7, generated/release 27; **166 pytest tests passed** plus the fresh-process EXEC-G3 final proof.
+- Next remains **PRES-G3 70/77** only after native EXEC-G3 v3 qualification.

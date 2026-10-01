@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from .execution_contract import ExecutionStatus, canonical_execution_status
 from .events.bus import EventBus
-from .events.events import GraphSealed, RunFinished
+from .events.events import GraphSealed, NodeBlocked, NodeFinished, RunFinished
 from .events.runtime import get_event_bus
 
 
@@ -53,6 +53,119 @@ def audit_execution_lifecycle(run_id: str, *, bus: EventBus | None = None) -> Ex
         nonterminal_nodes=nonterminal_nodes,
         active_processes=active_processes,
     )
+
+
+def _reconcile_nonterminal_nodes(
+    run_id: str,
+    *,
+    requested: ExecutionStatus,
+    bus: EventBus,
+    publish: Callable[[Any], None],
+) -> tuple[ExecutionStatus, tuple[str, ...]]:
+    """Terminalize dangling execution nodes without fabricating success.
+
+    This is a final lifecycle safety net for orchestration paths that have
+    already stopped discovering/executing work but failed to emit the last
+    node terminal event (for example worker exceptions, fail-fast exits, or
+    historical interrupted runs).  Observed terminal truth is never rewritten.
+    A requested successful run with unresolved required work fails closed.
+    """
+    snapshot = bus.execution_store.snapshot(run_id)
+    if snapshot is None:
+        return requested, ()
+    terminal = {"succeeded", "failed", "blocked", "skipped", "cancelled"}
+    unresolved = [node for node in snapshot.nodes if node.status not in terminal]
+    if not unresolved:
+        return requested, ()
+
+    effective = requested
+    fail_closed_from_success = requested is ExecutionStatus.SUCCEEDED
+    if fail_closed_from_success:
+        # Never convert unobserved work into success merely to make accounting
+        # close.  Persist a failed run instead and let the CLI return non-zero.
+        effective = ExecutionStatus.FAILED
+
+    existing_failed = any(node.status == "failed" for node in snapshot.nodes)
+    primary_failure_assigned = existing_failed
+    reconciled: list[str] = []
+    for node in unresolved:
+        status = str(node.status or "planned")
+        reason = (
+            f"execution finalization reconciled dangling {status} node after "
+            f"terminal run outcome {effective.value}"
+        )
+        if effective is ExecutionStatus.CANCELLED:
+            publish(NodeFinished(
+                run_id=str(run_id),
+                node_id=node.node_id,
+                parent_id=node.parent_id,
+                status="cancelled",
+                exit_code=130,
+                failure_kind="lifecycle_reconciliation",
+                source="execution-finalizer",
+                transition_origin="lifecycle_finalizer_inferred",
+                transition_reason=reason,
+            ))
+        elif effective in {ExecutionStatus.FAILED, ExecutionStatus.BLOCKED}:
+            if status == "running":
+                inferred = "cancelled"
+                exit_code = 130
+                if effective is ExecutionStatus.FAILED and not primary_failure_assigned:
+                    inferred = "failed"
+                    exit_code = 1
+                    primary_failure_assigned = True
+                publish(NodeFinished(
+                    run_id=str(run_id),
+                    node_id=node.node_id,
+                    parent_id=node.parent_id,
+                    status=inferred,
+                    exit_code=exit_code,
+                    failure_kind="lifecycle_reconciliation",
+                    source="execution-finalizer",
+                    transition_origin="lifecycle_finalizer_inferred",
+                    transition_reason=reason,
+                ))
+            else:
+                if fail_closed_from_success and not primary_failure_assigned:
+                    publish(NodeFinished(
+                        run_id=str(run_id),
+                        node_id=node.node_id,
+                        parent_id=node.parent_id,
+                        status="failed",
+                        exit_code=1,
+                        failure_kind="unobserved_required_work",
+                        source="execution-finalizer",
+                        transition_origin="lifecycle_finalizer_inferred",
+                        transition_reason=reason,
+                    ))
+                    primary_failure_assigned = True
+                else:
+                    blocked_by = tuple(
+                        dep for dep in node.depends_on
+                        if (snapshot.node(dep) is not None and snapshot.node(dep).status in {"failed", "blocked", "cancelled"})
+                    )
+                    publish(NodeBlocked(
+                        run_id=str(run_id),
+                        node_id=node.node_id,
+                        parent_id=node.parent_id,
+                        blocked_by=blocked_by,
+                        reason=reason,
+                        source="execution-finalizer",
+                    ))
+        else:
+            publish(NodeFinished(
+                run_id=str(run_id),
+                node_id=node.node_id,
+                parent_id=node.parent_id,
+                status="skipped",
+                exit_code=0,
+                failure_kind="lifecycle_reconciliation",
+                source="execution-finalizer",
+                transition_origin="lifecycle_finalizer_inferred",
+                transition_reason=reason,
+            ))
+        reconciled.append(node.node_id)
+    return effective, tuple(reconciled)
 
 
 def finalize_execution_run(
@@ -102,15 +215,28 @@ def finalize_execution_run(
         return None
 
     audit = audit_execution_lifecycle(run_id, bus=target)
-    if audit.nonterminal_nodes:
-        raise ExecutionLifecycleError(
-            "cannot finalize execution run with nonterminal node(s): " + ", ".join(audit.nonterminal_nodes)
-        )
     if audit.active_processes:
+        # A live process is materially different from missing terminal node
+        # bookkeeping: never infer process exit while the process may still be
+        # running.  The caller must stop/reap it first.
         raise ExecutionLifecycleError(
             "cannot finalize execution run with active process(es): " + ", ".join(audit.active_processes)
         )
 
+    requested, _reconciled = _reconcile_nonterminal_nodes(
+        run_id, requested=requested, bus=target, publish=publisher
+    )
+    if requested is ExecutionStatus.FAILED and int(exit_code or 0) == 0:
+        exit_code = 1
+    audit = audit_execution_lifecycle(run_id, bus=target)
+    if audit.nonterminal_nodes:
+        raise ExecutionLifecycleError(
+            "cannot finalize execution run after lifecycle reconciliation; nonterminal node(s): "
+            + ", ".join(audit.nonterminal_nodes)
+        )
+
+    snapshot = target.execution_store.snapshot(run_id)
+    assert snapshot is not None
     if not snapshot.graph_sealed:
         publisher(
             GraphSealed(
