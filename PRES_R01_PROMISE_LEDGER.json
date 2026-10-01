@@ -4,7 +4,7 @@
   "title": "Canonical Textual execution-presentation ownership remediation",
   "position": "61/76",
   "gate_window_position": "1/4",
-  "status": "qualified_then_reopened_runtime_remediated_by_pres_r03_pending_native_qualification",
+  "status": "qualified_native_runtime_closed_by_pres_r03",
   "promises": [
     {
       "id": "PRES-R01-P001",
@@ -18,9 +18,10 @@
     },
     {
       "id": "PRES-R01-P003",
-      "status": "delivered_pending_pres_r03_native_qualification",
+      "status": "delivered_qualified_native",
       "text": "Interactive TTY execution prefers Textual when available; presentation startup failure falls back to plain output without changing the process result.",
-      "remediation": "PRES-R03 general main-thread Textual execution host"
+      "remediation": "PRES-R03 general main-thread Textual execution host",
+      "qualification": "PRES-R03 v6 native run 9b5fff37ecd14b9c81d294a00540183b; 175 passed; commit 0fd7d0c"
     },
     {
       "id": "PRES-R01-P004",
@@ -44,15 +45,17 @@
     },
     {
       "id": "PRES-R01-P008",
-      "status": "delivered_pending_pres_r03_native_qualification",
+      "status": "delivered_qualified_native",
       "text": "Normal execution cancellation is injected from the runner; the Textual execution surface requires a second Ctrl+C within three seconds before invoking cancellation.",
-      "remediation": "PRES-R03 general main-thread Textual execution host"
+      "remediation": "PRES-R03 general main-thread Textual execution host",
+      "qualification": "PRES-R03 v6 native run 9b5fff37ecd14b9c81d294a00540183b; 175 passed; commit 0fd7d0c"
     },
     {
       "id": "PRES-R01-P009",
-      "status": "delivered_pending_pres_r03_native_qualification",
+      "status": "delivered_qualified_native",
       "text": "The Textual execution bridge is bounded and non-blocking: presentation backpressure drops intermediate display updates instead of blocking canonical execution, and log lines are bounded.",
-      "remediation": "PRES-R03 general main-thread Textual execution host"
+      "remediation": "PRES-R03 general main-thread Textual execution host",
+      "qualification": "PRES-R03 v6 native run 9b5fff37ecd14b9c81d294a00540183b; 175 passed; commit 0fd7d0c"
     },
     {
       "id": "PRES-R01-P010",
@@ -98,7 +101,7 @@
     "Explicit legacy terminal/studio HUD Rich Live renderers remain outside the normal-execution R01 ownership boundary; PRES-G2R/PRES-G3 must either migrate, deprecate, or explicitly qualify those cross-surface modes."
   ],
   "next": "PRES-G2R 64/76 after PRES-R03 native qualification",
-  "qualification_note": "PRES-R01 v2 qualified, H01 reopened illegal helper-thread terminal ownership, H02 v3 qualified artifact apply, and PRES-R03 now implements the corresponding parent/main-thread Textual host for ordinary interactive execution. Final live qualification is owned by the PRES-R03 native workflow before PRES-G2R.",
+  "qualification_note": "PRES-R01 v2 plus H01/H02 were retained and the reopened ordinary-execution main-thread Textual host/cancellation/backpressure promises were requalified by PRES-R03 v6 native run 9b5fff37ecd14b9c81d294a00540183b (175 passed, 0 failed, 0 skipped; commit 0fd7d0c). PRES-G2R now owns historical concrete-runtime requalification.",
   "hotfixes": [
     {
       "id": "PRES-H01",

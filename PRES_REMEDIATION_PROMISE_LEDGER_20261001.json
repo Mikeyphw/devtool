@@ -73,7 +73,7 @@
     {
       "id": "PRES-R01",
       "position": "61/76",
-      "status": "qualified_then_reopened_by_pres_h01",
+      "status": "qualified_native_runtime_closed_by_pres_r03",
       "promises": [
         "progress trackers are semantic/event producers and never instantiate rich.live.Live",
         "one execution presentation controller owns normal local terminal presentation",
@@ -90,7 +90,7 @@
         "live Textual terminal driver is hosted on the Python main interpreter thread rather than a helper thread"
       ],
       "next": "PRES-R02",
-      "hotfix": "PRES-H01 and PRES-H02 v3 are qualified/applied. H01 prevents invalid helper-thread Textual driver startup; H02 provides the legal main-thread Textual host for artifact apply. General normal-execution live Textual remains open."
+      "hotfix": "PRES-H01 and PRES-H02 v3 are qualified/applied. PRES-R03 v6 then qualified the legal parent/main-thread ordinary-execution Textual host, cancellation and bounded bridge on native Termux (run 9b5fff37ecd14b9c81d294a00540183b; commit 0fd7d0c)."
     },
     {
       "id": "PRES-R02",
@@ -118,7 +118,7 @@
     {
       "id": "PRES-R03",
       "position": "63/76",
-      "status": "implemented_v5_pending_native_qualification",
+      "status": "qualified_native",
       "promises": [
         "unify shortcut/action authority and collision detection",
         "normalize devtool tui page names and compatibility aliases",
@@ -130,19 +130,41 @@
       ],
       "next": "PRES-G2R",
       "delivered_ledger": "PRES_R03_PROMISE_LEDGER.json",
-      "note": "v1 native run 381b4e609f324c408ab30287ea8e8e9a rolled back on stale action-parity assertions and Textual-invalid H02 confirmation CSS; v2 folded both into 63/76. v2 native run d976675c392d4a62ac4eada61506250f passed 3/4 real Textual cases and exposed the qualification-only ContentSwitcher import mismatch; v3 corrected that import. v3 native run 881acebe9965432aa5420b05f530f97f passed all non-Textual/retained stages and 3/4 real Textual cases, then exposed an off-screen overlay action Pilot click plus a real shutdown race where the periodic control-center refresh queried a detached Screen. v4 keeps the same 63/76 boundary, scrolls the action visible before mouse activation, and adopts the already-qualified H02 timer-stop/NoMatches/on_unmount lifecycle pattern. v4 native run 9bbd9be6985f43f5b11fc2fd35023c70 passed construction/retained stages and again reached the real Textual lane, then exposed queued DataTable RowHighlighted teardown outside refresh_from_provider. v5 keeps 63/76 and introduces one projection-wide lifecycle barrier for timer/deferred/event/render shutdown safety."
+      "note": "v1 native run 381b4e609f324c408ab30287ea8e8e9a rolled back on stale action-parity assertions and Textual-invalid H02 confirmation CSS; v2 folded both into 63/76. v2 native run d976675c392d4a62ac4eada61506250f passed 3/4 real Textual cases and exposed the qualification-only ContentSwitcher import mismatch; v3 corrected that import. v3 native run 881acebe9965432aa5420b05f530f97f passed all non-Textual/retained stages and 3/4 real Textual cases, then exposed an off-screen overlay action Pilot click plus a real shutdown race where the periodic control-center refresh queried a detached Screen. v4 keeps the same 63/76 boundary, scrolls the action visible before mouse activation, and adopts the already-qualified H02 timer-stop/NoMatches/on_unmount lifecycle pattern. v4 native run 9bbd9be6985f43f5b11fc2fd35023c70 passed construction/retained stages and again reached the real Textual lane, then exposed queued DataTable RowHighlighted teardown outside refresh_from_provider. v5 keeps 63/76 and introduces one projection-wide lifecycle barrier for timer/deferred/event/render shutdown safety. v6 native run 9b5fff37ecd14b9c81d294a00540183b passed the complete targeted matrix (175/175) and applied as commit 0fd7d0c.",
+      "qualification": {
+        "run": "9b5fff37ecd14b9c81d294a00540183b",
+        "tests": "175 passed, 0 failed, 0 skipped",
+        "diagnostics": "0 warnings, 0 errors",
+        "git_commit": "0fd7d0c"
+      }
     },
     {
       "id": "PRES-G2R",
       "position": "64/76",
-      "status": "open_gate",
+      "status": "candidate_pending_native_qualification",
       "promises": [
         "audit all R01..R03 work and reopened X04..X08/G1/G2 claims",
         "reject spec/model-only evidence for user-visible concrete-app promises",
         "prove normal execution and control-center Textual runtime boundaries in fresh processes",
         "leave PRES-G3 as the later final cross-surface seal"
       ],
-      "next": "DIST-R01"
+      "next": "DIST-G3 66/76 (DIST-R01 65/76 already qualified/applied)",
+      "audit_window": [
+        "PRES-X04",
+        "PRES-X05",
+        "PRES-X06",
+        "PRES-X07",
+        "PRES-G1",
+        "PRES-X08",
+        "PRES-G2 remediation",
+        "PRES-G2",
+        "PRES-R01",
+        "PRES-H01",
+        "PRES-H02",
+        "PRES-R02",
+        "PRES-R03"
+      ],
+      "gate_evidence": "PRES_G2R_CONCRETE_RUNTIME_REQUALIFICATION_GATE_REPORT.md"
     }
   ],
   "known_non_pres_insertions": [

@@ -63,3 +63,5 @@ R01..R03 work plus the reopened PRES-X04..X08/G1/G2 claims. `PRES-G3` remains th
 later final seal after DIST, TEST, and EXEC are finally qualified.
 
 - PRES-R03 v5 retry remains full-plan 63/76: native v4 exposed queued Textual row-highlight teardown after the default Screen detached; v5 adds a projection-wide lifecycle barrier. PRES-G2R remains next at 64/76. Native v5 then exposed Textual 8.2.8 built-in Ctrl+P command-palette precedence; v6 disables the framework palette so the canonical Devtool CommandPaletteModal owns Ctrl+P. PRES-G2R remains next at 64/76.
+
+- PRES-R03 v6 qualified/applied on native Termux: run `9b5fff37ecd14b9c81d294a00540183b`, **175 passed, 0 failed, 0 skipped**, zero diagnostics, commit `0fd7d0c`. The active item is now the separate **PRES-G2R 64/76** gate. After a successful G2R, skip already-qualified/applied DIST-R01 65/76 and proceed to **DIST-G3 66/76**.

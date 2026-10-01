@@ -5,7 +5,7 @@
   "position": "63/76",
   "gate_window_position": "3/4",
   "implementation_position": "3/3",
-  "status": "implemented_v6_pending_native_qualification",
+  "status": "qualified_native",
   "merge_window_decision": {
     "window": [
       "PRES-R01",
@@ -117,6 +117,16 @@
       "Textual 8.2.8 enables its own built-in Ctrl+P command palette by default and injects a priority command_palette binding, preempting Devtool R03 show_command_palette",
       "the native Pilot therefore opened Textual CommandPalette instead of the canonical Devtool CommandPaletteModal even though the Devtool binding and modal were both present"
     ],
-    "v6_correction": "same PRES-R03 63/76 boundary; disable Textual built-in command-palette injection on DevtoolTextualControlCenter so the canonical R03 Ctrl+P shortcut exclusively owns the concrete Devtool CommandPaletteModal, with static and native assertions for that ownership"
+    "v6_correction": "same PRES-R03 63/76 boundary; disable Textual built-in command-palette injection on DevtoolTextualControlCenter so the canonical R03 Ctrl+P shortcut exclusively owns the concrete Devtool CommandPaletteModal, with static and native assertions for that ownership",
+    "v6_run_id": "9b5fff37ecd14b9c81d294a00540183b",
+    "v6_result": "qualified_applied",
+    "v6_commit": "0fd7d0c"
+  },
+  "native_qualification": {
+    "run": "9b5fff37ecd14b9c81d294a00540183b",
+    "tests": "175 passed, 0 failed, 0 skipped",
+    "diagnostics": "0 warnings, 0 errors",
+    "git_commit": "0fd7d0c",
+    "artifact": "pres_r03_textual_parity_qualification_v6.zip"
   }
 }

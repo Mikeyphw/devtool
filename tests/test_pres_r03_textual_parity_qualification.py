@@ -236,7 +236,9 @@ def test_r03_campaign_ledger_and_workflow_are_last_implementation_before_gate() 
     assert ledger["position"] == "63/76"
     assert ledger["gate_window_position"] == "3/4"
     assert ledger["implementation_position"] == "3/3"
-    assert ledger["status"] == "implemented_v6_pending_native_qualification"
+    assert ledger["status"] == "qualified_native"
+    assert ledger["native_qualification"]["run"] == "9b5fff37ecd14b9c81d294a00540183b"
+    assert ledger["native_qualification"]["git_commit"] == "0fd7d0c"
     assert ledger["remaining_before_gate"] == 0
     assert ledger["next_gate"] == "PRES-G2R 64/76"
     assert all(row["status"] == "delivered" for row in ledger["promises"])

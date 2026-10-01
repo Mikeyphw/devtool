@@ -384,7 +384,7 @@ def test_pres_r01_campaign_refresh_and_reopened_ledger_are_consistent() -> None:
     assert rows["PRES-R02"]["position"] == "62/76"
     assert rows["PRES-R03"]["position"] == "63/76"
     assert rows["PRES-G2R"]["position"] == "64/76"
-    assert rows["PRES-G2R"]["status"] == "open_gate"
+    assert rows["PRES-G2R"]["status"] == "candidate_pending_native_qualification"
     assert "65/76 DIST-R01" in plan
     assert "66/76 DIST-G3" in plan
     assert "67/76 TEST-G3" in plan

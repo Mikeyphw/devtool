@@ -47,3 +47,8 @@ Native-Termux run `3cf0cbb98ed744bfb9caeb80e3820007` rolled v5 back cleanly afte
 
 R03 v6 keeps the same 63/76 implementation boundary and disables Textual's built-in palette on `DevtoolTextualControlCenter` with `ENABLE_COMMAND_PALETTE = False`. The canonical shortcut registry remains the only `Ctrl+P` owner, and the existing Devtool modal continues to derive its commands from Devtool presentation/action intent. Static construction and native real-App assertions now verify both disabled framework palette state and concrete Devtool modal activation. No domain authority moves into Textual.
 
+
+
+### v6 native qualification closure
+
+Native-Termux run `9b5fff37ecd14b9c81d294a00540183b` qualified and applied PRES-R03 v6 with **175 passed, 0 failed, 0 skipped**, zero diagnostics, and commit `0fd7d0c`. This closes the reopened R01 ordinary-execution main-thread Textual host/cancellation/backpressure promises and leaves **PRES-G2R — 64/76** as the distinct authoritative requalification gate.
