@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "program": "CORE",
+  "gate": "CORE-G3",
+  "full_plan_position": "57/70",
+  "status": "candidate-awaiting-native-termux-qualification",
+  "source_obligations": 336,
+  "source_disposition_manifest_schema": 2,
+  "authority_chain": [
+    "CLI",
+    "CFG",
+    "WRAP",
+    "RUN-V3"
+  ],
+  "generated_surface_fixed_point_required": true,
+  "workflow_nodes": [
+    "syntax",
+    "source-dispositions",
+    "g1-identity",
+    "g2-run-store",
+    "generated-fixed-point",
+    "wrapper-federation-ssh",
+    "final-fresh-process"
+  ],
+  "artifact_revision": "v3",
+  "prerequisite": "core_g3_generated_surface_reseal_remediation_v3"
+}
