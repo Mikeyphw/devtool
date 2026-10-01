@@ -4,7 +4,7 @@
   "title": "Reopened concrete-runtime presentation requalification gate",
   "position": "64/76",
   "gate_window_position": "4/4",
-  "status": "candidate_pending_native_qualification",
+  "status": "qualified_applied",
   "merge_window_decision": {
     "merged": false,
     "reason": "PRES-G2R is an authoritative gate over the already-landed R01/R02/R03/H01/H02 remediation window and historical X04..X08/G1/G2 claims; it remains separate from implementation and from PRES-G3 final cross-surface sealing."
@@ -27,32 +27,32 @@
   "promises": [
     {
       "id": "PRES-G2R-P001",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Audit the complete reopened historical and remediation window at a fixed point rather than accepting report/spec/model evidence alone."
     },
     {
       "id": "PRES-G2R-P002",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Require concrete native Textual App.run_test/Pilot proofs for ordinary execution, artifact apply, the concrete control center, and broad R03 navigation/action/lifecycle behavior."
     },
     {
       "id": "PRES-G2R-P003",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Prove fresh-process renderer-independent control-center projection remains read-only and bounded while concrete interactive Textual remains renderer/control-only."
     },
     {
       "id": "PRES-G2R-P004",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Requalify the historical X04/X05 substrate/spec claims against concrete widgets, X06/X07/G1 default/replacement claims against legal main-thread normal execution, and X08/G2 model-action claims against real runtime controls."
     },
     {
       "id": "PRES-G2R-P005",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Preserve canonical RUN/EXO/LIFE/DIST/TEST/EXEC/WRAP/validation authority and fail closed on fake or guessed mutation surfaces."
     },
     {
       "id": "PRES-G2R-P006",
-      "status": "candidate",
+      "status": "qualified",
       "text": "Keep legacy terminal/studio Rich Live HUD disposition explicitly deferred to PRES-G3; G2R proves those paths do not own normal execution presentation."
     }
   ],
@@ -73,7 +73,20 @@
       "commit": "0fd7d0c"
     }
   },
-  "next_on_success": "DIST-G3 66/76 (DIST-R01 65/76 already qualified/applied)",
+  "next_on_success": "DIST-G3 66/76 (active candidate; DIST-R01 65/76 already qualified/applied)",
   "next_major_scope": "DIST finalization",
-  "final_presentation_seal": "PRES-G3 69/76"
+  "final_presentation_seal": "PRES-G3 69/76",
+  "native_qualification": {
+    "run_id": "c96acfc4493f40fc818f7086e6a68611",
+    "commit": "3ffbf98",
+    "tests": {
+      "passed": 302,
+      "failed": 0,
+      "skipped": 0
+    },
+    "diagnostics": {
+      "warnings": 0,
+      "errors": 0
+    }
+  }
 }

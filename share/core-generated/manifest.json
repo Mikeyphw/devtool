@@ -1,6 +1,6 @@
 {
-  "bundle_digest": "f8c7fa4bc86445bd618aede1333fe568aa653a2b2fb8af34400a6ef164449127",
-  "digest": "0113de132968a91503464fa0a01c3e490a2429fc2388461b5e42bc8fb596079b",
+  "bundle_digest": "3356d8586d24b9b0349b9bc89f82d6414016c53ccbc525767333d82b5c49c483",
+  "digest": "41c7b644213900b6762565215237e9d22fe56b68f175d8e5dbb3150efb0bb8c0",
   "files": {
     "completion.bash": {
       "sha256": "cc1ba27612446cbad5ea52d8887269b0129fc75117d30c4f2c4bc2255c638c99",
@@ -23,8 +23,8 @@
       "size": 16284
     },
     "machine-help.json": {
-      "sha256": "f0449b879f3783dbe49bc5be6b11a9b6c783045afcee3041a16dbcff9c71185a",
-      "size": 723308
+      "sha256": "7abbe623928565d1480c2fb476a468c0c44ab50572652e43984c19b364e19131",
+      "size": 723685
     },
     "ownership.json": {
       "sha256": "91d6aeb5c4abeeb6ed8f618af762538e988cd2b167992dce5be116a8c2ad2a76",

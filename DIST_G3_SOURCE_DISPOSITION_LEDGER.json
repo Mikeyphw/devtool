@@ -1,0 +1,2422 @@
+{
+  "schema_version": 1,
+  "kind": "dist-g3-source-disposition-ledger",
+  "roadmap_id": "DIST-G3",
+  "position": "66/76",
+  "source_audit": {
+    "name": "DEVTOOL_NESTED_DELEGATED_EXECUTION_EVENT_FORWARDING_AUDIT_REBASED_20260927.md",
+    "sha256": "18e7cbec439b50b7856f753cf6cdc53f4756a8623a2bb332b15d16e369a21e7d",
+    "promise_count": 84,
+    "regression_count": 157
+  },
+  "allowed_dispositions": [
+    "SATISFIED_BY_DIST",
+    "SUPERSEDED_BY_DIST",
+    "EXPORTED_TO",
+    "ALREADY_SATISFIED_BY_RETAINED_SSH_FRX_SUBSTRATE",
+    "RETIRED"
+  ],
+  "promises": [
+    {
+      "id": "NEST-P001",
+      "text": "Nested/delegated execution extends EXO/RUN rather than creating a parallel execution truth model.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P002",
+      "text": "Coordinator parent runs and delegated child runs have distinct canonical identities by default.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P003",
+      "text": "Each canonical run has one authoritative event-sequence producer.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P004",
+      "text": "Child semantic event run_id/event_id/sequence are immutable across forwarding.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P005",
+      "text": "Forwarding provenance lives in a typed transport envelope rather than rewriting semantic events.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P006",
+      "text": "Parent-run/node\u2192child-run linkage is a first-class provider-neutral execution contract.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P007",
+      "text": "Federation-specific lineage metadata projects into the generic run-link contract.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P008",
+      "text": "SSH/chroot/PRoot/OCI delegation uses the same run-link/event transport contract.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P009",
+      "text": "External event ingest is distinct from ordinary local publish and recovery replay.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P010",
+      "text": "External ingest is idempotent for byte/semantic-identical duplicate events.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P011",
+      "text": "Same event identity with different canonical payload is detected as equivocation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P012",
+      "text": "Recovery replay retains its no-live-listener semantics.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P013",
+      "text": "Live forwarded ingest updates normal subscribers exactly once.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P014",
+      "text": "Per-origin sequence, not cross-host wall clock, is authoritative ordering.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P015",
+      "text": "No global total sequence is invented across concurrent child runs.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P016",
+      "text": "Parent/child causal relation is represented separately from event ordering.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P017",
+      "text": "Delegated process/node identity cannot collide merely because hosts reuse PIDs or local keys.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P018",
+      "text": "Whole-run ownership transfer, if retained, has an explicit atomic sequence-handoff contract.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x01_delegation_ingest.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P019",
+      "text": "Runner semantic adapters execute at the child origin.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P020",
+      "text": "Parent never reparses child human stdout to rediscover semantic tasks/tests.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P021",
+      "text": "Gradle/npm/.NET semantic child nodes survive provider boundaries unchanged.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P022",
+      "text": "Generic stdout markers cannot impersonate trusted semantic events.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P023",
+      "text": "Every provider offers a dedicated event side channel or durable cursor source.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P024",
+      "text": "Detached SSH can reconnect and catch up from a durable origin journal.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P025",
+      "text": "Forwarding uses at-least-once delivery plus event-identity idempotency.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P026",
+      "text": "Forwarding tracks acknowledged origin sequence and detects gaps.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P027",
+      "text": "Gap catch-up uses the origin RUN journal rather than reconstructed presentation state.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P028",
+      "text": "Final child snapshot/event cursor are reconciled and integrity-checked.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P029",
+      "text": "A DelegatedExecutionReceipt records transport, child run, event range and terminal reconciliation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P030",
+      "text": "Transport/event delivery health is separate from child execution status.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P031",
+      "text": "Event-bridge failure is a secondary diagnostic unless execution truth itself is unavailable.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P032",
+      "text": "Known child failures cannot be suppressed by bridge/UI/storage failures.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P033",
+      "text": "Control request/ack is a separate typed channel from telemetry.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P034",
+      "text": "Cancellation remains available when the live event channel is degraded.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P035",
+      "text": "Canonical child terminal truth reconciles transport rc and child snapshot without contradictory status/exit combinations.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P036",
+      "text": "Sequential and parallel federation expose equivalent child semantic execution truth.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P037",
+      "text": "Parallel federation imports/query-exposes canonical child nodes rather than a lossy terminal projection.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P038",
+      "text": "Parallel child custom Tasker state ceases to be a separate long-term execution authority.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P039",
+      "text": "RUN V3 stores child run/event/evidence truth once; parent history stores links/references.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P040",
+      "text": "Provider staging/spool directories are temporary transport state with explicit cleanup ownership.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P041",
+      "text": "Run hierarchy query supports ancestors, descendants and subtree inspection.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P042",
+      "text": "UIX/TUI/Desktop consume the same generic run-link hierarchy.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P043",
+      "text": "Parent progress derives from child relation without flattening child nodes into parent-run identity.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P044",
+      "text": "Reused child runs are referenced historically and never replayed as newly executed.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P045",
+      "text": "Live, recovery-replayed, catch-up-replayed and historical-reused provenance are distinguishable in projection.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P046",
+      "text": "Ordinary semantic events are sanitized before crossing trust/process/host boundaries.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P047",
+      "text": "Protected raw evidence never traverses the ordinary semantic event bridge.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P048",
+      "text": "Event transport declares its content/sanitization class.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P049",
+      "text": "External stream authorization is bound to the planned child run and provider/attestation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P050",
+      "text": "An event's descriptive `source` string is never security authority.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P051",
+      "text": "Nested forwarding has route/hop cycle protection.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P052",
+      "text": "Unknown future safe events can be preserved through transport/journal compatibility.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P053",
+      "text": "Parent/child versions negotiate forwarding protocol/schema capabilities.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P054",
+      "text": "Network I/O never runs synchronously under EventBus publish lock.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P055",
+      "text": "Forwarding uses a bounded asynchronous queue/spool.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P056",
+      "text": "Canonical semantic events are never silently dropped due to backpressure.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P057",
+      "text": "High-volume raw process output follows TUI-X stream/storage policy rather than unbounded event forwarding.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P058",
+      "text": "Child raw stream attachments remain independently queryable according to RUN retention.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P059",
+      "text": "Forwarding does not add a second per-event synchronous fsync path.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P060",
+      "text": "Event delivery metrics/health never become a competing execution status model.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "tests/test_dist_x02_async_transport.py",
+        "tests/test_dist_x04_operational_adoption.py"
+      ]
+    },
+    {
+      "id": "NEST-P061",
+      "text": "Parent machine output exposes child links and transport health without duplicating child history.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-substrate",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P062",
+      "text": "Parent final summary can identify a failed nested child and drill into its canonical run evidence.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-substrate",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P063",
+      "text": "Repository/target/provider identity remains attached to child-run linkage across remote transport.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-substrate",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P064",
+      "text": "Federation final child attestation and live event stream use the same planned identity boundary.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-substrate",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P065",
+      "text": "SSH worker/disconnected tmux event catch-up is provider-neutral at the semantic layer.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-substrate",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P066",
+      "text": "Chroot/PRoot local bridges preserve the same semantic event identities as SSH/federation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-substrate",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P067",
+      "text": "Output/presentation flags never change delegated event identity or selection.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-substrate",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P068",
+      "text": "Event bridge lifecycle is idempotent across retry/reconnect/shutdown.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-substrate",
+        "tests/test_dist_x03_provider_control_hierarchy.py",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "NEST-P069",
+      "text": "Permanent tests cover duplicate-equivalent vs duplicate-conflicting events.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P070",
+      "text": "Permanent tests cover sequential/parallel federation topology parity.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P071",
+      "text": "Permanent tests cover disconnect/reconnect gap replay.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P072",
+      "text": "Permanent tests cover delegated-event secret safety.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P073",
+      "text": "Permanent tests cover mixed-version/unknown event compatibility.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P074",
+      "text": "Permanent tests cover sustained high-volume/backpressure behavior.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P075",
+      "text": "Devtool dogfoods nested forwarding across federation, SSH and local delegated providers.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P076",
+      "text": "No nested-specific scheduler, RunStore, UI truth store or semantic parser is introduced.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P077",
+      "text": "RER reuse semantics integrate with child links without fake execution events.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P078",
+      "text": "COPY secondary-failure isolation applies to event transport/finalization failures.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P079",
+      "text": "TUI-X safe semantic stream contracts are reused instead of duplicated.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P080",
+      "text": "Host V2 provider/transport identity is referenced instead of reinvented by the event bridge.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P081",
+      "text": "Gradle V2 receipts/semantic nodes remain intact through delegation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P082",
+      "text": "Federation parent dependency scheduling consumes reconciled canonical child terminal truth.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P083",
+      "text": "Final delegated-execution seal performs promise-by-promise lineage, ordering, redaction and parity checks.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    },
+    {
+      "id": "NEST-P084",
+      "text": "Final architecture can follow one event from its origin child process through transport, RUN storage, parent hierarchy and every UI without changing its semantic identity.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "tests/test_dist_g3_final_seal.py"
+      ]
+    }
+  ],
+  "regressions": [
+    {
+      "id": "NEST-R001",
+      "source_case": 1,
+      "text": "Two independent event producers cannot be authorized to publish the same canonical run sequence concurrently.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R002",
+      "source_case": 2,
+      "text": "Delegated child receives a distinct child run ID by default.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R003",
+      "source_case": 3,
+      "text": "Parent coordinator remains sole producer of parent-run events.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R004",
+      "source_case": 4,
+      "text": "Child semantic event preserves its origin run ID.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R005",
+      "source_case": 5,
+      "text": "Child semantic event preserves its origin sequence.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R006",
+      "source_case": 6,
+      "text": "Child semantic event preserves its origin event ID.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R007",
+      "source_case": 7,
+      "text": "External ingest never renumbers the child semantic event.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R008",
+      "source_case": 8,
+      "text": "External ingest never rewrites node/process identity to parent-run identity.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R009",
+      "source_case": 9,
+      "text": "Duplicate external event with identical canonical payload is idempotent.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R010",
+      "source_case": 10,
+      "text": "Duplicate external event with different canonical payload is rejected as equivocation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R011",
+      "source_case": 11,
+      "text": "Recovery replay duplicate with different canonical payload is detected under the new integrity path.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R012",
+      "source_case": 12,
+      "text": "Live external ingest notifies subscribed projections exactly once.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R013",
+      "source_case": 13,
+      "text": "Recovery replay can rebuild state without pretending events are live.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R014",
+      "source_case": 14,
+      "text": "Historical reuse projection does not notify fake live process events.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R015",
+      "source_case": 15,
+      "text": "Transport envelope includes delegation/link ID.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R016",
+      "source_case": 16,
+      "text": "Transport envelope includes parent run ID.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R017",
+      "source_case": 17,
+      "text": "Transport envelope includes parent node ID.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R018",
+      "source_case": 18,
+      "text": "Transport envelope includes origin run/event/sequence identity.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R019",
+      "source_case": 19,
+      "text": "Transport envelope includes provider/host/session identity.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R020",
+      "source_case": 20,
+      "text": "Transport envelope includes content-class/sanitization contract.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R021",
+      "source_case": 21,
+      "text": "Transport envelope includes route/hop information.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R022",
+      "source_case": 22,
+      "text": "Transport route cannot loop the same event back into its origin.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R023",
+      "source_case": 23,
+      "text": "Nested federation forwarding cannot recursively re-forward an already-routed hop indefinitely.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R024",
+      "source_case": 24,
+      "text": "Event source string alone is never treated as transport authorization.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R025",
+      "source_case": 25,
+      "text": "External stream is accepted only for the planned child run.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R026",
+      "source_case": 26,
+      "text": "External stream repository identity is bound to the child attestation/qualification.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R027",
+      "source_case": 27,
+      "text": "External event for an unrelated run is rejected.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R028",
+      "source_case": 28,
+      "text": "External event claiming the parent run is rejected unless a formal run-ownership handoff exists.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R029",
+      "source_case": 29,
+      "text": "Formal run-ownership handoff, if supported, transfers the next sequence atomically.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R030",
+      "source_case": 30,
+      "text": "Process IDs from different hosts cannot collide in one canonical producer namespace.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R031",
+      "source_case": 31,
+      "text": "Node IDs from independent delegated producers cannot collide in one canonical run.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R032",
+      "source_case": 32,
+      "text": "Per-origin sequence is the only execution ordering authority across hosts.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X01/X02/G1"
+      ]
+    },
+    {
+      "id": "NEST-R033",
+      "source_case": 33,
+      "text": "Cross-host wall-clock skew cannot cause sequence rejection.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R034",
+      "source_case": 34,
+      "text": "UI sorting never treats cross-host timestamps as authoritative total order.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R035",
+      "source_case": 35,
+      "text": "Delegation link records causal parent node \u2192 child run relation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R036",
+      "source_case": 36,
+      "text": "Delegation link survives parent/child process restart.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R037",
+      "source_case": 37,
+      "text": "Delegation link survives detached SSH execution.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R038",
+      "source_case": 38,
+      "text": "Delegation link survives parallel federation subprocess execution.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R039",
+      "source_case": 39,
+      "text": "Sequential federation child emits the same semantic node set as parallel federation child.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R040",
+      "source_case": 40,
+      "text": "Parallel federation imports/query-exposes child nodes, not only terminal status.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R041",
+      "source_case": 41,
+      "text": "Parallel federation imports/query-exposes child diagnostics.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R042",
+      "source_case": 42,
+      "text": "Parallel federation imports/query-exposes child artifacts.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R043",
+      "source_case": 43,
+      "text": "Parallel federation imports/query-exposes child processes.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R044",
+      "source_case": 44,
+      "text": "Parallel federation imports/query-exposes child progress/accounting where retained.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R045",
+      "source_case": 45,
+      "text": "Parallel fallback never substitutes the current lossy SimpleNamespace for canonical child truth.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R046",
+      "source_case": 46,
+      "text": "Federation parent node references child run rather than duplicating child task nodes.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R047",
+      "source_case": 47,
+      "text": "Parent child node terminal status reconciles against canonical child terminal receipt.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R048",
+      "source_case": 48,
+      "text": "Snapshot succeeded + transport rc nonzero produces a contradiction diagnostic, not succeeded/exit1 state.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R049",
+      "source_case": 49,
+      "text": "Snapshot failed + transport rc zero produces a contradiction diagnostic or canonical failed result.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R050",
+      "source_case": 50,
+      "text": "Child cancellation receipt reconciles transport rc and child terminal state.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R051",
+      "source_case": 51,
+      "text": "Parent dependency scheduling uses reconciled child terminal truth.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R052",
+      "source_case": 52,
+      "text": "Child event forwarding failure alone cannot rewrite a known child execution result.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R053",
+      "source_case": 53,
+      "text": "Child final snapshot can reconcile a temporarily degraded live stream.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R054",
+      "source_case": 54,
+      "text": "Parent marks telemetry degraded while child execution continues.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R055",
+      "source_case": 55,
+      "text": "Final receipt states whether forwarded stream is complete/reconciled/degraded.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R056",
+      "source_case": 56,
+      "text": "DelegatedExecutionReceipt records first event ID.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R057",
+      "source_case": 57,
+      "text": "DelegatedExecutionReceipt records last terminal event ID.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R058",
+      "source_case": 58,
+      "text": "DelegatedExecutionReceipt records last acknowledged origin sequence.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R059",
+      "source_case": 59,
+      "text": "DelegatedExecutionReceipt records replayed event count.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R060",
+      "source_case": 60,
+      "text": "DelegatedExecutionReceipt records unresolved gaps, if any.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R061",
+      "source_case": 61,
+      "text": "DelegatedExecutionReceipt records terminal snapshot digest.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R062",
+      "source_case": 62,
+      "text": "DelegatedExecutionReceipt records provider/session identity.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R063",
+      "source_case": 63,
+      "text": "DelegatedExecutionReceipt records child repository/target identity.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R064",
+      "source_case": 64,
+      "text": "Parent completion references DelegatedExecutionReceipt.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R065",
+      "source_case": 65,
+      "text": "Local subprocess delegation uses a dedicated event side channel or origin journal cursor.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R066",
+      "source_case": 66,
+      "text": "Whole-process chroot delegation uses the same semantic bridge contract.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R067",
+      "source_case": 67,
+      "text": "PRoot delegation uses the same semantic bridge contract.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R068",
+      "source_case": 68,
+      "text": "OCI delegation uses the same semantic bridge contract.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R069",
+      "source_case": 69,
+      "text": "SSH foreground delegation uses the same semantic bridge contract.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R070",
+      "source_case": 70,
+      "text": "SSH detached tmux delegation persists origin events independently of attachment.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R071",
+      "source_case": 71,
+      "text": "SSH reconnect resumes from the last acknowledged origin sequence.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R072",
+      "source_case": 72,
+      "text": "SSH reconnect does not duplicate canonical child events.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R073",
+      "source_case": 73,
+      "text": "SSH reconnect detects a missing sequence gap.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R074",
+      "source_case": 74,
+      "text": "Gap replay fills events in origin sequence order.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R075",
+      "source_case": 75,
+      "text": "Unavailable old gap is reported as degraded/incomplete rather than silently hidden.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R076",
+      "source_case": 76,
+      "text": "Remote child terminal snapshot still arrives when live event connection fails.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R077",
+      "source_case": 77,
+      "text": "Event bridge uses asynchronous local enqueue and never performs network I/O under EventBus publish lock.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R078",
+      "source_case": 78,
+      "text": "Slow network sender does not stall local ExecutionStore reduction.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R079",
+      "source_case": 79,
+      "text": "Disconnected network sender does not block child task execution.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R080",
+      "source_case": 80,
+      "text": "Bridge queue has a bounded memory policy.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X03/G2"
+      ]
+    },
+    {
+      "id": "NEST-R081",
+      "source_case": 81,
+      "text": "Canonical semantic events are never silently dropped because the queue is full.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R082",
+      "source_case": 82,
+      "text": "Lossy presentation/progress coalescing, if used, is explicitly separate from canonical event delivery.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R083",
+      "source_case": 83,
+      "text": "Process raw output follows TUI-X stream policy rather than unbounded semantic-event forwarding.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R084",
+      "source_case": 84,
+      "text": "Protected raw stream bytes are never placed on the ordinary event channel.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R085",
+      "source_case": 85,
+      "text": "Ordinary forwarded event containing API token/password is sanitized before transport.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R086",
+      "source_case": 86,
+      "text": "Ordinary Json/TUI/Logging listener cannot receive protected raw secret fields after safe-event convergence.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R087",
+      "source_case": 87,
+      "text": "Screenshot/binary/protected attachments are referenced, not embedded in ordinary events.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R088",
+      "source_case": 88,
+      "text": "Durable child journal remains sufficient for event catch-up.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R089",
+      "source_case": 89,
+      "text": "Compact journal truncation is visible when raw output is not fully represented.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R090",
+      "source_case": 90,
+      "text": "Raw stream attachment remains available according to RUN retention policy.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R091",
+      "source_case": 91,
+      "text": "Unknown future event type can transit the bridge opaquely when safe.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R092",
+      "source_case": 92,
+      "text": "Older parent can persist/query unknown newer child event without corrupting known state.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R093",
+      "source_case": 93,
+      "text": "Unsupported schema capability fails/explains before execution when semantic correctness depends on it.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R094",
+      "source_case": 94,
+      "text": "Schema negotiation is independent from human CLI output format.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R095",
+      "source_case": 95,
+      "text": "Origin-side Gradle adapter emits canonical Gradle task child nodes before forwarding.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R096",
+      "source_case": 96,
+      "text": "Parent never reparses Gradle human stdout into a second semantic task lifecycle.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R097",
+      "source_case": 97,
+      "text": "Origin-side Gradle test events preserve child task/test IDs through transport.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R098",
+      "source_case": 98,
+      "text": "Origin-side npm adapter emits canonical script nodes before forwarding.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R099",
+      "source_case": 99,
+      "text": "Origin-side .NET adapter emits canonical unit nodes before forwarding.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R100",
+      "source_case": 100,
+      "text": "Generic child stdout cannot inject a trusted semantic event merely by printing `DEVTOOL_EVENT`.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R101",
+      "source_case": 101,
+      "text": "Human stdout and semantic event side channels can be recorded independently.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R102",
+      "source_case": 102,
+      "text": "Sequential/in-process bridge and subprocess bridge use the same semantic event schema.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R103",
+      "source_case": 103,
+      "text": "Federated wrapper child and target-local-job child use the same forwarding contract.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R104",
+      "source_case": 104,
+      "text": "Nested federation child of a child appears as a descendant run, not flattened into grandparent nodes.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R105",
+      "source_case": 105,
+      "text": "Run hierarchy query returns parent plus all descendants.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R106",
+      "source_case": 106,
+      "text": "Run hierarchy query can filter to one child subtree.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R107",
+      "source_case": 107,
+      "text": "Run hierarchy history preserves child repository identities.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R108",
+      "source_case": 108,
+      "text": "Run hierarchy history preserves provider placements.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R109",
+      "source_case": 109,
+      "text": "RUN retention can pin a child because the parent/seal references it.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R110",
+      "source_case": 110,
+      "text": "Pruning a child payload leaves truthful pruned attachment/event-history state without deleting the parent link.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R111",
+      "source_case": 111,
+      "text": "Parent link can outlive temporary transport spool.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R112",
+      "source_case": 112,
+      "text": "Provider temporary child state is deletable after canonical RUN import/reconciliation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R113",
+      "source_case": 113,
+      "text": "Parallel federation child Tasker directory is no longer the canonical long-term child history.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R114",
+      "source_case": 114,
+      "text": "Detached SSH state directory is staging/transport state, not the sole execution history.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R115",
+      "source_case": 115,
+      "text": "Control cancel request is correlated with child run/provider operation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R116",
+      "source_case": 116,
+      "text": "Cancel acknowledgement is not inferred merely from a telemetry event.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R117",
+      "source_case": 117,
+      "text": "Telemetry loss does not prevent a separate control acknowledgement.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R118",
+      "source_case": 118,
+      "text": "Control channel failure is represented independently from event-stream degradation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R119",
+      "source_case": 119,
+      "text": "Reuse of a prior federation child creates no new child process lifecycle.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R120",
+      "source_case": 120,
+      "text": "Reused child references source run/node/event/evidence identities.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "DIST-X04"
+      ]
+    },
+    {
+      "id": "NEST-R121",
+      "source_case": 121,
+      "text": "Reused child can expose historical child details on demand without replaying them as live.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R122",
+      "source_case": 122,
+      "text": "RER reused status/projection remains distinct from event replay/catch-up.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R123",
+      "source_case": 123,
+      "text": "Parent aggregate progress handles a live child run without copying its nodes into parent run.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R124",
+      "source_case": 124,
+      "text": "Parallel child progress and sequential child progress render equivalently.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R125",
+      "source_case": 125,
+      "text": "Multiple concurrent child runs can stream independently without a global total event order.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R126",
+      "source_case": 126,
+      "text": "Parent UI shows which delegated child is live/delayed/reconnecting/reconciled.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R127",
+      "source_case": 127,
+      "text": "Parent UI can drill into child raw/semantic events by child run ID.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R128",
+      "source_case": 128,
+      "text": "TUI/CLI/Desktop use the same run hierarchy/link model.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R129",
+      "source_case": 129,
+      "text": "Machine JSON exposes child run links and delivery health.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R130",
+      "source_case": 130,
+      "text": "Output mode does not change forwarding or child event selection.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R131",
+      "source_case": 131,
+      "text": "`--json`, HUD, verbose or copy flags do not alter child event identity.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R132",
+      "source_case": 132,
+      "text": "Event transport failure produces a bounded secondary diagnostic.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R133",
+      "source_case": 133,
+      "text": "Event transport secondary diagnostic cannot replace the primary child failure.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R134",
+      "source_case": 134,
+      "text": "Child failure remains visible even if bridge finalization fails.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R135",
+      "source_case": 135,
+      "text": "Bridge shutdown is idempotent.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R136",
+      "source_case": 136,
+      "text": "Bridge catch-up is idempotent.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R137",
+      "source_case": 137,
+      "text": "Bridge reconnect is idempotent.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R138",
+      "source_case": 138,
+      "text": "Event delivery metrics do not become a second execution status authority.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R139",
+      "source_case": 139,
+      "text": "Final child snapshot digest mismatch is a transport/evidence integrity failure.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R140",
+      "source_case": 140,
+      "text": "Final event cursor beyond snapshot sequence is rejected.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R141",
+      "source_case": 141,
+      "text": "Snapshot sequence beyond received cursor triggers catch-up/reconciliation.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R142",
+      "source_case": 142,
+      "text": "Same terminal snapshot and complete cursor mark bridge reconciled.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R143",
+      "source_case": 143,
+      "text": "Conflicting child terminal snapshots are rejected.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R144",
+      "source_case": 144,
+      "text": "Provider attestation change invalidates an active bridge session.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R145",
+      "source_case": 145,
+      "text": "Repository identity change invalidates an active federation child stream.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R146",
+      "source_case": 146,
+      "text": "Remote Devtool version/capability mismatch is visible in bridge qualification.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R147",
+      "source_case": 147,
+      "text": "Event bridge never persists credentials/tokens from transport environment.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R148",
+      "source_case": 148,
+      "text": "Forwarding logs never include SSH secrets/root pairing tokens.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R149",
+      "source_case": 149,
+      "text": "High-volume test fixture forwards thousands of semantic events without blocking execution.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R150",
+      "source_case": 150,
+      "text": "High-volume process output fixture remains bounded according to stream policy.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R151",
+      "source_case": 151,
+      "text": "Bridge disconnect during high-volume run catches up without semantic event loss.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R152",
+      "source_case": 152,
+      "text": "Permanent regression proves conflicting same-ID event bodies cannot be silently dropped.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R153",
+      "source_case": 153,
+      "text": "Permanent regression proves parallel and sequential federation child node parity.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R154",
+      "source_case": 154,
+      "text": "Permanent regression proves detached SSH disconnect/reconnect event catch-up.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R155",
+      "source_case": 155,
+      "text": "Permanent regression proves delegated event redaction.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R156",
+      "source_case": 156,
+      "text": "Permanent regression proves mixed event-schema compatibility.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    },
+    {
+      "id": "NEST-R157",
+      "source_case": 157,
+      "text": "Final seal covers local subprocess, chroot, PRoot/OCI, SSH and federation delegated execution.",
+      "disposition": "SATISFIED_BY_DIST",
+      "evidence": [
+        "roadmap-dist-g3-final-proof",
+        "DIST-G3"
+      ]
+    }
+  ],
+  "closure": {
+    "unmapped_promises": 0,
+    "unmapped_regressions": 0,
+    "complete": true
+  }
+}

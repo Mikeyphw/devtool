@@ -155,6 +155,37 @@ description = "Run the ANDROID-G3 final Android environment/device/instrumentati
 workflow = "roadmap-android-g3"
 target = "devtool"
 
+
+# DIST-G3 final distributed-execution seal.
+[[test]]
+id = "roadmap-dist-g3-source-closure"
+name = "DIST-G3 source promise/regression and historical-substrate closure"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_dist_g3_final_seal.py", "-k", "source_promise or historical_ssh_frx or dist_promise or wrapper or generated_core or records_successful"]
+
+[[test]]
+id = "roadmap-dist-g3-retained-dist"
+name = "DIST-G3 retained DIST X01-X04 G1-G2 R01 fixed point"
+runner = "pytest"
+timeout_seconds = 1200
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_dist_x01_delegation_ingest.py", "tests/test_dist_x02_async_transport.py", "tests/test_dist_g1_identity_delivery_recovery_gate.py", "tests/test_dist_x03_provider_control_hierarchy.py", "tests/test_dist_g2_provider_parity_gate.py", "tests/test_dist_x04_operational_adoption.py", "tests/test_dist_r01_candidate_runtime_self_refresh.py", "-k", "not candidate_editable_binding_points_at_transaction_root"]
+
+[[test]]
+id = "roadmap-dist-g3-retained-substrate"
+name = "DIST-G3 retained SSH FRX GIT-FRX LIFE provider/source authority"
+runner = "pytest"
+timeout_seconds = 1500
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_ssh01_transport_environment_worker_preparation.py", "tests/test_ssh02_execution_history_recovery_convergence.py", "tests/test_ssh03_lifecycle_hardening_final_qualification.py", "tests/test_frx_x01_target_qualified_workflow_identity.py", "tests/test_frx_x02_target_identity_convergence.py", "tests/test_frx_x03_executable_federation_groups.py", "tests/test_frx_x04_real_repo_adoption_reseal.py", "tests/test_git_frx14_federated_cancellation_recovery.py", "tests/test_life_x03_generated_cleanup_ownership.py", "tests/test_life_g2_ownership_retention_gate.py", "tests/test_life_x04_lifecycle_convergence.py"]
+
+[[test]]
+id = "roadmap-dist-g3-final-proof"
+name = "DIST-G3 authoritative fresh-process end-to-end distributed seal"
+runner = "command"
+timeout_seconds = 900
+command = ["python", "-m", "devtool.dist_g3_gate"]
+
+
 # LIFE-X04 final lifecycle convergence/adoption.
 [wrapper.commands.life-x04]
 description = "Run the LIFE-X04 lifecycle convergence/adoption workflow"
@@ -219,6 +250,13 @@ target = "devtool"
 [wrapper.commands.dist-r01]
 description = "Run DIST-R01 candidate-runtime self-refresh remediation qualification"
 workflow = "roadmap-dist-r01"
+target = "devtool"
+
+
+# DIST-G3 final authoritative distributed-execution seal.
+[wrapper.commands.dist-g3]
+description = "Run the DIST-G3 final distributed-execution seal"
+workflow = "roadmap-dist-g3"
 target = "devtool"
 
 [wrapper.commands.pres-x01]
@@ -962,6 +1000,15 @@ roadmap-dist-r01 = [
   { id = "artifact-finalize", ref = "test:roadmap-dist-r01-artifact-finalize", depends_on = ["remediation-contract"] },
   { id = "transaction-self-refresh", ref = "test:roadmap-dist-r01-transaction-self-refresh", depends_on = ["artifact-finalize"] },
   { id = "exo-hook-convergence", ref = "test:roadmap-dist-r01-exo-hook-convergence", depends_on = ["transaction-self-refresh"] },
+]
+
+
+roadmap-dist-g3 = [
+  { id = "syntax", ref = "job:source-syntax", depends_on = [] },
+  { id = "source-closure", ref = "test:roadmap-dist-g3-source-closure", depends_on = ["syntax"] },
+  { id = "retained-dist", ref = "test:roadmap-dist-g3-retained-dist", depends_on = ["source-closure"] },
+  { id = "retained-substrate", ref = "test:roadmap-dist-g3-retained-substrate", depends_on = ["retained-dist"] },
+  { id = "final-proof", ref = "test:roadmap-dist-g3-final-proof", depends_on = ["retained-substrate"] },
 ]
 
 roadmap-life-x04 = [

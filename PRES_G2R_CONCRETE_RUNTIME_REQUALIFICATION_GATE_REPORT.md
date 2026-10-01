@@ -38,3 +38,7 @@ The artifact validator exports every `DEVTOOL_PRES_*_REQUIRE_TEXTUAL=1` flag and
 ## Next on success
 
 DIST-R01 **65/76** is already qualified/applied. A successful PRES-G2R therefore advances directly to **DIST-G3 66/76**. PRES-G3 remains later at **69/76** after DIST/TEST/EXEC final seals.
+
+## Native qualification result
+
+Qualified/applied on native Termux: run `c96acfc4493f40fc818f7086e6a68611`, **302 passed, 0 failed, 0 skipped**, zero diagnostics, commit `3ffbf98`. The active item advances to **DIST-G3 66/76**; DIST-R01 65/76 remains already complete.

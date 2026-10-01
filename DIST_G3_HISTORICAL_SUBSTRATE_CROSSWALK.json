@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "kind": "dist-g3-historical-substrate-crosswalk",
+  "roadmap_id": "DIST-G3",
+  "position": "66/76",
+  "rows": [
+    {
+      "authority": "SSH-01",
+      "disposition": "ALREADY_SATISFIED_BY_RETAINED_SSH_FRX_SUBSTRATE",
+      "contract": "transport/environment/worker preparation",
+      "evidence": [
+        "SSH01_TRANSPORT_ENVIRONMENT_WORKER_PREPARATION_REPORT.md",
+        "tests/test_ssh01_transport_environment_worker_preparation.py"
+      ]
+    },
+    {
+      "authority": "SSH-02",
+      "disposition": "ALREADY_SATISFIED_BY_RETAINED_SSH_FRX_SUBSTRATE",
+      "contract": "durable execution history/reconnect/recovery",
+      "evidence": [
+        "SSH02_EXECUTION_HISTORY_RECOVERY_CONVERGENCE_REPORT.md",
+        "tests/test_ssh02_execution_history_recovery_convergence.py"
+      ]
+    },
+    {
+      "authority": "SSH-03",
+      "disposition": "ALREADY_SATISFIED_BY_RETAINED_SSH_FRX_SUBSTRATE",
+      "contract": "known-hosts trust/capacity/GC/lifecycle hardening",
+      "evidence": [
+        "SSH03_LIFECYCLE_HARDENING_FINAL_QUALIFICATION_REPORT.md",
+        "tests/test_ssh03_lifecycle_hardening_final_qualification.py"
+      ]
+    },
+    {
+      "authority": "FRX",
+      "disposition": "ALREADY_SATISFIED_BY_RETAINED_SSH_FRX_SUBSTRATE",
+      "contract": "repository identity, target-qualified workflow identity, executable groups, hierarchical federation, recovery and observability",
+      "evidence": [
+        "FRX_X01_TARGET_QUALIFIED_WORKFLOW_IDENTITY_REPORT.md",
+        "FRX_X02_TARGET_IDENTITY_CONVERGENCE_REPORT.md",
+        "FRX_X03_EXECUTABLE_FEDERATION_GROUPS_REPORT.md",
+        "FRX_X04_REAL_REPO_ADOPTION_FINAL_RESEAL_REPORT.md",
+        "tests/test_frx_x01_target_qualified_workflow_identity.py",
+        "tests/test_frx_x04_real_repo_adoption_reseal.py"
+      ]
+    },
+    {
+      "authority": "GIT-FRX",
+      "disposition": "ALREADY_SATISFIED_BY_RETAINED_SSH_FRX_SUBSTRATE",
+      "contract": "frozen source, parent/child git lineage, transactional dirty-tree preservation, cancellation/recovery, remote attestation",
+      "evidence": [
+        "GIT_FRX08_FRX_Y03_FROZEN_SOURCE_LOCK_REPORT.md",
+        "GIT_FRX09_PARENT_CHILD_GIT_LINEAGE_REPORT.md",
+        "GIT_FRX13_TRANSACTIONAL_DIRTY_TREE_PRESERVATION_REPORT.md",
+        "GIT_FRX14_FEDERATED_CANCELLATION_RECOVERY_REPORT.md",
+        "GIT_FRX16_GIT_BUNDLE_REMOTE_ATTESTATION_GATE2_REPORT.md",
+        "tests/test_git_frx14_federated_cancellation_recovery.py"
+      ]
+    }
+  ],
+  "closure": {
+    "unmapped_authorities": 0,
+    "competing_authority_created": false,
+    "complete": true
+  }
+}

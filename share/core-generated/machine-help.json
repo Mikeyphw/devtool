@@ -14945,12 +14945,27 @@
         {
           "choices": [
             "dashboard",
-            "build",
+            "runs",
+            "logs",
+            "diagnostics",
+            "history",
+            "targets",
+            "workers",
+            "validation",
+            "artifacts",
             "overlays",
-            "workers"
+            "evidence",
+            "build",
+            "run",
+            "log",
+            "diagnostic",
+            "worker",
+            "ssh",
+            "artifact",
+            "overlay"
           ],
           "dest": "page",
-          "help": "Initial terminal dashboard page",
+          "help": "Initial Textual control-center page (legacy aliases remain accepted)",
           "hidden": false,
           "nargs": null,
           "required": false,
@@ -28644,7 +28659,7 @@
       "summary": ""
     }
   ],
-  "digest": "ed23bd363d3efdadd0af128b54fecfbcf14fca724305e6e8a6fc6e9b05f341e6",
+  "digest": "4a330e2b5513b9b8e3c6c3cdba550c92066de21476806b6deeb8688f885bcd98",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [

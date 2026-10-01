@@ -1,0 +1,984 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "DIST-G3",
+  "title": "Final distributed-execution seal",
+  "position": "66/76",
+  "gate_window_position": "2/2",
+  "status": "candidate_pending_native_qualification",
+  "merge_window_decision": {
+    "merged": false,
+    "reason": "DIST-G3, TEST-G3 and EXEC-G3 are independent final seals and remain separate."
+  },
+  "prerequisites": {
+    "DIST-R01": {
+      "position": "65/76",
+      "status": "qualified_applied_ahead_of_sequence",
+      "artifact": "dist_r01_candidate_runtime_self_refresh_remediation_v3.zip",
+      "sha256": "3b7da2ac877bbaca2c8cfab2ced6ef10fd1f51d979d6ac1fa0459269795fae72"
+    },
+    "PRES-G2R": {
+      "position": "64/76",
+      "run": "c96acfc4493f40fc818f7086e6a68611",
+      "commit": "3ffbf98",
+      "tests": "302 passed, 0 failed, 0 skipped",
+      "diagnostics": "0 warnings, 0 errors"
+    }
+  },
+  "promise_rows": [
+    {
+      "id": "DIST-P001",
+      "text": "Nested/delegated execution extends EXO/RUN rather than creating a parallel execution truth model.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P002",
+      "text": "Coordinator parent runs and delegated child runs have distinct canonical identities by default.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P003",
+      "text": "Each canonical run has one authoritative event-sequence producer.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P004",
+      "text": "Child semantic event run_id/event_id/sequence are immutable across forwarding.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P005",
+      "text": "Forwarding provenance lives in a typed transport envelope rather than rewriting semantic events.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P006",
+      "text": "Parent-run/node\u2192child-run linkage is a first-class provider-neutral execution contract.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P007",
+      "text": "Federation-specific lineage metadata projects into the generic run-link contract.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P008",
+      "text": "SSH/chroot/PRoot/OCI delegation uses the same run-link/event transport contract.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P009",
+      "text": "External event ingest is distinct from ordinary local publish and recovery replay.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P010",
+      "text": "External ingest is idempotent for byte/semantic-identical duplicate events.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P011",
+      "text": "Same event identity with different canonical payload is detected as equivocation.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P012",
+      "text": "Recovery replay retains its no-live-listener semantics.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P013",
+      "text": "Live forwarded ingest updates normal subscribers exactly once.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P014",
+      "text": "Per-origin sequence, not cross-host wall clock, is authoritative ordering.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P015",
+      "text": "No global total sequence is invented across concurrent child runs.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P016",
+      "text": "Parent/child causal relation is represented separately from event ordering.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P017",
+      "text": "Delegated process/node identity cannot collide merely because hosts reuse PIDs or local keys.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P018",
+      "text": "Whole-run ownership transfer, if retained, has an explicit atomic sequence-handoff contract.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P019",
+      "text": "Runner semantic adapters execute at the child origin.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P020",
+      "text": "Parent never reparses child human stdout to rediscover semantic tasks/tests.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P021",
+      "text": "Gradle/npm/.NET semantic child nodes survive provider boundaries unchanged.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P022",
+      "text": "Generic stdout markers cannot impersonate trusted semantic events.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P023",
+      "text": "Every provider offers a dedicated event side channel or durable cursor source.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P024",
+      "text": "Detached SSH can reconnect and catch up from a durable origin journal.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P025",
+      "text": "Forwarding uses at-least-once delivery plus event-identity idempotency.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P026",
+      "text": "Forwarding tracks acknowledged origin sequence and detects gaps.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P027",
+      "text": "Gap catch-up uses the origin RUN journal rather than reconstructed presentation state.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P028",
+      "text": "Final child snapshot/event cursor are reconciled and integrity-checked.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P029",
+      "text": "A DelegatedExecutionReceipt records transport, child run, event range and terminal reconciliation.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P030",
+      "text": "Transport/event delivery health is separate from child execution status.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P031",
+      "text": "Event-bridge failure is a secondary diagnostic unless execution truth itself is unavailable.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P032",
+      "text": "Known child failures cannot be suppressed by bridge/UI/storage failures.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P033",
+      "text": "Control request/ack is a separate typed channel from telemetry.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P034",
+      "text": "Cancellation remains available when the live event channel is degraded.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P035",
+      "text": "Canonical child terminal truth reconciles transport rc and child snapshot without contradictory status/exit combinations.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P036",
+      "text": "Sequential and parallel federation expose equivalent child semantic execution truth.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P037",
+      "text": "Parallel federation imports/query-exposes canonical child nodes rather than a lossy terminal projection.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P038",
+      "text": "Parallel child custom Tasker state ceases to be a separate long-term execution authority.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P039",
+      "text": "RUN V3 stores child run/event/evidence truth once; parent history stores links/references.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P040",
+      "text": "Provider staging/spool directories are temporary transport state with explicit cleanup ownership.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P041",
+      "text": "Run hierarchy query supports ancestors, descendants and subtree inspection.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P042",
+      "text": "UIX/TUI/Desktop consume the same generic run-link hierarchy.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P043",
+      "text": "Parent progress derives from child relation without flattening child nodes into parent-run identity.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P044",
+      "text": "Reused child runs are referenced historically and never replayed as newly executed.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P045",
+      "text": "Live, recovery-replayed, catch-up-replayed and historical-reused provenance are distinguishable in projection.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P046",
+      "text": "Ordinary semantic events are sanitized before crossing trust/process/host boundaries.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P047",
+      "text": "Protected raw evidence never traverses the ordinary semantic event bridge.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P048",
+      "text": "Event transport declares its content/sanitization class.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P049",
+      "text": "External stream authorization is bound to the planned child run and provider/attestation.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P050",
+      "text": "An event's descriptive `source` string is never security authority.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P051",
+      "text": "Nested forwarding has route/hop cycle protection.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P052",
+      "text": "Unknown future safe events can be preserved through transport/journal compatibility.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P053",
+      "text": "Parent/child versions negotiate forwarding protocol/schema capabilities.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P054",
+      "text": "Network I/O never runs synchronously under EventBus publish lock.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P055",
+      "text": "Forwarding uses a bounded asynchronous queue/spool.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P056",
+      "text": "Canonical semantic events are never silently dropped due to backpressure.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P057",
+      "text": "High-volume raw process output follows TUI-X stream/storage policy rather than unbounded event forwarding.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P058",
+      "text": "Child raw stream attachments remain independently queryable according to RUN retention.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P059",
+      "text": "Forwarding does not add a second per-event synchronous fsync path.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P060",
+      "text": "Event delivery metrics/health never become a competing execution status model.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P061",
+      "text": "Parent machine output exposes child links and transport health without duplicating child history.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P062",
+      "text": "Parent final summary can identify a failed nested child and drill into its canonical run evidence.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P063",
+      "text": "Repository/target/provider identity remains attached to child-run linkage across remote transport.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P064",
+      "text": "Federation final child attestation and live event stream use the same planned identity boundary.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P065",
+      "text": "SSH worker/disconnected tmux event catch-up is provider-neutral at the semantic layer.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P066",
+      "text": "Chroot/PRoot local bridges preserve the same semantic event identities as SSH/federation.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P067",
+      "text": "Output/presentation flags never change delegated event identity or selection.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P068",
+      "text": "Event bridge lifecycle is idempotent across retry/reconnect/shutdown.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P069",
+      "text": "Permanent tests cover duplicate-equivalent vs duplicate-conflicting events.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P070",
+      "text": "Permanent tests cover sequential/parallel federation topology parity.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P071",
+      "text": "Permanent tests cover disconnect/reconnect gap replay.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P072",
+      "text": "Permanent tests cover delegated-event secret safety.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P073",
+      "text": "Permanent tests cover mixed-version/unknown event compatibility.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P074",
+      "text": "Permanent tests cover sustained high-volume/backpressure behavior.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P075",
+      "text": "Devtool dogfoods nested forwarding across federation, SSH and local delegated providers.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P076",
+      "text": "No nested-specific scheduler, RunStore, UI truth store or semantic parser is introduced.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P077",
+      "text": "RER reuse semantics integrate with child links without fake execution events.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P078",
+      "text": "COPY secondary-failure isolation applies to event transport/finalization failures.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P079",
+      "text": "TUI-X safe semantic stream contracts are reused instead of duplicated.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P080",
+      "text": "Host V2 provider/transport identity is referenced instead of reinvented by the event bridge.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P081",
+      "text": "Gradle V2 receipts/semantic nodes remain intact through delegation.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P082",
+      "text": "Federation parent dependency scheduling consumes reconciled canonical child terminal truth.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P083",
+      "text": "Final delegated-execution seal performs promise-by-promise lineage, ordering, redaction and parity checks.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P084",
+      "text": "Final architecture can follow one event from its origin child process through transport, RUN storage, parent hierarchy and every UI without changing its semantic identity.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P085",
+      "text": "Existing SSH-01 adaptive workspace/result transport, remote environment policy, multiplexing and worker preparation remain consumed substrate; DIST does not duplicate them as a second transport stack.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P086",
+      "text": "Existing SSH-02 persistent stdout/stderr, sessions/runs/output/follow, managed ssh exec, recovery and artifact-return lifecycle remain authoritative host-transport/runtime history features and are linked to, not replaced by, semantic event forwarding.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P087",
+      "text": "Existing SSH-03 known_hosts trust, GC, capacity qualification, deep doctor and lifecycle hardening remain authoritative provider qualification/cleanup inputs; semantic forwarding consumes their identities and safety decisions.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P088",
+      "text": "Existing GIT-FRX parent/child repository lineage, frozen-source identity, typed contract identity, hierarchical federation, cancellation/recovery and provider placement remain canonical federation inputs to DelegationLink.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P089",
+      "text": "Existing GIT-FRX Git-bundle transport and remote repository/config/source attestation remain source-materialization authorities; the event bridge binds to their attestation evidence instead of inventing repository trust.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P090",
+      "text": "Existing final federated provenance/seal evidence remains authoritative; DIST contributes event-delivery/child-reconciliation evidence references rather than creating a competing campaign seal format.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P091",
+      "text": "LIFE-qualified remote artifact, repository-pack, cleanup and signing requests travel through DIST as typed envelopes whose semantic object identity remains LIFE-owned.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P092",
+      "text": "Signing and other secret-bearing remote operations use explicit private transport channels; raw secret values never enter EventTransportEnvelope, ordinary semantic events, shell argv or serialized wrapper command text.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P093",
+      "text": "Resolved ToolInvocation/ToolArgumentBinding passthrough is finalized by EXEC/ENV before provider wrapping; DIST preserves exact argv boundaries across SSH/chroot/PRoot/OCI and never broadcasts ambiguous raw tails.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P094",
+      "text": "Remote Android execution resolves/records environment and device/artifact identities through ENV/ANDROID and forwards only those canonical references through delegation lineage.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P095",
+      "text": "Remote/instrumented test semantics originate at the child and preserve canonical TestResult/TestRunReceipt identities; DIST transports links/evidence but never reparses human output into test truth.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P096",
+      "text": "Provider staging/spool/event-cursor state has explicit LIFE cleanup ownership and may be reclaimed only after canonical RUN import/reconciliation and required recovery/reference checks.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P097",
+      "text": "Presentation flags and surfaces may change projection only; they cannot alter child selection, event identity, forwarding, control, reconciliation, passthrough binding or provider placement.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P098",
+      "text": "Mixed-version forwarding has an explicit capability-negotiation/degradation contract that distinguishes safely preservable unknown events from semantics that require fail-closed incompatibility.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P099",
+      "text": "DIST-X01 through DIST-X04 may run bounded targeted validation for changed non-Gradle boundaries; Gradle-related implementation validation is deferred. DIST-G1, DIST-G2 and DIST-G3 remain separate authoritative Devtool validation overlays, and `--no-validate` remains valid when no meaningful non-Gradle targeted check exists.",
+      "status": "SATISFIED",
+      "evidence": [
+        "roadmap-dist-g3-retained-dist",
+        "roadmap-dist-g3-retained-substrate"
+      ]
+    },
+    {
+      "id": "DIST-P100",
+      "text": "Every DIST implementation overlay retains the before-commit editable-install refresh hook so subsequent overlays and gates exercise the transaction candidate Devtool rather than a stale installed CLI.",
+      "status": "REMEDIATED_AFTER_HISTORICAL_DEVIATION",
+      "evidence": [
+        "DIST_R01_PROMISE_LEDGER.json",
+        "DIST_R01_HISTORICAL_ARTIFACT_AUDIT.json"
+      ]
+    },
+    {
+      "id": "DIST-P101",
+      "text": "DIST-G1 proves identity, equivocation protection, bounded forwarding, cursor/gap recovery, terminal reconciliation and sequential/parallel federation parity from fresh processes.",
+      "status": "SATISFIED",
+      "evidence": [
+        "DIST_G1_PROMISE_LEDGER.json",
+        "tests/test_dist_g1_identity_delivery_recovery_gate.py"
+      ]
+    },
+    {
+      "id": "DIST-P102",
+      "text": "DIST-G2 proves provider parity across local subprocess, chroot, PRoot/OCI, SSH foreground, SSH detached/reconnect and nested federation, including control acknowledgements and hierarchy/retention behavior.",
+      "status": "SATISFIED",
+      "evidence": [
+        "DIST_G2_PROMISE_LEDGER.json",
+        "tests/test_dist_g2_provider_parity_gate.py"
+      ]
+    },
+    {
+      "id": "DIST-P103",
+      "text": "Before DIST-G3 every NEST-P001..NEST-P084 source promise and all 157 source regression cases have explicit evidence/disposition; historical SSH/FRX qualification contracts consumed by M007 are mapped rather than silently reimplemented or dropped.",
+      "status": "SATISFIED",
+      "evidence": [
+        "DIST_G3_SOURCE_DISPOSITION_LEDGER.json",
+        "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+      ]
+    },
+    {
+      "id": "DIST-P104",
+      "text": "DIST-G3 proves one event can be followed unchanged from origin child execution through provider transport, external ingest, canonical RUN storage, terminal reconciliation and parent hierarchy into machine/CLI/TUI/Desktop projections while preserving source identity and primary failure truth.",
+      "status": "CANDIDATE_NATIVE_SEAL",
+      "evidence": [
+        "tests/test_dist_g3_final_seal.py",
+        "roadmap-dist-g3-final-proof"
+      ]
+    }
+  ],
+  "promise_count": 104,
+  "source_closure": {
+    "nest_promises": 84,
+    "nest_regressions": 157,
+    "ledger": "DIST_G3_SOURCE_DISPOSITION_LEDGER.json",
+    "historical_crosswalk": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+  },
+  "authoritative_final_proof": [
+    "one child semantic event retains run_id/event_id/sequence/payload digest across origin journal, EventTransportEnvelope, external ingest and canonical RUN event store",
+    "terminal failed child truth reconciles without being replaced by transport/projection status",
+    "parent hierarchy retains canonical child run/delegation relation rather than flattening child nodes",
+    "machine/shared UI/TUI/Desktop projection inputs retain child canonical identity without creating a second truth store",
+    "reused child projection remains historical and never fabricates live replay",
+    "G2 provider parity remains closed across local, federation, chroot, PRoot/OCI and SSH foreground/detached classes"
+  ],
+  "next_on_success": "TEST-G3 67/76",
+  "remaining_in_dist_before_next_scope": 0,
+  "next_major_scope": "TEST finalization",
+  "later": "EXEC-G3 68/76 then PRES-G3 69/76"
+}

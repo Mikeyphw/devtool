@@ -141,14 +141,14 @@
     {
       "id": "PRES-G2R",
       "position": "64/76",
-      "status": "candidate_pending_native_qualification",
+      "status": "qualified_native",
       "promises": [
         "audit all R01..R03 work and reopened X04..X08/G1/G2 claims",
         "reject spec/model-only evidence for user-visible concrete-app promises",
         "prove normal execution and control-center Textual runtime boundaries in fresh processes",
         "leave PRES-G3 as the later final cross-surface seal"
       ],
-      "next": "DIST-G3 66/76 (DIST-R01 65/76 already qualified/applied)",
+      "next": "DIST-G3 66/76 (active candidate; DIST-R01 65/76 already qualified/applied)",
       "audit_window": [
         "PRES-X04",
         "PRES-X05",
@@ -164,7 +164,13 @@
         "PRES-R02",
         "PRES-R03"
       ],
-      "gate_evidence": "PRES_G2R_CONCRETE_RUNTIME_REQUALIFICATION_GATE_REPORT.md"
+      "gate_evidence": "PRES_G2R_CONCRETE_RUNTIME_REQUALIFICATION_GATE_REPORT.md",
+      "qualification": {
+        "run": "c96acfc4493f40fc818f7086e6a68611",
+        "tests": "302 passed, 0 failed, 0 skipped",
+        "diagnostics": "0 warnings, 0 errors",
+        "git_commit": "3ffbf98"
+      }
     }
   ],
   "known_non_pres_insertions": [
