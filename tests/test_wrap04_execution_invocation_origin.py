@@ -8,6 +8,7 @@ import pytest
 from devtool.cli import main
 from devtool.core.events import EventBus, RunFinished, RunStarted
 from devtool.core.execution_state import ExecutionRunState, ExecutionSnapshot
+from devtool.invocation_origin import trusted_invocation_context
 
 
 def test_run_started_persists_invocation_origin_in_snapshot() -> None:
@@ -47,42 +48,19 @@ def test_cli_internal_wrapper_provenance_reaches_run_started(monkeypatch: pytest
     import devtool.cli as cli
 
     events = []
-
     monkeypatch.setattr(cli, "publish_event", events.append)
     monkeypatch.setattr(cli, "finalize_execution_run", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_main_after_parse", lambda *args, **kwargs: 0)
-    code = cli.main([
-        "--repo",
-        str(tmp_path),
-        "--internal-invocation-source",
-        "wrapper",
-        "--internal-invocation-command",
-        "codegen",
-        "--internal-wrapper-schema",
-        "1",
-        "invoke",
-        "codegen",
-    ])
+    with trusted_invocation_context(source="wrapper", command="codegen", wrapper_schema="1"):
+        code = cli.main(["--repo", str(tmp_path), "invoke", "codegen"])
     assert code == 0
-    assert events
     event = events[0]
     assert event.source == "wrapper"
-    assert event.command == "invoke"
     assert event.metadata["invocation_source"] == "wrapper"
     assert event.metadata["invocation_command"] == "codegen"
     assert event.metadata["wrapper_schema"] == "1"
-    assert event.metadata["wrapper_command"] == "codegen"
 
-
-def test_cli_rejects_unsafe_internal_invocation_tokens(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cli_rejects_unsafe_internal_invocation_tokens(tmp_path: Path) -> None:
     import devtool.cli as cli
-
-    monkeypatch.setattr(cli, "_main_after_parse", lambda *args, **kwargs: 0)
-    code = cli.main([
-        "--repo",
-        str(tmp_path),
-        "--internal-invocation-source",
-        "wrapper with spaces",
-        "build",
-    ])
-    assert code == 1
+    with pytest.raises(SystemExit):
+        cli.main(["--repo", str(tmp_path), "--internal-invocation-source", "wrapper", "build"])

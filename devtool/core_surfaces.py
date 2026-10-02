@@ -17,7 +17,7 @@ import hashlib
 import json
 import os
 
-from .core_registry import CoreRegistry, build_adopted_core_registry
+from .core_registry import CoreRegistry, build_core_registry, assert_parser_matches_canonical_registry
 
 SURFACE_SCHEMA_VERSION = 1
 PERFORMANCE_BUDGETS_MS = {
@@ -48,29 +48,24 @@ def _sha(value: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _option_rows(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
+def _option_rows(registry: CoreRegistry, path: Sequence[str]) -> list[dict[str, Any]]:
+    """Project command options from the canonical schema, never argparse."""
+    target = tuple(path)
     rows: list[dict[str, Any]] = []
-    for action in parser._actions:
-        if isinstance(action, argparse._SubParsersAction):  # type: ignore[attr-defined]
+    for option in registry.options:
+        metadata = dict(option.metadata)
+        if tuple(str(x) for x in (metadata.get("path") or ())) != target:
             continue
-        spellings = [str(item) for item in getattr(action, "option_strings", ())]
-        if not spellings:
-            continue
-        if str(getattr(action, "help", "") or "") == argparse.SUPPRESS:
-            hidden = True
-        else:
-            hidden = False
-        rows.append(
-            {
-                "dest": str(getattr(action, "dest", "") or ""),
-                "spellings": spellings,
-                "required": bool(getattr(action, "required", False)),
-                "nargs": getattr(action, "nargs", None),
-                "choices": [str(item) for item in (getattr(action, "choices", None) or ())],
-                "help": "" if hidden else str(getattr(action, "help", "") or ""),
-                "hidden": hidden,
-            }
-        )
+        rows.append({
+            "id": option.stable_id,
+            "dest": str(metadata.get("dest") or ""),
+            "spellings": list(option.all_spellings()),
+            "required": bool(metadata.get("required")),
+            "nargs": metadata.get("nargs"),
+            "choices": list(metadata.get("choices") or ()),
+            "help": "" if metadata.get("hidden") else str(metadata.get("help") or ""),
+            "hidden": bool(metadata.get("hidden")),
+        })
     return rows
 
 
@@ -91,7 +86,8 @@ def _parser_by_paths(parser: argparse.ArgumentParser) -> dict[tuple[str, ...], a
 
 
 def machine_help_payload(parser: argparse.ArgumentParser, registry: CoreRegistry | None = None) -> dict[str, Any]:
-    registry = registry or build_adopted_core_registry(parser)
+    registry = registry or build_core_registry()
+    assert_parser_matches_canonical_registry(parser, registry)
     parser_map = _parser_by_paths(parser)
     commands: list[dict[str, Any]] = []
     for command in registry.commands:
@@ -111,7 +107,7 @@ def machine_help_payload(parser: argparse.ArgumentParser, registry: CoreRegistry
                 "summary": summary,
                 "stability": str(metadata.get("stability") or "stable"),
                 "adoption_source": str(metadata.get("adoption_source") or "core-registry"),
-                "options": _option_rows(command_parser) if command_parser is not None else [],
+                "options": _option_rows(registry, command.canonical_path),
             }
         )
     parity = registry.parser_parity(parser)
@@ -231,9 +227,9 @@ def config_schema_payload(registry: CoreRegistry) -> dict[str, Any]:
 def _root_words(registry: CoreRegistry) -> list[str]:
     words: list[str] = []
     for command in registry.commands:
-        for path in command.all_paths():
-            if path:
-                words.append(path[0])
+        path = command.canonical_path
+        if path:
+            words.append(path[0])
     return sorted(dict.fromkeys(words))
 
 
@@ -241,10 +237,10 @@ def _children(registry: CoreRegistry, prefix: Sequence[str]) -> list[str]:
     p = tuple(prefix)
     children: list[str] = []
     for command in registry.commands:
-        for path in command.all_paths():
-            if path[: len(p)] != p or len(path) <= len(p):
-                continue
-            children.append(path[len(p)])
+        path = command.canonical_path
+        if path[: len(p)] != p or len(path) <= len(p):
+            continue
+        children.append(path[len(p)])
     return sorted(dict.fromkeys(children))
 
 
@@ -289,7 +285,7 @@ def reference_markdown(machine_help: Mapping[str, Any], config_schema: Mapping[s
         "",
         f"Registry digest: `{machine_help.get('registry_digest', '')}`",
         "",
-        "This file is generated from the CORE command/config registry and the live parser adoption boundary.",
+        "This file is generated from the CORE command/config registry and the canonical CLI schema.",
         "",
         "## Commands",
         "",
@@ -333,7 +329,7 @@ def generated_manpage(machine_help: Mapping[str, Any]) -> str:
         ".B devtool",
         "[global-options] command [command-options]",
         ".SH DESCRIPTION",
-        "This manual is generated from the canonical CORE registry and live parser adoption boundary.",
+        "This manual is generated from the canonical CORE registry and canonical CLI schema.",
         ".SH COMMANDS",
     ]
     for command in machine_help.get("commands", []) or []:
@@ -392,7 +388,8 @@ class GeneratedSurfaceBundle:
 
 
 def build_generated_surfaces(parser: argparse.ArgumentParser) -> GeneratedSurfaceBundle:
-    registry = build_adopted_core_registry(parser)
+    registry = build_core_registry()
+    assert_parser_matches_canonical_registry(parser, registry)
     machine_help = machine_help_payload(parser, registry)
     config_schema = config_schema_payload(registry)
     completions = {shell: generated_completion(registry, shell) for shell in ("zsh", "bash", "fish")}
@@ -402,7 +399,7 @@ def build_generated_surfaces(parser: argparse.ArgumentParser) -> GeneratedSurfac
         "schema_version": 1,
         "owner": "CORE",
         "authority": "generated-projection",
-        "canonical_sources": ["CoreRegistry", "argparse adoption boundary"],
+        "canonical_sources": ["CoreRegistry", "core_cli_schema.json"],
         "generated_files": list(GENERATED_SURFACE_FILES[:-1]),
         "manifest_file": "manifest.json",
         "drift_policy": "exact-generated-set",

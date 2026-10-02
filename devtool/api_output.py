@@ -4,6 +4,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 import io
 import json
+import os
 import time
 from typing import Any, Callable
 
@@ -103,13 +104,14 @@ def _native_machine_envelope(value: Any) -> bool:
         and isinstance(value.get("data"), dict)
     )
 
-def invocation_envelope(*, command: str, repo: str, exit_code: int, stdout: str, stderr: str, started_at: datetime, duration_seconds: float, events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def invocation_envelope(*, command: str, repo: str, exit_code: int, stdout: str, stderr: str, started_at: datetime, duration_seconds: float, events: list[dict[str, Any]] | None = None, run_id: str = "") -> dict[str, Any]:
     safe_stdout = redact_sensitive_text(stdout)
     safe_stderr = redact_sensitive_text(stderr)
     data = redact_sensitive_value(_parsed_stdout(stdout))
     result = CommandResult(success=exit_code == 0, exit_code=exit_code, stdout="" if data is not None else safe_stdout, stderr=safe_stderr, duration=duration_seconds, metadata={"command": command, "repo": repo})
     machine = machine_state_from_runtime({
         "producer": "devtool",
+        "run_id": str(run_id or ""),
         "status": "ok" if exit_code == 0 else "failed",
         "command": command,
         "repo_root": repo,
@@ -167,6 +169,7 @@ def run_json_invocation(invoke: Callable[[], int], *, command: str, repo: str) -
         started_at=started,
         duration_seconds=max(0.0, time.monotonic() - monotonic),
         events=event_listener.events,
+        run_id=str(os.environ.get("DEVTOOL_RUN_ID") or ""),
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return code

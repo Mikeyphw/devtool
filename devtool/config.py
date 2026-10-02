@@ -10,6 +10,8 @@ import sys
 import tomllib
 from pathlib import Path
 from typing import Any
+from dataclasses import dataclass
+import hashlib
 
 from .models import DotnetTarget, JobConfig, ProjectConfig, TargetConfig
 from .federation_config import FederationConfigError, federation_as_dict, load_federation_config
@@ -43,6 +45,102 @@ GLOBAL_REPO_SCOPED_SECTIONS = {
     "project", "workspace", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
     "go", "maven", "cmake", "meson", "make", "test_profiles", "test_selection", "variants", "wrapper", "federation",
 }
+
+REPO_SAFE_TOP_LEVEL_SECTIONS = frozenset({
+    "project", "workspace", "targets", "jobs", "tasks", "artifacts", "wrapper", "federation",
+    "env", "execution", "toolchain", "git", "ui", "variants", "test", "tests", "workflows", "test_profiles", "test_selection",
+    "android", "gradle", "dotnet", "python", "node", "rust", "go", "maven", "cmake", "meson", "make",
+    "build", "terminal", "termux_chroot", "termux", "proot", "ssh", "bootstrap", "chroots", "features",
+    "validation", "release", "repositories", "workspace_groups", "plugins", "extensions",
+})
+
+
+def _validate_repo_top_level_namespaces(data: dict[str, Any], *, source: Path) -> None:
+    """Reject unknown repository namespaces unless explicitly extension-scoped.
+
+    Trusted global-only policy sections retain their stronger, specific error so
+    callers can distinguish an attempted privilege grant from an ordinary typo.
+    """
+    if "privilege" in data:
+        raise SystemExit(
+            f"Invalid repository config {source}: [privilege] is global-only trusted policy; "
+            "repositories may request capabilities but cannot grant privilege."
+        )
+    unknown = sorted(
+        str(key) for key in data
+        if str(key) not in REPO_SAFE_TOP_LEVEL_SECTIONS and not str(key).startswith("x-")
+    )
+    if unknown:
+        raise SystemExit(
+            f"Invalid config {source}: unknown top-level section(s): {', '.join(unknown)}. "
+            "Third-party extensions must use [extensions.*] or an x-* namespace."
+        )
+
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedConfigDocument:
+    """Canonical parsed TOML boundary with source provenance.
+
+    Domain-specific loaders may project tables out of ``data`` but must not
+    reparse the source.  ``digest`` binds the projection to the exact document
+    bytes that crossed the authority boundary.
+    """
+
+    scope: str
+    source: Path
+    data: dict[str, Any]
+    digest: str
+
+
+def _load_toml_document(path: Path, *, scope: str, required: bool = False) -> LoadedConfigDocument:
+    if not path.is_file():
+        if required:
+            raise SystemExit(f"{scope.title()} config does not exist: {path}")
+        return LoadedConfigDocument(scope=scope, source=path, data={}, digest=hashlib.sha256(b"").hexdigest())
+    try:
+        raw = path.read_bytes()
+        parsed = tomllib.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise SystemExit(f"Invalid TOML in {scope} config {path}: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise SystemExit(f"Invalid {scope} config {path}: expected a TOML document")
+    return LoadedConfigDocument(scope=scope, source=path, data=dict(parsed), digest=hashlib.sha256(raw).hexdigest())
+
+
+def _validate_global_top_level_namespaces(data: dict[str, Any], *, source: Path) -> None:
+    # Known repository-scoped sections are deliberately accepted at the parse
+    # boundary for backward compatibility, but downstream global-default
+    # projection ignores them (and the config doctor reports them).  Unknown
+    # namespaces still fail closed here so no subsystem can privately adopt one.
+    known = GLOBAL_SAFE_TOP_LEVEL_SECTIONS | GLOBAL_REPO_SCOPED_SECTIONS
+    unknown = sorted(
+        str(key) for key in data
+        if str(key) not in known and not str(key).startswith("x-")
+    )
+    if unknown:
+        raise SystemExit(
+            f"Invalid global config {source}: unknown top-level section(s): {', '.join(unknown)}. "
+            "Third-party extensions must use an x-* namespace."
+        )
+
+
+def load_config_document(path: str | Path, *, scope: str, required: bool = False) -> LoadedConfigDocument:
+    config_path = Path(path).expanduser()
+    document = _load_toml_document(config_path, scope=scope, required=required)
+    if scope == "repository":
+        _validate_repo_top_level_namespaces(document.data, source=config_path)
+    elif scope == "global":
+        _validate_global_top_level_namespaces(document.data, source=config_path)
+    else:
+        raise ValueError(f"unsupported config document scope: {scope}")
+    return document
+
+def load_repository_document(path: str | Path, *, required: bool = False) -> dict[str, Any]:
+    """Compatibility projection of the canonical repository document."""
+    return dict(load_config_document(path, scope="repository", required=required).data)
+
+
 GLOBAL_COMMAND_SCOPED_CLI_KEYS = {
     ("validation", "skip_restore"), ("validation", "skip_build"), ("validation", "skip_test"),
     ("validation", "watch"), ("validation", "matrix"), ("validation", "test_profile"),
@@ -67,15 +165,8 @@ def global_config_path() -> Path:
 
 def load_global_config(path: str | Path | None = None) -> tuple[dict[str, Any], Path]:
     config_path = Path(path).expanduser() if path is not None else global_config_path()
-    if not config_path.exists():
-        return {}, config_path
-    try:
-        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
-        raise SystemExit(f"Invalid TOML in global config {config_path}: {exc}") from exc
-    if not isinstance(data, dict):
-        return {}, config_path
-    return data, config_path
+    document = load_config_document(config_path, scope="global", required=False)
+    return dict(document.data), config_path
 
 
 def _deep_merge_defaults(defaults: dict[str, Any], values: dict[str, Any]) -> dict[str, Any]:
@@ -752,12 +843,7 @@ def load_project_config(
         raise SystemExit(str(exc)) from exc
     config_root = config_path.parent if config_path else repo_root
 
-    loaded: dict[str, Any] = {}
-    if config_path:
-        try:
-            loaded = tomllib.loads(config_path.read_text(encoding="utf-8"))
-        except tomllib.TOMLDecodeError as exc:
-            raise SystemExit(f"Invalid TOML in {config_path}: {exc}") from exc
+    loaded: dict[str, Any] = load_repository_document(config_path) if config_path else {}
     repo_loaded = dict(loaded)
 
     global_loaded, global_path = load_global_config()

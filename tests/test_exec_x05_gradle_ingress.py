@@ -290,13 +290,10 @@ def test_cli_wrapper_provenance_is_carried_into_runtime_project_config(tmp_path:
     )
     from devtool.cli import _load_command_config, build_parser
 
-    args = build_parser().parse_args([
-        "-r", str(tmp_path),
-        "--internal-invocation-source", "wrapper",
-        "--internal-invocation-command", "build",
-        "build",
-    ])
-    config = _load_command_config(args)
+    args = build_parser().parse_args(["-r", str(tmp_path), "build"])
+    from devtool.invocation_origin import trusted_invocation_context
+    with trusted_invocation_context(source="wrapper", command="build", wrapper_schema="1"):
+        config = _load_command_config(args)
     assert config.invocation_source == "wrapper"
     assert config.invocation_command == "build"
 

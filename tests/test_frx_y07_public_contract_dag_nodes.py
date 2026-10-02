@@ -9,7 +9,7 @@ import pytest
 from devtool.config import load_project_config
 from devtool.core.events import EventBus, RunFinished, RunStarted
 from devtool.federation_execution import run_federated_group, run_federated_workflow
-from devtool.invocation_origin import invocation_metadata_for_args
+from devtool.invocation_origin import invocation_metadata_for_args, current_trusted_invocation
 from devtool.repository_identity import build_repository_identity
 from devtool.federation_plan import build_federated_plan, materialize_federation_group
 
@@ -135,15 +135,9 @@ def test_y07_wrapper_contract_executes_through_existing_wrapper_bridge(tmp_path:
         seen.append(list(argv))
         run_id = os.environ["DEVTOOL_RUN_ID"]
         root = Path(argv[argv.index("--repo") + 1])
-        source = argv[argv.index("--internal-invocation-source") + 1]
-        command = argv[argv.index("--internal-invocation-command") + 1]
-        schema = argv[argv.index("--internal-wrapper-schema") + 1]
-        metadata = invocation_metadata_for_args(SimpleNamespace(
-            _devtool_invocation_source=source,
-            _devtool_invocation_command=command,
-            _devtool_wrapper_schema=schema,
-            command="build",
-        ))
+        ctx = current_trusted_invocation(); assert ctx is not None
+        source, command = ctx.source, ctx.command
+        metadata = invocation_metadata_for_args(SimpleNamespace(command="build"))
         metadata["repository_identity"] = build_repository_identity(root, root / ".devtool.toml").as_dict()
         bus.publish(RunStarted(run_id=run_id, command="build", project=str(root), source=source, metadata=metadata))
         bus.publish(RunFinished(run_id=run_id, status="succeeded", exit_code=0, source=source))
@@ -163,7 +157,7 @@ def test_y07_wrapper_contract_executes_through_existing_wrapper_bridge(tmp_path:
     assert snapshot is not None
     assert snapshot.run_lineage["child_contract"] == "wrapper:build"
     assert snapshot.run_lineage["contract_ref"] == "child::app::wrapper:build"
-    assert seen and "--internal-wrapper-schema" in seen[0]
+    assert seen and not any(token.startswith("--internal-invocation-") or token == "--internal-wrapper-schema" for token in seen[0])
 
 
 def test_y07_explicit_workflow_contract_ref_is_typed_without_breaking_legacy_workflows(tmp_path: Path) -> None:

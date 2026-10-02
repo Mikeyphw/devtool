@@ -21,6 +21,7 @@ from .models import (
     WrapperPositionalConfig,
 )
 from .workspace import expand_workspace_group
+from .core_registry import build_core_registry
 
 
 class WrapperConfigError(ValueError):
@@ -34,19 +35,14 @@ WRAPPER_OPTION_TYPES = frozenset({"boolean", "string", "integer", "float", "choi
 WRAPPER_PATH_BASES = frozenset({"cwd", "repo"})
 WRAPPER_RESERVED_OPTION_SPELLINGS = frozenset({"help", "h", "version"})
 WRAPPER_RESERVED_COMMAND_SPELLINGS = frozenset({"help", "version"})
-# Canonical public action commands.  Aliases are deliberately excluded: the
-# repository contract should not depend on CLI shorthand.
-WRAPPER_NATIVE_COMMANDS = frozenset({
-    "restore",
-    "build",
-    "test",
-    "lint",
-    "validate",
-    "wine-validate",
-    "run",
-    "package",
-    "clean",
-})
+# Canonical public action commands are compiled from the CORE command authority.
+# Repository wrapper configuration never carries an independent static command
+# allow-list.  Aliases remain excluded: wrapper contracts bind semantic commands.
+WRAPPER_NATIVE_COMMANDS = frozenset(
+    command.canonical_path[0]
+    for command in build_core_registry().commands
+    if len(command.canonical_path) == 1 and bool(command.metadata.get("wrapper_native"))
+)
 
 # Static binding safety.  The wrapper contract may bind repository-facing
 # options to Devtool argv, but it must not let the repository redefine the

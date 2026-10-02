@@ -54,13 +54,8 @@ def test_wrapper_canonical_argv_injects_non_secret_provenance() -> None:
 
     argv = cli._wrapper_canonical_argv_with_provenance(resolution)
 
-    assert argv == [
-        "--repo", str(root),
-        "--internal-invocation-source", "wrapper",
-        "--internal-invocation-command", "build",
-        "--internal-wrapper-schema", "1",
-        "build", "--target", "android", "--variant", "release",
-    ]
+    assert argv == ["--repo", str(root), "build", "--target", "android", "--variant", "release"]
+    assert not any(token.startswith("--internal-invocation-") or token == "--internal-wrapper-schema" for token in argv)
     assert "wrapper" not in argv[argv.index("build") + 1 :]
 
 
@@ -86,9 +81,12 @@ def test_wrapper_exec_reenters_canonical_main_once_and_forwards_execution_contro
             "wrapper", "exec", "build", "--abi", "arm64-v8a", "--", "--stacktrace",
         ])
         calls: list[list[str]] = []
+        origins = []
 
         def fake_main(argv):
+            from devtool.invocation_origin import current_trusted_invocation
             calls.append(list(argv))
+            origins.append(current_trusted_invocation())
             return 17
 
         monkeypatch.setattr(cli, "main", fake_main)
@@ -100,10 +98,8 @@ def test_wrapper_exec_reenters_canonical_main_once_and_forwards_execution_contro
     assert canonical[:2] == ["--repo", str(root)]
     assert "--dry-run" in canonical
     assert canonical[canonical.index("--ssh") + 1] == "tablet"
-    assert canonical[canonical.index("--internal-invocation-source") + 1] == "wrapper"
-    assert canonical[canonical.index("--internal-invocation-command") + 1] == "build"
-    assert canonical[canonical.index("--internal-wrapper-schema") + 1] == "1"
-    assert canonical[canonical.index("build", canonical.index("--internal-wrapper-schema")) + 1 : canonical.index("--")] == ["--target", "android"]
+    assert origins[0] is not None and origins[0].source == "wrapper" and origins[0].command == "build"
+    assert canonical[canonical.index("build") + 1 : canonical.index("--")] == ["--target", "android"]
     assert canonical[canonical.index("--") + 1 :] == ["-Pabi=arm64-v8a", "--stacktrace"]
 
 
@@ -118,7 +114,11 @@ def test_wrapper_workflow_exec_reenters_invoke_action(monkeypatch) -> None:
         parser = cli.build_parser()
         args = parser.parse_args(["--repo", str(root), "wrapper", "exec", "codegen"])
         calls: list[list[str]] = []
-        monkeypatch.setattr(cli, "main", lambda argv: calls.append(list(argv)) or 0)
+        origins = []
+        def fake_main(argv):
+            from devtool.invocation_origin import current_trusted_invocation
+            calls.append(list(argv)); origins.append(current_trusted_invocation()); return 0
+        monkeypatch.setattr(cli, "main", fake_main)
 
         assert cli._handle_wrapper_command(args) == 0
 
@@ -127,8 +127,7 @@ def test_wrapper_workflow_exec_reenters_invoke_action(monkeypatch) -> None:
     assert canonical[canonical.index("invoke") : canonical.index("invoke") + 4] == [
         "invoke", "codegen", "--target", "android",
     ]
-    assert canonical[canonical.index("--internal-invocation-source") + 1] == "wrapper"
-    assert canonical[canonical.index("--internal-invocation-command") + 1] == "codegen"
+    assert origins[0] is not None and origins[0].source == "wrapper" and origins[0].command == "codegen"
 
 
 def test_wrapper_resolve_json_does_not_execute(monkeypatch, capsys) -> None:

@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "REMED-R01A",
+  "position": "71/93",
+  "gate_window": "1/8",
+  "scope_maxima": {
+    "CORE": "CORE-P084",
+    "ENV": "ENV-P131",
+    "LIFE": "LIFE-P127"
+  },
+  "source_obligation_counts": {
+    "M001_CORE": 336,
+    "M004_ENV": 252,
+    "M006_LIFE": 168
+  },
+  "source_obligation_default_disposition": "RETAINED_NOT_REQUALIFIED",
+  "findings": [
+    {
+      "id": "CORE-A01",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": [
+        "devtool/core_cli_schema.json",
+        "devtool/core_parser.py",
+        "devtool/cli.py",
+        "devtool/core_registry.py"
+      ],
+      "evidence": [
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_schema_compiles_parser_and_identity_rows_are_bound",
+        "tests/test_core_x01_registry.py::test_registry_parser_parity_inventory_is_complete_and_fail_closed"
+      ]
+    },
+    {
+      "id": "CORE-A02",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": [
+        "devtool/invocation_origin.py",
+        "devtool/wrapper_execution.py",
+        "devtool/federation_execution.py"
+      ],
+      "evidence": [
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_user_argv_cannot_forge_internal_origin_and_wrapper_uses_private_context",
+        "tests/test_wrap04_execution_invocation_origin.py",
+        "tests/test_frx07_wrapper_tlj_federation_bridge.py"
+      ]
+    },
+    {
+      "id": "CORE-A03",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": [
+        "devtool/config.py",
+        "devtool/features.py",
+        "devtool/federation_config.py",
+        "devtool/ssh_profiles.py",
+        "devtool/ssh_tmux_runner.py",
+        "devtool/ui_core/preferences.py",
+        "devtool/final_seal.py",
+        "devtool/target_seal.py"
+      ],
+      "evidence": [
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_repository_and_global_config_cross_one_namespace_boundary",
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_production_config_consumers_do_not_reparse_devtool_toml"
+      ]
+    },
+    {
+      "id": "CORE-A04",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": [
+        "devtool/wrapper_config.py",
+        "devtool/wrapper_execution.py"
+      ],
+      "evidence": [
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_wrapper_native_command_set_is_registry_projection",
+        "tests/test_wrapper_reseal_hotfix.py"
+      ]
+    },
+    {
+      "id": "CORE-A05",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": [
+        "devtool/cli.py",
+        "devtool/api_output.py",
+        "devtool/core_runtime.py",
+        "devtool/invocation_origin.py",
+        "devtool/textual_execution_host.py",
+        "devtool/textual_apply_host.py",
+        "devtool/federation_execution.py"
+      ],
+      "evidence": [
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_root_cli_ignores_stale_run_env_and_persists_distinct_run_instances",
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_managed_child_run_id_requires_one_shot_parent_handoff",
+        "tests/test_pres_h02_textual_apply_host.py",
+        "tests/test_pres_r03_textual_parity_qualification.py"
+      ]
+    },
+    {
+      "id": "CORE-A06",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": [
+        "devtool/core_runtime.py",
+        "devtool/cli.py"
+      ],
+      "evidence": [
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_semantic_operation_id_is_stable_while_run_id_is_unique",
+        "tests/test_core_g1_identity_authority_gate.py::test_alias_and_canonical_commands_have_same_semantic_run_identity"
+      ]
+    },
+    {
+      "id": "CORE-A08",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": [
+        "devtool/core_surfaces.py",
+        "share/core-generated"
+      ],
+      "evidence": [
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_checked_in_generated_surfaces_are_fixed_point",
+        "tests/test_core_x04_generated_surfaces.py"
+      ]
+    },
+    {
+      "id": "ENV-A02",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": [
+        "devtool/python_support.py"
+      ],
+      "evidence": [
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_python_environment_identity_recurses_includes",
+        "tests/test_python_support.py"
+      ]
+    },
+    {
+      "id": "LIFE-A03",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": [
+        "devtool/android/signing.py",
+        "devtool/artifact_trust.py"
+      ],
+      "evidence": [
+        "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_android_signing_consumes_life_identity_registry",
+        "tests/test_aops03_android_signing_instrumentation_operations.py"
+      ]
+    }
+  ],
+  "remaining_r01b_findings": [
+    "EXEC-A03",
+    "ENV-A03",
+    "ENV-A04",
+    "ANDROID-A12",
+    "LIFE-A01",
+    "LIFE-A02",
+    "LIFE-A05"
+  ],
+  "next": "REMED-R01B (72/93)"
+}

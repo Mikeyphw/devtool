@@ -209,26 +209,16 @@ def _merge_config_maps(defaults: Mapping[str, Any], overrides: Mapping[str, Any]
     return merged
 
 
-def _read_ssh_toml(path: Path | None) -> dict[str, Any]:
-    if path is None or not path.is_file():
-        return {}
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise ValueError(f"Unable to read SSH settings from {path}: {exc}") from exc
-    return data if isinstance(data, dict) else {}
-
-
 def _load_raw_config(argv: list[str], cwd: str) -> tuple[dict[str, Any], Path | None]:
     # SSH workers are machine/user resources first and repository overrides
     # second.  A globally-added tablet can therefore be reused by every repo,
     # while a repo-local [ssh] or [ssh.hosts.*] table wins field-by-field.
-    from .config import global_config_path
+    from .config import global_config_path, load_global_config, load_repository_document
 
     global_path = global_config_path()
     local_path = _config_path_from_args(argv, cwd)
-    global_data = _read_ssh_toml(global_path)
-    local_data = _read_ssh_toml(local_path)
+    global_data, _ = load_global_config(global_path)
+    local_data = load_repository_document(local_path) if local_path is not None else {}
     merged = _merge_config_maps(global_data, local_data)
     source = local_path if local_path is not None else (global_path if global_data else None)
     return merged, source

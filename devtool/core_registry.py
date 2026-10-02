@@ -8,6 +8,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+from functools import lru_cache
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,14 +286,50 @@ class CoreRegistry:
         parser_commands = _parser_command_paths(parser)
         registry_paths = {" ".join(command.canonical_path) for command in self.commands}
         registry_aliases = {" ".join(alias) for command in self.commands for alias in command.aliases}
-        covered = sorted(path for path in parser_commands if path in registry_paths or path in registry_aliases)
-        missing = sorted(path for path in parser_commands if path not in registry_paths and path not in registry_aliases)
+        declared_commands = registry_paths | registry_aliases
+        missing = sorted(declared_commands - parser_commands)
+        extra = sorted(parser_commands - declared_commands)
+
+        parser_options: set[tuple[tuple[str, ...], str]] = set()
+        seen: set[int] = set()
+        canonical_for_parser: dict[int, tuple[str, ...]] = {}
+        for path, child in _parser_command_entries(parser):
+            command = next((c for c in self.commands if path in c.all_paths()), None)
+            if command is not None:
+                canonical_for_parser[id(child)] = command.canonical_path
+        canonical_for_parser[id(parser)] = ()
+        def visit(current: argparse.ArgumentParser) -> None:
+            if id(current) in seen:
+                return
+            seen.add(id(current))
+            path = canonical_for_parser.get(id(current), ())
+            for action in current._actions:
+                if isinstance(action, argparse._SubParsersAction):  # type: ignore[attr-defined]
+                    for child in {id(item): item for item in action.choices.values()}.values():
+                        visit(child)
+                    continue
+                for spelling in getattr(action, "option_strings", ()) or ():
+                    parser_options.add((path, str(spelling)))
+        visit(parser)
+        registry_options = {
+            (tuple(str(x) for x in (option.metadata.get("path") or ())), spelling)
+            for option in self.options
+            for spelling in option.all_spellings()
+        }
+        missing_options = sorted(" ".join((*path, spelling)) for path, spelling in registry_options - parser_options)
+        extra_options = sorted(" ".join((*path, spelling)) for path, spelling in parser_options - registry_options)
         return {
             "parser_command_count": len(parser_commands),
             "registry_command_count": len(registry_paths),
-            "covered": covered,
+            "covered": sorted(parser_commands & declared_commands),
             "missing": missing,
+            "extra": extra,
             "missing_count": len(missing),
+            "extra_count": len(extra),
+            "missing_options": missing_options,
+            "extra_options": extra_options,
+            "option_missing_count": len(missing_options),
+            "option_extra_count": len(extra_options),
         }
 
     @property
@@ -383,129 +420,127 @@ def _stable_command_id(path: Sequence[str]) -> str:
     return "cli.command." + ".".join(parts)
 
 
-def adopt_parser_registry(base: CoreRegistry, parser: argparse.ArgumentParser) -> CoreRegistry:
-    """Adopt the complete live argparse command surface into CORE identity.
+@lru_cache(maxsize=1)
+def _canonical_cli_schema() -> Mapping[str, Any]:
+    """Return the single checked-in CLI authority used by parser + registry.
 
-    CORE-X04 is a migration boundary: older commands are still physically
-    registered by the legacy monolithic parser, but every live parser path must
-    now lower to a stable CORE command identity.  Generated help/completion/docs
-    consume this adopted registry and parity gates prevent unexplained drift.
-
-    Existing hand-authored CORE identities always win.  Missing parser commands
-    receive deterministic IDs and record ``adoption_source=argparse`` so later
-    modular registration work can migrate ownership without changing identity.
+    Importing through :mod:`core_parser` is intentional: the identity rows and
+    parser lowering are two projections of one schema document, not separate
+    authorities that can silently drift.
     """
-    existing_paths: dict[tuple[str, ...], CliCommandSpec] = {}
-    for command in base.commands:
-        for path in command.all_paths():
-            existing_paths[path] = command
+    from .core_parser import canonical_cli_schema
+    return canonical_cli_schema()
 
-    grouped: dict[int, list[tuple[str, ...]]] = {}
-    parsers: dict[int, argparse.ArgumentParser] = {}
-    order: list[int] = []
-    for path, child in _parser_command_entries(parser):
-        key = id(child)
-        if key not in grouped:
-            grouped[key] = []
-            parsers[key] = child
-            order.append(key)
-        if path not in grouped[key]:
-            grouped[key].append(path)
 
-    adopted: list[CliCommandSpec] = []
-    used_ids = set(base.commands_by_id)
-    for key in order:
-        paths = grouped[key]
-        known = next((existing_paths[path] for path in paths if path in existing_paths), None)
-        if known is not None:
-            # Hand-authored identities retain their canonical/alias contract.
-            # If argparse exposes additional spellings for the same parser, add
-            # them as migration aliases so parser parity is exhaustive.
-            extras = tuple(path for path in paths if path not in known.all_paths())
-            if extras:
-                replaced = CliCommandSpec(
-                    stable_id=known.stable_id,
-                    canonical_path=known.canonical_path,
-                    aliases=tuple(dict.fromkeys((*known.aliases, *extras))),
-                    options=known.options,
-                    metadata={**dict(known.metadata), "adoption_source": "canonical+argparse"},
-                )
-                adopted.append(replaced)
-                for path in replaced.all_paths():
-                    existing_paths[path] = replaced
+def _assert_schema_identity_binding() -> None:
+    """Fail closed when registry identity rows diverge from parser lowering."""
+    from .core_parser import parser_identity_projection
+
+    schema = _canonical_cli_schema()
+    projection = parser_identity_projection()
+    parser_commands = {tuple(row) for row in projection["commands"]}
+    declared_commands: set[tuple[str, ...]] = set()
+    for row in schema.get("commands", ()):
+        if not isinstance(row, Mapping):
             continue
-
-        canonical = paths[0]
-        aliases = tuple(paths[1:])
-        stable_id = _stable_command_id(canonical)
-        if stable_id in used_ids:
-            suffix = hashlib.sha256(" ".join(canonical).encode()).hexdigest()[:8]
-            stable_id = f"{stable_id}.{suffix}"
-        used_ids.add(stable_id)
-        child = parsers[key]
-        summary = str(getattr(child, "description", "") or "").strip()
-        adopted.append(
-            CliCommandSpec(
-                stable_id=stable_id,
-                canonical_path=canonical,
-                aliases=aliases,
-                metadata={
-                    "domain": canonical[0] if canonical else "root",
-                    "summary": summary,
-                    "stability": "adopted",
-                    "adoption_source": "argparse",
-                },
-            )
+        canonical = tuple(str(x) for x in row.get("canonical_path", ()) if str(x))
+        if canonical:
+            declared_commands.add(canonical)
+        for alias in row.get("aliases", ()):
+            if isinstance(alias, list):
+                path = tuple(str(x) for x in alias if str(x))
+                if path:
+                    declared_commands.add(path)
+    parser_options = {(tuple(path), spelling) for path, spelling in projection["options"]}
+    declared_options: set[tuple[tuple[str, ...], str]] = set()
+    for row in schema.get("options", ()):
+        if not isinstance(row, Mapping):
+            continue
+        path = tuple(str(x) for x in (row.get("metadata") or {}).get("path", ()) if str(x))
+        for spelling in (str(row.get("canonical") or ""), *(str(x) for x in row.get("aliases", ()) if str(x))):
+            if spelling:
+                declared_options.add((path, spelling))
+    if declared_commands != parser_commands or declared_options != parser_options:
+        missing_commands = sorted(" ".join(x) for x in declared_commands - parser_commands)
+        extra_commands = sorted(" ".join(x) for x in parser_commands - declared_commands)
+        missing_options = sorted(" ".join((*path, spelling)) for path, spelling in declared_options - parser_options)
+        extra_options = sorted(" ".join((*path, spelling)) for path, spelling in parser_options - declared_options)
+        raise RuntimeError(
+            "canonical CLI schema identity rows diverged from parser lowering: "
+            + json.dumps({
+                "missing_commands": missing_commands, "extra_commands": extra_commands,
+                "missing_options": missing_options, "extra_options": extra_options,
+            }, sort_keys=True)
         )
 
-    # Replace any hand-authored command that gained parser aliases, then append
-    # newly adopted commands in stable traversal order.
-    replacements = {item.stable_id: item for item in adopted if item.stable_id in base.commands_by_id}
-    commands: list[CliCommandSpec] = [replacements.get(item.stable_id, item) for item in base.commands]
-    commands.extend(item for item in adopted if item.stable_id not in base.commands_by_id)
-    return CoreRegistry(
-        schema_version=base.schema_version,
-        commands=tuple(commands),
-        options=base.options,
-        config_documents=base.config_documents,
-        env=base.env,
-        reserved_namespaces=base.reserved_namespaces,
-    )
 
+def _schema_commands() -> tuple[CliCommandSpec, ...]:
+    rows: list[CliCommandSpec] = []
+    for raw in _canonical_cli_schema().get("commands", ()):
+        if not isinstance(raw, Mapping):
+            continue
+        rows.append(CliCommandSpec(
+            stable_id=str(raw.get("stable_id") or ""),
+            canonical_path=tuple(str(x) for x in raw.get("canonical_path", ()) if str(x)),
+            aliases=tuple(tuple(str(x) for x in alias if str(x)) for alias in raw.get("aliases", ()) if isinstance(alias, list)),
+            options=tuple(str(x) for x in raw.get("options", ()) if str(x)),
+            metadata=dict(raw.get("metadata") or {}),
+        ))
+    if not rows or any(not row.stable_id or not row.canonical_path for row in rows):
+        raise RuntimeError("canonical CLI schema contains invalid command rows")
+    return tuple(rows)
+
+
+def _schema_options() -> tuple[CliOptionSpec, ...]:
+    rows: list[CliOptionSpec] = []
+    for raw in _canonical_cli_schema().get("options", ()):
+        if not isinstance(raw, Mapping):
+            continue
+        rows.append(CliOptionSpec(
+            stable_id=str(raw.get("stable_id") or ""),
+            canonical=str(raw.get("canonical") or ""),
+            aliases=tuple(str(x) for x in raw.get("aliases", ()) if str(x)),
+            scope=str(raw.get("scope") or "global"),
+            value_kind=str(raw.get("value_kind") or "flag"),
+            config_field_id=str(raw.get("config_field_id") or "") or None,
+            sensitive=bool(raw.get("sensitive")),
+            metadata=dict(raw.get("metadata") or {}),
+        ))
+    if not rows or any(not row.stable_id or not row.canonical for row in rows):
+        raise RuntimeError("canonical CLI schema contains invalid option rows")
+    return tuple(rows)
+
+
+def assert_parser_matches_canonical_registry(parser: argparse.ArgumentParser, registry: CoreRegistry | None = None) -> None:
+    """Fail closed if argparse drifts from the checked-in canonical schema."""
+    authority = registry or build_core_registry()
+    parity = authority.parser_parity(parser)
+    if parity.get("missing") or parity.get("extra") or parity.get("missing_options") or parity.get("extra_options"):
+        raise RuntimeError(
+            "argparse surface drifted from canonical CLI registry: "
+            + json.dumps({k: parity.get(k) for k in ("missing", "extra", "missing_options", "extra_options")}, sort_keys=True)
+        )
+
+
+def adopt_parser_registry(base: CoreRegistry, parser: argparse.ArgumentParser) -> CoreRegistry:
+    """Compatibility spelling for the retired reverse-adoption boundary.
+
+    The parser may no longer contribute command/option identities.  Existing
+    callers receive the canonical registry only after strict parity succeeds.
+    """
+    assert_parser_matches_canonical_registry(parser, base)
+    return base
 
 def build_adopted_core_registry(parser: argparse.ArgumentParser) -> CoreRegistry:
-    """Return the full CORE-X04 command registry for the live frontend."""
-    return adopt_parser_registry(build_core_registry(), parser)
+    """Compatibility alias: validate parser parity and return canonical authority."""
+    registry = build_core_registry()
+    assert_parser_matches_canonical_registry(parser, registry)
+    return registry
 
 def build_core_registry() -> CoreRegistry:
-    options = (
-        CliOptionSpec("cli.option.repo", "--repo", ("-r",), scope="global", value_kind="path", config_field_id="cfg.project.repo_root"),
-        CliOptionSpec("cli.option.config", "--config", ("-c",), scope="global", value_kind="path", config_field_id="cfg.project.config_file"),
-        CliOptionSpec("cli.option.target", "--target", (), scope="workspace", value_kind="string", config_field_id="cfg.workspace.target"),
-        CliOptionSpec("cli.option.copy", "--copy", ("-p",), scope="output", value_kind="bool", config_field_id="cfg.cli.output.copy"),
-        CliOptionSpec("cli.option.stdout_payload", "--stdout-payload", (), scope="output", value_kind="enum", config_field_id="cfg.cli.output.stdout_payload"),
-        CliOptionSpec("cli.option.machine_file", "--machine-file", (), scope="output", value_kind="path", sensitive=True),
-        CliOptionSpec("cli.option.internal_invocation_source", "--internal-invocation-source", (), scope="internal", value_kind="string", sensitive=True),
-        CliOptionSpec("cli.option.internal_invocation_command", "--internal-invocation-command", (), scope="internal", value_kind="string", sensitive=True),
-        CliOptionSpec("cli.option.internal_wrapper_schema", "--internal-wrapper-schema", (), scope="internal", value_kind="string", sensitive=True),
-        CliOptionSpec("cli.option.yes", "--yes", ("-y",), scope="execution", value_kind="bool"),
-        CliOptionSpec("cli.option.verbose", "--verbose", ("-v",), scope="execution", value_kind="bool"),
-        CliOptionSpec("cli.option.execution_environment", "--execution-environment", (), scope="environment", value_kind="enum", config_field_id="cfg.cli.environment.execution_environment"),
-    )
-    commands = (
-        CliCommandSpec("cli.command.apply.overlay", ("apply", "overlay"), aliases=(("apply-overlay",),), options=("cli.option.repo", "cli.option.yes"), metadata={"domain": "artifact"}),
-        CliCommandSpec("cli.command.apply.snapshot", ("apply", "snapshot"), aliases=(("apply-snapshot",),), metadata={"domain": "artifact"}),
-        CliCommandSpec("cli.command.apply.bundle", ("apply", "bundle"), aliases=(("apply-overlays",),), metadata={"domain": "artifact"}),
-        CliCommandSpec("cli.command.validate", ("validate",), aliases=(("v",),), metadata={"domain": "validation"}),
-        CliCommandSpec("cli.command.config.doctor", ("config", "doctor"), metadata={"domain": "config"}),
-        CliCommandSpec("cli.command.config.resolve", ("config", "resolve"), metadata={"domain": "config"}),
-        CliCommandSpec("cli.command.wrapper.resolve", ("wrapper", "resolve"), aliases=(("wrapper", "plan"),), metadata={"domain": "wrapper"}),
-        CliCommandSpec("cli.command.wrapper.schema", ("wrapper", "schema"), metadata={"domain": "wrapper"}),
-        CliCommandSpec("cli.command.pytest.inventory", ("pytest", "inventory"), metadata={"domain": "test"}),
-        CliCommandSpec("cli.command.pytest.select", ("pytest", "select"), metadata={"domain": "test"}),
-        CliCommandSpec("cli.command.core.registry", ("core", "registry"), aliases=(("registry",),), metadata={"domain": "core"}),
-        CliCommandSpec("cli.command.core.runtime", ("core", "runtime"), metadata={"domain": "core", "run_descriptor": True}),
-    )
+    _assert_schema_identity_binding()
+    options = _schema_options()
+    commands = _schema_commands()
     repo_config = ConfigDocument(
         "repo",
         fields=(

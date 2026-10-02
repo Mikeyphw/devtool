@@ -18,6 +18,7 @@ import tomllib
 from .compatibility import COMPATIBILITY_ENTRIES, compatibility_report
 from .completion import ZSH_COMPLETION
 from .config_migration import analyze_config_migration_text
+from .config import load_repository_document
 from .ui_core.machine import IPC_PROTOCOL_VERSION, MACHINE_SCHEMA_VERSION, TASKER_SCHEMA_VERSION
 from .validation_sessions import SESSION_SCHEMA_VERSION
 
@@ -336,12 +337,12 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
             [f"{item.compatibility_id}: {item.key}" for item in migrations],
         ))
         try:
-            parsed_cfg = tomllib.loads(cfg_text)
-        except tomllib.TOMLDecodeError as exc:
-            checks.append(_check("config.parse", False, "repository configuration is invalid TOML", [str(exc)]))
+            parsed_cfg = load_repository_document(cfg_path, required=True)
+        except SystemExit as exc:
+            checks.append(_check("config.parse", False, "repository configuration failed canonical ingestion", [str(exc)]))
             parsed_cfg = {}
         else:
-            checks.append(_check("config.parse", True, "repository configuration parses as TOML"))
+            checks.append(_check("config.parse", True, "repository configuration passes canonical ingestion"))
         workspace_default = str((parsed_cfg.get("workspace") or {}).get("default_target") or "") if isinstance(parsed_cfg, dict) else ""
         targets = parsed_cfg.get("targets") or {} if isinstance(parsed_cfg, dict) else {}
         roots_missing: list[str] = []

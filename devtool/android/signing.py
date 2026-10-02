@@ -60,6 +60,7 @@ class AndroidSigningError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class SigningProfile:
     name: str = "release"
+    identity_id: str = ""
     mode: str = "project"
     policy: str = "optional"
     keystore: str = ""
@@ -70,6 +71,8 @@ class SigningProfile:
     expected_cert_sha256: str = ""
     store_password_env: str = ""
     key_password_env: str = ""
+    store_password_file: str = ""
+    key_password_file: str = ""
     store_password_fd: int | None = None
     key_password_fd: int | None = None
     store_password_command: str = ""
@@ -176,6 +179,64 @@ def signing_profile(config: ProjectConfig | None, name: str = "release") -> Sign
     if policy not in SIGNING_POLICIES:
         raise AndroidSigningError(f"Unsupported Android signing policy {policy!r}; expected one of {', '.join(sorted(SIGNING_POLICIES))}")
 
+    identity_id = str(raw.get("identity_id") or "").strip()
+    identity = None
+    if identity_id:
+        from ..artifact_trust import SigningIdentityRegistry
+        identity = SigningIdentityRegistry().get(identity_id)
+        if identity is None:
+            raise AndroidSigningError(f"Unknown LIFE signing identity {identity_id!r}")
+        if identity.purposes and not set(identity.purposes).intersection({"android", "android-signing", "release-signing"}):
+            raise AndroidSigningError(
+                f"LIFE signing identity {identity_id!r} is not authorized for Android signing "
+                f"(purposes={', '.join(identity.purposes)})"
+            )
+        if identity.variants and name not in identity.variants and "*" not in identity.variants:
+            raise AndroidSigningError(
+                f"LIFE signing identity {identity_id!r} is not authorized for signing profile {name!r}"
+            )
+    elif mode == "devtool":
+        # Compatibility lowering: historical Android signing configuration is
+        # compiled into the shared LIFE identity model instead of remaining an
+        # independent identity authority. New configurations should name a
+        # durable registry identity explicitly.
+        from ..artifact_trust import SecretProviderRef, SigningIdentityId, SigningIdentityRecord
+        source = None
+        if str(raw.get("store_password_env") or "").strip():
+            source = SecretProviderRef("local", str(raw.get("store_password_env") or "").strip())
+        elif raw.get("store_password_fd") not in {None, ""}:
+            source = SecretProviderRef("fd", str(raw.get("store_password_fd")))
+        elif str(raw.get("store_password_command") or "").strip():
+            source = SecretProviderRef("external-command", str(raw.get("store_password_command") or "").strip())
+        elif _coerce_bool(raw.get("store_password_stdin", False), False):
+            source = SecretProviderRef("stdin", "stdin")
+        elif str(raw.get("store_password_file") or "").strip():
+            source = SecretProviderRef("private-file", str(raw.get("store_password_file") or "").strip())
+        legacy_basis = {
+            "name": name,
+            "keystore": str(raw.get("keystore") or ""),
+            "alias": str(raw.get("alias") or ""),
+            "store_type": str(raw.get("store_type") or raw.get("type") or "PKCS12"),
+            "certificate": str(raw.get("expected_cert_sha256") or ""),
+            "secret_source": source.as_dict() if source else None,
+        }
+        legacy_id = "android-compat-" + hashlib.sha256(
+            json.dumps(legacy_basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:20]
+        identity = SigningIdentityRecord(
+            identity_id=SigningIdentityId(legacy_id),
+            provider="android-jks" if str(legacy_basis["store_type"]).upper() == "JKS" else "android-pkcs12",
+            key_reference=str(raw.get("keystore") or "").strip(),
+            alias=str(raw.get("alias") or "").strip(),
+            certificate_sha256=_normalize_fingerprint(str(raw.get("expected_cert_sha256") or "")),
+            purposes=("android-signing",),
+            variants=(name,),
+            secret_provider=source,
+            policy_provenance="android-legacy-compatibility-lowering",
+            lifecycle="ephemeral",
+        )
+        identity_id = str(identity.identity_id)
+
     def _fd(key: str) -> int | None:
         value = raw.get(key)
         if value in {None, ""}:
@@ -189,23 +250,57 @@ def signing_profile(config: ProjectConfig | None, name: str = "release") -> Sign
         return parsed
 
     keystore = str(raw.get("keystore") or "").strip()
+    alias = str(raw.get("alias") or "").strip()
+    store_type = str(raw.get("store_type") or raw.get("type") or "PKCS12").strip().upper()
+    expected_cert = _normalize_fingerprint(str(raw.get("expected_cert_sha256") or ""))
+    secret_overrides: dict[str, Any] = {}
+    if identity is not None:
+        keystore = str(identity.key_reference or "").strip()
+        alias = str(identity.alias or alias).strip()
+        expected_cert = _normalize_fingerprint(identity.certificate_sha256 or expected_cert)
+        provider_name = str(identity.provider or "").strip().lower()
+        if "jks" in provider_name:
+            store_type = "JKS"
+        elif "pkcs12" in provider_name or "android-keystore" in provider_name:
+            store_type = "PKCS12"
+        provider = identity.secret_provider
+        if provider is not None:
+            if provider.kind == "local":
+                secret_overrides["store_password_env"] = provider.reference
+            elif provider.kind == "fd":
+                try:
+                    secret_overrides["store_password_fd"] = int(provider.reference)
+                except ValueError as exc:
+                    raise AndroidSigningError(f"Invalid LIFE signing fd reference {provider.reference!r}") from exc
+            elif provider.kind == "stdin":
+                secret_overrides["store_password_stdin"] = True
+            elif provider.kind == "external-command":
+                secret_overrides["store_password_command"] = provider.reference
+            elif provider.kind == "private-file":
+                secret_overrides["store_password_file"] = provider.reference
+            else:
+                raise AndroidSigningError(
+                    f"LIFE signing secret provider {provider.kind!r} is not supported by Android signing"
+                )
     if keystore:
         keystore = str(Path(keystore).expanduser())
     return SigningProfile(
-        name=name,
+        name=name, identity_id=identity_id,
         mode=mode,
         policy=policy,
         keystore=keystore,
-        alias=str(raw.get("alias") or "").strip(),
-        store_type=str(raw.get("store_type") or raw.get("type") or "PKCS12").strip().upper(),
-        expected_cert_sha256=_normalize_fingerprint(str(raw.get("expected_cert_sha256") or "")),
-        store_password_env=str(raw.get("store_password_env") or "").strip(),
+        alias=alias,
+        store_type=store_type,
+        expected_cert_sha256=expected_cert,
+        store_password_env=str(secret_overrides.get("store_password_env", raw.get("store_password_env") or "")).strip(),
         key_password_env=str(raw.get("key_password_env") or "").strip(),
-        store_password_fd=_fd("store_password_fd"),
+        store_password_file=str(secret_overrides.get("store_password_file", raw.get("store_password_file") or "")).strip(),
+        key_password_file=str(raw.get("key_password_file") or "").strip(),
+        store_password_fd=secret_overrides.get("store_password_fd", _fd("store_password_fd")),
         key_password_fd=_fd("key_password_fd"),
-        store_password_command=str(raw.get("store_password_command") or "").strip(),
+        store_password_command=str(secret_overrides.get("store_password_command", raw.get("store_password_command") or "")).strip(),
         key_password_command=str(raw.get("key_password_command") or "").strip(),
-        store_password_stdin=_coerce_bool(raw.get("store_password_stdin", False), False),
+        store_password_stdin=bool(secret_overrides.get("store_password_stdin", _coerce_bool(raw.get("store_password_stdin", False), False))),
         key_password_stdin=_coerce_bool(raw.get("key_password_stdin", False), False),
         allow_prompt=_coerce_bool(raw.get("allow_prompt", False), False),
     )
@@ -229,11 +324,14 @@ def tasks_require_release_signing(tasks: Sequence[str]) -> bool:
 
 def _secret_source_label(profile: SigningProfile, which: str) -> str:
     env_name = getattr(profile, f"{which}_password_env")
+    file_name = getattr(profile, f"{which}_password_file")
     fd = getattr(profile, f"{which}_password_fd")
     command = getattr(profile, f"{which}_password_command")
     stdin = getattr(profile, f"{which}_password_stdin")
     if env_name:
         return f"env:{env_name}"
+    if file_name:
+        return "private-file"
     if fd is not None:
         return f"fd:{fd}"
     if command:
@@ -272,6 +370,7 @@ def _run_secret_command(command: str, *, env: Mapping[str, str]) -> str:
 
 def _resolve_secret(profile: SigningProfile, which: str, *, env: Mapping[str, str], stdin_value: str | None = None, allow_prompt: bool = False) -> str:
     env_name = getattr(profile, f"{which}_password_env")
+    file_name = getattr(profile, f"{which}_password_file")
     fd = getattr(profile, f"{which}_password_fd")
     command = getattr(profile, f"{which}_password_command")
     use_stdin = getattr(profile, f"{which}_password_stdin")
@@ -280,6 +379,15 @@ def _resolve_secret(profile: SigningProfile, which: str, *, env: Mapping[str, st
         if value:
             return value
         raise AndroidSigningError(f"Signing secret environment variable {env_name} is not set")
+    if file_name:
+        path = Path(file_name).expanduser()
+        try:
+            value = path.read_text(encoding="utf-8").rstrip("\r\n")
+        except OSError as exc:
+            raise AndroidSigningError(f"Could not read signing secret private file {path}: {exc}") from exc
+        if value:
+            return value
+        raise AndroidSigningError(f"Signing secret private file {path} is empty")
     if fd is not None:
         value = _read_fd(fd)
         if value:
@@ -528,6 +636,8 @@ def validate_signing_profile_for_tasks(config: ProjectConfig | None, tasks: Sequ
             os.fstat(profile.store_password_fd)
         except OSError as exc:
             raise AndroidSigningError(f"Signing secret file descriptor {profile.store_password_fd} is unavailable: {exc}") from exc
+    if profile.store_password_file and not Path(profile.store_password_file).expanduser().is_file():
+        raise AndroidSigningError(f"Signing secret file does not exist: {profile.store_password_file}")
     if config is not None and profile.key_password_env and profile.key_password_env in config.env:
         raise AndroidSigningError(
             f"Signing secret environment variable {profile.key_password_env} must come from the process environment, "
@@ -540,6 +650,8 @@ def validate_signing_profile_for_tasks(config: ProjectConfig | None, tasks: Sequ
             os.fstat(profile.key_password_fd)
         except OSError as exc:
             raise AndroidSigningError(f"Signing secret file descriptor {profile.key_password_fd} is unavailable: {exc}") from exc
+    if profile.key_password_file and not Path(profile.key_password_file).expanduser().is_file():
+        raise AndroidSigningError(f"Signing secret file does not exist: {profile.key_password_file}")
     return profile
 
 

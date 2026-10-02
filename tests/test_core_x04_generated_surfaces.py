@@ -47,7 +47,8 @@ def test_generated_surfaces_cover_help_schema_completion_reference_and_manpage(t
     assert bundle.machine_help["registry_digest"] == bundle.registry.digest
     assert bundle.config_schema["registry_digest"] == bundle.registry.digest
     assert set(bundle.completions) == {"zsh", "bash", "fish"}
-    assert "apply-overlay" in bundle.completions["zsh"]
+    assert "apply-overlay" not in bundle.completions["zsh"]
+    assert "apply" in bundle.completions["zsh"]
     assert "Devtool generated CORE reference" in bundle.reference
     assert ".TH DEVTOOL-CORE 1" in bundle.manpage
 

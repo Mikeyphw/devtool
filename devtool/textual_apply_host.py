@@ -26,6 +26,7 @@ from types import SimpleNamespace
 import uuid
 
 from .tasker import DEFAULT_TASKER_DIR, resolve_cli_path
+from .invocation_origin import create_managed_run_handoff
 from .textual_ux import (
     ArtifactActivityTracker, TEXTUAL_SHARED_CSS, artifact_display_progress,
     artifact_review_text, artifact_running_summary, artifact_stage_compact_line,
@@ -300,6 +301,7 @@ class ArtifactApplyHostSource:
         child_env[_CHILD_ENV] = "1"
         child_env["DEVTOOL_AUTO_HUD_CHILD"] = "1"
         child_env["DEVTOOL_RUN_ID"] = self.run_id
+        child_env["DEVTOOL_MANAGED_RUN_HANDOFF"] = create_managed_run_handoff(self.run_id)
         # Nested runner/hook presentation remains plain; the parent owns the TTY.
         child_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
         argv = [sys.executable, "-m", "devtool", *child_argv(self.raw_argv, force_yes=force_yes)]

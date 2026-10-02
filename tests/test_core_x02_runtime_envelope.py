@@ -67,14 +67,15 @@ def test_output_mode_does_not_change_command_or_config_semantics(tmp_path: Path)
     assert human_envelope.output.to_dict()["digest"] != json_envelope.output.to_dict()["digest"]
 
 
-def test_run_descriptor_is_private_repo_scoped_and_stable(tmp_path: Path) -> None:
+def test_run_descriptor_is_private_repo_scoped_with_unique_run_and_stable_operation(tmp_path: Path) -> None:
     context = ResolutionContext.from_argv(["validate"], repo_root=tmp_path)
     first = build_run_envelope(context)
     second = build_run_envelope(context)
 
     assert first.descriptor.schema_version == 3
     assert first.descriptor.private is True
-    assert first.descriptor.run_id == second.descriptor.run_id
+    assert first.descriptor.run_id != second.descriptor.run_id
+    assert first.descriptor.operation_id == second.descriptor.operation_id
     assert first.descriptor.run_root.startswith(str(private_run_root(tmp_path)))
     assert "/.devtool/private/run-v3/" in first.descriptor.run_root
     assert first.scope.repository_id == second.scope.repository_id

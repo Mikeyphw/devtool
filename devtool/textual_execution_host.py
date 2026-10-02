@@ -24,6 +24,7 @@ import uuid
 
 from .execution_presentation import build_textual_execution_app, create_textual_execution_source
 from .tasker import DEFAULT_TASKER_DIR, resolve_cli_path
+from .invocation_origin import create_managed_run_handoff
 
 _TRUE = {"1", "true", "yes", "on"}
 _CHILD_ENV = "DEVTOOL_TEXTUAL_EXECUTION_CHILD"
@@ -204,6 +205,7 @@ class ExecutionTextualHostSource:
         child_env[_CHILD_ENV] = "1"
         child_env["DEVTOOL_AUTO_HUD_CHILD"] = "1"
         child_env["DEVTOOL_RUN_ID"] = self.run_id
+        child_env["DEVTOOL_MANAGED_RUN_HANDOFF"] = create_managed_run_handoff(self.run_id)
         # Child runner presentation stays plain because the parent owns the TTY.
         child_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
         argv = [sys.executable, "-m", "devtool", *self.raw_argv]

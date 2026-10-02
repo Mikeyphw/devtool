@@ -2,7 +2,7 @@
   "authority": "generated-projection",
   "canonical_sources": [
     "CoreRegistry",
-    "argparse adoption boundary"
+    "core_cli_schema.json"
   ],
   "drift_policy": "exact-generated-set",
   "forbidden_authorities": [

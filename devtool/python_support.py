@@ -1150,6 +1150,74 @@ def _manager_version(manager: str) -> str:
     return proc.stdout.strip().splitlines()[0] if proc.stdout.strip() else ""
 
 
+_REQUIREMENT_INCLUDE_RE = re.compile(r"^\s*(?:-r|--requirement|-c|--constraint)(?:\s+|=)(?P<path>[^\s#]+)")
+
+
+def _requirement_file_closure(root: Path, initial: Sequence[str]) -> tuple[tuple[str, str], ...]:
+    """Return a deterministic recursive requirements/constraints digest closure."""
+    queue: list[Path] = [(root / name).resolve(strict=False) for name in initial]
+    seen: set[Path] = set()
+    rows: list[tuple[str, str]] = []
+    while queue:
+        path = queue.pop(0)
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        try:
+            label = path.relative_to(root.resolve(strict=False)).as_posix()
+        except ValueError:
+            label = str(path)
+        rows.append((label, hashlib.sha256(raw).hexdigest()))
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        for line in text.splitlines():
+            match = _REQUIREMENT_INCLUDE_RE.match(line)
+            if not match:
+                continue
+            child = (path.parent / match.group("path")).expanduser().resolve(strict=False)
+            if child not in seen:
+                queue.append(child)
+    return tuple(sorted(rows))
+
+
+def _local_dependency_source_identity(path: Path) -> str:
+    """Hash source-bearing project inputs without generated/cache directories."""
+    root = path.expanduser().resolve(strict=False)
+    if not root.exists():
+        return "missing"
+    digest = hashlib.sha256()
+    if root.is_file():
+        digest.update(root.read_bytes())
+        return digest.hexdigest()
+    allowed_suffixes = {".py", ".pyi", ".toml", ".cfg", ".ini", ".txt", ".lock", ".json"}
+    explicit_names = {"setup.py", "setup.cfg", "pyproject.toml", "requirements.txt", "Pipfile", "Pipfile.lock"}
+    for item in sorted(root.rglob("*")):
+        if not item.is_file():
+            continue
+        try:
+            rel = item.relative_to(root)
+        except ValueError:
+            continue
+        if any(part in IGNORED_DIRECTORIES for part in rel.parts[:-1]):
+            continue
+        if item.name not in explicit_names and item.suffix.lower() not in allowed_suffixes:
+            continue
+        try:
+            data = item.read_bytes()
+        except OSError:
+            continue
+        digest.update(rel.as_posix().encode("utf-8", "surrogatepass"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(data).digest())
+    return digest.hexdigest()
+
+
 def environment_fingerprint(
     info: PythonProjectInfo,
     *,
@@ -1159,25 +1227,19 @@ def environment_fingerprint(
     execution_environment: str = "",
     probe_runtime: bool = True,
 ) -> tuple[str, tuple[str, ...]]:
-    inputs: list[str] = []
-    files: dict[str, str] = {}
-    for name in info.dependency_files:
-        path = info.root / name
-        try:
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError:
-            continue
-        files[name] = digest
-        inputs.append(name)
+    closure = _requirement_file_closure(info.root, info.dependency_files)
+    files: dict[str, str] = dict(closure)
+    inputs: list[str] = [name for name, _ in closure]
     version, version_text = _interpreter_version(python) if probe_runtime else ((), "guest")
     local_sources = []
     for name, source, source_extras in info.local_dependency_sources:
-        marker = Path(source) / "pyproject.toml"
-        try:
-            marker_hash = hashlib.sha256(marker.read_bytes()).hexdigest()
-        except OSError:
-            marker_hash = "missing"
-        local_sources.append({"name": name, "path": str(Path(source).expanduser()), "extras": list(source_extras), "pyproject": marker_hash})
+        source_path = Path(source).expanduser()
+        local_sources.append({
+            "name": name,
+            "path": str(source_path.resolve(strict=False)),
+            "extras": list(source_extras),
+            "source_identity": _local_dependency_source_identity(source_path),
+        })
     payload = {
         "manager": info.manager,
         "manager_version": _manager_version(info.manager) if probe_runtime else "guest",

@@ -24,7 +24,7 @@ def test_core_registry_links_cli_options_to_config_fields() -> None:
     assert links["cli.option.copy"] == "cfg.cli.output.copy"
     assert links["cli.option.stdout_payload"] == "cfg.cli.output.stdout_payload"
     assert links["cli.option.execution_environment"] == "cfg.cli.environment.execution_environment"
-    assert registry.options_by_id["cli.option.internal_invocation_source"].sensitive is True
+    assert "cli.option.internal_invocation_source" not in registry.options_by_id
 
 
 def test_config_document_validation_rejects_unknown_keys_and_wrong_types() -> None:
@@ -63,13 +63,16 @@ def test_trusted_invocation_envelope_cannot_be_spoofed_directly() -> None:
         )
 
 
-def test_registry_parser_parity_inventory_is_explicit_about_missing_commands() -> None:
+def test_registry_parser_parity_inventory_is_complete_and_fail_closed() -> None:
     registry = build_core_registry()
     parity = registry.parser_parity(build_parser())
 
     assert "apply overlay" in parity["covered"]
     assert "pytest inventory" in parity["covered"]
-    assert parity["missing_count"] > 0
+    assert parity["missing_count"] == 0
+    assert parity["extra_count"] == 0
+    assert parity["missing_options"] == []
+    assert parity["extra_options"] == []
     assert "core registry" in parity["covered"]
 
 

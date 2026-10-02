@@ -26,19 +26,20 @@ def test_alias_and_canonical_commands_have_same_semantic_run_identity(tmp_path: 
     assert canonical.invocation.invoked_path != alias.invocation.invoked_path
     assert canonical.descriptor.command_digest == alias.descriptor.command_digest
     assert canonical.descriptor.config_digest == alias.descriptor.config_digest
-    assert canonical.descriptor.run_id == alias.descriptor.run_id
+    assert canonical.descriptor.run_id != alias.descriptor.run_id
+    assert canonical.descriptor.operation_id == alias.descriptor.operation_id
 
 
 def test_nested_command_identity_is_complete_and_not_prefix_truncated() -> None:
     registry = build_core_registry()
     apply_overlay = registry.resolve_command(["apply", "overlay", "patch.zip"])
-    apply_bundle = registry.resolve_command(["apply", "bundle", "one.zip", "two.zip"])
+    apply_bundle = registry.resolve_command(["apply", "overlays", "one.zip", "two.zip"])
     core_runtime = registry.resolve_command(["core", "runtime", "--", "validate"])
 
     assert apply_overlay["command"].stable_id == "cli.command.apply.overlay"
     assert apply_overlay["canonical_path"] == ("apply", "overlay")
     assert apply_bundle["command"].stable_id == "cli.command.apply.bundle"
-    assert apply_bundle["canonical_path"] == ("apply", "bundle")
+    assert apply_bundle["canonical_path"] == ("apply", "overlays")
     assert core_runtime["command"].stable_id == "cli.command.core.runtime"
     assert core_runtime["remaining"] == ("--", "validate")
 
@@ -91,7 +92,8 @@ def test_effective_config_provenance_and_identity_are_deterministic(tmp_path: Pa
 
     assert first.config.semantic_digest == second.config.semantic_digest
     assert first.descriptor.config_digest == second.descriptor.config_digest
-    assert first.descriptor.run_id == second.descriptor.run_id
+    assert first.descriptor.run_id != second.descriptor.run_id
+    assert first.descriptor.operation_id == second.descriptor.operation_id
     provenance = {item["field_id"]: item for item in first.config.to_dict()["provenance"]}
     assert provenance["cfg.cli.output.stdout_payload"]["source"] == "env:DEVTOOL_STDOUT_PAYLOAD"
 
@@ -123,7 +125,8 @@ def test_human_json_and_copy_output_do_not_change_run_identity(tmp_path: Path, c
         assert payload["invocation"]["command_id"] == human["invocation"]["command_id"]
         assert payload["descriptor"]["command_digest"] == human["descriptor"]["command_digest"]
         assert payload["descriptor"]["config_digest"] == human["descriptor"]["config_digest"]
-        assert payload["descriptor"]["run_id"] == human["descriptor"]["run_id"]
+        assert payload["descriptor"]["run_id"] != human["descriptor"]["run_id"]
+        assert payload["descriptor"]["operation_id"] == human["descriptor"]["operation_id"]
     assert copy_mode["output"]["copy"] is True
     assert json_mode["output"]["digest"] != human["output"]["digest"]
 
@@ -136,7 +139,8 @@ def test_wrapper_alias_and_direct_cli_lower_to_same_command_and_config_identity(
     assert direct.invocation.canonical_path == alias.invocation.canonical_path
     assert direct.descriptor.command_digest == alias.descriptor.command_digest
     assert direct.descriptor.config_digest == alias.descriptor.config_digest
-    assert direct.descriptor.run_id == alias.descriptor.run_id
+    assert direct.descriptor.run_id != alias.descriptor.run_id
+    assert direct.descriptor.operation_id == alias.descriptor.operation_id
 
 
 def test_registered_operations_receive_one_private_run_descriptor(tmp_path: Path) -> None:

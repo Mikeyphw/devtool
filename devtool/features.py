@@ -12,7 +12,6 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Mapping
 import os
-import tomllib
 
 FEATURE_DEFAULTS: dict[str, bool] = {
     "new_android_pipeline": True,
@@ -60,8 +59,11 @@ def _project_feature_values(repo_root: Path, config_path: str | Path | None = No
     if not path.is_file():
         return {}
     try:
-        payload = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        # Lazy import avoids the config -> features import cycle while keeping
+        # one repository-document parsing/namespace authority.
+        from .config import load_repository_document
+        payload = load_repository_document(path)
+    except (OSError, SystemExit):
         return {}
     values = payload.get("features", {}) if isinstance(payload, dict) else {}
     return values if isinstance(values, dict) else {}

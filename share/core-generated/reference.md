@@ -1,294 +1,292 @@
 # Devtool generated CORE reference
 
-Registry digest: `ee588b99382be438885e2d5be7b149f247e2aa5b756f52e2592eb873648cffcd`
+Registry digest: `5c035ec0f2aebb4297b790f928fa6fbea4662e6ecc8582a90dfd34e2862775bc`
 
-This file is generated from the CORE command/config registry and the live parser adoption boundary.
+This file is generated from the CORE command/config registry and the canonical CLI schema.
 
 ## Commands
 
-- `apply overlay`
-- `apply snapshot`
-- `apply bundle`
-- `validate`
-- `config doctor`
-- `config resolve`
-- `wrapper resolve`
-- `wrapper schema`
-- `pytest inventory`
-- `pytest select`
-- `core registry`
-- `core runtime`
-- `gradle`
-- `gradle takeover`
-- `gradle takeover status`
-- `gradle takeover doctor`
-- `gradle takeover explain`
-- `gradle takeover disable`
-- `gradle takeover enable`
-- `gradle takeover intercept`
-- `gradle real`
-- `restore`
-- `build`
-- `test`
-- `lint`
-- `validate-all`
-- `wine-validate`
-- `run`
-- `package`
-- `release`
-- `clean`
-- `inspect`
-- `status`
-- `doctor`
-- `variants`
-- `start-validation`
-- `resume-validation`
-- `validation-menu`
-- `menu`
-- `menu validation`
+- `affected`
 - `ai-prompt`
-- `commit`
+- `android`
+- `android capabilities`
+- `android clear-data`
+- `android devices`
+- `android doctor`
+- `android env`
+- `android env diff`
+- `android env explain`
+- `android environment`
+- `android install`
+- `android instrumentation`
+- `android launch`
+- `android logcat`
+- `android permission`
+- `android permission grant`
+- `android permission revoke`
+- `android pull`
+- `android push`
+- `android qualification`
+- `android qualification show`
+- `android release`
+- `android restart`
+- `android screenshot`
+- `android shell`
+- `android signing`
+- `android signing compare`
+- `android signing create`
+- `android signing export-certificate`
+- `android signing import`
+- `android signing inspect`
+- `android signing list`
+- `android signing verify`
+- `android smoke`
+- `android stop`
+- `android uninstall`
+- `android-hud-bridge`
 - `apply`
+- `apply overlay`
 - `apply overlays`
-- `validate-overlay`
-- `validate-overlays`
-- `overlay`
-- `overlay check`
-- `overlay status`
-- `overlay rebase`
-- `plugin`
-- `plugin list`
-- `plugin doctor`
-- `inspect-artifact`
+- `apply snapshot`
+- `artifact`
+- `artifact inspect`
+- `artifact list`
+- `artifact prune`
+- `artifact verify`
+- `audit`
+- `audit delta`
+- `audit record`
+- `audit status`
+- `batch`
+- `bootstrap`
+- `bootstrap install`
+- `bootstrap remove`
+- `bootstrap status`
+- `build`
 - `bundle`
 - `bundle overlays`
-- `artifact`
-- `artifact list`
-- `artifact inspect`
-- `artifact verify`
-- `artifact prune`
+- `campaign`
+- `campaign checkpoint`
+- `campaign range-diff`
+- `campaign rollback`
+- `campaign status`
+- `campaign supersede`
+- `clean`
+- `cleanup`
+- `commit`
+- `compatibility`
+- `completion`
+- `completion-state`
+- `config`
+- `config defaults`
+- `config diff`
+- `config doctor`
+- `config edit`
+- `config explain`
+- `config init`
+- `config migrate`
+- `config path`
+- `config resolve`
+- `config schema`
+- `config show`
+- `config status`
+- `control-center`
+- `core`
+- `core help`
+- `core registry`
+- `core run-store`
+- `core runtime`
+- `core surfaces`
 - `delivery`
 - `delivery plan`
-- `repo-pack`
-- `repo-pack plan`
-- `repo-pack create`
-- `signing-identity`
-- `signing-identity list`
-- `signing-identity register`
-- `tui`
-- `cleanup`
-- `batch`
+- `detect`
+- `doctor`
+- `federation`
+- `federation affected`
+- `federation artifacts`
+- `federation bisect`
+- `federation bootstrap`
+- `federation capabilities`
+- `federation conformance`
+- `federation diff`
+- `federation doctor`
+- `federation exec`
+- `federation failures`
+- `federation final-seal`
+- `federation gate2`
+- `federation inspect`
+- `federation integrate`
+- `federation interfaces`
+- `federation list`
+- `federation lock`
+- `federation logs`
+- `federation plan`
+- `federation preflight`
+- `federation recover`
+- `federation resume`
+- `federation retry`
+- `federation rollback`
+- `federation run`
+- `federation status`
+- `federation sync`
+- `federation why`
+- `final-seal`
+- `git`
+- `git bisect`
+- `git campaign`
+- `git campaign checkpoint`
+- `git campaign range-diff`
+- `git campaign restore-dirty`
+- `git campaign rollback`
+- `git campaign seal`
+- `git campaign start`
+- `git campaign status`
+- `git campaign supersede`
+- `git doctor`
+- `git notes`
+- `git notes show`
+- `git rerere`
+- `git rerere apply`
+- `git rerere capture`
+- `git rerere record`
+- `git rerere suggest`
+- `git state`
+- `gradle`
+- `gradle real`
+- `gradle takeover`
+- `gradle takeover disable`
+- `gradle takeover doctor`
+- `gradle takeover enable`
+- `gradle takeover explain`
+- `gradle takeover intercept`
+- `gradle takeover status`
+- `groups`
+- `handoff`
+- `history`
+- `hud`
 - `init-config`
+- `inspect`
+- `inspect-artifact`
+- `instrumentation`
+- `invoke`
+- `ipc-server`
+- `jobs`
+- `lint`
 - `logs`
 - `logs latest`
 - `logs list`
 - `logs open`
 - `logs tail`
-- `runs`
-- `tag`
-- `release-notes`
-- `completion`
-- `completion-state`
-- `wrapper`
-- `wrapper describe`
-- `wrapper help`
-- `wrapper discover`
-- `wrapper exec`
-- `wrapper init`
-- `wrapper update`
-- `wrapper verify`
-- `wrapper status`
-- `wrapper migrate`
-- `wrapper seal`
-- `compatibility`
-- `final-seal`
+- `menu`
+- `menu validation`
+- `oci`
+- `oci bootstrap`
+- `oci build`
+- `oci containers`
+- `oci definition`
+- `oci diagnostics`
+- `oci doctor`
+- `oci final-seal`
+- `oci gate1`
+- `oci image-status`
+- `oci images`
+- `oci install`
+- `oci prune`
+- `oci remove`
+- `oci update`
+- `oci validate-image`
+- `oci workspace`
+- `overlay`
+- `overlay check`
+- `overlay rebase`
+- `overlay status`
+- `package`
+- `plan`
+- `plugin`
+- `plugin doctor`
+- `plugin list`
+- `preflight`
 - `pytest`
+- `pytest inventory`
 - `pytest profile`
-- `audit`
-- `audit record`
-- `audit delta`
-- `audit status`
-- `git`
-- `git state`
-- `git doctor`
-- `git rerere`
-- `git rerere suggest`
-- `git rerere capture`
-- `git rerere record`
-- `git rerere apply`
-- `git bisect`
-- `git notes`
-- `git notes show`
-- `git campaign`
-- `git campaign start`
-- `git campaign checkpoint`
-- `git campaign rollback`
-- `git campaign supersede`
-- `git campaign range-diff`
-- `git campaign status`
-- `git campaign restore-dirty`
-- `git campaign seal`
-- `campaign`
-- `campaign status`
-- `campaign checkpoint`
-- `campaign rollback`
-- `campaign range-diff`
-- `campaign supersede`
-- `federation`
-- `federation list`
-- `federation inspect`
-- `federation preflight`
-- `federation gate2`
-- `federation final-seal`
-- `federation doctor`
-- `federation status`
-- `federation capabilities`
-- `federation diff`
-- `federation artifacts`
-- `federation logs`
-- `federation failures`
-- `federation interfaces`
-- `federation conformance`
-- `federation affected`
-- `federation why`
-- `federation plan`
-- `federation lock`
-- `federation bisect`
-- `federation run`
-- `federation resume`
-- `federation retry`
-- `federation recover`
-- `federation rollback`
-- `federation integrate`
-- `federation bootstrap`
-- `federation sync`
-- `federation exec`
-- `core`
-- `core run-store`
-- `core surfaces`
-- `core help`
-- `config`
-- `config path`
-- `config show`
-- `config defaults`
-- `config init`
-- `config edit`
-- `config explain`
-- `config migrate`
-- `config schema`
-- `config status`
-- `config diff`
+- `pytest select`
+- `release`
+- `release-notes`
+- `repo-pack`
+- `repo-pack create`
+- `repo-pack plan`
+- `restore`
+- `resume-validation`
+- `rollback`
+- `run`
+- `runs`
+- `signing-identity`
+- `signing-identity list`
+- `signing-identity register`
 - `ssh`
-- `ssh profiles`
 - `ssh add`
-- `ssh remove`
+- `ssh bootstrap`
+- `ssh cancel`
 - `ssh default`
-- `ssh qualify`
 - `ssh doctor`
 - `ssh env`
+- `ssh exec`
+- `ssh gc`
+- `ssh output`
 - `ssh prepare`
-- `ssh bootstrap`
-- `ssh sessions`
-- `ssh workspace`
-- `ssh sync`
+- `ssh profiles`
+- `ssh qualify`
+- `ssh recover`
+- `ssh remove`
+- `ssh resume`
 - `ssh retrieve`
 - `ssh runs`
-- `ssh output`
-- `ssh exec`
-- `ssh resume`
-- `ssh cancel`
-- `ssh recover`
-- `ssh gc`
-- `oci`
-- `oci definition`
-- `oci build`
-- `oci gate1`
-- `oci workspace`
-- `oci validate-image`
-- `oci image-status`
-- `oci update`
-- `oci prune`
-- `oci diagnostics`
-- `oci final-seal`
-- `oci doctor`
-- `oci images`
-- `oci containers`
-- `oci bootstrap`
-- `oci install`
-- `oci remove`
-- `bootstrap`
-- `bootstrap install`
-- `bootstrap status`
-- `bootstrap remove`
-- `android`
-- `android environment`
-- `android env`
-- `android env explain`
-- `android env diff`
-- `android qualification`
-- `android qualification show`
-- `android capabilities`
-- `android devices`
-- `android doctor`
-- `android signing`
-- `android signing create`
-- `android signing list`
-- `android signing inspect`
-- `android signing verify`
-- `android signing compare`
-- `android signing import`
-- `android signing export-certificate`
-- `android install`
-- `android uninstall`
-- `android launch`
-- `android stop`
-- `android restart`
-- `android clear-data`
-- `android shell`
-- `android push`
-- `android pull`
-- `android logcat`
-- `android screenshot`
-- `android permission`
-- `android permission grant`
-- `android permission revoke`
-- `android release`
-- `android instrumentation`
-- `android smoke`
-- `instrumentation`
+- `ssh sessions`
+- `ssh sync`
+- `ssh workspace`
+- `start-validation`
+- `status`
+- `tag`
+- `target-local-jobs`
+- `targets`
 - `termux`
 - `termux doctor`
-- `termux packages`
 - `termux explain`
-- `detect`
-- `handoff`
-- `hud`
-- `android-hud-bridge`
-- `history`
-- `rollback`
-- `validation-status`
-- `validation-plan`
-- `validation-pause`
-- `validation-stop`
-- `validation-events`
-- `validation-report`
-- `validation-abort`
-- `validation-finalize`
-- `validation-recover`
-- `validation-reset`
-- `validation-accept-plan-change`
-- `targets`
-- `groups`
-- `jobs`
-- `target-local-jobs`
-- `workflows`
-- `plan`
-- `invoke`
-- `affected`
+- `termux packages`
+- `test`
+- `tui`
 - `ui-contract`
-- `preflight`
-- `control-center`
-- `ipc-server`
+- `validate`
+- `validate-all`
+- `validate-overlay`
+- `validate-overlays`
+- `validation-abort`
+- `validation-accept-plan-change`
+- `validation-events`
+- `validation-finalize`
+- `validation-menu`
+- `validation-pause`
+- `validation-plan`
+- `validation-recover`
+- `validation-report`
+- `validation-reset`
+- `validation-status`
+- `validation-stop`
+- `variants`
+- `wine-validate`
+- `workflows`
+- `wrapper`
+- `wrapper describe`
+- `wrapper discover`
+- `wrapper exec`
+- `wrapper help`
+- `wrapper init`
+- `wrapper migrate`
+- `wrapper resolve`
+- `wrapper seal`
+- `wrapper status`
+- `wrapper update`
+- `wrapper verify`
 
 ## Configuration documents
 

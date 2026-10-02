@@ -72,6 +72,11 @@ description = "Run pre-CORE-G3 generated-surface fixed-point remediation validat
 workflow = "core-g3-remediation"
 target = "devtool"
 
+[wrapper.commands.remed-r01a]
+description = "Run REMED-R01A canonical authority and identity targeted validation"
+workflow = "remed-r01a"
+target = "devtool"
+
 [wrapper.commands.core-g3]
 description = "Run CORE-G3 final identity/config/wrapper/RUN seal"
 workflow = "core-g3"
@@ -858,6 +863,13 @@ roadmap-exec-x04 = [
 
 core-g3-remediation = [
   { id = "generated-surfaces", ref = "test:core-g3-remediation", depends_on = [] },
+]
+remed-r01a = [
+  { id = "authority", ref = "test:remed-r01a-authority", depends_on = [] },
+  { id = "managed-child-runtime", ref = "test:remed-r01a-managed-child-runtime", depends_on = ["authority"] },
+  { id = "retained-core", ref = "test:remed-r01a-retained-core", depends_on = ["authority"] },
+  { id = "wrapper-federation", ref = "test:remed-r01a-wrapper-federation", depends_on = ["authority"] },
+  { id = "config-env-signing", ref = "test:remed-r01a-config-env-signing", depends_on = ["managed-child-runtime", "retained-core", "wrapper-federation"] },
 ]
 core-g3 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -4203,6 +4215,41 @@ id = "core-g3-retained"
 runner = "pytest"
 paths = ["tests/test_core_g1_identity_authority_gate.py", "tests/test_core_g2_run_store_authority_gate.py", "tests/test_core_x04_generated_surfaces.py"]
 depends_on = ["core-g3-proof"]
+
+[[test]]
+id = "remed-r01a-authority"
+name = "REMED-R01A production authority and identity"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_remed_r01a_canonical_authority_identity.py"]
+
+[[test]]
+id = "remed-r01a-managed-child-runtime"
+name = "REMED-R01A managed child run identity handoff regressions"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_pres_h02_textual_apply_host.py", "tests/test_pres_r03_textual_parity_qualification.py", "tests/test_pres_g2r_concrete_runtime_requalification.py"]
+
+[[test]]
+id = "remed-r01a-retained-core"
+name = "REMED-R01A retained CORE identity and generated surfaces"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_core_x01_registry.py", "tests/test_core_x02_runtime_envelope.py", "tests/test_core_g1_identity_authority_gate.py", "tests/test_core_x04_generated_surfaces.py", "tests/test_wrapper_reseal_hotfix.py"]
+
+[[test]]
+id = "remed-r01a-wrapper-federation"
+name = "REMED-R01A wrapper and federation private provenance regressions"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_wrap04_execution_invocation_origin.py", "tests/test_wrap05_wrapper_dispatch.py", "tests/test_frx07_wrapper_tlj_federation_bridge.py", "tests/test_frx_y07_public_contract_dag_nodes.py", "tests/test_exec_x05_gradle_ingress.py"]
+
+[[test]]
+id = "remed-r01a-config-env-signing"
+name = "REMED-R01A config environment and signing authority regressions"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_config.py", "tests/test_global_config.py", "tests/test_frx02_federation_config.py", "tests/test_python_support.py", "tests/test_aops03_android_signing_instrumentation_operations.py", "tests/test_wrap01_wrapper_config_contract.py", "tests/test_ov06_ssh_contracts.py", "tests/test_ui03_ui04_preferences_tokens_copy.py"]
 
 [[test]]
 id = "core-g3-remediation"

@@ -12,7 +12,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 import ast
-import tomllib
+
+from .config import load_repository_document
 
 TARGET_SEAL_SCHEMA_VERSION = 1
 
@@ -99,10 +100,10 @@ def _read_config(repo_root: Path) -> tuple[dict[str, Any], list[str]]:
     if not path.is_file():
         return {}, ["missing:.devtool.toml"]
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
+        data = load_repository_document(path, required=True)
+    except SystemExit as exc:
         return {}, [f"invalid:.devtool.toml:{exc}"]
-    return (data if isinstance(data, dict) else {}), []
+    return data, []
 
 
 def _markdown_errors(repo_root: Path, paths: tuple[str, ...], *, min_bytes: int = 120) -> list[str]:

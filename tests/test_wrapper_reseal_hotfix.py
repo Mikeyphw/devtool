@@ -75,17 +75,22 @@ def test_shared_bridge_reenters_once_and_propagates_callback_exit_code() -> None
     td, root, config = _sealed_config()
     try:
         resolution = resolve_wrapper_argv(config, ["build"], launch_cwd=root)
+        from devtool.invocation_origin import current_trusted_invocation
+
         calls: list[list[str]] = []
-        code = execute_wrapper_resolution(
-            resolution,
-            reenter=lambda argv: calls.append(list(argv)) or 29,
-        )
+        origins: list[object] = []
+        def reenter(argv):
+            calls.append(list(argv))
+            origins.append(current_trusted_invocation())
+            return 29
+
+        code = execute_wrapper_resolution(resolution, reenter=reenter)
         assert code == 29
         assert len(calls) == 1
-        assert calls[0].count("--internal-invocation-source") == 1
-        assert calls[0].count("--internal-invocation-command") == 1
-        assert calls[0].count("--internal-wrapper-schema") == 1
-        assert calls[0][calls[0].index("--internal-invocation-source") + 1] == "wrapper"
+        assert not any(item.startswith("--internal-invocation-") or item == "--internal-wrapper-schema" for item in calls[0])
+        assert origins[0] is not None
+        assert origins[0].source == "wrapper"
+        assert origins[0].command == "build"
     finally:
         td.cleanup()
 

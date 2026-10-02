@@ -12,11 +12,9 @@ from dataclasses import dataclass
 from typing import Callable, Sequence
 
 from .wrapper_resolution import WrapperResolution, WrapperResolutionError
+from .invocation_origin import trusted_invocation_context, current_trusted_invocation
 
-_INTERNAL_SOURCE = "--internal-invocation-source"
-_INTERNAL_COMMAND = "--internal-invocation-command"
-_INTERNAL_SCHEMA = "--internal-wrapper-schema"
-_INTERNAL_FLAGS = (_INTERNAL_SOURCE, _INTERNAL_COMMAND, _INTERNAL_SCHEMA)
+_INTERNAL_FLAGS: tuple[str, ...] = ()
 
 
 def wrapper_resolution_command_token(resolution: WrapperResolution) -> str:
@@ -43,16 +41,7 @@ def build_wrapper_canonical_argv_with_provenance(
     argv: list[str] = list(resolution.global_argv)
     if outer_global_argv:
         argv.extend(str(item) for item in outer_global_argv if str(item))
-    argv.extend([
-        _INTERNAL_SOURCE,
-        "wrapper",
-        _INTERNAL_COMMAND,
-        resolution.command or resolution.command_spelling or command_token,
-        _INTERNAL_SCHEMA,
-        str(resolution.schema),
-        command_token,
-        *resolution.command_argv,
-    ])
+    argv.extend([command_token, *resolution.command_argv])
     if resolution.passthrough_argv:
         argv.extend(["--", *resolution.passthrough_argv])
     return argv
@@ -70,17 +59,12 @@ def execute_wrapper_resolution(
         resolution,
         outer_global_argv=outer_global_argv,
     )
-    return int(reenter(canonical))
-
-
-def _flag_value(argv: Sequence[str], flag: str) -> str:
-    indices = [index for index, token in enumerate(argv) if token == flag]
-    if len(indices) != 1:
-        return ""
-    index = indices[0]
-    if index + 1 >= len(argv):
-        return ""
-    return str(argv[index + 1])
+    with trusted_invocation_context(
+        source="wrapper",
+        command=resolution.command or resolution.command_spelling or wrapper_resolution_command_token(resolution),
+        wrapper_schema=str(resolution.schema),
+    ):
+        return int(reenter(canonical))
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,9 +101,11 @@ def probe_wrapper_execution_bridge(resolution: WrapperResolution) -> WrapperExec
     """Exercise the production bridge without executing a repository command."""
 
     calls: list[tuple[str, ...]] = []
+    contexts: list[object] = []
 
     def probe_reentry(argv: list[str]) -> int:
         calls.append(tuple(argv))
+        contexts.append(current_trusted_invocation())
         return 73
 
     callback_exit_code = execute_wrapper_resolution(resolution, reenter=probe_reentry)
@@ -131,10 +117,10 @@ def probe_wrapper_execution_bridge(resolution: WrapperResolution) -> WrapperExec
         command_token=command_token,
         reentry_count=len(calls),
         callback_exit_code=callback_exit_code,
-        invocation_source=_flag_value(canonical, _INTERNAL_SOURCE),
-        invocation_command=_flag_value(canonical, _INTERNAL_COMMAND),
-        wrapper_schema=_flag_value(canonical, _INTERNAL_SCHEMA),
-        internal_control_counts=tuple((flag, canonical.count(flag)) for flag in _INTERNAL_FLAGS),
+        invocation_source=str(getattr(contexts[0], "source", "")) if contexts else "",
+        invocation_command=str(getattr(contexts[0], "command", "")) if contexts else "",
+        wrapper_schema=str(getattr(contexts[0], "wrapper_schema", "")) if contexts else "",
+        internal_control_counts=(),
         nested_wrapper_dispatch=command_token == "wrapper",
         canonical_argv=canonical,
     )

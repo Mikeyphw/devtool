@@ -10,7 +10,6 @@ FRX-03 and later overlays.
 
 from pathlib import Path
 import re
-import tomllib
 from typing import Any, Mapping
 
 from .models import (
@@ -91,8 +90,9 @@ def _direct_back_reference(child_root: Path, owner_root: Path) -> bool:
     if not child_config.is_file():
         return False
     try:
-        parsed = tomllib.loads(child_config.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        from .config import load_repository_document
+        parsed = load_repository_document(child_config)
+    except (OSError, UnicodeError, SystemExit):
         return False
     federation = parsed.get("federation")
     if not isinstance(federation, dict):

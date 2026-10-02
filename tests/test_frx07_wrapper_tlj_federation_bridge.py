@@ -17,7 +17,7 @@ from devtool.federation_bridge import (
     plan_federated_job,
     plan_federated_wrapper,
 )
-from devtool.invocation_origin import invocation_metadata_for_args
+from devtool.invocation_origin import invocation_metadata_for_args, current_trusted_invocation
 from devtool.models import OperationResult
 from devtool.repository_identity import build_repository_identity
 
@@ -47,15 +47,9 @@ def _wrapper_reenter(bus: EventBus, seen: list[list[str]]):
         seen.append(list(argv))
         run_id = os.environ["DEVTOOL_RUN_ID"]
         root = Path(argv[argv.index("--repo") + 1])
-        source = argv[argv.index("--internal-invocation-source") + 1]
-        command = argv[argv.index("--internal-invocation-command") + 1]
-        schema = argv[argv.index("--internal-wrapper-schema") + 1]
-        metadata = invocation_metadata_for_args(SimpleNamespace(
-            _devtool_invocation_source=source,
-            _devtool_invocation_command=command,
-            _devtool_wrapper_schema=schema,
-            command="build",
-        ))
+        ctx = current_trusted_invocation(); assert ctx is not None
+        source, command = ctx.source, ctx.command
+        metadata = invocation_metadata_for_args(SimpleNamespace(command="build"))
         metadata["repository_identity"] = build_repository_identity(root, root / ".devtool.toml").as_dict()
         bus.publish(RunStarted(run_id=run_id, command="build", project=str(root), source=source, metadata=metadata))
         bus.publish(RunFinished(run_id=run_id, status="succeeded", exit_code=0, source=source))
@@ -80,7 +74,7 @@ def test_wrapper_bridge_preserves_wrapper_provenance_and_federation_lineage(tmp_
     argv = seen[0]
     assert argv[argv.index("--repo") + 1] == str(child_root.resolve())
     assert argv[argv.index("--target") + 1] == "android"
-    assert argv[argv.index("--internal-invocation-source") + 1] == "wrapper"
+    assert not any(token.startswith("--internal-invocation-") or token == "--internal-wrapper-schema" for token in argv)
     snap = bus.execution_store.snapshot(child.run_id)
     assert snap is not None
     assert snap.invocation_source == "wrapper"

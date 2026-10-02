@@ -17,7 +17,7 @@ import tempfile
 import tomllib
 from typing import Any, Mapping
 
-from .config import CONFIG_NAME, global_config_path
+from .config import CONFIG_NAME, global_config_path, load_global_config, load_repository_document
 from .execution_providers import SSH_NATIVE, normalize_execution_provider
 
 _PROFILE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -34,12 +34,15 @@ def _toml_string(value: str) -> str:
     return json.dumps(str(value), ensure_ascii=False)
 
 
-def _parse(path: Path) -> dict[str, Any]:
+def _parse(path: Path, *, repository: bool = False) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        value = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        if repository:
+            value = load_repository_document(path)
+        else:
+            value, _ = load_global_config(path)
+    except (OSError, SystemExit, ValueError) as exc:
         raise ValueError(f"Unable to read SSH profile configuration from {path}: {exc}") from exc
     return value if isinstance(value, dict) else {}
 
@@ -80,7 +83,7 @@ def list_profiles(*, repo: str | Path = "", config_path: str | Path = "") -> dic
     global_path = global_config_path()
     local_path = repository_config_path(repo, config_path)
     global_data = _parse(global_path)
-    local_data = _parse(local_path)
+    local_data = _parse(local_path, repository=True)
     global_profiles = _profile_map(global_data)
     local_profiles = _profile_map(local_data)
     names = sorted(set(global_profiles) | set(local_profiles))
@@ -252,7 +255,7 @@ def add_profile(
     execution_provider = normalize_execution_provider(execution_provider, remote=True)
     path = profile_config_path(repo=repo, config_path=config_path, global_scope=global_scope)
     original = path.read_text(encoding="utf-8") if path.exists() else ""
-    parsed = _parse(path)
+    parsed = _parse(path, repository=not global_scope)
     exists = name in _profile_map(parsed)
     if exists and not force:
         raise ValueError(f"SSH profile {name!r} already exists in {path}; use --force to replace it")
@@ -327,7 +330,7 @@ def remove_profile(
     if not path.exists():
         raise ValueError(f"SSH profile configuration does not exist: {path}")
     original = path.read_text(encoding="utf-8")
-    parsed = _parse(path)
+    parsed = _parse(path, repository=not global_scope)
     if name not in _profile_map(parsed):
         raise ValueError(f"SSH profile {name!r} is not defined in {path}")
     current_default = str(_ssh_table(parsed).get("profile", _ssh_table(parsed).get("default_profile", "")) or "").strip()
@@ -355,7 +358,7 @@ def set_default_profile(
 ) -> dict[str, Any]:
     name = _validate_name(name)
     path = profile_config_path(repo=repo, config_path=config_path, global_scope=global_scope)
-    parsed = _parse(path)
+    parsed = _parse(path, repository=not global_scope)
     if name not in _profile_map(parsed):
         raise ValueError(f"SSH profile {name!r} is not defined in {path}")
     original = path.read_text(encoding="utf-8") if path.exists() else ""

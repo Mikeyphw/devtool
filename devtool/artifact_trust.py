@@ -274,7 +274,8 @@ class SigningIdentityRegistry:
     """Private append/update registry outside repositories; records non-secret identity metadata only."""
 
     def __init__(self, path: str | Path | None = None) -> None:
-        self.path = Path(path).expanduser() if path else state_dir() / "signing" / "identities.json"
+        configured = str(os.environ.get("DEVTOOL_SIGNING_IDENTITY_REGISTRY") or "").strip()
+        self.path = Path(path).expanduser() if path else (Path(configured).expanduser() if configured else state_dir() / "signing" / "identities.json")
 
     def _load_payload(self) -> dict[str, Any]:
         if not self.path.exists():

@@ -65,6 +65,7 @@ from .distributed_transport import (
     LocalLoopbackTransport,
     distributed_provider_adapter,
 )
+from .invocation_origin import create_managed_run_handoff, trusted_invocation_context
 
 
 class FederationExecutionError(RuntimeError):
@@ -498,12 +499,7 @@ def _child_argv(
         argv.extend(["--ssh-profile", profile])
     elif environment not in {"", "auto", "ssh", "proot-distro"}:
         argv.extend(["--execution-environment", environment])
-    argv.extend([
-        "--internal-invocation-source", "federation",
-        "--internal-invocation-command", invocation_command,
-        "invoke", workflow,
-        "--target", target,
-    ])
+    argv.extend(["invoke", workflow, "--target", target])
     return argv
 
 
@@ -560,14 +556,17 @@ def _execute_existing_child_contract(
     """Execute a workflow/job/wrapper through its existing authoritative service."""
     if step.contract_type == "workflow":
         resolution = resolve_federated_repository(parent, step.repository)
-        return int(reenter(_child_argv(
+        invocation_command = f"{lineage.get('federation_workflow')}:{step.step_id}"
+        argv = _child_argv(
             root=resolution.root,
             target=str(lineage.get("target") or step.target),
             workflow=step.workflow,
-            invocation_command=f"{lineage.get('federation_workflow')}:{step.step_id}",
+            invocation_command=invocation_command,
             provider_profile=provider_profile,
             execution_environment=execution_environment,
-        )))
+        )
+        with trusted_invocation_context(source="federation", command=invocation_command):
+            return int(reenter(argv))
 
     if step.hierarchical:
         if provider_profile:
@@ -576,17 +575,14 @@ def _execute_existing_child_contract(
                 "remote placement belongs to the child federation's own Y09 scheduler"
             )
         resolution = resolve_federated_repository(parent, step.repository)
-        argv = [
-            "-r", str(resolution.root),
-            "--internal-invocation-source", "federation",
-            "--internal-invocation-command", f"{lineage.get('federation_workflow')}:{step.step_id}",
-            "federation", "run",
-        ]
+        invocation_command = f"{lineage.get('federation_workflow')}:{step.step_id}"
+        argv = ["-r", str(resolution.root), "federation", "run"]
         if step.contract_type == "group":
             argv.extend(["--group", step.contract_name])
         else:
             argv.append(step.contract_name)
-        return int(reenter(argv))
+        with trusted_invocation_context(source="federation", command=invocation_command):
+            return int(reenter(argv))
 
     from .federation_bridge import (
         execute_planned_federated_job_child,
@@ -1233,6 +1229,9 @@ def _default_parallel_child_executor(argv: list[str], env: dict[str, str]) -> in
 
     child_env = dict(os.environ)
     child_env.update({str(key): str(value) for key, value in env.items() if str(value)})
+    child_run_id = str(child_env.get("DEVTOOL_RUN_ID") or "").strip()
+    if child_run_id:
+        child_env["DEVTOOL_MANAGED_RUN_HANDOFF"] = create_managed_run_handoff(child_run_id)
     completed = subprocess.run(
         [sys.executable, "-m", "devtool", *argv],
         env=child_env,

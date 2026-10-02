@@ -333,10 +333,10 @@ def user_ui_config_path(env: Mapping[str, str] | None = None) -> Path:
 @lru_cache(maxsize=16)
 def _load_user_ui_config_cached(path_text: str, mtime_ns: int, size: int) -> dict[str, Any]:
     del mtime_ns, size
-    path = Path(path_text)
+    from ..config import load_global_config
     try:
-        parsed = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        parsed, _ = load_global_config(Path(path_text))
+    except SystemExit:
         return {}
     value = parsed.get("ui", {}) if isinstance(parsed, dict) else {}
     return dict(value) if isinstance(value, Mapping) else {}

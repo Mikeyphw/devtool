@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -217,6 +218,7 @@ class ResolutionContext:
 @dataclass(frozen=True, slots=True)
 class RunDescriptor:
     run_id: str
+    operation_id: str
     schema_version: int
     command_id: str
     command_digest: str
@@ -229,6 +231,7 @@ class RunDescriptor:
         return {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
+            "operation_id": self.operation_id,
             "command_id": self.command_id,
             "command_digest": self.command_digest,
             "config_digest": self.config_digest,
@@ -369,7 +372,18 @@ def resolve_effective_config(context: ResolutionContext, registry: CoreRegistry 
 
 
 def private_run_root(repo_root: str | Path) -> Path:
-    return Path(repo_root).expanduser().resolve(strict=False) / ".devtool" / "private" / "run-v3"
+    repo = Path(repo_root).expanduser().resolve(strict=False)
+    # DEVTOOL_XDG_DIR is an explicit state-isolation boundary used by tests,
+    # remote workers, and users who intentionally keep Devtool private state
+    # outside a checkout.  Honor it for RUN-V3 as well so merely executing a
+    # direct library operation never dirties an otherwise-clean repository.
+    override = str(os.environ.get("DEVTOOL_XDG_DIR", "") or "").strip()
+    if override:
+        from .xdg import state_dir
+        digest = hashlib.sha256(str(repo).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+        slug = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in (repo.name or "repo")).strip(".-") or "repo"
+        return state_dir() / "run-v3" / f"{slug}-{digest}"
+    return repo / ".devtool" / "private" / "run-v3"
 
 
 def build_run_envelope(context: ResolutionContext, registry: CoreRegistry | None = None) -> RunEnvelope:
@@ -385,9 +399,14 @@ def build_run_envelope(context: ResolutionContext, registry: CoreRegistry | None
         "config_digest": config_digest,
         "scope_digest": scope.scope_digest,
     }
-    run_id = _sha256(descriptor_payload)[:32]
+    operation_id = _sha256(descriptor_payload)[:32]
+    # A semantic operation identity is intentionally stable and may participate
+    # in reuse/resume qualification.  A run instance is a unique occurrence and
+    # must never collapse two identical invocations into one history record.
+    run_id = uuid.uuid4().hex
     descriptor = RunDescriptor(
         run_id=run_id,
+        operation_id=operation_id,
         schema_version=3,
         command_id=invocation.command_id,
         command_digest=command_digest,
