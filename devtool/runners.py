@@ -3639,7 +3639,7 @@ def run_specs(
     if not dry_run:
         try:
             from .test_runstore import persist_test_run
-            test_run_path = persist_test_run(config.repo_root, results)
+            test_run_path = persist_test_run(config.repo_root, results, run_id=event_run_id)
             if test_run_path is not None:
                 for item in results:
                     if isinstance(item.metadata, dict) and isinstance(item.metadata.get("test_result"), dict):

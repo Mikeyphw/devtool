@@ -697,6 +697,47 @@ def _unsupported_generic_selection(selection: TestSelection) -> bool:
         selection.paths, selection.classes, selection.methods, selection.native_filter,
     ))
 
+def _canonical_selection_projection(
+    config: ProjectConfig,
+    legacy: TestSelection,
+    selected_catalog: Sequence[TestDescriptor],
+) -> dict[str, Any]:
+    """Compile legacy selection syntax into a stable immutable selection projection.
+
+    The existing framework-specific argument lowering remains a compatibility
+    lowering surface.  This projection is the canonical identity that downstream
+    RUN/RER/test receipt code can bind to, so a later history lookup never has
+    to trust mutable CLI syntax or repo-local .devtool/test-history.json.
+    """
+
+    import hashlib
+    import json
+
+    resolved_nodes = [item.id for item in selected_catalog]
+    if not resolved_nodes:
+        resolved_nodes = list(dict.fromkeys([*legacy.pytest_tests, *legacy.ids, *legacy.paths]))
+    requested = legacy.as_dict()
+    payload = {
+        "schema_version": 1,
+        "authority": "TEST-X02 immutable selection",
+        "repository": str(config.repo_root.expanduser().resolve()),
+        "project_root": str(Path(config.project_root or config.repo_root).expanduser().resolve()),
+        "target": str(config.selected_target or ""),
+        "variant": str(config.variant or ""),
+        "framework": str(config.kind or ""),
+        "requested": requested,
+        "resolved_check_ids": list(dict.fromkeys(resolved_nodes)),
+        "resolved_pytest_nodes": list(dict.fromkeys(
+            item.id for item in selected_catalog if item.framework == "pytest"
+        )) or list(dict.fromkeys(legacy.pytest_tests)),
+        "selected_count": len(dict.fromkeys(resolved_nodes)),
+    }
+    payload["selection_id"] = "tsel-" + hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:24]
+    return payload
+
+
 def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpec:
     selection = resolve_test_selection(config)
     contains_tests = bool(spec.metadata.get("contains_tests", False))
@@ -708,6 +749,7 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
     catalog = discover_tests(config)
     selected_catalog = select_catalog(catalog, selection)
     metadata["test_selection"] = selection.as_dict()
+    metadata["canonical_test_selection"] = _canonical_selection_projection(config, selection, selected_catalog)
     if config.selected_target:
         metadata["target"] = config.selected_target
     if config.variant:
@@ -944,6 +986,18 @@ def _history_path(repo_root: Path) -> Path:
 
 
 def load_failed_test_ids(repo_root: Path) -> list[str]:
+    # R02B: canonical failed-test selection comes from durable RUN/TestRunReceipt
+    # history when available.  The repo-local file is a compatibility projection
+    # only, used for pre-R02B history and manual workflows without receipts.  A
+    # latest valid canonical receipt with zero failures is authoritative; do not
+    # fall back to stale projection failures in that case.
+    try:
+        from .test_runstore import failed_test_ids_from_receipt, latest_canonical_test_run_receipt
+        receipt = latest_canonical_test_run_receipt(repo_root)
+        if receipt is not None:
+            return failed_test_ids_from_receipt(receipt)
+    except Exception:
+        pass
     path = _history_path(repo_root)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -957,5 +1011,11 @@ def save_failed_test_ids(repo_root: Path, values: Iterable[str]) -> Path:
     path = _history_path(repo_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     unique = list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
-    path.write_text(json.dumps({"failed": unique}, indent=2) + "\n", encoding="utf-8")
+    payload = {
+        "schema_version": 2,
+        "authority": "projection",
+        "canonical_authority": "RUN-V3 TestRunReceipt",
+        "failed": unique,
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path

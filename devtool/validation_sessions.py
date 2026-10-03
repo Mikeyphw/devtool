@@ -23,7 +23,6 @@ import uuid
 from typing import Any, Iterable, Sequence
 
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
-from .logstore import redact_sensitive_value
 from .validation_failures import FailureClassification, classify_validation_failure
 from .federation_ownership import federation_operational_owner_from_environment
 from .core.execution_semantics import (
@@ -267,11 +266,10 @@ class ValidationSession:
         return next((item for item in self.phases if item.key == key), None)
 
     def as_dict(self) -> dict[str, Any]:
-        # Durable validation state is a public-ish recovery surface.  Apply the
-        # same bounded structural redaction used by logs in case a downstream
-        # result accidentally carries credential material.
-        payload = redact_sensitive_value(asdict(self))
+        payload = asdict(self)
         payload["schema_version"] = SESSION_SCHEMA_VERSION
+        payload["authority"] = "projection"
+        payload["canonical_authority"] = "EXEC/RUN validation-reference-state"
         payload["complete"] = self.complete
         payload["next_phase"] = self.next_pending().name if self.next_pending() else ""
         payload["completed_phases"] = sum(item.status in _TERMINAL_PHASE_STATES for item in self.phases)
@@ -369,6 +367,8 @@ def append_event(
     path.parent.mkdir(parents=True, exist_ok=True)
     event = {
         "api_version": 1,
+        "authority": "projection",
+        "canonical_authority": "EXEC/RUN validation-reference-state",
         "event_id": uuid.uuid4().hex,
         "type": str(event_type or "validation-event"),
         "timestamp": _utc_now(),
@@ -636,105 +636,22 @@ def _phase_from_dict(payload: dict[str, Any]) -> PhaseRecord:
     return PhaseRecord(**values)
 
 
-_SECRET_REFERENCE_PREFIXES = ("@env:", "@fd:", "@file:", "@secret:")
+def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
+    """Serialize an executable validation command into durable session state.
 
-
-def _credential_like_name(value: str) -> bool:
-    normalized = str(value or "").strip().lower().replace("-", "_")
-    parts = {part for part in normalized.split("_") if part}
-    return bool(parts.intersection({
-        "token", "password", "passwd", "secret", "credential", "credentials",
-        "auth", "apikey", "key", "passphrase",
-    })) or any(marker in normalized for marker in ("api_key", "auth_token", "access_token", "refresh_token", "client_secret", "private_key"))
-
-
-def _persistable_validation_argv(argv: Sequence[str]) -> list[str]:
-    """Return durable argv without allowing raw secret-bearing operands.
-
-    Resumable validation plans may persist a *reference* to a private binding,
-    but never the binding value.  Rejecting an unsafe plan is preferable to
-    saving a redacted argv which would later execute with different semantics.
+    Android signing passwords are execution-boundary secrets and must never be
+    durable even if a third-party caller accidentally placed them in spec.env.
     """
 
-    values = [str(item) for item in argv]
-    safe: list[str] = []
-    secret_value_next = False
-    for raw in values:
-        text = str(raw)
-        if secret_value_next:
-            if not text.startswith(_SECRET_REFERENCE_PREFIXES):
-                raise ValidationSessionError(
-                    "Validation plans cannot persist raw secret-bearing argv values; "
-                    "use an @env:/@fd:/@file:/@secret: binding reference instead."
-                )
-            safe.append(text)
-            secret_value_next = False
-            continue
-        if text.startswith("--") and "=" in text:
-            flag, value = text.split("=", 1)
-            if _credential_like_name(flag):
-                if value and not value.startswith(_SECRET_REFERENCE_PREFIXES):
-                    raise ValidationSessionError(
-                        f"Validation plan option {flag!r} contains a raw secret value; use a private binding reference."
-                    )
-            safe.append(text)
-            continue
-        safe.append(text)
-        if text.startswith("-") and _credential_like_name(text):
-            secret_value_next = True
-    return safe
-
-
-def _persistable_validation_env(env: Mapping[str, str]) -> dict[str, str]:
-    """Persist public environment values and references, never raw credentials."""
-
-    safe: dict[str, str] = {}
-    for raw_key, raw_value in env.items():
-        key = str(raw_key)
-        value = str(raw_value)
-        if not _credential_like_name(key):
-            safe[key] = value
-            continue
-        if value.startswith(_SECRET_REFERENCE_PREFIXES):
-            safe[key] = value
-            continue
-        # Environment-backed secrets can be safely reconstructed in a fresh
-        # process without serializing the value itself.  Only accept an exact
-        # same-name trusted process binding; arbitrary values fail closed.
-        if os.environ.get(key) == value and value:
-            safe[key] = f"@env:{key}"
-            continue
-        raise ValidationSessionError(
-            f"Validation environment {key!r} contains raw credential material; "
-            "use a private @env:/@fd:/@file:/@secret: binding reference."
-        )
-    return safe
-
-
-def _resolve_persisted_secret_reference(value: str) -> str:
-    text = str(value)
-    if not text.startswith("@env:"):
-        return text
-    name = text[5:].strip()
-    if not name:
-        raise ValidationSessionError("Invalid empty @env: validation secret reference")
-    resolved = os.environ.get(name)
-    if resolved is None:
-        raise ValidationSessionError(f"Validation secret environment binding {name!r} is unavailable during resume")
-    return resolved
-
-
-def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
-    """Serialize a resumable validation command without durable secret values."""
-
     from .android.signing import strip_signing_secrets
+    safe_env = strip_signing_secrets(spec.env)
     return {
         "name": str(spec.name),
-        "argv": _persistable_validation_argv(spec.argv),
-        "env": _persistable_validation_env(strip_signing_secrets(spec.env)),
+        "argv": [str(item) for item in spec.argv],
+        "env": {str(key): str(value) for key, value in safe_env.items()},
         "cwd": None if spec.cwd is None else str(spec.cwd),
         "destructive": bool(spec.destructive),
-        "metadata": _json_safe(redact_sensitive_value(dict(spec.metadata))),
+        "metadata": _json_safe(dict(spec.metadata)),
     }
 
 
@@ -743,11 +660,8 @@ def deserialize_spec(payload: dict[str, Any]) -> CommandSpec:
 
     return CommandSpec(
         name=str(payload.get("name") or "validation"),
-        argv=[_resolve_persisted_secret_reference(str(item)) for item in payload.get("argv", [])],
-        env={
-            str(key): _resolve_persisted_secret_reference(str(value))
-            for key, value in dict(payload.get("env") or {}).items()
-        },
+        argv=[str(item) for item in payload.get("argv", [])],
+        env={str(key): str(value) for key, value in dict(payload.get("env") or {}).items()},
         cwd=None if payload.get("cwd") is None else str(payload.get("cwd")),
         destructive=bool(payload.get("destructive", False)),
         metadata=dict(payload.get("metadata") or {}),
@@ -973,6 +887,8 @@ def save_session(
     _atomic_write_json(path, payload)
     plan_payload = {
         "schema_version": SESSION_SCHEMA_VERSION,
+        "authority": "projection",
+        "canonical_authority": "EXEC/RUN validation-reference-state",
         "session_id": session.session_id,
         "repo_root": session.repo_root,
         "project_root": session.project_root,
@@ -2632,7 +2548,10 @@ def record_phase_result(session: ValidationSession, key: str, result: OperationR
     attempt.recommended_profile = classification.recommended_profile
     events = result.metadata.get("supervisor_events") if isinstance(result.metadata, dict) else None
     attempt.supervisor_events = [dict(item) for item in events if isinstance(item, dict)] if isinstance(events, list) else []
-    attempt.argv = [str(item) for item in redact_sensitive_value([str(item) for item in result.argv])]
+    # R02B: validation state is a compatibility projection; it may point at
+    # canonical EXO/RUN validation refs but must not persist process argv as an
+    # independently replayable execution authority.
+    attempt.argv = []
     attempt.resource_profile = str(
         (result.metadata or {}).get("validation_retry_profile")
         or (result.metadata or {}).get("validation_resource_profile")

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import threading
 from typing import Any, Iterable
+import hashlib
 
 from .logstore import state_dir
 
@@ -16,7 +17,24 @@ _PERSIST_LOCK = threading.RLock()
 
 
 def _root() -> Path:
+    # Compatibility projection store.  Canonical R02B receipts are written under
+    # _receipt_root(); this path remains a latest/index projection for older
+    # consumers and manual inspection.
     return state_dir() / "test-runs"
+
+
+def _receipt_root() -> Path:
+    return state_dir() / "run-v3" / "test-run-receipts"
+
+
+def _repo_key(repo_root: Path) -> str:
+    return hashlib.sha256(str(repo_root.expanduser().resolve()).encode("utf-8")).hexdigest()[:24]
+
+
+def _sha256_json(value: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
 
 
 def _safe_run_id(value: str) -> str:
@@ -442,6 +460,110 @@ def reconcile_ssh_return_recovery(results: Iterable[dict[str, Any]]) -> dict[str
             runs_updated += 1
     return {"runs_updated": runs_updated, "operations_updated": operations_updated}
 
+def write_canonical_test_run_receipt(repo_root: Path, payload: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+    """Persist the canonical RUN-V3 test receipt and return its path/ref.
+
+    The older state_dir()/test-runs JSON file is retained only as a derived
+    projection.  The receipt binds the exact repository, run identity, operation
+    payload, testcase results, reports/logs and a digest over the immutable
+    content.
+    """
+
+    if not isinstance(payload, dict) or not payload.get("operations"):
+        raise ValueError("canonical test receipt requires one or more operations")
+    repo = Path(repo_root).expanduser().resolve()
+    run_id = _safe_run_id(str(payload.get("run_id") or ""))
+    if not run_id:
+        raise ValueError("canonical test receipt requires a run_id")
+    receipt = {
+        "schema_version": 1,
+        "authority": "RUN-V3 TestRunReceipt",
+        "repository": str(repo),
+        "repo_key": _repo_key(repo),
+        "run_id": run_id,
+        "selection_refs": list(dict.fromkeys(
+            str((op.get("test_result") or {}).get("metadata", {}).get("canonical_test_selection", {}).get("selection_id") or "")
+            for op in payload.get("operations", []) if isinstance(op, dict)
+        )),
+        "environment_refs": list(dict.fromkeys(
+            str((op.get("test_result") or {}).get("metadata", {}).get("test_environment_qualification", {}).get("qualification_id") or "")
+            for op in payload.get("operations", []) if isinstance(op, dict)
+        )),
+        "operations": list(payload.get("operations") or []),
+        "comparison": dict(payload.get("comparison") or {}),
+        "updated_at": str(payload.get("updated_at") or ""),
+    }
+    receipt["receipt_id"] = "trr-" + _sha256_json({k: v for k, v in receipt.items() if k != "receipt_id"})[:24]
+    receipt["sha256"] = _sha256_json(receipt)
+    root = _receipt_root() / _repo_key(repo)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{run_id}.json"
+    tmp = root / f".{run_id}.{threading.get_ident()}.receipt.tmp"
+    tmp.write_text(json.dumps(receipt, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path, receipt
+
+
+def _receipt_digest_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in payload.items() if key != "sha256"}
+
+
+def valid_canonical_test_run_receipt(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("authority") != "RUN-V3 TestRunReceipt":
+        return False
+    digest = str(payload.get("sha256") or "").strip()
+    if not digest:
+        return False
+    return digest == _sha256_json(_receipt_digest_payload(payload))
+
+
+def latest_canonical_test_run_receipt(repo_root: Path, *, exclude_run_id: str = "") -> dict[str, Any] | None:
+    root = _receipt_root() / _repo_key(repo_root)
+    if not root.is_dir():
+        return None
+    excluded = _safe_run_id(exclude_run_id)
+    for path in sorted(root.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        if excluded and path.stem == excluded:
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if valid_canonical_test_run_receipt(payload):
+            return payload
+    return None
+
+
+def failed_test_ids_from_receipt(payload: dict[str, Any] | None) -> list[str]:
+    failed_statuses = {"failed", "error", "cancelled", "xpass"}
+    values: list[str] = []
+    if not isinstance(payload, dict):
+        return values
+    for operation in payload.get("operations", []) or []:
+        if not isinstance(operation, dict):
+            continue
+        result = operation.get("test_result")
+        if not isinstance(result, dict):
+            continue
+        for suite in result.get("suites", []) or []:
+            if not isinstance(suite, dict):
+                continue
+            for case in suite.get("cases", []) or []:
+                if not isinstance(case, dict):
+                    continue
+                if str(case.get("status") or "").strip().lower() in failed_statuses:
+                    cid = str(case.get("id") or "").strip()
+                    if cid:
+                        values.append(cid)
+    return list(dict.fromkeys(values))
+
+
+def latest_failed_test_ids(repo_root: Path) -> list[str]:
+    return failed_test_ids_from_receipt(latest_canonical_test_run_receipt(repo_root))
+
+
 def persist_test_run(repo_root: Path, results: Iterable[Any], *, run_id: str = "") -> Path | None:
     incoming = build_run_payload(repo_root, results, run_id=run_id)
     if incoming is None:
@@ -456,6 +578,12 @@ def persist_test_run(repo_root: Path, results: Iterable[Any], *, run_id: str = "
         previous = latest_test_run(repo_root, exclude_run_id=str(current["run_id"]))
         current["comparison"] = compare_test_runs(previous, current)
         current["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        receipt_path, receipt = write_canonical_test_run_receipt(repo_root, current)
+        current["authority"] = "projection"
+        current["canonical_authority"] = "RUN-V3 TestRunReceipt"
+        current["canonical_receipt_path"] = str(receipt_path)
+        current["canonical_receipt_id"] = str(receipt.get("receipt_id") or "")
+        current["canonical_receipt_sha256"] = str(receipt.get("sha256") or "")
         tmp = root / f".{current['run_id']}.{threading.get_ident()}.json.tmp"
         tmp.write_text(json.dumps(current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         os.replace(tmp, path)

@@ -1,0 +1,114 @@
+{
+  "artifact_version": "v2",
+  "base_requirement": "Apply directly on post-REM01-hotfix + REMED-R02A-v2; do not apply v1 or hotfix first.",
+  "current_maxima": {
+    "ANDROID": "ANDROID-P111",
+    "CORE": "CORE-P084",
+    "ENV": "ENV-P131",
+    "EXEC": "EXEC-P087",
+    "LIFE": "LIFE-P127"
+  },
+  "deferred_findings": [
+    "EXEC-A08",
+    "R03 provider/lifecycle/cleanup ownership",
+    "R04 evidence/gate/final-seal truth"
+  ],
+  "delivered_findings": [
+    "TEST-A02",
+    "TEST-A09",
+    "TEST-A13",
+    "ANDROID-A05",
+    "ANDROID-A06"
+  ],
+  "duplicate_authorities_reduced": [
+    ".devtool/test-history.json is projection-only when canonical TestRunReceipt exists",
+    "state_dir()/test-runs is projection-only with canonical receipt pointer",
+    "validation state/events are marked projection of EXEC/RUN reference authority",
+    "validation attempts no longer persist replayable process argv",
+    "A latest valid clean canonical TestRunReceipt suppresses stale .devtool/test-history.json projection",
+    "Tampered canonical TestRunReceipts are rejected as failed-test selection authority"
+  ],
+  "evidence": [
+    "tests/test_remed_r02b_validation_test_truth.py::test_failed_history_prefers_canonical_run_receipt_over_repo_projection",
+    "tests/test_remed_r02b_validation_test_truth.py::test_legacy_selection_is_lowered_with_canonical_selection_identity",
+    "tests/test_remed_r02b_validation_test_truth.py::test_validation_session_state_and_events_are_projection_not_execution_authority",
+    "tests/test_remed_r02b_validation_test_truth.py::test_android_zero_and_setup_failures_do_not_fabricate_testcase_failures",
+    "tests/test_validation_sessions.py",
+    "tests/test_exec_g2_validation_proof_gate.py",
+    "tests/test_test_selection.py",
+    "tests/test_test_runstore.py",
+    "tests/test_android_instrumentation.py",
+    "tests/test_remed_r02b_validation_test_truth.py::test_direct_run_specs_persists_test_receipt_with_event_run_id",
+    "tests/test_remed_r02b_validation_test_truth.py::test_clean_canonical_receipt_with_zero_failures_suppresses_stale_projection",
+    "tests/test_remed_r02b_validation_test_truth.py::test_tampered_canonical_receipt_is_not_failed_selection_authority"
+  ],
+  "full_plan_position": "74/93",
+  "gate_window_position": "4/8",
+  "hotfixes": [
+    {
+      "disposition": "Folded into v2 so the artifact applies directly to post-R02A-v2 without requiring v1 first.",
+      "evidence": [
+        "tests/test_remed_r02b_validation_test_truth.py::test_direct_run_specs_persists_test_receipt_with_event_run_id",
+        "tests/test_remed_r02b_validation_test_truth.py::test_clean_canonical_receipt_with_zero_failures_suppresses_stale_projection",
+        "tests/test_remed_r02b_validation_test_truth.py::test_tampered_canonical_receipt_is_not_failed_selection_authority"
+      ],
+      "fixed_findings": [
+        "TEST-A09",
+        "TEST-A13",
+        "EXEC-A01",
+        "EXEC-A02"
+      ],
+      "id": "REMED-R02B-v2-folded-H01",
+      "production_changes": [
+        "devtool.runners.run_specs passes event_run_id to persist_test_run",
+        "devtool.test_selection.load_failed_test_ids treats a latest valid clean canonical receipt as authoritative",
+        "devtool.test_runstore validates canonical receipt sha256 before using it as selection authority"
+      ],
+      "reason": "Post-v1 audit found direct/library run_specs receipt identity fallback and stale failed-test projection resurrection."
+    }
+  ],
+  "next_major_phase": "CORE-G3R (79/93)",
+  "next_overlay": "REMED-R03A (75/93)",
+  "partial_findings": [
+    "EXEC-A01",
+    "EXEC-A02",
+    "TEST-A01",
+    "TEST-A03",
+    "TEST-A05",
+    "TEST-A06",
+    "TEST-A07",
+    "TEST-A10",
+    "TEST-A14",
+    "TEST-A15",
+    "ANDROID-A03",
+    "ANDROID-A04",
+    "ANDROID-A07",
+    "ANDROID-A08",
+    "ANDROID-A10",
+    "ANDROID-A11"
+  ],
+  "production_ingress_changed": [
+    "devtool.test_runstore.persist_test_run",
+    "devtool.test_selection.apply_test_selection",
+    "devtool.validation_sessions.save_session",
+    "devtool.validation_sessions.append_event",
+    "devtool.validation_sessions.record_phase_result",
+    "devtool.android.instrumentation.AndroidInstrumentationOrchestrator",
+    "devtool.runners.run_specs passes event_run_id to persist_test_run",
+    "devtool.test_selection.load_failed_test_ids clean canonical receipt authority",
+    "devtool.test_runstore canonical receipt sha256 verification"
+  ],
+  "remaining_remediation_implementation_overlays_before_g3r": 4,
+  "roadmap_id": "REMED-R02B",
+  "schema_version": 1,
+  "supersedes": [
+    "remed_r02b_validation_test_truth_v1.zip",
+    "remed_r02b_validation_test_truth_hotfix_v1.zip"
+  ],
+  "title": "Validation and Test Truth",
+  "validation": {
+    "local_reconstructed_result": "94 passed, 0 failed",
+    "maximum_warnings": 0,
+    "native_termux_workflow": "./devtoolw remed-r02b"
+  }
+}

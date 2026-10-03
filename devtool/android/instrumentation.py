@@ -620,7 +620,10 @@ class AndroidInstrumentationOrchestrator:
         if policy == "required":
             return InstrumentationResult(
                 status="failed", reason=reason, failure_kind="device-readiness", intent_id=intent_id,
-                failed=1, total=0, returncode=1, duration_ms=int((time.monotonic() - started) * 1000),
+                # Execution/device readiness failures must fail through the execution
+                # dimension, not by fabricating a failed testcase.
+                executed=0, failed=0, total=0, returncode=1,
+                duration_ms=int((time.monotonic() - started) * 1000),
                 device_policy=request.device_policy,
             )
         return InstrumentationResult(
@@ -886,7 +889,9 @@ class AndroidInstrumentationOrchestrator:
             zero_required = policy == "required" and counts["total"] <= 0 and failure_kind != "setup-crash"
             failed = execution.returncode != 0 or counts["failed"] > 0 or zero_required or bool(failure_kind)
             if zero_required:
-                counts["failed"] = max(1, counts["failed"])
+                # Required zero-test runs fail the instrumentation/gate verdict but
+                # preserve testcase truth: no testcase executed and no testcase failed.
+                counts.update({"executed": 0, "passed": 0, "failed": 0, "skipped": 0})
                 failure_kind = failure_kind or "zero-tests"
                 classification_reason = "Required instrumentation executed zero tests"
             result = InstrumentationResult(
@@ -928,7 +933,10 @@ class AndroidInstrumentationOrchestrator:
                 plan_id=plan.plan_id if plan else "", artifact_pair_id=artifact_pair.pair_id if artifact_pair else "",
                 device_lease_id=lease.lease_id if lease else "", target_package=target_package,
                 test_package=installed_test_package, device_serial=device.serial, device_policy=request.device_policy,
-                failed=1, returncode=1, duration_ms=int((time.monotonic() - started) * 1000), evidence=evidence,
+                # Setup errors are not testcase failures.  Preserve counts and fail
+                # through failure_kind/returncode/status instead.
+                executed=0, failed=0, total=0, returncode=1,
+                duration_ms=int((time.monotonic() - started) * 1000), evidence=evidence,
             )
 
         assert result is not None

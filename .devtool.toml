@@ -92,6 +92,11 @@ description = "Run REMED-R02A execution scheduler and RUN truth targeted validat
 workflow = "remed-r02a"
 target = "devtool"
 
+[wrapper.commands.remed-r02b]
+description = "Run REMED-R02B validation and test truth targeted validation"
+workflow = "remed-r02b"
+target = "devtool"
+
 [wrapper.commands.core-g3]
 description = "Run CORE-G3 final identity/config/wrapper/RUN seal"
 workflow = "core-g3"
@@ -897,6 +902,10 @@ rem01-hotfix = [
 remed-r02a = [
   { id = "scheduler-run", ref = "test:remed-r02a-scheduler-run", depends_on = [] },
   { id = "retained-exec", ref = "test:remed-r02a-retained-exec", depends_on = ["scheduler-run"] },
+]
+remed-r02b = [
+  { id = "validation-test-truth", ref = "test:remed-r02b-validation-test-truth", depends_on = [] },
+  { id = "retained-validation-test", ref = "test:remed-r02b-retained-validation-test", depends_on = ["validation-test-truth"] },
 ]
 core-g3 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -4319,6 +4328,20 @@ name = "REMED-R02A retained EXEC/RUN/reuse regressions"
 runner = "pytest"
 timeout_seconds = 900
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_exec_g1_reuse_evidence_gate.py", "tests/test_exec_x04_operational_adoption.py", "tests/test_exo_p0_cli_run_finalization.py", "tests/test_core_x03_run_store.py"]
+
+[[test]]
+id = "remed-r02b-validation-test-truth"
+name = "REMED-R02B validation and test truth"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_remed_r02b_validation_test_truth.py"]
+
+[[test]]
+id = "remed-r02b-retained-validation-test"
+name = "REMED-R02B retained validation, TEST, and Android regressions"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_validation_sessions.py", "tests/test_exec_g2_validation_proof_gate.py", "tests/test_test_selection.py", "tests/test_test_runstore.py", "tests/test_android_instrumentation.py"]
 
 [[test]]
 id = "core-g3-remediation"
