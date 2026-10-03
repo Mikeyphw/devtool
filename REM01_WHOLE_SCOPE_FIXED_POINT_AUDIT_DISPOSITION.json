@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "REM01-WHOLE-SCOPE-HOTFIX",
+  "position": "post-72/93 hotfix before 73/93",
+  "scope": "Fixed-point audit and closure hotfix for REMED-R01A plus REMED-R01B",
+  "authoritative_promise_maxima": {
+    "CORE": "CORE-P084",
+    "EXEC": "EXEC-P087",
+    "ENV": "ENV-P131",
+    "ANDROID": "ANDROID-P111",
+    "LIFE": "LIFE-P127"
+  },
+  "reopened_findings": [
+    {
+      "finding": "CORE-A01",
+      "status_before": "PARTIALLY_ADOPTED",
+      "status_after": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "defect": "Default zsh completion still used handwritten legacy surface instead of generated CORE schema surface.",
+      "evidence": ["tests/test_remed_r01_whole_audit_hotfix.py::test_rem01_default_zsh_completion_uses_canonical_generated_surface", "tests/test_core_x04_generated_surfaces.py"]
+    },
+    {
+      "finding": "CORE-A02",
+      "status_before": "PARTIALLY_ADOPTED",
+      "status_after": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "defect": "Alias-bearing legacy completion was still production default.",
+      "evidence": ["tests/test_remed_r01_whole_audit_hotfix.py::test_rem01_default_zsh_completion_uses_canonical_generated_surface", "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_checked_in_generated_surfaces_are_fixed_point"]
+    },
+    {
+      "finding": "CORE-A08",
+      "status_before": "PARTIALLY_ADOPTED",
+      "status_after": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "defect": "Ambient DEVTOOL_FEDERATION_* variables could manufacture invocation lineage.",
+      "evidence": ["tests/test_remed_r01_whole_audit_hotfix.py::test_rem01_ambient_federation_environment_is_not_lineage_authority", "tests/test_remed_r01_whole_audit_hotfix.py::test_rem01_federation_lineage_requires_private_parent_handoff"]
+    },
+    {
+      "finding": "LIFE-A03",
+      "status_before": "PARTIALLY_ADOPTED",
+      "status_after": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "defect": "Android devtool signing could synthesize a LIFE-shaped identity from legacy Android fields without identity_id.",
+      "evidence": ["tests/test_remed_r01_whole_audit_hotfix.py::test_rem01_android_devtool_signing_rejects_legacy_identity_synthesis", "tests/test_remed_r01a_canonical_authority_identity.py::test_r01a_android_signing_consumes_life_identity_registry"]
+    },
+    {
+      "finding": "LIFE-A05",
+      "status_before": "PARTIALLY_ADOPTED",
+      "status_after": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "defect": "Artifact execution records were success-shaped at mutation time and did not bind terminal primary tree identity.",
+      "evidence": ["tests/test_remed_r01_whole_audit_hotfix.py::test_rem01_artifact_execution_record_is_pending_until_validation_finalization", "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_artifact_apply_persists_run_linked_execution_record"]
+    }
+  ],
+  "scope_corrections": [
+    {
+      "field": "REMED_R01B.authoritative_promise_maxima.ANDROID",
+      "previous": "ANDROID-P099",
+      "current": "ANDROID-P111",
+      "status": "CORRECTED_IN_CURRENT_REPORTING",
+      "historical_evidence_rewritten": false
+    }
+  ],
+  "targeted_validation": {
+    "construction_host": "51 passed, 0 failed",
+    "native_termux_workflow": "./devtoolw rem01-hotfix"
+  },
+  "next_overlay": "REMED-R02A — Execution, Scheduler & RUN Truth (73/93)",
+  "remaining_remediation_implementation_overlays_before_g3r": 6,
+  "next_major_scope": "CORE-G3R at 79/93"
+}

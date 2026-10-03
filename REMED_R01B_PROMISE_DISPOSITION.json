@@ -1,6 +1,6 @@
 {
   "authoritative_promise_maxima": {
-    "ANDROID": "ANDROID-P099",
+    "ANDROID": "ANDROID-P111",
     "CORE": "CORE-P084",
     "ENV": "ENV-P131",
     "EXEC": "EXEC-P087",
@@ -269,5 +269,14 @@
       "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED"
     }
   ],
-  "schema_version": 1
+  "schema_version": 1,
+  "superseding_audit_corrections": [
+    {
+      "current": "ANDROID-P111",
+      "field": "authoritative_promise_maxima.ANDROID",
+      "previous": "ANDROID-P099",
+      "reason": "Preserved merged handoff scope includes Android promises through ANDROID-P111; ANDROID-P099 was stale R01B paperwork and cannot be a fixed-point scope maximum.",
+      "source": "REM01 whole-scope fixed-point audit hotfix"
+    }
+  ]
 }

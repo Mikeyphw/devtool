@@ -196,46 +196,27 @@ def signing_profile(config: ProjectConfig | None, name: str = "release") -> Sign
                 f"LIFE signing identity {identity_id!r} is not authorized for signing profile {name!r}"
             )
     elif mode == "devtool":
-        # Compatibility lowering: historical Android signing configuration is
-        # compiled into the shared LIFE identity model instead of remaining an
-        # independent identity authority. New configurations should name a
-        # durable registry identity explicitly.
-        from ..artifact_trust import SecretProviderRef, SigningIdentityId, SigningIdentityRecord
-        source = None
-        if str(raw.get("store_password_env") or "").strip():
-            source = SecretProviderRef("local", str(raw.get("store_password_env") or "").strip())
-        elif raw.get("store_password_fd") not in {None, ""}:
-            source = SecretProviderRef("fd", str(raw.get("store_password_fd")))
-        elif str(raw.get("store_password_command") or "").strip():
-            source = SecretProviderRef("external-command", str(raw.get("store_password_command") or "").strip())
-        elif _coerce_bool(raw.get("store_password_stdin", False), False):
-            source = SecretProviderRef("stdin", "stdin")
-        elif str(raw.get("store_password_file") or "").strip():
-            source = SecretProviderRef("private-file", str(raw.get("store_password_file") or "").strip())
-        legacy_basis = {
-            "name": name,
-            "keystore": str(raw.get("keystore") or ""),
-            "alias": str(raw.get("alias") or ""),
-            "store_type": str(raw.get("store_type") or raw.get("type") or "PKCS12"),
-            "certificate": str(raw.get("expected_cert_sha256") or ""),
-            "secret_source": source.as_dict() if source else None,
-        }
-        legacy_id = "android-compat-" + hashlib.sha256(
-            json.dumps(legacy_basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()[:20]
-        identity = SigningIdentityRecord(
-            identity_id=SigningIdentityId(legacy_id),
-            provider="android-jks" if str(legacy_basis["store_type"]).upper() == "JKS" else "android-pkcs12",
-            key_reference=str(raw.get("keystore") or "").strip(),
-            alias=str(raw.get("alias") or "").strip(),
-            certificate_sha256=_normalize_fingerprint(str(raw.get("expected_cert_sha256") or "")),
-            purposes=("android-signing",),
-            variants=(name,),
-            secret_provider=source,
-            policy_provenance="android-legacy-compatibility-lowering",
-            lifecycle="ephemeral",
+        # REM01 fixed-point audit: devtool-managed Android signing must consume
+        # a durable LIFE signing identity.  The previous compatibility branch
+        # synthesized a canonical-looking ephemeral identity from Android-local
+        # keystore/alias/certificate fields, which made legacy Android config an
+        # independent identity authority.  Project/Gradle signing may still use
+        # project-local settings, but mode=devtool is reserved for LIFE-owned
+        # identities.
+        legacy_fields = [
+            key for key in (
+                "keystore", "alias", "expected_cert_sha256", "store_file_env",
+                "key_alias_env", "store_password_env", "key_password_env",
+                "store_password_file", "key_password_file", "store_password_fd",
+                "key_password_fd", "store_password_command", "key_password_command",
+                "store_password_stdin", "key_password_stdin",
+            )
+            if raw.get(key) not in (None, "", False)
+        ]
+        detail = f"; legacy fields present: {', '.join(sorted(legacy_fields))}" if legacy_fields else ""
+        raise AndroidSigningError(
+            f"Android signing mode 'devtool' requires a registered LIFE identity_id for profile {name!r}{detail}"
         )
-        identity_id = str(identity.identity_id)
 
     def _fd(key: str) -> int | None:
         value = raw.get(key)

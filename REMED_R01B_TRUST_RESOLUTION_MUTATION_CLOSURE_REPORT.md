@@ -17,7 +17,7 @@ R01B is the second half of the original REMED-R01 authority/trust family after t
 - `LIFE-A05` — normal artifact execution must persist a RUN-linked `ArtifactExecutionRecord`/qualification evidence.
 - Shared sealability foundation — evidence references must resolve to concrete executable/durable evidence and reject missing/stale hashes.
 
-The current authoritative promise maxima inspected before implementation are **CORE-P084, EXEC-P087, ENV-P131, ANDROID-P099, and LIFE-P127**. R01B does not redefine those ranges; its remediation findings amend their production-truth requirements and invalidate historical G3 qualification until the corresponding G3R gates rerun.
+The current authoritative promise maxima inspected before implementation are **CORE-P084, EXEC-P087, ENV-P131, ANDROID-P111, and LIFE-P127**. R01B does not redefine those ranges; its remediation findings amend their production-truth requirements and invalidate historical G3 qualification until the corresponding G3R gates rerun.
 
 ## Source → current obligation → implementation → evidence mapping
 
@@ -102,3 +102,8 @@ R01B closes the implementation half of the original REMED-R01 family. It does **
 - **Next overlay:** REMED-R02A — Execution, Scheduler & RUN Truth, full-plan **73/93**.
 - **Remaining remediation implementation overlays before requalification:** **6**.
 - **Next major phase:** eight G3R requalification gates beginning **CORE-G3R 79/93**.
+
+
+## REM01 whole-scope audit correction
+
+The later REM01 fixed-point audit corrected the Android promise maximum from `ANDROID-P099` to `ANDROID-P111`. The earlier value was stale paperwork; no historical device run evidence was rewritten.

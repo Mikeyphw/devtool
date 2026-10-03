@@ -13055,9 +13055,10 @@ def _main_after_parse(
         return 0
 
     if args.command in {"completion"}:
-        if args.shell == "zsh" and not bool(getattr(args, "canonical", False)):
-            print(ZSH_COMPLETION)
-            return 0
+        # REM01 fixed-point audit: runtime completion output is generated from
+        # the canonical CORE schema by default.  The handcrafted Zsh body may
+        # remain as a non-authoritative compatibility constant for tests/docs,
+        # but it must not be the normal ``devtool completion zsh`` authority.
         from .core_surfaces import build_generated_surfaces
 
         bundle = build_generated_surfaces(parser)

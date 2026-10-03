@@ -382,6 +382,7 @@ class ArtifactExecutionRecord:
     rollback_receipt_id: str = ""
     trust_evidence_ids: tuple[str, ...] = ()
     final_state_identity: str = ""
+    execution_status: str = "applied-pending-validation"
     durability: str = "durable"
 
     def __post_init__(self) -> None:
@@ -401,6 +402,7 @@ class ArtifactExecutionRecord:
         rollback_receipt_id: str = "",
         trust_evidence_ids: Sequence[str] = (),
         final_state_identity: str = "",
+        execution_status: str = "applied-pending-validation",
         durability: str = "durable",
     ) -> "ArtifactExecutionRecord":
         basis = {
@@ -408,7 +410,7 @@ class ArtifactExecutionRecord:
             "qualification_receipt_id": qualification_receipt_id,
             "validation_evidence_id": validation_evidence_id, "transaction_id": transaction_id,
             "rollback_receipt_id": rollback_receipt_id, "trust_evidence_ids": list(trust_evidence_ids),
-            "final_state_identity": final_state_identity, "durability": durability,
+            "final_state_identity": final_state_identity, "execution_status": execution_status, "durability": durability,
         }
         return cls(record_id=f"artifact-execution:{_digest(basis)[:24]}", **basis)
 

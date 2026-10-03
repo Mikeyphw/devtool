@@ -82,6 +82,11 @@ description = "Run REMED-R01B trust resolution and mutation closure targeted val
 workflow = "remed-r01b"
 target = "devtool"
 
+[wrapper.commands.rem01-hotfix]
+description = "Run REM01 whole-scope audit hotfix targeted validation"
+workflow = "rem01-hotfix"
+target = "devtool"
+
 [wrapper.commands.core-g3]
 description = "Run CORE-G3 final identity/config/wrapper/RUN seal"
 workflow = "core-g3"
@@ -880,6 +885,9 @@ remed-r01b = [
   { id = "trust-mutation", ref = "test:remed-r01b-trust-mutation", depends_on = [] },
   { id = "execution-environment", ref = "test:remed-r01b-exec-env", depends_on = ["trust-mutation"] },
   { id = "android-generated", ref = "test:remed-r01b-android-generated", depends_on = ["execution-environment"] },
+]
+rem01-hotfix = [
+  { id = "fixed-point", ref = "test:rem01-hotfix-fixed-point", depends_on = [] },
 ]
 core-g3 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -4281,6 +4289,13 @@ name = "REMED-R01B Android private transport and canonical generated surfaces"
 runner = "pytest"
 timeout_seconds = 600
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_android_instrumentation.py", "tests/test_android_x03_instrumentation_lifecycle.py", "tests/test_android_g2_instrumentation_device_gate.py", "tests/test_rem11_android_devices_release_gates.py", "tests/test_core_x01_registry.py", "tests/test_core_x04_generated_surfaces.py"]
+
+[[test]]
+id = "rem01-hotfix-fixed-point"
+name = "REM01 whole-scope fixed-point hotfix"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_remed_r01_whole_audit_hotfix.py", "tests/test_remed_r01a_canonical_authority_identity.py", "tests/test_remed_r01b_trust_resolution_mutation.py", "tests/test_core_x04_generated_surfaces.py"]
 
 [[test]]
 id = "core-g3-remediation"

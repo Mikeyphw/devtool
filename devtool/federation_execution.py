@@ -65,7 +65,7 @@ from .distributed_transport import (
     LocalLoopbackTransport,
     distributed_provider_adapter,
 )
-from .invocation_origin import create_managed_run_handoff, trusted_invocation_context
+from .invocation_origin import create_federation_lineage_handoff, create_managed_run_handoff, trusted_invocation_context
 
 
 class FederationExecutionError(RuntimeError):
@@ -534,6 +534,20 @@ def _step_contract_ref(plan: FederatedPlanGraph, step: FederatedWorkflowStep) ->
     return f"{step.repository}::{target}::{step.child_contract}" if target else ""
 
 
+
+
+def _attach_federation_lineage_handoff(env: dict[str, str], lineage: Mapping[str, Any]) -> dict[str, str]:
+    """Bind federation lineage to a private immediate-child capability.
+
+    The DEVTOOL_FEDERATION_* variables stay in the environment for legacy
+    provider routing and human diagnostics, but invocation metadata only trusts
+    the handoff consumed by devtool.invocation_origin.
+    """
+    if lineage and str(lineage.get("parent_run_id") or "").strip():
+        env["DEVTOOL_FEDERATION_LINEAGE_HANDOFF"] = create_federation_lineage_handoff(lineage)
+    return env
+
+
 def _step_display_workflow(step: FederatedWorkflowStep) -> str:
     if step.contract_type == "federation":
         return f"@federation:{step.contract_name}"
@@ -966,6 +980,7 @@ def _run_federated_workflow_sequential(
                 env["DEVTOOL_PROJECT_EXECUTION_ENVIRONMENT"] = scheduler_node.execution_environment
             env.update(git_lineage_environment(planned_git_lineage))
             env.update(artifact_env)
+            _attach_federation_lineage_handoff(env, lineage)
             if federation_group:
                 env["DEVTOOL_FEDERATION_GROUP"] = federation_group
             env.update(federation_attestation_environment(attestation))
@@ -1515,6 +1530,7 @@ def _run_federated_workflow_parallel(
         if not scheduler_node.provider_profile and scheduler_node.execution_environment not in {"", "auto"}:
             env["DEVTOOL_PROJECT_EXECUTION_ENVIRONMENT"] = scheduler_node.execution_environment
         env.update(git_lineage_environment(planned_git_lineage))
+        _attach_federation_lineage_handoff(env, lineage)
         env.update(artifact_env)
         if federation_group:
             env["DEVTOOL_FEDERATION_GROUP"] = federation_group
@@ -2159,6 +2175,7 @@ def run_federated_direct_child(
         "DEVTOOL_FEDERATION_EXECUTION_ENVIRONMENT": "auto",
     }
     env.update(git_lineage_environment(planned_git_lineage))
+    _attach_federation_lineage_handoff(env, lineage)
     from .federation_transport import build_repository_attestation, federation_attestation_environment
     env.update(federation_attestation_environment(build_repository_attestation(
         resolution.root,

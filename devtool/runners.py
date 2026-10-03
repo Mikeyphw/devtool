@@ -3857,6 +3857,58 @@ def _plan_authorizes_config_registration(plan: object, *, source_owner: str | No
     return False
 
 
+def _artifact_terminal_tree_identity(repo_root: Path) -> str:
+    """Return a concrete terminal source-tree identity for artifact evidence."""
+    root = repo_root.resolve()
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        if completed.returncode == 0 and completed.stdout.strip():
+            return "git-tree:" + completed.stdout.strip()
+    except Exception:
+        pass
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if rel.startswith(".git/") or rel.startswith(".devtool/run/") or "/__pycache__/" in f"/{rel}/":
+            continue
+        try:
+            if path.is_file() or path.is_symlink():
+                digest.update(rel.encode("utf-8"))
+                digest.update(b"\0")
+                if path.is_symlink():
+                    digest.update(b"symlink:")
+                    digest.update(os.readlink(path).encode("utf-8", "surrogateescape"))
+                else:
+                    digest.update(hashlib.sha256(path.read_bytes()).hexdigest().encode("ascii"))
+                digest.update(b"\0")
+        except OSError:
+            continue
+    return "tree-sha256:" + digest.hexdigest()
+
+
+def _artifact_execution_status(result: OperationResult) -> str:
+    metadata = dict(result.metadata or {})
+    if bool(metadata.get("rolled_back_during_apply")):
+        return "rolled-back" if int(metadata.get("rollback_returncode") or 0) == 0 else "rollback-failed"
+    if int(result.returncode or 0) != 0:
+        return "failed"
+    if bool(metadata.get("validation_complete")) or str(metadata.get("validation_status") or "").lower() in {"passed", "succeeded"}:
+        return "succeeded"
+    if metadata.get("transaction_path") or metadata.get("transaction_id"):
+        return "applied-pending-validation"
+    return "succeeded"
+
+
 def _persist_artifact_execution_record(repo_root: Path, plan: object, result: OperationResult) -> None:
     from .artifact_lifecycle import ArtifactExecutionRecord, ResolvedArtifactPlan
     from .core_runtime import private_run_root
@@ -3866,7 +3918,9 @@ def _persist_artifact_execution_record(repo_root: Path, plan: object, result: Op
 
     if not isinstance(plan, ResolvedArtifactPlan):
         return
-    root = private_run_root(repo_root)
+    metadata = dict(result.metadata or {})
+    canonical_repo = Path(str(metadata.get("transaction_primary_repo_root") or repo_root)).resolve()
+    root = private_run_root(canonical_repo)
     catalog = RunCatalog.open(root)
 
     # Reuse ambient run identity only when RUN-V3 itself confirms this is a live
@@ -3877,21 +3931,26 @@ def _persist_artifact_execution_record(repo_root: Path, plan: object, result: Op
     ambient_live = bool(ambient and str(ambient_row.get("status") or "") == "running")
     run_id = ambient if ambient_live else _uuid.uuid4().hex
 
+    execution_status = _artifact_execution_status(result)
+    terminal_tree_identity = _artifact_terminal_tree_identity(canonical_repo)
     final_identity = hashlib.sha256(json.dumps({
         "returncode": int(result.returncode or 0),
-        "transaction": str((result.metadata or {}).get("transaction_id") or ""),
+        "execution_status": execution_status,
+        "transaction": str(metadata.get("transaction_id") or ""),
         "artifact": plan.artifact.identities.semantic_sha256,
         "plan": plan.plan_id,
+        "terminal_tree_identity": terminal_tree_identity,
     }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     record = ArtifactExecutionRecord.create(
         run_id=run_id,
         artifact_id=plan.artifact.artifact_id,
         plan_id=plan.plan_id,
         qualification_receipt_id=plan.qualification.receipt_id,
-        transaction_id=str((result.metadata or {}).get("transaction_id") or ""),
-        rollback_receipt_id=str((result.metadata or {}).get("rollback_receipt_id") or ""),
+        transaction_id=str(metadata.get("transaction_id") or ""),
+        rollback_receipt_id=str(metadata.get("rollback_receipt_id") or ""),
         trust_evidence_ids=plan.qualification.trust_evidence_ids,
         final_state_identity=final_identity,
+        execution_status=execution_status,
     )
     record_dir = root / run_id / "artifacts"
     record_dir.mkdir(parents=True, exist_ok=True)
@@ -3909,7 +3968,7 @@ def _persist_artifact_execution_record(repo_root: Path, plan: object, result: Op
     tmp.write_text(json.dumps(record.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, record_path)
 
-    status = "succeeded" if int(result.returncode or 0) == 0 else "failed"
+    status = execution_status
     row = dict(catalog.runs.get(run_id, {}))
     row.update({
         "schema_version": 3,
@@ -3924,6 +3983,8 @@ def _persist_artifact_execution_record(repo_root: Path, plan: object, result: Op
         "artifact_id": plan.artifact.artifact_id,
         "artifact_plan_id": plan.plan_id,
         "artifact_qualification_receipt_id": plan.qualification.receipt_id,
+        "artifact_execution_status": execution_status,
+        "artifact_terminal_tree_identity": terminal_tree_identity,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     })
     if not ambient_live:
@@ -3951,6 +4012,8 @@ def _persist_artifact_execution_record(repo_root: Path, plan: object, result: Op
     result.metadata.setdefault("artifact_qualification_attachment_id", qualification_attachment.attachment_id)
     result.metadata.setdefault("artifact_qualification_reference", qualification_ref.ref_id)
     result.metadata.setdefault("artifact_execution_record_id", record.record_id)
+    result.metadata.setdefault("artifact_execution_status", execution_status)
+    result.metadata.setdefault("artifact_terminal_tree_identity", terminal_tree_identity)
     result.metadata.setdefault("artifact_execution_attachment_id", execution_attachment.attachment_id)
     result.metadata.setdefault("artifact_execution_reference", execution_ref.ref_id)
     result.metadata.setdefault("run_id", run_id)
