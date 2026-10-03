@@ -87,6 +87,11 @@ description = "Run REM01 whole-scope audit hotfix targeted validation"
 workflow = "rem01-hotfix"
 target = "devtool"
 
+[wrapper.commands.remed-r02a]
+description = "Run REMED-R02A execution scheduler and RUN truth targeted validation"
+workflow = "remed-r02a"
+target = "devtool"
+
 [wrapper.commands.core-g3]
 description = "Run CORE-G3 final identity/config/wrapper/RUN seal"
 workflow = "core-g3"
@@ -888,6 +893,10 @@ remed-r01b = [
 ]
 rem01-hotfix = [
   { id = "fixed-point", ref = "test:rem01-hotfix-fixed-point", depends_on = [] },
+]
+remed-r02a = [
+  { id = "scheduler-run", ref = "test:remed-r02a-scheduler-run", depends_on = [] },
+  { id = "retained-exec", ref = "test:remed-r02a-retained-exec", depends_on = ["scheduler-run"] },
 ]
 core-g3 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -4296,6 +4305,20 @@ name = "REM01 whole-scope fixed-point hotfix"
 runner = "pytest"
 timeout_seconds = 900
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_remed_r01_whole_audit_hotfix.py", "tests/test_remed_r01a_canonical_authority_identity.py", "tests/test_remed_r01b_trust_resolution_mutation.py", "tests/test_core_x04_generated_surfaces.py"]
+
+[[test]]
+id = "remed-r02a-scheduler-run"
+name = "REMED-R02A execution scheduler and RUN truth"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_remed_r02a_execution_scheduler_run_truth.py"]
+
+[[test]]
+id = "remed-r02a-retained-exec"
+name = "REMED-R02A retained EXEC/RUN/reuse regressions"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_exec_g1_reuse_evidence_gate.py", "tests/test_exec_x04_operational_adoption.py", "tests/test_exo_p0_cli_run_finalization.py", "tests/test_core_x03_run_store.py"]
 
 [[test]]
 id = "core-g3-remediation"

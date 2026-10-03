@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "scope": "REMED-R02A Execution, Scheduler & RUN Truth",
+  "position": {"gate_window": "3/8", "full_plan": "73/93"},
+  "supersedes": "remed_r02a_execution_scheduler_run_truth_v1.zip",
+  "source_state": {
+    "after_remed_r01a_commit": "7f7b6fd",
+    "after_remed_r01b_commit": "b5a8cce",
+    "after_rem01_hotfix_commit": "e16ef1d"
+  },
+  "promise_maxima_checked": {
+    "exec": "EXEC-P087",
+    "core": "CORE-P084",
+    "env": "ENV-P131",
+    "android": "ANDROID-P111",
+    "life": "LIFE-P127"
+  },
+  "audit_correction": {
+    "v1_overclaimed_findings": ["EXEC-A01", "EXEC-A02", "EXEC-A06", "EXEC-A08", "EXEC-A13"],
+    "reason": "v1 implemented scheduler/RUN substrate but reported several validation/control/domain-cache findings as fully delivered. v2 corrects statuses and adds an adversarial production guard for scheduler metadata bypass."
+  },
+  "findings": [
+    {
+      "id": "EXEC-A01",
+      "status": "DEFERRED_TO_R02B",
+      "implementation": [],
+      "evidence": [],
+      "rationale": "ValidationSession still owns validation phase/attempt/progress/control state. R02A does not claim closure."
+    },
+    {
+      "id": "EXEC-A02",
+      "status": "DEFERRED_TO_R02B",
+      "implementation": [],
+      "evidence": [],
+      "rationale": "Validation state projection/history reduction is R02B Validation & Test Truth work."
+    },
+    {
+      "id": "EXEC-A04",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": ["devtool/execution_scheduler_truth.py", "devtool/runners.py"],
+      "evidence": [
+        "tests/test_remed_r02a_execution_scheduler_run_truth.py::test_r02a_authoritative_reuse_skips_real_process_and_persists_reuse_disposition",
+        "tests/test_remed_r02a_execution_scheduler_run_truth.py::test_r02a_public_metadata_cannot_disable_scheduler_boundary"
+      ]
+    },
+    {
+      "id": "EXEC-A05",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": ["devtool/execution_scheduler_truth.py", "devtool/core/execution_store.py"],
+      "evidence": [
+        "tests/test_remed_r02a_execution_scheduler_run_truth.py::test_r02a_reuse_index_ignores_legacy_projection_files",
+        "tests/test_exec_g1_reuse_evidence_gate.py::test_reuse_index_is_rebuildable_only_from_exo_history"
+      ]
+    },
+    {
+      "id": "EXEC-A06",
+      "status": "PARTIALLY_ADOPTED",
+      "implementation": ["devtool/execution_scheduler_truth.py", "devtool/runners.py"],
+      "evidence": ["tests/test_remed_r02a_execution_scheduler_run_truth.py"],
+      "rationale": "Normal workflow/direct run_specs ingress is adopted. Validation/test consumers remain in R02B."
+    },
+    {
+      "id": "EXEC-A07",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED",
+      "implementation": ["devtool/execution_scheduler_truth.py", "devtool/runners.py", "devtool/core/execution_store.py"],
+      "evidence": ["tests/test_remed_r02a_execution_scheduler_run_truth.py::test_r02a_materialize_restores_verified_output_without_process_spawn"]
+    },
+    {
+      "id": "EXEC-A08",
+      "status": "DEFERRED_TO_R02B_OR_LATER",
+      "implementation": [],
+      "evidence": [],
+      "rationale": "Universal fresh/rerun/rerun-from controls are not completed by this overlay."
+    },
+    {
+      "id": "EXEC-A13",
+      "status": "PARTIALLY_ADOPTED",
+      "implementation": ["devtool/execution_scheduler_truth.py", "devtool/runners.py"],
+      "evidence": ["tests/test_remed_r02a_execution_scheduler_run_truth.py::test_r02a_public_metadata_cannot_disable_scheduler_boundary"],
+      "rationale": "run_specs/workflow/CLI scheduler boundary is adopted; all domain-specific cache/reuse/resume paths still require the later gate audit loop."
+    }
+  ],
+  "delivered_findings": ["EXEC-A04", "EXEC-A05", "EXEC-A07"],
+  "partial_findings": ["EXEC-A06", "EXEC-A13"],
+  "deferred_findings": ["EXEC-A01", "EXEC-A02", "EXEC-A08"],
+  "targeted_validation": {
+    "py_compile": "pass",
+    "focused_and_retained": "52 passed",
+    "native_termux_workflow": "./devtoolw remed-r02a"
+  },
+  "next": {
+    "next_overlay": "REMED-R02B Validation & Test Truth",
+    "next_full_plan_position": "74/93",
+    "remaining_remediation_implementation_overlays_before_g3r": 5,
+    "next_major_phase": "CORE-G3R at 79/93"
+  }
+}

@@ -7579,7 +7579,7 @@ def _register_cli_run_instance(args: argparse.Namespace, raw_argv: list[str], ru
     commands still receive an independently queryable run instance.
     """
     try:
-        from .run_store import RunCatalog
+        from .run_store import AttachmentDescriptor, RunCatalog
         from .core_runtime import private_run_root
         repo = Path(str(getattr(args, "repo", "") or Path.cwd())).expanduser().resolve(strict=False)
         command = str(getattr(args, "command", "") or "devtool")
@@ -7603,12 +7603,40 @@ def _register_cli_run_instance(args: argparse.Namespace, raw_argv: list[str], ru
 
 def _finalize_cli_run_instance(args: argparse.Namespace, run_id: str, *, status: str, exit_code: int) -> None:
     try:
-        from .run_store import RunCatalog
+        from .run_store import AttachmentDescriptor, RunCatalog
         from .core_runtime import private_run_root
         repo = Path(str(getattr(args, "repo", "") or Path.cwd())).expanduser().resolve(strict=False)
         catalog = RunCatalog.open(private_run_root(repo))
         row = dict(catalog.runs.get(run_id, {"run_id": run_id}))
         row.update({"status": status, "exit_code": int(exit_code), "finished_at": datetime.now(timezone.utc).isoformat()})
+        try:
+            from .execution_scheduler_truth import execution_history_root, run_projection_directory
+            execution_dir = run_projection_directory(run_id)
+            execution_path = execution_dir / "execution.json"
+            checkpoint_path = execution_dir / "execution-checkpoint.json"
+            history_path = execution_history_root() / run_id / "execution.json"
+            refs: dict[str, str] = {}
+            for kind, path in (
+                ("execution-snapshot", execution_path),
+                ("execution-checkpoint", checkpoint_path),
+                ("execution-history", history_path),
+            ):
+                if path.is_file():
+                    attachment = AttachmentDescriptor.from_file(
+                        run_id=run_id,
+                        path=path,
+                        kind=kind,
+                        privacy="private",
+                        media_type="application/json",
+                    )
+                    ref = catalog.add_attachment(attachment)
+                    refs[kind] = ref.ref_id
+            if refs:
+                row["execution_attachment_refs"] = refs
+                row["execution_projection_dir"] = str(execution_dir)
+                row["execution_history_path"] = str(history_path) if history_path.is_file() else ""
+        except Exception as attach_exc:
+            row["execution_attachment_warning"] = f"{type(attach_exc).__name__}: {attach_exc}"
         catalog.add_run(row)
         catalog.save()
     except Exception as exc:
@@ -12837,7 +12865,23 @@ def _main_impl(argv: list[str] | None = None) -> int:
         lifecycle_started = time.monotonic()
         invocation_source = _invocation_source_for_args(args)
         invocation_metadata = _invocation_metadata_for_args(args)
+        execution_projection = None
         if emit_build:
+            try:
+                from .core.events.runtime import get_event_bus
+                from .core.execution_subscribers import ExecutionProjectionSubscriber
+                from .execution_scheduler_truth import execution_history_root, run_projection_directory
+                bus = get_event_bus()
+                execution_projection = ExecutionProjectionSubscriber(
+                    store=bus.execution_store,
+                    run_id=event_run_id,
+                    directory=run_projection_directory(event_run_id),
+                    history_directory=execution_history_root(),
+                    checkpoint_interval=1,
+                )
+                bus.subscribe_all(execution_projection)
+            except Exception as projection_exc:
+                raise RuntimeError(f"unable to attach canonical execution projection for run {event_run_id}: {projection_exc}") from projection_exc
             publish_event(BuildStarted(
                 run_id=event_run_id,
                 command=command,
@@ -12888,6 +12932,12 @@ def _main_impl(argv: list[str] | None = None) -> int:
             )
             return code
         finally:
+            if execution_projection is not None:
+                try:
+                    from .core.events.runtime import get_event_bus
+                    get_event_bus().unsubscribe_all(execution_projection)
+                finally:
+                    execution_projection.close()
             sink = getattr(args, "_devtool_live_progress_sink", None)
             if sink is not None:
                 sink.close_execution_projection()

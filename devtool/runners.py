@@ -2378,6 +2378,15 @@ def run_specs(
     workflow_node_status: dict[str, str] = dict(workflow_initial_statuses or {})
     workflow_fail_fast = bool(workflow_initial_fail_fast)
     workflow_cancelled = bool(workflow_initial_cancelled)
+    try:
+        from .execution_scheduler_truth import decisions_for_specs
+        exec_scheduler_decisions = decisions_for_specs(config, specs)
+        exec_scheduler_error = ""
+    except Exception as exc:
+        # Fail safe to RUN.  RER qualification must never become a new reason
+        # to suppress real execution when history is unavailable or corrupt.
+        exec_scheduler_decisions = {}
+        exec_scheduler_error = f"{type(exc).__name__}: {exc}"
 
     def _metadata_int(value: object, default: int) -> int:
         try:
@@ -2436,6 +2445,21 @@ def run_specs(
                 instance=workflow_part_index,
             ))
         progress_parent_node_id = command_part_node_id or event_node_id
+        exec_scheduler_decision = exec_scheduler_decisions.get(spec_index)
+        if exec_scheduler_decision is not None:
+            metadata = dict(spec.metadata or {})
+            metadata["exec_scheduler_decision"] = exec_scheduler_decision.as_dict()
+            metadata["exec_scheduler_disposition"] = exec_scheduler_decision.disposition
+            metadata["exec_scheduler_authoritative"] = bool(exec_scheduler_decision.authoritative)
+            metadata["exec_scheduler_process_executed"] = bool(exec_scheduler_decision.process_executed)
+            spec.metadata = metadata
+        elif exec_scheduler_error:
+            metadata = dict(spec.metadata or {})
+            metadata["exec_scheduler_decision_error"] = exec_scheduler_error
+            metadata["exec_scheduler_disposition"] = "run"
+            metadata["exec_scheduler_authoritative"] = False
+            metadata["exec_scheduler_process_executed"] = True
+            spec.metadata = metadata
         if workflow_node_key:
             blocked_dependencies = [
                 key for key in workflow_dependencies
@@ -2548,6 +2572,115 @@ def run_specs(
             source="runner",
             metadata=redact_sensitive_value({"index": spec_index, "total": len(specs), "argv": list(effective_argv), **dict(spec.metadata)}),
         ))
+        if exec_scheduler_decision is not None and exec_scheduler_decision.disposition == "materialize":
+            from .execution_scheduler_truth import materialize_outputs
+            cwd_for_materialize = Path(str(spec.cwd or config.repo_root)).expanduser().resolve(strict=False)
+            exec_scheduler_decision = materialize_outputs(exec_scheduler_decision, cwd=cwd_for_materialize)
+            metadata = dict(spec.metadata or {})
+            metadata["exec_scheduler_decision"] = exec_scheduler_decision.as_dict()
+            metadata["exec_scheduler_disposition"] = exec_scheduler_decision.disposition
+            metadata["exec_scheduler_authoritative"] = bool(exec_scheduler_decision.authoritative)
+            metadata["exec_scheduler_process_executed"] = bool(exec_scheduler_decision.process_executed)
+            spec.metadata = metadata
+        if exec_scheduler_decision is not None and exec_scheduler_decision.terminal_without_spawn:
+            started = time.perf_counter()
+            command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
+            disposition = exec_scheduler_decision.disposition
+            output = (
+                f"Devtool EXEC scheduler {disposition}: process spawn skipped for {spec.name}; "
+                f"source_run={exec_scheduler_decision.source_run_id or '-'} "
+                f"source_node={exec_scheduler_decision.source_node_id or '-'}; "
+                f"reason={exec_scheduler_decision.reason}.\n"
+            )
+            raw_text = command_line + "\n" + output
+            log_file = str(write_log(raw_text, log_path, append=log_path is not None))
+            duration = time.perf_counter() - started
+            result_metadata = dict(spec.metadata or {})
+            result_metadata.update({
+                "execution_disposition": disposition,
+                "reuse_decision": disposition,
+                "reused": disposition == "reuse",
+                "materialized": disposition == "materialize",
+                "process_executed": False,
+                "returncode": 0,
+                "duration_seconds": duration,
+                "reuse_fingerprint": dict(exec_scheduler_decision.fingerprint),
+                "reuse_output_manifest": dict(exec_scheduler_decision.output_manifest),
+                "reuse_result_identity": exec_scheduler_decision.result_identity,
+                "reuse_evidence_refs": list(exec_scheduler_decision.proof_refs),
+                "exec_scheduler_decision": exec_scheduler_decision.as_dict(),
+            })
+            if workflow_node_key:
+                workflow_node_status[workflow_node_key] = "passed"
+                result_metadata["workflow_node_state"] = "passed"
+                result_metadata["workflow_node_statuses"] = dict(workflow_node_status)
+            result = OperationResult(
+                spec.name,
+                effective_argv,
+                0,
+                duration,
+                output,
+                [],
+                skipped=False,
+                log_path=log_file,
+                failure_kind="",
+                metadata=result_metadata,
+            )
+            results.append(result)
+            raw_sections.append(raw_text)
+            if command_part_node_id:
+                publish_event(NodeFinished(
+                    run_id=event_run_id,
+                    node_id=command_part_node_id,
+                    parent_id=workflow_node_key,
+                    status="succeeded",
+                    exit_code=0,
+                    duration_seconds=duration,
+                    source="runner",
+                    transition_origin="rer_scheduler",
+                    transition_reason=exec_scheduler_decision.reason,
+                    evidence=(log_file,) if log_file else (),
+                    metadata={
+                        "part_index": workflow_part_index,
+                        "part_total": workflow_part_total,
+                        "execution_disposition": disposition,
+                        "process_executed": False,
+                    },
+                ))
+            publish_event(TaskFinished(
+                run_id=event_run_id,
+                task=spec.name,
+                success=True,
+                status="succeeded",
+                exit_code=0,
+                duration_seconds=duration,
+                node_id=event_node_id,
+                parent_id=workflow_parent_id,
+                source="runner",
+                transition_origin="rer_scheduler",
+                transition_reason=exec_scheduler_decision.reason,
+                evidence=(log_file,) if log_file and not command_part_node_id else (),
+                metadata={
+                    "returncode": 0,
+                    "duration_seconds": duration,
+                    "execution_disposition": disposition,
+                    "reuse_decision": disposition,
+                    "reused": disposition == "reuse",
+                    "materialized": disposition == "materialize",
+                    "process_executed": False,
+                    "node_definition_id": exec_scheduler_decision.node_definition_id,
+                    "reuse_fingerprint": dict(exec_scheduler_decision.fingerprint),
+                    "reuse_output_manifest": dict(exec_scheduler_decision.output_manifest),
+                    "reuse_result_identity": exec_scheduler_decision.result_identity,
+                    "reuse_evidence_refs": list(exec_scheduler_decision.proof_refs),
+                    "exec_scheduler_decision": exec_scheduler_decision.as_dict(),
+                },
+            ))
+            if tasker_progress is not None and not dry_run:
+                tasker_progress.phase_finished(result)
+            if cleanup_dir:
+                shutil.rmtree(cleanup_dir, ignore_errors=True)
+            continue
         if command_part_node_id:
             publish_event(NodeDiscovered(
                 run_id=event_run_id,

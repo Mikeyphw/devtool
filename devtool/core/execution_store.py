@@ -376,12 +376,17 @@ class ExecutionReducer:
                     evidence_refs=evidence_refs,
                 )
             reason = "qualified-terminal-proof" if record_reusable and qualification_complete else "terminal-proof-incomplete-or-nonreusable"
+            raw_disposition = str(node.metadata.get("execution_disposition") or node.metadata.get("reuse_decision") or ReuseDisposition.RUN.value).strip().lower()
+            try:
+                record_disposition = ReuseDisposition(raw_disposition)
+            except ValueError:
+                record_disposition = ReuseDisposition.RUN
             reusable_record = ReusableNodeRecord(
                 node_definition_id=definition_id,
                 source_run_id=str(run.run_id),
                 source_node_id=str(node.node_id),
                 execution_status=node.status.value,
-                disposition=ReuseDisposition.RUN,
+                disposition=record_disposition,
                 reusable=record_reusable,
                 qualification_complete=qualification_complete,
                 evidence_refs=evidence_refs,

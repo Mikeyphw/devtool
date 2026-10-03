@@ -250,6 +250,8 @@ def isolate_devtool_runtime_env(
         "DEVTOOL_PHONE_LOG_MIRROR_DIR",
         "DEVTOOL_GLOBAL_CONFIG",
         "DEVTOOL_LOG_DIR",
+        "DEVTOOL_EXECUTION_HISTORY_DIR",
+        "DEVTOOL_EXECUTION_PROJECTION_DIR",
         "DEVTOOL_XDG_DIR",
         "DEVTOOL_TERMUX_CHROOT",
         "DEVTOOL_TERMUX_HOME",
