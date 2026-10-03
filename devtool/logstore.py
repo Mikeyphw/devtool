@@ -188,6 +188,7 @@ def _rotate_log_root(root: Path, *, protected: Path | None = None) -> None:
             return 0.0, path.name
 
     files.sort(key=stat_key)
+    victims: list[Path] = []
     survivors: list[Path] = []
     for path in files:
         try:
@@ -195,7 +196,7 @@ def _rotate_log_root(root: Path, *, protected: Path | None = None) -> None:
                 survivors.append(path)
                 continue
             if now - path.stat().st_mtime > max_age:
-                path.unlink()
+                victims.append(path)
                 continue
         except OSError:
             continue
@@ -212,10 +213,7 @@ def _rotate_log_root(root: Path, *, protected: Path | None = None) -> None:
         if not choices:
             break
         victim = choices[0]
-        try:
-            victim.unlink()
-        except OSError:
-            break
+        victims.append(victim)
         survivors.remove(victim)
 
     def total_size() -> int:
@@ -232,11 +230,55 @@ def _rotate_log_root(root: Path, *, protected: Path | None = None) -> None:
         if not choices:
             break
         victim = choices[0]
-        try:
-            victim.unlink()
-        except OSError:
-            break
+        victims.append(victim)
         survivors.remove(victim)
+
+    # Retention policy selects candidates; LIFE is the only destructive
+    # authority.  The current Devtool repository RUN catalog is projected into
+    # the ownership view, so a log that remains a canonical RUN attachment is
+    # protected even when age/count/size policy would otherwise select it.
+    unique_victims = list(dict.fromkeys(path.resolve(strict=False) for path in victims))
+    if not unique_victims:
+        return
+    try:
+        from .cleanup_lifecycle import (
+            CleanupReference,
+            CleanupScope,
+            GeneratedOutputDescriptor,
+            apply_cleanup_plan,
+            build_cleanup_ownership_view,
+            compile_cleanup_plan,
+        )
+
+        authority_root = Path(os.environ.get("DEVTOOL_REPO_ROOT") or Path.cwd()).expanduser().resolve(strict=False)
+        descriptors = [
+            GeneratedOutputDescriptor.create(
+                path, owner="devtool-logstore", provider="logstore", category="diagnostic-log",
+                producer_id=f"log:{path.name}", lifecycle="retained", rebuild_cost="unknown",
+                scope=CleanupScope.USER_GLOBAL, destination="local", managed=True, published=False,
+                provenance={"retention_policy": "age-count-size", "log_root": str(root)},
+            )
+            for path in unique_victims
+        ]
+        explicit_refs = []
+        if protected_resolved is not None:
+            explicit_refs.append(CleanupReference(
+                reference_id=f"logstore-active:{protected_resolved}", source="logstore-active",
+                path=str(protected_resolved), protective=True, reason="active log is protected from rotation",
+            ))
+        ownership = build_cleanup_ownership_view(
+            authority_root, descriptors, references=explicit_refs,
+            policy_generation="life-r03b-log-retention-v1", strict_authorities=True,
+        )
+        plan = compile_cleanup_plan(
+            ownership, scope=CleanupScope.USER_GLOBAL, destination="local", include_user_global=True,
+        )
+        apply_cleanup_plan(plan, ownership=ownership, confirm=True)
+    except Exception:
+        # Rotation is secondary housekeeping.  If any canonical protection
+        # authority is unavailable or rejects the candidate, fail closed by
+        # retaining the log rather than bypassing LIFE with direct unlink.
+        return
 
 
 def _rotate_logs(*, protected: Path | None = None) -> None:

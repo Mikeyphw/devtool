@@ -170,6 +170,33 @@ def test_remote_artifact_requires_complete_ssh02_lifecycle(tmp_path: Path) -> No
     assert edges["contracts"]["remote_transfer"]["restored_locally"] is True
 
 
+
+
+def test_materialized_artifact_input_drift_fails_closed_without_unlink(tmp_path: Path) -> None:
+    config, producer, consumer = _fixture(tmp_path)
+    artifact = _artifact(producer, "producer-run", b"v1\n")
+    registry = json.loads((producer / ".devtool" / "artifacts" / "registry.json").read_text())
+    record = dict(registry["items"][0])
+    ownership = {
+        "root": str(producer),
+        "references": [{"kind": "artifact-registry", "metadata": {"records": [record]}}],
+    }
+    producer_child = FederatedChildRun(
+        "contracts", "platform", "validate", "app", "producer-run", "node", "succeeded", 0,
+        operational_ownership=ownership,
+    )
+    step = config.federation.workflows["integration"].steps[1]
+
+    edges = resolve_artifact_inputs(step, {"contracts": producer_child}, consumer_root=consumer, parent_run_id="parent")
+    materialized = consumer / edges["contracts"]["materialized_path"]
+    assert materialized.read_bytes() == artifact.read_bytes()
+
+    materialized.write_bytes(b"local-drift-must-survive\n")
+    with pytest.raises(FederationArtifactError, match="materialization target drifted"):
+        resolve_artifact_inputs(step, {"contracts": producer_child}, consumer_root=consumer, parent_run_id="parent")
+
+    assert materialized.read_bytes() == b"local-drift-must-survive\n"
+
 def test_group_expansion_remaps_artifact_producer_step_ids(tmp_path: Path) -> None:
     config, _producer, _consumer = _fixture(tmp_path)
     path = config.repo_root / ".devtool.toml"

@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -913,6 +914,57 @@ def _translate_token_for_chroot(
     return translated
 
 
+def _chroot_provider_session(run_id: str, secret_guest_path: str) -> str:
+    stem = Path(str(secret_guest_path or "chroot-secret")).name
+    return f"termux-chroot:{run_id or 'run'}:{stem}"
+
+
+def _register_chroot_secret_resource(
+    repo_root: str | Path,
+    *,
+    chroot_name: str,
+    secret_guest_path: str,
+    run_id: str,
+    session: str,
+) -> str:
+    from .cleanup_lifecycle import CleanupScope, GeneratedOutputDescriptor
+    from .provider_resource_registry import register_provider_resources
+
+    descriptor = GeneratedOutputDescriptor.create(
+        Path(secret_guest_path),
+        owner="DIST",
+        provider="termux-host-chroot",
+        category="provider-secret-staging",
+        producer_id=run_id or session or "termux-host-chroot",
+        lifecycle="transient",
+        rebuild_cost="low",
+        scope=CleanupScope.REMOTE,
+        destination=f"termux-chroot:{chroot_name}",
+        provenance={
+            "run_id": run_id,
+            "session": session,
+            "chroot": chroot_name,
+            "provider": "termux-host-chroot",
+            "authority": "RUN/LIFE",
+            "normal_ingress": "termux-host-chroot",
+        },
+        managed=True,
+        published=False,
+    )
+    register_provider_resources(repo_root, (descriptor,))
+    return descriptor.resource_id
+
+
+def _release_chroot_secret_command(repo_root: str | Path, *, run_id: str, session: str) -> list[str]:
+    code = (
+        "from devtool.provider_resource_registry import release_provider_resources;"
+        f"release_provider_resources({str(Path(repo_root).expanduser().resolve(strict=False))!r}, "
+        f"run_id={str(run_id or '')!r}, session={str(session or '')!r}, "
+        "reason='termux chroot sensitive env cleanup completed')"
+    )
+    return [sys.executable or "python3", "-c", code]
+
+
 def translate_argv_paths_for_chroot(argv: list[str], *, mappings: Iterable[tuple[str, str]], cwd: str | None = None) -> list[str]:
     """Translate host paths and reject any native-Termux residue."""
     mapping_items = list(mappings)
@@ -948,6 +1000,7 @@ def wrap_specs_for_termux_host_chroot(
     repo_root: str | Path | None = None,
     env: Mapping[str, str] | None = None,
     path_map: Iterable[tuple[str, str]] | None = None,
+    dry_run: bool = False,
 ) -> list[CommandSpec]:
     """Wrap command phases for chroot while keeping devtool itself on Termux.
 
@@ -976,6 +1029,9 @@ def wrap_specs_for_termux_host_chroot(
             mappings=mappings,
             cwd=host_cwd,
         )
+        from .ssh_resilience import split_sensitive_env
+        public_env, sensitive_env = split_sensitive_env(translated_env)
+        translated_env = public_env
         # Structured Gradle events are authenticated to the active Devtool run.
         # sudo/chrootctl may sanitize the host environment, so carry the run ID
         # inside the explicit ``env`` assignment list instead of relying on
@@ -1022,10 +1078,67 @@ def wrap_specs_for_termux_host_chroot(
             path_mapping="chroot-path-map",
         )
         attestation_probe = build_federation_attestation_shell(metadata, remote_root=federation_remote_root)
+        secret_guest_path = ""
+        chroot_provider_session = ""
+        chroot_provider_resource_id = ""
+        if sensitive_env:
+            secret_guest_path = f"{identity.home.rstrip('/')}/.devtool-secret-{uuid.uuid4().hex[:12]}.sh"
+            chroot_provider_session = _chroot_provider_session(shared_run_id or str(os.getpid()), secret_guest_path)
+            secret_payload = "\n".join(
+                f"export {key}={shlex.quote(str(value))}" for key, value in sorted(sensitive_env.items())
+            ) + "\n"
+            stage_payload = (
+                "umask 077; cat > " + shlex.quote(secret_guest_path)
+                + "; chmod 600 " + shlex.quote(secret_guest_path)
+            )
+            stage_command = _identity_switch_command(identity, stage_payload)
+            if not dry_run:
+                completed = subprocess.run(
+                    build_chroot_exec_argv(stage_command, chroot_name, env=dict(env)),
+                    input=secret_payload,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env=dict(env),
+                )
+                if completed.returncode != 0:
+                    detail = (completed.stderr or completed.stdout or "").strip()
+                    raise ValueError(
+                        f"Chroot sensitive environment staging failed with exit {completed.returncode}: {detail or 'no diagnostic output'}"
+                    )
+                metadata["chroot_sensitive_env_keys"] = sorted(sensitive_env)
+                metadata["chroot_sensitive_env_staged"] = True
+                if host_repo is not None:
+                    chroot_provider_resource_id = _register_chroot_secret_resource(
+                        host_repo,
+                        chroot_name=chroot_name,
+                        secret_guest_path=secret_guest_path,
+                        run_id=shared_run_id or str(os.getpid()),
+                        session=chroot_provider_session,
+                    )
+                    metadata["chroot_provider_resource_registry"] = "LIFE"
+                    metadata["chroot_provider_resource_id"] = chroot_provider_resource_id
+                    metadata["chroot_provider_session"] = chroot_provider_session
+            else:
+                metadata["chroot_sensitive_env_keys"] = sorted(sensitive_env)
+                metadata["chroot_sensitive_env_staged"] = False
+                metadata["chroot_sensitive_env_dry_run"] = True
+                metadata["chroot_provider_resource_registry"] = "dry-run"
+                metadata["chroot_provider_session"] = chroot_provider_session
+
+        secret_assignments = " ".join(
+            f'{key}="${{{key}-}}"' for key in sorted(sensitive_env)
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(key))
+        )
         payload = "cd " + shlex.quote(chroot_cwd or "/") + " && "
         if attestation_probe:
             payload += attestation_probe + " && "
-        payload += "exec env -i " + assignments + " " + shlex.join(argv)
+        if secret_guest_path:
+            payload += ". " + shlex.quote(secret_guest_path) + " && rm -f -- " + shlex.quote(secret_guest_path) + " && "
+        payload += "exec env -i " + assignments
+        if secret_assignments:
+            payload += " " + secret_assignments
+        payload += " " + shlex.join(argv)
         command = _identity_switch_command(identity, payload)
         metadata["execution_mode"] = "termux-host-chroot"
         metadata["chroot"] = chroot_name
@@ -1035,12 +1148,45 @@ def wrap_specs_for_termux_host_chroot(
         metadata["chroot_linux_home"] = identity.home
         if translated_env_keys:
             metadata["chroot_translated_env"] = list(translated_env_keys)
+        if bool(metadata.get("android_signing_backend_secret_pending")):
+            from .android.signing import SIGNING_ENV_KEYS
+            signing_keys = sorted(key for key in sensitive_env if key in SIGNING_ENV_KEYS)
+            if not dry_run and not signing_keys:
+                raise ValueError(
+                    "Android signing required protected chroot secret staging, but no signing secret reached the backend"
+                )
+            if not dry_run:
+                metadata["android_signing_backend_secret_pending"] = False
+                metadata["android_signing_backend_secret_staged"] = True
+            metadata["android_signing_secret_transport_backend"] = "termux-host-chroot"
+            metadata["android_signing_secret_keys"] = signing_keys
         # Execute the translated command in the chroot, but plan/render dotnet
         # progress from the original host-side command. This lets the parser
         # inspect the real solution/project path and estimate project totals.
         metadata.setdefault("progress_argv", list(spec.argv))
         metadata.setdefault("progress_cwd", host_cwd)
-        wrapped.append(replace(spec, argv=build_chroot_exec_argv(command, chroot_name, env=dict(env)), cwd=None, env={}, metadata=metadata))
+        exec_argv = build_chroot_exec_argv(command, chroot_name, env=dict(env))
+        if secret_guest_path:
+            cleanup_payload = _identity_switch_command(identity, "rm -f -- " + shlex.quote(secret_guest_path))
+            cleanup_argv = build_chroot_exec_argv(cleanup_payload, chroot_name, env=dict(env))
+            release_argv = (
+                _release_chroot_secret_command(host_repo, run_id=shared_run_id or str(os.getpid()), session=chroot_provider_session)
+                if host_repo is not None and chroot_provider_resource_id else []
+            )
+            release_script = ""
+            if release_argv:
+                release_script = (
+                    "; rel_rc=0; " + shlex.join(release_argv) + " >/dev/null 2>&1 || rel_rc=$?; "
+                    'if [ "$rc" -eq 0 ] && [ "$rel_rc" -ne 0 ]; then exit "$rel_rc"; fi'
+                )
+            local_script = (
+                shlex.join(exec_argv) + '; rc=$?; '
+                + shlex.join(cleanup_argv) + ' >/dev/null 2>&1 || true'
+                + release_script
+                + '; exit "$rc"'
+            )
+            exec_argv = ["sh", "-lc", local_script]
+        wrapped.append(replace(spec, argv=exec_argv, cwd=None, env={}, metadata=metadata))
     return wrapped
 
 

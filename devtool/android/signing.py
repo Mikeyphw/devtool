@@ -30,6 +30,8 @@ from .capabilities import AndroidExecutionContext, resolve_android_execution_con
 
 SIGNING_MODES = {"devtool", "project", "external"}
 SIGNING_POLICIES = {"optional", "release-required", "external"}
+PROTECTED_SIGNING_BACKENDS = ("native", "ssh-command", "ssh-proot-oci", "termux-host-chroot", "proot-distro")
+_DESTINATION_SIGNING_BACKENDS = frozenset(PROTECTED_SIGNING_BACKENDS[1:])
 _RELEASE_PRODUCER_MARKERS = (
     "assemble", "bundle", "package", "publish", "upload", "release", "distribution",
 )
@@ -493,8 +495,31 @@ def signing_plan_metadata(
         "android_signing_profile": profile.name,
         "android_signing_tasks": normalized,
         "android_signing_secret_transport": "execution-boundary",
+        "android_signing_transport_matrix": signing_transport_matrix(),
         "android_signing_store_source": _secret_source_label(profile, "store"),
         "android_signing_key_source": _secret_source_label(profile, "key"),
+    }
+
+
+def signing_transport_matrix() -> dict[str, Any]:
+    """Return the non-secret release-signing transport matrix.
+
+    LIFE-A04 is a production-boundary invariant, not only a test assertion:
+    command planners persist this matrix with the signing plan so retries,
+    validation sessions and provider wrappers can prove which backends are
+    allowed to materialize credentials directly and which must stage them via a
+    protected provider-owned channel.  The payload contains no secret values or
+    secret-provider commands.
+    """
+
+    return {
+        "schema_version": 1,
+        "authority": "LIFE-A04/android-signing-transport",
+        "native_backend": "native",
+        "protected_destination_backends": sorted(_DESTINATION_SIGNING_BACKENDS),
+        "all_supported_backends": list(PROTECTED_SIGNING_BACKENDS),
+        "unsafe_shell_wrapped_env_backends": sorted(_DESTINATION_SIGNING_BACKENDS),
+        "secret_value_persisted": False,
     }
 
 
@@ -507,19 +532,29 @@ def signing_environment_for_execution(
     """Resolve signing secrets exactly at the final native execution boundary.
 
     Backends that turn environment assignments into shell command text are
-    deliberately rejected. This prevents passwords from entering argv/process
-    listings while a secure backend-specific secret channel is not available.
+    deliberately rejected unless the backend has already consumed the secret
+    values through its protected staging channel.  In that case the wrapped
+    CommandSpec carries only a non-secret attestation marker and this function
+    must *not* resolve the passwords a second time into the local wrapper
+    process environment.
     """
 
     base = dict(env)
     if not bool(metadata.get("android_signing_required")):
+        return base
+    if bool(metadata.get("android_signing_backend_secret_staged")):
+        # The SSH/chroot/PRoot wrapper has already removed the secret values
+        # from CommandSpec.env and staged them through a mode-0600 private
+        # channel.  Re-materialising here would put the credentials in the
+        # environment of the local shell/transport wrapper and would no longer
+        # correspond to the destination process that performs signing.
         return base
     tasks = [str(item) for item in metadata.get("android_signing_tasks", []) or [] if str(item).strip()]
     # `android_signing_required` is canonical plan metadata. Do not re-derive
     # intent from Gradle task spelling here: custom production-signed variants
     # need not contain the word "release".
     execution_mode = str(metadata.get("execution_mode") or "").strip().lower()
-    unsafe_modes = {"chroot", "termux-host-chroot", "proot-distro", "ssh-command", "ssh"}
+    unsafe_modes = {"chroot", "ssh", *_DESTINATION_SIGNING_BACKENDS}
     if execution_mode in unsafe_modes:
         raise AndroidSigningError(
             "Devtool-managed Android signing refuses the selected execution backend "
@@ -533,6 +568,46 @@ def signing_environment_for_execution(
     # Interactive runs may securely prompt for missing passwords. CI and
     # redirected/non-TTY executions remain fail-closed unless explicitly opted in
     # through metadata (which still uses getpass and never logs the value).
+    interactive = bool(metadata.get("android_signing_interactive")) or (
+        sys.stdin.isatty() and sys.stderr.isatty()
+    )
+    secrets = signing_secret_environment(profile, env=base, allow_prompt=interactive)
+    base.update(secrets)
+    return base
+
+
+def signing_environment_for_protected_backend(
+    config: ProjectConfig | None,
+    metadata: Mapping[str, Any],
+    *,
+    env: Mapping[str, str],
+    backend: str,
+) -> dict[str, str]:
+    """Materialise signing credentials for a backend-owned private channel.
+
+    This is intentionally separate from :func:`signing_environment_for_execution`.
+    It is called immediately before a destination wrapper takes ownership of a
+    CommandSpec.  The caller MUST remove the returned sensitive values from the
+    resulting CommandSpec and stage them through its private channel before the
+    spec reaches normal execution/persistence.
+
+    Only backends with an implemented protected channel are accepted here.
+    The return value contains secrets; callers must never serialize it into
+    metadata, argv, reports, or durable state.
+    """
+
+    backend_name = str(backend or "").strip().lower()
+    if backend_name not in _DESTINATION_SIGNING_BACKENDS:
+        raise AndroidSigningError(
+            f"Android signing backend {backend_name or '<unknown>'} has no protected secret transport"
+        )
+    base = dict(env)
+    if not bool(metadata.get("android_signing_required")):
+        return base
+    tasks = [str(item) for item in metadata.get("android_signing_tasks", []) or [] if str(item).strip()]
+    profile = validate_signing_profile_for_tasks(config, tasks, env=base)
+    if profile.mode != "devtool":
+        return base
     interactive = bool(metadata.get("android_signing_interactive")) or (
         sys.stdin.isatty() and sys.stderr.isatty()
     )
@@ -942,9 +1017,10 @@ class AndroidSigningManager:
 
 __all__ = [
     "AndroidSigningError", "AndroidSigningManager", "SigningIdentity", "SigningProfile", "SigningVerification",
-    "SIGNING_MODES", "SIGNING_POLICIES", "signing_profile", "task_requires_release_signing",
+    "SIGNING_MODES", "SIGNING_POLICIES", "PROTECTED_SIGNING_BACKENDS", "signing_profile", "task_requires_release_signing",
     "tasks_require_release_signing", "validate_signing_profile_for_tasks", "signing_secret_environment",
-    "signing_environment_for_tasks", "signing_plan_metadata", "signing_environment_for_execution",
+    "signing_environment_for_tasks", "signing_plan_metadata", "signing_transport_matrix",
+    "signing_environment_for_execution", "signing_environment_for_protected_backend",
     "strip_signing_secrets", "strip_configured_signing_source_values", "SIGNING_ENV_KEYS",
     "stage_gradle_signing_init_script", "signing_gradle_args_for_tasks",
 ]

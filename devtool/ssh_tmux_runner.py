@@ -681,6 +681,44 @@ def _command_name(argv: list[str]) -> str:
     return "run"
 
 
+def _trusted_federation_remote_forwarded_argv(
+    config: SSHRunnerConfig,
+    forwarded: list[str],
+) -> tuple[list[str], dict[str, object]]:
+    """Lower a trusted federation child root into its explicit SSH checkout.
+
+    Ordinary whole-process SSH deliberately forwards ``--repo`` verbatim: a
+    local path must never be guessed into a remote home.  Federation is
+    different because the parent already selected a concrete SSH provider and
+    the private lineage handoff binds the child repository identity.  For that
+    trusted path only, ``ssh.cwd`` is the declared remote counterpart and is
+    therefore the canonical destination root.
+    """
+    from .invocation_origin import federation_lineage_from_environment
+
+    lineage = federation_lineage_from_environment()
+    if not lineage or str(lineage.get("relationship") or "") != "child":
+        return list(forwarded), {}
+    remote_root = str(config.cwd or "").strip()
+    if not remote_root:
+        raise ValueError(
+            "Federated whole-process SSH requires the selected profile to declare ssh.cwd as the remote repository root"
+        )
+    result = list(forwarded)
+    for idx, token in enumerate(result):
+        if token in {"-r", "--repo"} and idx + 1 < len(result):
+            # The only caller that can reach this branch has a private,
+            # parent-bound federation handoff.  The parent constructed this
+            # operand from the enrolled local child repository; ``ssh.cwd`` is
+            # the provider profile's explicit counterpart.
+            result[idx + 1] = remote_root
+            break
+        if token.startswith("--repo="):
+            result[idx] = "--repo=" + remote_root
+            break
+    return result, {str(k): v for k, v in lineage.items()}
+
+
 def _forwarded_argv(argv: list[str]) -> list[str]:
     """Strip local SSH transport flags and preserve every remote argument verbatim."""
     forwarded: list[str] = []
@@ -929,8 +967,16 @@ def _assert_session_inactive(config: SSHRunnerConfig, session: str) -> None:
 
 
 def _remove_remote_tree(config: SSHRunnerConfig, remote_dir: str) -> None:
-    command = _build_ssh_remote_sh_argv(config, f"rm -rf -- {_remote_shell_path(remote_dir)}", tty=False)
-    subprocess.run(command, check=False, timeout=_transport_timeout())
+    """Refuse legacy direct remote tree cleanup.
+
+    Remote staging/session trees are provider resources.  Destructive cleanup
+    must be performed by the provider lifecycle/recovery path after LIFE/RUN/RER
+    revalidation; a raw recursive shell delete here can erase recoverable evidence.
+    """
+    raise ValueError(
+        "remote provider staging cleanup requires LIFE/provider recovery authority; "
+        f"refusing direct shell cleanup for {remote_dir}"
+    )
 
 
 def _artifact_operand_indices(forwarded: list[str]) -> set[int]:
@@ -1354,7 +1400,16 @@ def _cleanup_oci_construction_state(
     if files:
         fragments.append("rm -f -- " + " ".join(_remote_shell_path(path) for path in files))
     if roots:
-        fragments.append("rm -rf -- " + " ".join(_remote_shell_path(path) for path in roots))
+        # Operation roots are provider resources.  Retain them for recovery
+        # instead of deleting an unregistered tree during construction failure.
+        fragments.append(
+            "printf %s\n "
+            + shlex.quote(
+                "Devtool retained OCI operation staging for provider recovery: "
+                + ",".join(roots)
+            )
+            + " >&2"
+        )
     try:
         subprocess.run(
             _build_ssh_remote_sh_argv(config, "; ".join(fragments), tty=False),
@@ -1416,7 +1471,8 @@ def _build_remote_phase_script(
         release_fragment = (
             f"; lease={_remote_shell_path(lease_dir)}; "
             f"if [ -d \"$lease\" ]; then owner=$(sed -n 's/^run_id=//p' \"$lease/owner\" 2>/dev/null | head -n1); "
-            f"[ \"$owner\" = {shlex.quote(_sanitize_session(run_identity))} ] && rm -rf -- \"$lease\" || true; fi"
+            f"if [ \"$owner\" = {shlex.quote(_sanitize_session(run_identity))} ]; then "
+            f"rm -f -- \"$lease/owner\" 2>/dev/null || true; rmdir -- \"$lease\" 2>/dev/null || true; fi; fi"
         )
     payload = (
         "set +e; "
@@ -1964,6 +2020,19 @@ def wrap_specs_for_ssh_commands(
                 }
             from .ssh_resilience import split_sensitive_env
             public_env, sensitive_env = split_sensitive_env(translated_env)
+            if bool(metadata.get("android_signing_backend_secret_pending")):
+                from .android.signing import SIGNING_ENV_KEYS
+                staged_signing_keys = sorted(key for key in sensitive_env if key in SIGNING_ENV_KEYS)
+                if not staged_signing_keys:
+                    raise ValueError(
+                        "Android signing required protected SSH secret staging, but no signing secret reached the backend"
+                    )
+                metadata["android_signing_backend_secret_staged"] = True
+                metadata["android_signing_backend_secret_pending"] = False
+                metadata["android_signing_secret_transport_backend"] = (
+                    "ssh-proot-oci" if config.execution_provider == SSH_PROOT_OCI else "ssh-command"
+                )
+                metadata["android_signing_secret_keys"] = staged_signing_keys
             if config.execution_provider == SSH_PROOT_OCI and sensitive_env and not dry_run:
                 from .ssh_resilience import remote_phase_state_paths
                 expected_secret_file = _remote_join(remote_phase_state_paths(config, run_identity, session)["root"], "secret-env.sh")
@@ -2007,14 +2076,16 @@ def wrap_specs_for_ssh_commands(
                     guest_artifact_dir = _oci_guest_translate(remote_artifact_dir, remote_root=remote_root, operation_root=operation_host, operation_guest=operation_guest)
                     guest_command = (
                         "cd " + shlex.quote(guest_cwd)
-                        + " && rm -rf -- " + shlex.quote(native_output)
+                        + " && if [ -e " + shlex.quote(native_output) + " ]; then "
+                        + "echo 'Devtool refuses to replace existing native artifact output outside LIFE/provider cleanup' >&2; exit 126; fi"
                         + " && mkdir -p -- " + shlex.quote(native_output)
                         + " && " + command_core
                         + '; rc=$?; if [ "$rc" -eq 0 ]; then '
-                        + "rm -rf -- " + shlex.quote(guest_artifact_dir)
-                        + " && mkdir -p -- " + shlex.quote(guest_artifact_dir)
+                        + "if [ -e " + shlex.quote(guest_artifact_dir) + " ]; then "
+                        + "echo 'Devtool refuses to replace existing remote artifact output outside LIFE/provider cleanup' >&2; rc=126; "
+                        + "else mkdir -p -- " + shlex.quote(guest_artifact_dir)
                         + " && cp -a -- " + shlex.quote(native_output).rstrip("/") + "/. " + shlex.quote(guest_artifact_dir)
-                        + ' || rc=$?; fi; exit "$rc"'
+                        + '; fi || rc=$?; fi; exit "$rc"'
                     )
                 else:
                     guest_command = "cd " + shlex.quote(guest_cwd) + " && " + command_core
@@ -2040,14 +2111,16 @@ def wrap_specs_for_ssh_commands(
                         raise ValueError("SSH artifact output directory cannot be the repository root")
                     inner = (
                         "cd " + _remote_shell_path(remote_cwd)
-                        + " && rm -rf -- " + _remote_shell_path(native_output)
+                        + " && if [ -e " + _remote_shell_path(native_output) + " ]; then "
+                        + "echo 'Devtool refuses to replace existing native artifact output outside LIFE/provider cleanup' >&2; exit 126; fi"
                         + " && mkdir -p -- " + _remote_shell_path(native_output)
                         + " && " + actual_command
                         + '; rc=$?; if [ "$rc" -eq 0 ]; then '
-                        + "rm -rf -- " + _remote_shell_path(remote_artifact_dir)
-                        + " && mkdir -p -- " + _remote_shell_path(remote_artifact_dir)
+                        + "if [ -e " + _remote_shell_path(remote_artifact_dir) + " ]; then "
+                        + "echo 'Devtool refuses to replace existing remote artifact output outside LIFE/provider cleanup' >&2; rc=126; "
+                        + "else mkdir -p -- " + _remote_shell_path(remote_artifact_dir)
                         + " && cp -a -- " + _remote_shell_path(native_output).rstrip("/") + "/. " + _remote_shell_path(remote_artifact_dir)
-                        + ' || rc=$?; fi; exit "$rc"'
+                        + '; fi || rc=$?; fi; exit "$rc"'
                     )
                     command = "sh -c " + shlex.quote(inner)
                 else:
@@ -2077,6 +2150,7 @@ def wrap_specs_for_ssh_commands(
             phase_meta["ssh_output_schema"] = "split-v1"
             phase_meta["ssh_confirmation_mode"] = str(metadata.get("ssh_confirmation_mode") or "interactive")
             phase_meta["oci_phase_node_id"] = phase_node_id(run_identity, session, provider=str(phase_meta.get("execution_provider") or "ssh-command"))
+            delegation_link = None
             try:
                 from .distributed_execution import DelegationLink
                 from .distributed_provider_control import ssh_phase_dist_metadata
@@ -2093,6 +2167,11 @@ def wrap_specs_for_ssh_commands(
                     or ""
                 ).strip()
                 planned_provider = dict(delegation_link.provider_identity) if delegation_link is not None else {}
+                lifecycle_stage_path = (
+                    _operation_stage_root(config, session)
+                    if (bool(staged) or bool(artifact_phase))
+                    else ""
+                )
                 phase_meta.update(ssh_phase_dist_metadata(
                     link=delegation_link,
                     child_run_id=child_identity,
@@ -2102,13 +2181,44 @@ def wrap_specs_for_ssh_commands(
                     destination=config.destination,
                     provider_kind=str(planned_provider.get("provider_kind") or config.execution_provider or "ssh"),
                     provider_evidence_digest=str(planned_provider.get("provider_evidence_digest") or ""),
+                    stage_path=lifecycle_stage_path,
+                    provider_state_root=config.run_state_root,
                     secret_keys=tuple(sorted(sensitive_env)),
                     original_argv=original_argv,
                 ))
+                # Persist the concrete remote resources under LIFE authority.
+                # The phase metadata carries only digest/count projections;
+                # cleanup protection/release is reconstructed from this
+                # repository-private registry rather than from display state.
+                try:
+                    from .distributed_provider_control import provider_cleanup_descriptors
+                    from .provider_resource_registry import register_provider_resources
+                    descriptors = provider_cleanup_descriptors(
+                        destination=config.destination,
+                        provider=str(planned_provider.get("provider_kind") or config.execution_provider or "ssh"),
+                        run_id=child_identity,
+                        session=session,
+                        stage_path=lifecycle_stage_path,
+                        state_path=str(phase_meta.get("dist_provider_state_path") or ""),
+                        cursor_path=str(phase_meta.get("dist_event_cursor_path") or ""),
+                        delegation_id=str(delegation_link.delegation_id if delegation_link is not None else ""),
+                    )
+                    repo_owner = getattr(project_config, "repo_root", None)
+                    if repo_owner is not None and descriptors:
+                        registered = register_provider_resources(repo_owner, descriptors)
+                        phase_meta["dist_provider_resource_registry"] = "LIFE"
+                        phase_meta["dist_provider_resource_count"] = len(registered)
+                except (OSError, ValueError) as exc:
+                    # A declared provider lifecycle authority is mandatory for
+                    # real delegated work. Never silently run with unowned
+                    # cleanup resources.
+                    if delegation_link is not None:
+                        raise ValueError(f"Provider LIFE resource registration failed: {exc}") from exc
             except (ValueError, TypeError):
                 # Non-delegated SSH commands remain valid provider work; DIST
                 # metadata is additive and must never invent delegation truth.
-                pass
+                if delegation_link is not None:
+                    raise
             remote_script = _build_remote_phase_script(
                 config, session=session, command=command, run_id=run_identity,
                 workspace_id=workspace_id, workspace_path=remote_root, lease_dir=lease_dir,
@@ -2143,9 +2253,11 @@ def wrap_specs_for_ssh_commands(
                 source = f"{config.destination}:{_remote_scp_path(remote_artifact_dir).rstrip('/')}/."
                 scp = [*build_scp_base_argv(config), "-r", source, str(local_artifact_dir)]
                 local_script += (
-                    "; if [ \"$rc\" -eq 0 ]; then rm -rf -- " + shlex.quote(str(local_artifact_dir))
-                    + " && mkdir -p " + shlex.quote(str(local_artifact_dir))
-                    + " && " + shlex.join(scp) + " || rc=$?; fi"
+                    "; if [ \"$rc\" -eq 0 ]; then "
+                    + "if [ -e " + shlex.quote(str(local_artifact_dir)) + " ]; then "
+                    + "echo 'Devtool refuses to replace existing local artifact mirror outside LIFE/RUN/RER cleanup' >&2; rc=126; "
+                    + "else mkdir -p " + shlex.quote(str(local_artifact_dir))
+                    + " && " + shlex.join(scp) + " || rc=$?; fi; fi"
                 )
             # Secret material is never evidence. Remove its mode-600 remote file on
             # every definitive completion/failure, but retain it across rc=125 because
@@ -2160,10 +2272,15 @@ def wrap_specs_for_ssh_commands(
             # retain them on failure so recovery/retrieval remains possible.
             cleanup_operation = bool(staged) or (artifact_phase and config.copy_artifacts)
             if cleanup_operation:
-                cleanup_remote = _build_ssh_remote_sh_argv(
-                    config, f"rm -rf -- {_remote_shell_path(_operation_stage_root(config, session))}", tty=False
+                # Operation staging is a provider resource. Retain it for the
+                # registered lifecycle/recovery path rather than issuing a raw
+                # remote shell delete from the local wrapper.
+                local_script += (
+                    "; if [ \"$rc\" -eq 0 ]; then "
+                    + "printf %s\\n "
+                    + shlex.quote("Devtool retained SSH operation staging for provider lifecycle recovery")
+                    + " >&2; fi"
                 )
-                local_script += "; if [ \"$rc\" -eq 0 ]; then " + shlex.join(cleanup_remote) + " || rc=$?; fi"
             if lease_release_argv:
                 release = shlex.join(lease_release_argv)
                 if ordinal == last_external_ordinal:
@@ -2202,68 +2319,143 @@ def wrap_specs_for_ssh_commands(
             release_workspace_lease(config, SSHWorkspaceLease(**preparation.lease))
 
 
-def build_remote_tmux_script(config: SSHRunnerConfig, forwarded: list[str]) -> str:
+def build_remote_tmux_script(
+    config: SSHRunnerConfig,
+    forwarded: list[str],
+    *,
+    federation_lineage: Mapping[str, object] | None = None,
+) -> str:
+    """Build the durable whole-process SSH launcher.
+
+    Whole-process SSH now uses the same remote run-state persistence boundary as
+    command-mode SSH.  A federated child additionally receives fresh
+    *remote-local* immediate-parent handoff files; forwarding the controller's
+    local handoff pathname would be both unusable and false authority.
+    """
     from .federation_transport import require_federation_remote_attestation_environment
     require_federation_remote_attestation_environment()
     session = _sanitize_session(config.session or _default_session(config, forwarded))
     config.session = session
-    state_dir = '${XDG_STATE_HOME:-$HOME/.local/state}/devtool/ssh-tmux'
-    status_path = f'$state_dir/{session}.status'
-    inner_status_path = f'${{XDG_STATE_HOME:-$HOME/.local/state}}/devtool/ssh-tmux/{session}.status'
-    devtool_argv = [config.tool, *forwarded]
-
     run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
+    remote_root = _find_value(forwarded, {"-r", "--repo"}).strip() or str(config.cwd or "").strip()
+    lineage = {str(k): v for k, v in dict(federation_lineage or {}).items()}
+
+    phase_meta: dict[str, Any] = {
+        "execution_mode": "ssh-devtool",
+        "execution_provider": str(config.execution_provider or "ssh-native"),
+        "ssh_profile": str(config.profile or ""),
+        "ssh_destination": str(config.destination or ""),
+        "ssh_session": session,
+        "ssh_repository_root": remote_root,
+        "ssh_phase": "whole-process",
+        "ssh_output_schema": "split-v1",
+    }
+    raw_link = lineage.get("delegation_link") if isinstance(lineage, Mapping) else None
+    if lineage and str(lineage.get("relationship") or "") == "child":
+        phase_meta.update({
+            "federation_group": str(lineage.get("federation_group") or ""),
+            "federation_child_repository": str(lineage.get("repository") or ""),
+            "federation_child_target": str(lineage.get("target") or ""),
+            "federation_child_workflow": str(lineage.get("child_workflow") or ""),
+            "federation_ref": str(lineage.get("federation_ref") or ""),
+            "federation_requested_ref": str(lineage.get("requested_ref") or ""),
+            "federation_child_contract": str(lineage.get("child_contract") or ""),
+            "federation_contract_ref": str(lineage.get("contract_ref") or ""),
+            "federation_child_remote_root": remote_root,
+            "federation_execution_environment": "ssh",
+            "federation_execution_provider": str(config.execution_provider or "ssh-native"),
+            "federation_parent_run_id": str(lineage.get("parent_run_id") or ""),
+            "federation_parent_node_id": str(lineage.get("parent_node_id") or ""),
+            "federation_child_run_id": str(lineage.get("child_run_id") or run_id),
+        })
+    if isinstance(raw_link, Mapping) and run_id and remote_root:
+        from .distributed_execution import DelegationLink
+        from .distributed_provider_control import ssh_phase_dist_metadata
+        link = DelegationLink.from_dict(raw_link)
+        if link.child_run_id != run_id:
+            raise ValueError("Federated SSH child RUN identity does not match its delegation link")
+        phase_meta.update(ssh_phase_dist_metadata(
+            link=link,
+            child_run_id=run_id,
+            remote_root=remote_root,
+            session=session,
+            profile=config.profile,
+            destination=config.destination,
+            provider_kind=str(link.provider_identity.get("provider_kind") or "ssh"),
+            provider_evidence_digest=str(link.provider_identity.get("provider_evidence_digest") or ""),
+            provider_state_root=config.run_state_root,
+            original_argv=tuple(forwarded),
+        ))
+
     forwarded_env: list[str] = []
-    if run_id:
-        forwarded_env.append("DEVTOOL_RUN_ID=" + run_id)
+    # Public federation variables remain routing hints. Never forward the local
+    # private handoff pathname: it points at the controller filesystem.
     for key, value in sorted(os.environ.items()):
-        if key.startswith("DEVTOOL_FEDERATION_") and str(value).strip():
+        if key.startswith("DEVTOOL_FEDERATION_") and key != "DEVTOOL_FEDERATION_LINEAGE_HANDOFF" and str(value).strip():
             forwarded_env.append(f"{key}={value}")
-    env_suffix = (" " + " ".join(shlex.quote(item) for item in forwarded_env)) if forwarded_env else ""
-    command = (
-        "env DEVTOOL_EXECUTION_CONTEXT=ssh DEVTOOL_INSIDE_SSH=1 DEVTOOL_SSH_CONTEXT="
-        + shlex.quote(config.destination)
-        + env_suffix
-        + " " + _shell_join_remote(devtool_argv)
+
+    remote_handoff_prefix = ""
+    private_env: list[str] = []
+    if run_id:
+        private_env.append('DEVTOOL_MANAGED_RUN_HANDOFF="$devtool_run_handoff"')
+    if lineage and str(lineage.get("relationship") or "") == "child":
+        private_env.append('DEVTOOL_FEDERATION_LINEAGE_HANDOFF="$devtool_fed_handoff"')
+    if private_env:
+        import json
+        lineage_json = json.dumps(lineage, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        handoff_dir = '${TMPDIR:-/tmp}/devtool-ssh-handoff-' + session + '-$$'
+        remote_handoff_prefix = (
+            'devtool_handoff_dir="' + handoff_dir + '"; '
+            'mkdir -p "$devtool_handoff_dir"; chmod 700 "$devtool_handoff_dir"; '
+            'devtool_created_ns="$(python3 -c \'import time; print(time.time_ns())\')"; '
+        )
+        if run_id:
+            run_template = (
+                '{"schema_version":1,"run_id":' + __import__('json').dumps(run_id)
+                + ',"parent_pid":%s,"created_ns":%s}\n'
+            )
+            remote_handoff_prefix += (
+                'devtool_run_handoff="$devtool_handoff_dir/run.json"; '
+                + 'printf ' + shlex.quote(run_template)
+                + ' "$$" "$devtool_created_ns" > "$devtool_run_handoff"; chmod 600 "$devtool_run_handoff"; '
+            )
+        if lineage and str(lineage.get("relationship") or "") == "child":
+            # ``lineage_json`` is already JSON.  Insert it as a format argument
+            # so shell metacharacters never become executable syntax.
+            template = '{"schema_version":1,"kind":"devtool.federation-lineage-handoff","parent_pid":%s,"created_ns":%s,"lineage":%s}'
+            remote_handoff_prefix += (
+                'devtool_fed_handoff="$devtool_handoff_dir/federation.json"; '
+                + 'printf ' + shlex.quote(template + '\n')
+                + ' "$$" "$devtool_created_ns" ' + shlex.quote(lineage_json)
+                + ' > "$devtool_fed_handoff"; chmod 600 "$devtool_fed_handoff"; '
+            )
+
+    env_tokens = [
+        "DEVTOOL_EXECUTION_CONTEXT=ssh",
+        "DEVTOOL_INSIDE_SSH=1",
+        "DEVTOOL_SSH_CONTEXT=" + str(config.destination),
+        *forwarded_env,
+        *private_env,
+    ]
+    env_prefix = "env " + " ".join(
+        token if token.startswith("DEVTOOL_") and '="$' in token else shlex.quote(token)
+        for token in env_tokens
     )
+    command = remote_handoff_prefix + env_prefix + " " + _shell_join_remote([config.tool, *forwarded])
     if config.cwd:
         remote_cd = '"$HOME"' if config.cwd in {"~", "$HOME"} else _quote_remote_token(config.cwd)
         command = "cd " + remote_cd + " && " + command
 
-    tmux_payload = (
-        command
-        + "; rc=$?; printf '%s\\n' \"$rc\" > \""
-        + inner_status_path
-        + "\"; exit \"$rc\""
+    return _build_remote_phase_script(
+        config,
+        session=session,
+        command=command,
+        run_id=run_id,
+        workspace_path=remote_root,
+        phase_metadata=phase_meta,
+        attach=not config.detached,
+        release_lease_on_completion=False,
     )
-
-    lines = [
-        "set -eu",
-        f"session={shlex.quote(session)}",
-        f"state_dir={state_dir}",
-        f"status=\"{status_path}\"",
-        'mkdir -p "$state_dir"',
-        "command -v tmux >/dev/null 2>&1 || { echo 'devtool ssh: tmux is required on the remote host' >&2; exit 127; }",
-        'if ! tmux has-session -t "$session" 2>/dev/null; then',
-        '  rm -f "$status"',
-        "  tmux new-session -d -s \"$session\" " + shlex.quote("sh -lc " + shlex.quote(tmux_payload)),
-        "fi",
-    ]
-    if config.detached:
-        lines.extend([
-            'echo "Devtool SSH tmux session started: $session"',
-            'echo "Remote reattach: tmux attach-session -t $session"',
-            "exit 0",
-        ])
-    else:
-        lines.extend([
-            'echo "Devtool SSH tmux session: $session (detach: Ctrl-b d)"',
-            'tmux attach-session -t "$session" || true',
-            'if [ -f "$status" ]; then rc=$(cat "$status" 2>/dev/null || printf 1); rm -f "$status"; exit "$rc"; fi',
-            'echo "Detached; remote devtool continues in tmux session: $session"',
-            "exit 0",
-        ])
-    return "\n".join(lines) + "\n"
 
 
 def build_ssh_tmux_argv(
@@ -2294,11 +2486,14 @@ def run_ssh_tmux(
     if config.mode != "devtool":
         raise ValueError("run_ssh_tmux is the whole-process devtool transport; use command wrapping for ssh.mode=commands")
     forwarded = _forwarded_argv(argv)
+    forwarded, federation_lineage = _trusted_federation_remote_forwarded_argv(config, forwarded)
     _ensure_session(config, forwarded)
     _preflight_local_transport(config)
     _remote_tmux_preflight(config)
     forwarded, staged = stage_forwarded_artifacts(config, forwarded, cwd=local_cwd)
-    remote_script = build_remote_tmux_script(config, forwarded)
+    remote_script = build_remote_tmux_script(
+        config, forwarded, federation_lineage=federation_lineage
+    )
     command = _build_ssh_remote_sh_argv(config, remote_script, tty=not config.detached)
     print(f"Devtool SSH: {config.destination}:{config.port} (mode: {config.mode})")
     if config.cwd:
@@ -2314,6 +2509,12 @@ def run_ssh_tmux(
         completed = run_with_multiplex_fallback(config, command, check=False)
         if staged and not _session_active(config, config.session):
             _remove_remote_tree(config, _operation_stage_root(config, config.session))
+        # The durable phase launcher uses 125 to mean "successfully detached"
+        # so command-mode callers can distinguish it from completion.  The
+        # public whole-process SSH contract historically treats a successful
+        # detached launch as success.
+        if config.detached and int(completed.returncode) == 125:
+            return 0
         return int(completed.returncode)
     finally:
         # Whole-process SSH has a concrete operation boundary, so close the

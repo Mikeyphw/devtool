@@ -150,7 +150,8 @@ if ! mkdir "$lease" 2>/dev/null; then
   fi
   age=$((now-old_time))
   if [ "$active" -eq 0 ] && [ "$age" -ge "$stale_after" ]; then
-    rm -rf -- "$lease"
+    rm -f -- "$lease/owner" "$lease/owner.tmp" 2>/dev/null || true
+    rmdir -- "$lease"
     mkdir "$lease"
     reclaimed=1
   else
@@ -201,7 +202,8 @@ expected={shlex.quote(lease.run_id)}
 if [ ! -d "$lease" ]; then exit 0; fi
 owner="$(sed -n 's/^run_id=//p' "$lease/owner" 2>/dev/null | head -n1)"
 [ "$owner" = "$expected" ] || {{ echo 'devtool ssh: refusing to release a lease owned by another run' >&2; exit 77; }}
-rm -rf -- "$lease"
+rm -f -- "$lease/owner" "$lease/owner.tmp" 2>/dev/null || true
+rmdir -- "$lease"
 '''
 
 
@@ -548,7 +550,8 @@ if [ -d "$lease" ]; then
     echo 'devtool ssh: refusing to release a lease owned by another run' >&2
     exit 77
   fi
-  rm -rf -- "$lease"
+  rm -f -- "$lease/owner" "$lease/owner.tmp" 2>/dev/null || true
+rmdir -- "$lease"
 fi
 '''
 

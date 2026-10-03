@@ -185,8 +185,17 @@ def resolve_artifact_inputs(
             raise FederationArtifactError(f"Artifact input {spec.name!r} materialization path escaped consumer repository") from exc
         destination.parent.mkdir(parents=True, exist_ok=True)
         if destination.exists():
-            if not destination.is_file() or destination.is_symlink() or _sha256(destination) != identity["sha256"]:
-                destination.unlink(missing_ok=True)
+            if not destination.is_file() or destination.is_symlink():
+                raise FederationArtifactError(
+                    f"Artifact input {spec.name!r} materialization target is not a regular owned file: {destination}"
+                )
+            current_digest = _sha256(destination)
+            if current_digest != identity["sha256"]:
+                raise FederationArtifactError(
+                    f"Artifact input {spec.name!r} materialization target drifted: "
+                    f"expected {identity['sha256']}, got {current_digest}. "
+                    "Refusing direct destructive replacement outside LIFE/provider reconciliation."
+                )
         if not destination.exists():
             tmp = destination.with_name(destination.name + ".tmp")
             shutil.copy2(source, tmp)

@@ -15,6 +15,8 @@ second test runner, device fabric, retry engine, or evidence store:
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 import json
+import os
+import time
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -23,6 +25,46 @@ from .execution_snapshot import DeviceLease
 from .instrumentation import InstrumentationIntent
 
 ANDROID_X04_SCHEMA_VERSION = 1
+
+
+_ADVANCED_WORKER_HANDOFF_ENV = "DEVTOOL_ANDROID_ADVANCED_HANDOFF"
+_ADVANCED_WORKER_HANDOFF_MAX_AGE_SECONDS = 300.0
+
+
+def create_advanced_worker_handoff(payload: Mapping[str, Any]) -> str:
+    """Create a private immediate-child handoff for one typed Android child.
+
+    The handoff is parent-PID bound and mode 0600/0700 through the shared
+    invocation capability primitive.  Typed runner capabilities therefore do
+    not become repository configuration, argv, or ordinary process env truth.
+    """
+    from ..invocation_origin import _write_private_handoff
+
+    document = {
+        "schema_version": 1,
+        "kind": "devtool.android-advanced-worker-handoff",
+        "parent_pid": os.getpid(),
+        "created_ns": time.time_ns(),
+        "payload": dict(payload),
+    }
+    return _write_private_handoff("devtool-android-advanced-", document)
+
+
+def consume_advanced_worker_handoff(
+    environment: dict[str, str] | os._Environ[str] | None = None,
+) -> dict[str, Any]:
+    """Consume and verify one immediate-parent advanced worker capability."""
+    from ..invocation_origin import _consume_private_handoff
+
+    document = _consume_private_handoff(
+        _ADVANCED_WORKER_HANDOFF_ENV,
+        max_age_seconds=_ADVANCED_WORKER_HANDOFF_MAX_AGE_SECONDS,
+        environment=environment,
+    )
+    if str(document.get("kind") or "") != "devtool.android-advanced-worker-handoff":
+        return {}
+    payload = document.get("payload")
+    return dict(payload) if isinstance(payload, Mapping) else {}
 
 
 def _stable(value: object) -> str:
@@ -489,4 +531,6 @@ __all__ = [
     "legacy_instrumentation_migration_diagnostics",
     "matrix_evidence",
     "plan_projection",
+    "create_advanced_worker_handoff",
+    "consume_advanced_worker_handoff",
 ]

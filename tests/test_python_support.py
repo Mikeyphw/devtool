@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import sys
+import subprocess
 import unittest
 from io import StringIO
 from unittest import mock
@@ -786,6 +787,28 @@ class PythonSupportTests(unittest.TestCase):
             prepared = prepare_dist(root)
             self.assertEqual(prepared, dist)
             self.assertFalse(stale.exists())
+            receipts = list((root / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+            self.assertTrue(receipts, "prepare-dist deletion must leave a canonical LIFE receipt")
+
+    def test_prepare_dist_refuses_tracked_dist_instead_of_direct_rmtree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Devtool Test"], cwd=root, check=True)
+            dist = root / "dist"
+            dist.mkdir()
+            tracked = dist / "tracked.whl"
+            tracked.write_text("tracked", encoding="utf-8")
+            subprocess.run(["git", "add", "dist/tracked.whl"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "tracked dist"], cwd=root, check=True)
+
+            with self.assertRaisesRegex(PythonProjectError, "protected by cleanup authority"):
+                prepare_dist(root)
+
+            self.assertTrue(tracked.exists(), "tracked dist content must survive prepare-dist cleanup")
+            receipts = list((root / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+            self.assertTrue(receipts, "refused destructive cleanup must still persist its LIFE decision")
 
     def test_notebook_execution_uses_disposable_copy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

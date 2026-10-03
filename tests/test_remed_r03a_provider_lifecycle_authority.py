@@ -100,6 +100,7 @@ def test_provider_phase_metadata_carries_life_cleanup_authority_digest() -> None
         link=link,
         child_run_id="child-run",
         remote_root="~/Code/repo",
+        stage_path="~/.cache/devtool/ssh-stage/child-run/session-1/operation",
         session="session-1",
         profile="tablet",
         destination="termux@tablet",
@@ -112,7 +113,7 @@ def test_provider_phase_metadata_carries_life_cleanup_authority_digest() -> None
         provider="ssh",
         run_id="child-run",
         session="session-1",
-        stage_path="~/Code/repo",
+        stage_path="~/.cache/devtool/ssh-stage/child-run/session-1/operation",
         state_path="~/.cache/devtool/ssh-runs/child-run/session-1",
         cursor_path="~/.cache/devtool/ssh-runs/child-run/session-1/event-cursor.json",
         delegation_id=link.delegation_id,
@@ -122,7 +123,7 @@ def test_provider_phase_metadata_carries_life_cleanup_authority_digest() -> None
         provider="ssh",
         run_id="child-run",
         session="session-1",
-        stage_path="~/Code/repo",
+        stage_path="~/.cache/devtool/ssh-stage/child-run/session-1/operation",
         state_path="~/.cache/devtool/ssh-runs/child-run/session-1",
         cursor_path="~/.cache/devtool/ssh-runs/child-run/session-1/event-cursor.json",
         delegation_id=link.delegation_id,
@@ -140,6 +141,7 @@ def test_provider_phase_metadata_carries_life_cleanup_authority_digest() -> None
     assert line_map["dist_provider_cleanup_digest"] == metadata["dist_provider_cleanup_digest"]
     cleanup_line = next(line for line in lines if line.startswith("dist_provider_cleanup_digest="))
     assert "~/Code/repo" not in cleanup_line
+    assert metadata["dist_provider_cleanup_descriptor_count"] == 3
 
 
 def test_non_delegated_ssh_provider_work_still_gets_cleanup_authority() -> None:
@@ -154,7 +156,7 @@ def test_non_delegated_ssh_provider_work_still_gets_cleanup_authority() -> None:
     )
     assert "dist_delegation_id" not in metadata
     assert metadata["dist_provider_lifecycle_authority"] == "RUN/LIFE"
-    assert metadata["dist_provider_cleanup_descriptor_count"] == 3
+    assert metadata["dist_provider_cleanup_descriptor_count"] == 2
     assert metadata["dist_provider_cleanup_digest"]
 
 

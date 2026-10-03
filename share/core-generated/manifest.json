@@ -1,6 +1,6 @@
 {
-  "bundle_digest": "493e7399c883836b6507507614e7ead9bd6a4b9697e763d47fa3b1ca14bd86a4",
-  "digest": "c00b5f9344670b436ad7e0fe0f31afa06e82d7f9274c9b91a5e3b53e0b14b40b",
+  "bundle_digest": "d4240f9e2e9b2b3cd528127a8d335a40d3f21f0f4fdc41a63db403f77b5142fe",
+  "digest": "d5a9da9314b2d5825fa3534e01cedafc468c719bb697e7aada369287a8cb7895",
   "files": {
     "completion.bash": {
       "sha256": "97061014a65d7d40af2cfa279458f0205b8f751335abe9656d418691f89fd941",
@@ -15,27 +15,27 @@
       "size": 1195
     },
     "config-schema.json": {
-      "sha256": "29d1819aafce697ceb46145bda222896db0919f26ce325082c5b92bf52b3c8d3",
+      "sha256": "91e9084acff30b1d47ab98a340f412ad14abc8191694498eb56b342c33cb8b20",
       "size": 12664
     },
     "devtool-core.1": {
-      "sha256": "d64d60bb55411f9916b891d6d69bee12657562082046a1f9c2b7fb64c19cd2c6",
-      "size": 16179
+      "sha256": "5c7855d2cd25ab70fb566d05087ad47d64f2df371cfe7b712a3caab971248ac3",
+      "size": 16487
     },
     "machine-help.json": {
-      "sha256": "4c261653549b5f52b1ff1376317edb7fde24c5607228688fed9a5039c09fa2ac",
-      "size": 812422
+      "sha256": "8bcee5defe7c182bd0d00bf3b0d11d9d083192de4466f19ad6fab41d4bafdc8f",
+      "size": 818271
     },
     "ownership.json": {
       "sha256": "0f6469a88323b5956aaaac21ae8d133d93c6bfc8423fc12c3695a0cc4f6e39c6",
       "size": 558
     },
     "reference.md": {
-      "sha256": "6968b0c63d523da24eec44c2dca56db1354baf0b3ca63ec40f16d8945dd01cf2",
-      "size": 6285
+      "sha256": "b8f39fa3077930763d8804258ae3c8b899545ca15e426409631e5a6b7daba2d7",
+      "size": 6383
     }
   },
   "kind": "devtool.core-generated-surface-manifest",
-  "registry_digest": "41e678c3673abb6b5690db606309d40dc0a2d52de665edbb74238e71c67a4a28",
+  "registry_digest": "2eb4db785b71be086a97187c54bd6034bed09d96a6a4fe736808d13f92ed9098",
   "schema_version": 1
 }

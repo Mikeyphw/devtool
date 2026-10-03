@@ -155,12 +155,10 @@ def discover_backup_candidates(repo_root: Path) -> list[Path]:
     descriptors = []
     by_resource: dict[str, Path] = {}
     for path in discovered:
-        explicit = _known_devtool_backup(path) or (
-            path.parent == repo_root
-            and path.is_dir()
-            and path.name.startswith(".")
-            and ("backup" in path.name.lower() or ".before-" in path.name.lower() or ".pre-" in path.name.lower())
-        )
+        # Only exact producer-owned Devtool backup prefixes grant managed
+        # ownership. A user directory merely containing "backup", ".before-",
+        # or ".pre-" remains heuristic discovery and cannot be moved/deleted.
+        explicit = _known_devtool_backup(path)
         descriptor = descriptor_from_path(
             path,
             owner="devtool-legacy-backup" if explicit else "legacy-backup-discovery",
@@ -192,19 +190,45 @@ def _unique_destination(base: Path) -> Path:
 
 
 def archive_backup_candidates(repo_root: Path, *, dry_run: bool = False, stamp: str | None = None) -> list[CleanupMove]:
+    from .cleanup_lifecycle import (
+        CleanupScope,
+        GeneratedOutputDescriptor,
+        apply_cleanup_archive_plan,
+        build_cleanup_ownership_view,
+        compile_cleanup_plan,
+        persist_cleanup_receipt,
+    )
+
     repo_root = repo_root.expanduser().resolve()
     stamp = stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     destination_root = _history_root(repo_root) / stamp
+    sources = discover_backup_candidates(repo_root)
+    if not sources:
+        return []
+    descriptors: list[GeneratedOutputDescriptor] = []
+    source_by_resource: dict[str, Path] = {}
+    destinations: dict[str, Path] = {}
     moves: list[CleanupMove] = []
-    for source in discover_backup_candidates(repo_root):
+    for source in sources:
         relative = source.relative_to(repo_root)
         destination = _unique_destination(destination_root / relative)
+        descriptor = GeneratedOutputDescriptor.create(
+            source, owner="devtool-legacy-backup", provider="repository-cleanup",
+            category="backup-history", producer_id=f"devtool-backup:{source.name}", lifecycle="rebuildable",
+            scope=CleanupScope.PROJECT, managed=True, published=False,
+            provenance={"archive_destination": str(destination)},
+        )
+        descriptors.append(descriptor)
+        source_by_resource[descriptor.resource_id] = source
+        destinations[descriptor.resource_id] = destination
         moves.append(CleanupMove(str(relative), str(destination.relative_to(repo_root)), "directory" if source.is_dir() else "file"))
-        if dry_run:
-            continue
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(source), str(destination))
-    return moves
+    ownership = build_cleanup_ownership_view(repo_root, descriptors, policy_generation="life-r03b-backup-archive-v1")
+    plan = compile_cleanup_plan(ownership, scope=CleanupScope.PROJECT, destination="local")
+    receipt = apply_cleanup_archive_plan(plan, ownership=ownership, destinations=destinations, dry_run=dry_run)
+    if not dry_run:
+        persist_cleanup_receipt(repo_root, receipt)
+    allowed = {row.resource_id for row in receipt.results if row.status in {"planned", "applied"}}
+    return [move for move, descriptor in zip(moves, descriptors) if descriptor.resource_id in allowed]
 
 
 def prune_backup_history(repo_root: Path, *, older_than_days: float, dry_run: bool = False) -> list[str]:

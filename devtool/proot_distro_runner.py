@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import posixpath
 import re
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -109,6 +110,85 @@ def resolve_proot_config(project_config: ProjectConfig, args) -> ProotRunnerConf
     validate_proot_config(cfg)
     return cfg
 
+
+
+def _proot_stage_run_id() -> str:
+    return str(os.environ.get("DEVTOOL_RUN_ID") or f"proot-stage-{os.getpid()}").strip()
+
+
+def _proot_stage_session(stage_root: str | Path) -> str:
+    path = Path(stage_root).expanduser().resolve(strict=False)
+    return f"proot-stage:{path.name}"
+
+
+def _proot_stage_descriptor(stage_root: str | Path, *, repo_root: str | Path, run_id: str, session: str) -> "GeneratedOutputDescriptor":
+    from .cleanup_lifecycle import CleanupScope, GeneratedOutputDescriptor
+
+    return GeneratedOutputDescriptor.create(
+        Path(stage_root).expanduser().resolve(strict=False),
+        owner="DIST",
+        provider="proot-distro",
+        category="provider-staging",
+        producer_id=run_id or session or "proot-stage",
+        lifecycle="transient",
+        rebuild_cost="low",
+        scope=CleanupScope.PROJECT,
+        destination="local",
+        provenance={
+            "run_id": run_id,
+            "session": session,
+            "provider": "proot-distro",
+            "authority": "RUN/LIFE",
+            "normal_ingress": "proot-distro",
+        },
+        managed=True,
+        published=False,
+    )
+
+
+def _register_proot_stage_resource(repo_root: str | Path, stage_root: str | Path, *, run_id: str, session: str) -> str:
+    from .provider_resource_registry import register_provider_resources
+
+    descriptor = _proot_stage_descriptor(stage_root, repo_root=repo_root, run_id=run_id, session=session)
+    register_provider_resources(repo_root, (descriptor,))
+    return descriptor.resource_id
+
+
+def _release_and_cleanup_proot_stage(repo_root: str | Path, stage_root: str | Path, *, run_id: str = "", session: str = "", reason: str = "proot staging completed") -> tuple[bool, str]:
+    from .cleanup_lifecycle import (
+        CleanupScope,
+        apply_cleanup_plan,
+        build_cleanup_ownership_view,
+        compile_cleanup_plan,
+        persist_cleanup_receipt,
+    )
+    from .provider_resource_registry import release_provider_resources
+
+    root = Path(repo_root).expanduser().resolve(strict=False)
+    path = Path(stage_root).expanduser().resolve(strict=False)
+    resolved_run = str(run_id or _proot_stage_run_id()).strip()
+    resolved_session = str(session or _proot_stage_session(path)).strip()
+    descriptor = _proot_stage_descriptor(path, repo_root=root, run_id=resolved_run, session=resolved_session)
+    release_provider_resources(
+        root,
+        run_id=resolved_run,
+        session=resolved_session,
+        reason=reason,
+    )
+    ownership = build_cleanup_ownership_view(
+        root,
+        (descriptor,),
+        policy_generation="life-r03b-proot-stage-v1",
+        strict_authorities=True,
+    )
+    plan = compile_cleanup_plan(ownership, scope=CleanupScope.PROJECT, destination="local")
+    receipt = apply_cleanup_plan(plan, ownership=ownership, confirm=True)
+    receipt_path = persist_cleanup_receipt(root, receipt, run_id=resolved_run)
+    if path.exists() or path.is_symlink():
+        row = next((item for item in receipt.results if item.resource_id == descriptor.resource_id), None)
+        detail = str(getattr(row, "reason", "") or receipt.status or "not removed")
+        return False, f"PRoot staging retained at {path}: LIFE cleanup did not remove it ({detail}); receipt {receipt_path}"
+    return True, f"PRoot staging removed through LIFE receipt {receipt.receipt_id}"
 
 def _normalize_guest_path(value: str, *, label: str = "PRoot guest path") -> str:
     raw = str(value or "").strip()
@@ -404,6 +484,11 @@ def _guest_exec_wrapper(stage: Path, stage_mount: str, *, dry_run: bool = False)
         "set -eu\n"
         f'PATH="${{DEVTOOL_PROOT_CLEAN_PATH:-{_DEFAULT_GUEST_PATH}}}"\n'
         "export PATH\n"
+        'if [ -n "${DEVTOOL_PROOT_SECRET_ENV_FILE:-}" ]; then\n'
+        '  [ -f "$DEVTOOL_PROOT_SECRET_ENV_FILE" ] || { echo "Devtool protected PRoot secret file is missing" >&2; exit 78; }\n'
+        '  . "$DEVTOOL_PROOT_SECRET_ENV_FILE"\n'
+        '  unset DEVTOOL_PROOT_SECRET_ENV_FILE\n'
+        'fi\n'
         'exec "$@"\n'
     )
     if not dry_run and (not target.exists() or target.read_text(encoding="utf-8", errors="replace") != content):
@@ -536,10 +621,16 @@ def wrap_specs_for_proot_distro(
         cache_mapping = PathMapping(str(resolved_cache), config.cache_mount)
         _validate_mapping_conflicts([*mappings, stage_mapping, cache_mapping])
         mappings.extend([stage_mapping, cache_mapping])
+        proot_run_id = _proot_stage_run_id()
+        proot_session = _proot_stage_session(stage_root)
+        provider_resource_id = ""
         if not dry_run:
             stage_root.mkdir(parents=True, exist_ok=True)
             created_stage = True
             cache_root.mkdir(parents=True, exist_ok=True)
+            provider_resource_id = _register_proot_stage_resource(
+                repo_root, stage_root, run_id=proot_run_id, session=proot_session
+            )
         bind_pairs = [(item.host, item.guest) for item in mappings]
         federated_guest_root = translate_host_path(str(Path(repo_root).expanduser().resolve()), mappings, cwd=str(repo_root))
         if federated_guest_root == str(Path(repo_root).expanduser().resolve()):
@@ -567,6 +658,37 @@ def wrap_specs_for_proot_distro(
                 )
                 for index, token in enumerate(spec.argv)
             ]
+            # Secret-like environment values are never passed through
+            # ``proot-distro --env KEY=value`` because that serializes them in
+            # the host process argv.  Stage them in the already-private managed
+            # operation directory and pass only the non-secret guest filename.
+            from .ssh_resilience import split_sensitive_env
+            config_env_map: dict[str, str] = {}
+            config_env_passthrough: list[str] = []
+            for raw_item in config.env:
+                if "=" not in str(raw_item):
+                    config_env_passthrough.append(str(raw_item))
+                    continue
+                key, value = str(raw_item).split("=", 1)
+                config_env_map[key] = value
+            public_config_env, sensitive_config_env = split_sensitive_env(config_env_map)
+            public_project_env, sensitive_project_env = split_sensitive_env(dict(project_env or {}))
+            public_spec_env, sensitive_spec_env = split_sensitive_env(dict(spec.env or {}))
+            sensitive_env = {**sensitive_config_env, **sensitive_project_env, **sensitive_spec_env}
+            safe_config = replace(
+                config,
+                env=[*config_env_passthrough, *(f"{key}={value}" for key, value in sorted(public_config_env.items()))],
+            )
+            safe_spec = replace(spec, env=public_spec_env)
+            secret_guest_path = ""
+            if sensitive_env:
+                secret_name = f"secret-env-{uuid.uuid4().hex[:12]}.sh"
+                secret_host_path = stage_root / secret_name
+                secret_guest_path = config.stage_mount.rstrip("/") + "/" + secret_name
+                if not dry_run:
+                    lines = [f"export {key}={shlex.quote(str(value))}" for key, value in sorted(sensitive_env.items())]
+                    secret_host_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                    secret_host_path.chmod(0o600)
             command = [executable, "login", config.distro, "--user", config.user, "--work-dir", guest_cwd]
             if config.shared_home:
                 command.append("--shared-home")
@@ -579,10 +701,12 @@ def wrap_specs_for_proot_distro(
             for source, guest in bind_pairs:
                 command.extend(["--bind", f"{source}:{guest}"])
             for item in _guest_env(
-                config, spec, mappings=mappings, cwd=host_cwd, stage=stage_root, project_env=project_env, dry_run=dry_run,
+                safe_config, safe_spec, mappings=mappings, cwd=host_cwd, stage=stage_root, project_env=public_project_env, dry_run=dry_run,
                 helper_pythonpath=helper_pythonpath,
             ):
                 command.extend(["--env", item])
+            if secret_guest_path:
+                command.extend(["--env", f"DEVTOOL_PROOT_SECRET_ENV_FILE={secret_guest_path}"])
             metadata = dict(spec.metadata)
             from .federation_transport import attach_federation_transport_metadata, build_federation_attestation_shell
             metadata = attach_federation_transport_metadata(
@@ -611,27 +735,54 @@ def wrap_specs_for_proot_distro(
                 "proot_bindings": [{"host": h, "guest": g} for h, g in bind_pairs],
                 "proot_stage_dir": str(stage_root),
                 "proot_stage_owned": not dry_run,
+                "proot_repository_root": str(Path(repo_root).expanduser().resolve(strict=False)),
+                "proot_stage_lifecycle_authority": "LIFE",
+                "proot_stage_provider_resource_id": provider_resource_id,
+                "proot_run_id": proot_run_id,
+                "proot_provider_session": proot_session,
             })
+            if sensitive_env:
+                metadata["proot_sensitive_env_keys"] = sorted(sensitive_env)
+                metadata["proot_sensitive_env_staged"] = True
+            if bool(metadata.get("android_signing_backend_secret_pending")):
+                from .android.signing import SIGNING_ENV_KEYS
+                signing_keys = sorted(key for key in sensitive_env if key in SIGNING_ENV_KEYS)
+                if not signing_keys:
+                    raise ValueError(
+                        "Android signing required protected PRoot secret staging, but no signing secret reached the backend"
+                    )
+                metadata["android_signing_backend_secret_pending"] = False
+                metadata["android_signing_backend_secret_staged"] = True
+                metadata["android_signing_secret_transport_backend"] = "proot-distro"
+                metadata["android_signing_secret_keys"] = signing_keys
             wrapped.append(replace(spec, argv=command, cwd=str(repo_root), env={}, metadata=metadata))
         return wrapped
     except Exception as exc:
         if created_stage:
             try:
-                shutil.rmtree(stage_root)
-            except FileNotFoundError:
-                pass
-            except OSError as cleanup_exc:
-                note = f"PRoot staging retained at {stage_root}: cleanup failed during setup: {cleanup_exc}"
-                if hasattr(exc, "add_note"):
-                    exc.add_note(note)
+                ok, detail = _release_and_cleanup_proot_stage(
+                    repo_root,
+                    stage_root,
+                    run_id=locals().get("proot_run_id", ""),
+                    session=locals().get("proot_session", ""),
+                    reason="proot staging setup failed",
+                )
+            except Exception as cleanup_exc:  # pragma: no cover - defensive note preservation
+                detail = f"PRoot staging retained at {stage_root}: LIFE cleanup failed during setup: {cleanup_exc}"
+                ok = False
+            if not ok and hasattr(exc, "add_note"):
+                exc.add_note(detail)
         raise
 
 
 def cleanup_proot_staging(specs: Iterable[CommandSpec], *, retain: bool = False) -> list[str]:
-    """Remove completed host-owned staging and report anything retained.
+    """Release completed host-owned PRoot staging through LIFE authority.
 
-    Cleanup is intentionally truthful: a failed removal is not presented as
-    success. The retained directory remains available for manual recovery.
+    R03B treats PRoot staging as a concrete provider resource: successful
+    completion releases the active provider-resource reference, then LIFE
+    revalidates ownership/snapshot/tracked-source protection before removing the
+    local stage tree.  Missing repository authority fails closed by retaining the
+    directory instead of falling back to direct ``rmtree``.
     """
 
     seen: set[str] = set()
@@ -650,13 +801,25 @@ def cleanup_proot_staging(specs: Iterable[CommandSpec], *, retain: bool = False)
                     f"PRoot staging retained at {path}: execution did not complete successfully"
                 )
             continue
+        if not (path.exists() or path.is_symlink()):
+            continue
+        repo_root = str(spec.metadata.get("proot_repository_root") or spec.cwd or "").strip()
+        if not repo_root:
+            warnings.append(
+                f"PRoot staging retained at {path}: repository cleanup authority is unavailable"
+            )
+            continue
         try:
-            shutil.rmtree(path)
-        except FileNotFoundError:
+            ok, detail = _release_and_cleanup_proot_stage(
+                repo_root,
+                path,
+                run_id=str(spec.metadata.get("proot_run_id") or ""),
+                session=str(spec.metadata.get("proot_provider_session") or ""),
+                reason="proot staging completed",
+            )
+        except Exception as exc:
+            warnings.append(f"PRoot staging retained at {path}: LIFE cleanup failed: {exc}")
             continue
-        except OSError as exc:
-            warnings.append(f"PRoot staging retained at {path}: cleanup failed: {exc}")
-            continue
-        if path.exists():
-            warnings.append(f"PRoot staging retained at {path}: cleanup could not be verified")
+        if not ok:
+            warnings.append(detail)
     return warnings

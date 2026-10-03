@@ -425,6 +425,37 @@ class RunCatalog:
         self.runs.setdefault(relation.child_run_id, {"run_id": relation.child_run_id})
         return relation
 
+    def update_relation_state(
+        self,
+        relation: RunRelation,
+        *,
+        delivery_health: str | None = None,
+        pinned: bool | None = None,
+    ) -> RunRelation:
+        """Update mutable delivery/retention state without changing lineage.
+
+        RUN V3 owns the canonical parent/child relation.  Provider delivery
+        health is lifecycle state of that same relation, not a reason to mint
+        a parallel relation or overwrite immutable lineage fields.
+        """
+        existing = self.relations.get(relation.relation_id)
+        if existing is None:
+            existing = self.add_relation(relation)
+        immutable = (
+            "parent_run_id", "child_run_id", "parent_node_id", "relationship",
+            "delegation_id", "provider_identity",
+        )
+        for field_name in immutable:
+            if getattr(existing, field_name) != getattr(relation, field_name):
+                raise ValueError(f"run relation immutable field changed: {field_name}")
+        updated = replace(
+            existing,
+            delivery_health=(str(delivery_health) if delivery_health is not None else existing.delivery_health),
+            pinned=(bool(pinned) if pinned is not None else existing.pinned),
+        )
+        self.relations[updated.relation_id] = updated
+        return updated
+
     def pin_relation(self, relation_id: str) -> RunRelation:
         updated = self.relations[relation_id].pin()
         self.relations[relation_id] = updated

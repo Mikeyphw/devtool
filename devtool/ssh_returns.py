@@ -222,6 +222,60 @@ def _ssh_shell(config: SSHRunnerConfig) -> str:
     return shlex.join(argv[:-1])
 
 
+def _clear_return_mirror_through_life(
+    repo_root: Path,
+    local_repo: Path,
+    *,
+    manifest: Mapping[str, Any],
+) -> str:
+    """Retire a stale local SSH-return mirror through canonical LIFE cleanup."""
+    if not local_repo.exists() and not local_repo.is_symlink():
+        return ""
+    from .cleanup_lifecycle import (
+        CleanupScope,
+        GeneratedOutputDescriptor,
+        apply_cleanup_plan,
+        build_cleanup_ownership_view,
+        compile_cleanup_plan,
+        persist_cleanup_receipt,
+    )
+
+    run_id = str(manifest.get("run_id") or "")
+    session = str(manifest.get("session") or "")
+    descriptor = GeneratedOutputDescriptor.create(
+        local_repo,
+        owner="ssh-return-recovery",
+        provider="ssh-return",
+        category="local-return-mirror",
+        producer_id=f"{run_id}:{session}" or "ssh-return-recovery",
+        lifecycle="transient",
+        rebuild_cost="network",
+        scope=CleanupScope.PROJECT,
+        provenance={
+            "run_id": run_id,
+            "session": session,
+            "manifest": str(manifest.get("manifest_path") or ""),
+            "remote_root": str(manifest.get("remote_root") or ""),
+        },
+        managed=True,
+        published=False,
+        tracked_deletion_authorized=True,
+    )
+    ownership = build_cleanup_ownership_view(
+        repo_root,
+        [descriptor],
+        policy_generation="life-r03b-ssh-return-recovery-v1",
+    )
+    plan = compile_cleanup_plan(ownership, scope=CleanupScope.PROJECT, destination="local")
+    receipt = apply_cleanup_plan(plan, ownership=ownership, confirm=True)
+    receipt_path = persist_cleanup_receipt(repo_root, receipt, run_id=run_id)
+    applied = any(row.resource_id == descriptor.resource_id and row.status == "applied" for row in receipt.results)
+    if applied or not local_repo.exists():
+        return str(receipt_path)
+    reason = next((row.reason for row in receipt.results if row.resource_id == descriptor.resource_id), "protected by lifecycle authority")
+    raise ValueError(f"SSH return local mirror cleanup was refused by LIFE authority: {reason}")
+
+
 def build_return_rsync_argv(
     config: SSHRunnerConfig,
     *,
@@ -340,12 +394,20 @@ def shell_return_fragment(
         )
     else:
         archive_branch = f"return_bytes=0; return_files=0; return_transferred_bytes=0; {shlex.join(rsync)}; return_rc=$?; return_mode=rsync-delta; "
+    existing_probe = f"$(find {repo} -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)"
+    blocked_branch = (
+        "return_rc=96; return_mode=blocked-existing-local-mirror; "
+        "return_bytes=0; return_files=0; return_transferred_bytes=0; "
+        "echo 'Devtool SSH return mirror already contains files; refusing shell-level destructive cleanup. Run SSH return recovery so LIFE/RUN/RER can revalidate the mirror.' >&2; "
+    )
     return (
         "; return_rc=0; return_mode=deferred; return_bytes=0; return_files=0; "
         "if [ \"$rc\" -eq 125 ]; then "
         f"printf 'returncode=125\\nstate=deferred\\nmode=deferred\\n' > {status_tmp}; mv -f -- {status_tmp} {status}; "
         "else "
-        f"rm -rf -- {repo}; mkdir -p {repo}; " + archive_branch +
+        f"if [ -e {repo} ] && [ -n \"{existing_probe}\" ]; then " + blocked_branch + "else "
+        f"mkdir -p {repo}; " + archive_branch +
+        "fi; "
         f"printf 'returncode=%s\\nstate=%s\\nmode=%s\\nsource_bytes=%s\\nsource_files=%s\\ntransferred_bytes=%s\\n' \"$return_rc\" \"$([ \"$return_rc\" -eq 0 ] && printf complete || printf partial)\" \"$return_mode\" \"$return_bytes\" \"$return_files\" \"$return_transferred_bytes\" > {status_tmp}; "
         f"mv -f -- {status_tmp} {status}; "
         "fi"
@@ -617,7 +679,11 @@ def recover_return_bundles(
         if local_repo.exists():
             if local_repo.is_symlink() or not local_repo.is_dir():
                 raise ValueError(f"SSH return local mirror is not a safe directory: {local_repo}")
-            shutil.rmtree(local_repo)
+            cleanup_receipt_path = _clear_return_mirror_through_life(
+                repo, local_repo, manifest={**manifest, "manifest_path": str(manifest_path)}
+            )
+        else:
+            cleanup_receipt_path = ""
         local_repo.mkdir(parents=True, exist_ok=True)
         argv = build_return_rsync_argv(
             config, remote_root=remote_root, local_repo_root=local_repo, patterns=patterns, remote_rsync=remote_rsync,
@@ -639,6 +705,8 @@ def recover_return_bundles(
             "return_failed": int(completed.returncode) != 0,
             "recoverable": int(completed.returncode) != 0,
             "artifacts": lifecycle,
+            "local_mirror_cleanup_authority": "LIFE" if cleanup_receipt_path else "not-needed",
+            "local_mirror_cleanup_receipt": cleanup_receipt_path,
             "artifact_summary": {
                 "expected": sum(1 for item in lifecycle if item["expected"]),
                 "produced": sum(1 for item in lifecycle if item["produced"]),

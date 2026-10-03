@@ -208,9 +208,36 @@ def test_shell_lifecycle_is_explicit_reversible_and_truthful_about_coverage(tmp_
 
     disabled = disable_takeover(cfg)
     assert disabled["state"]["enabled"] is False
+    assert disabled["cleanup_authority"] == "LIFE"
+    assert Path(str(disabled["cleanup_receipt_path"])).is_file()
     assert not (shell_bin_dir() / "gradle").exists()
     assert resolve_takeover_config(cfg).enabled is False
 
+
+
+def test_disable_takeover_respects_life_protection_for_shell_assets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from devtool.core_runtime import private_run_root
+    from devtool.run_store import AttachmentDescriptor, RunCatalog
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    real = _exe(tmp_path / "real" / "gradle")
+    monkeypatch.setenv("PATH", str(real.parent))
+    cfg = _config(tmp_path)
+    enable_takeover(cfg, mode="strict", scope="both")
+    shim = shell_bin_dir() / "gradle"
+    assert shim.is_file()
+    catalog = RunCatalog.open(private_run_root(tmp_path))
+    catalog.add_run({"schema_version": 3, "run_id": "run-shell", "status": "running"})
+    catalog.add_attachment(AttachmentDescriptor.from_file(run_id="run-shell", path=shim, kind="gradle-shim", privacy="private"))
+    catalog.save()
+
+    disabled = disable_takeover(cfg)
+
+    assert shim.is_file(), "RUN-referenced shell shim must not be unlinked by disable cleanup"
+    assert all(Path(path).name != "gradle" for path in disabled["removed"])
+    assert any(Path(item["path"]).name == "gradle" for item in disabled["protected"])
+    assert disabled["cleanup_authority"] == "LIFE"
+    assert Path(str(disabled["cleanup_receipt_path"])).is_file()
 
 
 def test_local_system_launcher_identity_is_destination_significant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

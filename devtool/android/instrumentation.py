@@ -142,10 +142,13 @@ class InstrumentationExecutionReceipt:
     cleanup_authority: Mapping[str, Any]
     snapshot_id: str = ""
     snapshot_attachment_id: str = ""
+    advanced_plan_id: str = ""
+    advanced_child_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "schema_version": 1, "receipt_id": self.receipt_id, "intent_id": self.intent_id, "plan_id": self.plan_id,
+            "advanced_plan_id": self.advanced_plan_id, "advanced_child_id": self.advanced_child_id,
             "status": self.status, "failure_kind": self.failure_kind, "device_lease_id": self.device_lease_id,
             "artifact_pair_id": self.artifact_pair_id, "destination_id": self.destination_id,
             "install_results": [dict(item) for item in self.install_results], "execution_result": dict(self.execution_result),
@@ -162,12 +165,21 @@ def instrumentation_intent(request: "InstrumentationRequest") -> Instrumentation
             "ANDROID-X04 advanced runner arguments must use typed sharding/orchestrator planning, not raw runner_args: "
             + ", ".join(bypass)
         )
+    typed = {str(k): str(v) for k, v in sorted(request.typed_runner_args.items())}
+    invalid_typed = sorted(set(typed).difference(X04_TYPED_RUNNER_ARGS))
+    if invalid_typed:
+        raise InstrumentationError(
+            "canonical advanced instrumentation supplied unsupported typed runner arguments: "
+            + ", ".join(invalid_typed)
+        )
+    public_args = validate_runner_secret_bindings({str(k): str(v) for k, v in sorted(request.runner_args.items())})
+    merged_args = {**public_args, **typed}
     payload = {
         "variant": str(request.variant), "policy": normalize_instrumentation_policy(request.policy),
         "requested_runner": str(request.runner or ""), "requested_target_package": str(request.target_package or ""),
         "classes": list(request.classes), "methods": list(request.methods), "annotations": list(request.annotations),
         "not_annotations": list(request.not_annotations), "size": str(request.size or ""),
-        "runner_args": validate_runner_secret_bindings({str(k): str(v) for k, v in sorted(request.runner_args.items())}),
+        "runner_args": merged_args,
         "cleanup_app": bool(request.cleanup_app), "keep_installed": bool(request.keep_installed),
         "capture_logcat_on_failure": bool(request.capture_logcat_on_failure),
         "capture_screenshot_on_failure": bool(request.capture_screenshot_on_failure),
@@ -318,6 +330,13 @@ class InstrumentationRequest:
     not_annotations: list[str] = field(default_factory=list)
     size: str = ""
     runner_args: dict[str, str] = field(default_factory=dict)
+    # ANDROID-X04 typed capabilities are populated only by the canonical
+    # advanced-plan lowering path. They are deliberately separate from public
+    # runner_args so users/repository config cannot smuggle sharding or
+    # orchestrator authority through arbitrary -e arguments.
+    typed_runner_args: dict[str, str] = field(default_factory=dict)
+    advanced_plan_id: str = ""
+    advanced_child_id: str = ""
     gradle: str = "./gradlew"
     gradle_args: list[str] = field(default_factory=list)
     aapt2: str = ""
@@ -340,6 +359,8 @@ class InstrumentationResult:
     intent_id: str = ""
     plan_id: str = ""
     receipt_id: str = ""
+    advanced_plan_id: str = ""
+    advanced_child_id: str = ""
     artifact_pair_id: str = ""
     device_lease_id: str = ""
     execution_snapshot_id: str = ""
@@ -940,6 +961,8 @@ class AndroidInstrumentationOrchestrator:
             )
 
         assert result is not None
+        result.advanced_plan_id = str(request.advanced_plan_id or "")
+        result.advanced_child_id = str(request.advanced_child_id or "")
         cleanup_authority = self._cleanup_authority(request, report_path, plan_id=result.plan_id or intent.intent_id)
         cleanup_results, cleanup_errors = self._cleanup_packages(
             request, device_serial=device.serial, installed_test_package=installed_test_package,
@@ -995,6 +1018,8 @@ class AndroidInstrumentationOrchestrator:
             "install_results": install_results, "execution_result": execution_result, "evidence": evidence,
             "cleanup_results": cleanup_results, "cleanup_authority": cleanup_authority,
             "snapshot_id": snapshot_id, "snapshot_attachment_id": snapshot_attachment_id,
+            "advanced_plan_id": str(request.advanced_plan_id or ""),
+            "advanced_child_id": str(request.advanced_child_id or ""),
         }
         receipt = InstrumentationExecutionReceipt(receipt_id=_stable(receipt_payload), **receipt_payload)
         try:

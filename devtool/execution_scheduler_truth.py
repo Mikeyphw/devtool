@@ -193,6 +193,50 @@ def _source_for_ref(ref: str) -> Path | None:
     return path
 
 
+
+def source_proof_refs_from_execution_document(document: Mapping[str, Any]) -> tuple[str, ...]:
+    """Extract verified reusable source references from canonical EXO history.
+
+    The result is intentionally rebuildable from ``execution.json`` so RUN/LIFE
+    retention does not depend on an auxiliary mutable index.
+    """
+    execution = document.get("execution") if isinstance(document, Mapping) else None
+    nodes = execution.get("nodes") if isinstance(execution, Mapping) else None
+    refs: list[str] = []
+    if not isinstance(nodes, list):
+        return ()
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        metadata = node.get("metadata")
+        if not isinstance(metadata, Mapping):
+            continue
+        for key in ("reuse_evidence_refs", "reuse_source_proof_refs"):
+            values = metadata.get(key) or ()
+            if isinstance(values, str):
+                values = (values,)
+            if isinstance(values, (list, tuple, set)):
+                refs.extend(str(value) for value in values if str(value))
+        record = metadata.get("reusable_node_record")
+        if isinstance(record, Mapping):
+            values = record.get("evidence_refs") or record.get("proof_refs") or ()
+            if isinstance(values, str):
+                values = (values,)
+            if isinstance(values, (list, tuple, set)):
+                refs.extend(str(value) for value in values if str(value))
+    return tuple(dict.fromkeys(refs))
+
+
+def source_proof_refs_from_history(path: Path) -> tuple[str, ...]:
+    if not path.is_file():
+        return ()
+    try:
+        import json
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    return source_proof_refs_from_execution_document(document if isinstance(document, Mapping) else {})
+
 def materialize_outputs(decision: SchedulerReuseDecision, *, cwd: Path) -> SchedulerReuseDecision:
     if decision.disposition != "materialize" or not decision.authoritative:
         return decision

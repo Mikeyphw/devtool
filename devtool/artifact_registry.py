@@ -473,42 +473,124 @@ def verify_record(repo_root: Path, selector: str) -> dict[str, Any]:
 
 
 def prune_registry(repo_root: Path, *, older_than_days: float, delete_files: bool = False) -> dict[str, Any]:
+    """Prune old registry events without creating a second file-deletion authority.
+
+    File deletion is lowered through LIFE cleanup with the exact expiring
+    artifact references retired for this transaction. Any newer artifact/RUN/
+    validation/transaction/release reference still protects the bytes. A file
+    that cannot be safely deleted keeps its registry evidence rather than
+    silently dropping the protection record.
+    """
+    from .cleanup_lifecycle import (
+        CleanupScope, GeneratedOutputDescriptor, apply_cleanup_plan,
+        build_cleanup_ownership_view, compile_cleanup_plan, persist_cleanup_receipt,
+    )
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=max(0, older_than_days))
     managed = (repo_root / ".devtool" / "build-artifacts").resolve()
     with _registry_lock(repo_root):
         data = _load_registry_unlocked(repo_root)
         original_items = [item for item in data.get("items", []) if isinstance(item, dict)]
-        kept: list[dict[str, Any]] = []
-        removed: list[dict[str, Any]] = []
+        recent: list[dict[str, Any]] = []
+        expired: list[dict[str, Any]] = []
         retained_paths_all: set[str] = set()
         for item in original_items:
             stamp = _parse_timestamp(item.get("registered_at") or item.get("created_at"))
             if stamp >= cutoff:
-                kept.append(item)
+                recent.append(item)
                 retained_paths_all.add(str(item.get("path") or ""))
+            else:
+                expired.append(item)
 
-        for item in original_items:
-            if item in kept:
-                continue
+        if not delete_files:
+            # Registry records are durable production evidence. Age alone is not
+            # authority to erase them; without file GC there is no lifecycle
+            # tombstone proving that their bytes were retired.
+            return {
+                "removed": [], "remaining": len(original_items), "delete_files": False,
+                "protected": [dict(item, prune_protection="registry evidence retained; use --delete-files for canonical lifecycle retirement") for item in expired],
+            }
+
+        descriptors: list[GeneratedOutputDescriptor] = []
+        descriptor_for_record: dict[str, GeneratedOutputDescriptor] = {}
+        retiring_reference_ids: list[str] = []
+        for item in expired:
+            record_id = str(item.get("id") or item.get("event_key") or item.get("sha256") or "")
+            if record_id:
+                retiring_reference_ids.append(f"artifact:{record_id}")
             path_value = str(item.get("path") or "")
+            if not path_value or path_value in retained_paths_all:
+                continue
             path = resolve_artifact_path(repo_root, path_value)
-            deleted = False
-            if delete_files and path.is_file():
-                try:
-                    path.relative_to(managed)
-                except ValueError:
-                    pass
-                else:
-                    # A historical record may share its path with a retained
-                    # newer record that appears later in the registry. Compute
-                    # all retained paths before deleting anything so registry
-                    # order cannot make pruning destructive.
-                    if path_value not in retained_paths_all:
-                        path.unlink()
-                        deleted = True
+            try:
+                path.relative_to(managed)
+            except ValueError:
+                continue
+            if not path.is_file():
+                continue
+            descriptor = GeneratedOutputDescriptor.create(
+                path, owner="artifact-registry", provider="artifact-registry", category="expired-artifact",
+                producer_id=f"prune:{record_id or path_value}", lifecycle="disposable", rebuild_cost="high",
+                scope=CleanupScope.PROJECT, managed=True, published=False,
+                provenance={"registry_record_id": record_id, "age_policy_days": float(older_than_days)},
+            )
+            descriptors.append(descriptor)
+            descriptor_for_record[record_id or path_value] = descriptor
+
+        result_by_resource: dict[str, Any] = {}
+        cleanup_receipt_id = ""
+        if descriptors:
+            ownership = build_cleanup_ownership_view(
+                repo_root, descriptors, policy_generation=f"artifact-registry-prune-v2:{float(older_than_days):.6f}",
+                retired_reference_ids=retiring_reference_ids,
+            )
+            plan = compile_cleanup_plan(ownership, scope=CleanupScope.PROJECT, destination="local")
+            receipt = apply_cleanup_plan(plan, ownership=ownership, confirm=True)
+            persist_cleanup_receipt(repo_root, receipt)
+            cleanup_receipt_id = receipt.receipt_id
+            result_by_resource = {row.resource_id: row for row in receipt.results}
+
+        kept = list(recent)
+        removed: list[dict[str, Any]] = []
+        protected: list[dict[str, Any]] = []
+        for item in expired:
             copy = dict(item)
-            copy["file_deleted"] = deleted
-            removed.append(copy)
-        data["items"] = kept
+            record_id = str(item.get("id") or item.get("event_key") or item.get("sha256") or "")
+            path_value = str(item.get("path") or "")
+            path = resolve_artifact_path(repo_root, path_value) if path_value else Path()
+            descriptor = descriptor_for_record.get(record_id or path_value)
+            result = result_by_resource.get(descriptor.resource_id) if descriptor is not None else None
+            already_absent = bool(path_value) and not path.exists()
+            shared_with_recent = path_value in retained_paths_all
+            if already_absent:
+                copy["file_deleted"] = False
+                copy["lifecycle_tombstone"] = "already-absent"
+                removed.append(copy)
+            elif result is not None and result.status == "applied":
+                copy["file_deleted"] = True
+                copy["cleanup_receipt_id"] = cleanup_receipt_id
+                removed.append(copy)
+            elif shared_with_recent:
+                # The old event can be retired because the same bytes/path remain
+                # represented by a newer immutable production event.
+                copy["file_deleted"] = False
+                copy["lifecycle_tombstone"] = "superseded-by-retained-record"
+                removed.append(copy)
+            else:
+                kept.append(item)
+                copy["file_deleted"] = False
+                copy["prune_protection"] = str(getattr(result, "reason", "") or "artifact bytes are outside canonical managed deletion or protected by lifecycle authority")
+                protected.append(copy)
+
+        # Preserve newest-first ordering from the original immutable event list.
+        keep_ids = {id(item) for item in kept}
+        removed_keys = {(str(item.get("id") or ""), str(item.get("path") or ""), str(item.get("registered_at") or item.get("created_at") or "")) for item in removed}
+        data["items"] = [
+            item for item in original_items
+            if (str(item.get("id") or ""), str(item.get("path") or ""), str(item.get("registered_at") or item.get("created_at") or "")) not in removed_keys
+        ]
         _save_registry_unlocked(repo_root, data)
-    return {"removed": removed, "remaining": len(kept), "delete_files": delete_files}
+    return {
+        "removed": removed, "remaining": len(data["items"]), "delete_files": True,
+        "protected": protected, "cleanup_receipt_id": cleanup_receipt_id,
+    }

@@ -273,6 +273,7 @@ class CleanupOwnershipView:
     references: tuple[CleanupReference, ...]
     global_blockers: tuple[str, ...] = ()
     authority_sources: tuple[str, ...] = ()
+    retired_reference_ids: tuple[str, ...] = ()
 
     def references_for(self, descriptor: GeneratedOutputDescriptor) -> tuple[CleanupReference, ...]:
         target = _canonical_path(descriptor.path)
@@ -309,6 +310,7 @@ class CleanupOwnershipView:
             "references": [item.as_dict() for item in self.references],
             "global_blockers": list(self.global_blockers),
             "authority_sources": list(self.authority_sources),
+            "retired_reference_ids": list(self.retired_reference_ids),
         }
 
 
@@ -550,13 +552,16 @@ def persist_cleanup_receipt(
 
 
 def _safety_for(descriptor: GeneratedOutputDescriptor, refs: Sequence[CleanupReference]) -> CleanupSafetyClass:
-    if descriptor.scope in {CleanupScope.TOOLCHAIN_GLOBAL, CleanupScope.USER_GLOBAL}:
-        return CleanupSafetyClass.USER_GLOBAL
-    if descriptor.published:
-        return CleanupSafetyClass.DURABLE_EVIDENCE
+    # Reference protection outranks scope. A USER_GLOBAL/TOOLCHAIN_GLOBAL
+    # resource does not become deletable merely because global cleanup was
+    # explicitly authorized while RUN/validation/recovery still references it.
     if any(ref.protective and ref.source in {"transaction", "validation", "recovery"} for ref in refs):
         return CleanupSafetyClass.RECOVERY_CRITICAL
     if any(ref.protective for ref in refs):
+        return CleanupSafetyClass.DURABLE_EVIDENCE
+    if descriptor.scope in {CleanupScope.TOOLCHAIN_GLOBAL, CleanupScope.USER_GLOBAL}:
+        return CleanupSafetyClass.USER_GLOBAL
+    if descriptor.published:
         return CleanupSafetyClass.DURABLE_EVIDENCE
     if not descriptor.managed:
         return CleanupSafetyClass.PROTECTED_UNKNOWN
@@ -726,7 +731,86 @@ def refresh_cleanup_ownership_view(ownership: CleanupOwnershipView, *, strict_au
         ownership.descriptors,
         policy_generation=ownership.policy_generation,
         references=ownership.references,
+        retired_reference_ids=ownership.retired_reference_ids,
         strict_authorities=strict_authorities,
+    )
+
+
+def apply_cleanup_archive_plan(
+    plan: CleanupPlan,
+    *,
+    ownership: CleanupOwnershipView,
+    destinations: Mapping[str, str | Path],
+    dry_run: bool = False,
+) -> CleanupReceipt:
+    """Move selected local resources only after the same LIFE revalidation as deletion.
+
+    Archival is destructive with respect to the source path, so it must not use
+    a parallel ``shutil.move`` authority. Destinations are keyed by resource id
+    (or candidate id for compatibility) and are recorded in the receipt.
+    """
+    if plan.repository_id != ownership.repository_id or plan.policy_generation != ownership.policy_generation:
+        raise RuntimeError("Cleanup archive plan authority drifted; re-plan before mutation")
+    if plan.destination != "local":
+        raise RuntimeError("Cleanup archive mutation currently requires local destination authority")
+    live = refresh_cleanup_ownership_view(ownership, strict_authorities=True)
+    refreshed = compile_cleanup_plan(
+        live, scope=plan.scope, destination=plan.destination, include_user_global=plan.global_scope_authorized,
+        opaque_actions=plan.opaque_actions,
+    )
+    fresh_by_resource = {item.resource_id: item for item in refreshed.candidates}
+    rows: list[CleanupActionResult] = []
+    tombstones: list[Mapping[str, Any]] = []
+    failed = partial = False
+    for original in plan.candidates:
+        fresh = fresh_by_resource.get(original.resource_id)
+        if fresh is None or not original.selected or not fresh.selected:
+            rows.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "protected", reason=(fresh.protection_reason if fresh else "ownership disappeared during revalidation") or original.protection_reason))
+            partial = True
+            continue
+        current = _path_snapshot(Path(original.path))
+        if not _same_snapshot(original.source_snapshot, current):
+            rows.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "protected", reason="resource changed after cleanup archive plan was created"))
+            partial = True
+            continue
+        raw_destination = destinations.get(original.resource_id, destinations.get(original.candidate_id))
+        if raw_destination is None:
+            rows.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "failed", reason="archive destination missing"))
+            failed = True
+            continue
+        destination = _canonical_path(raw_destination)
+        source = _canonical_path(original.path)
+        if destination == source:
+            rows.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "failed", reason="archive destination equals source"))
+            failed = True
+            continue
+        if dry_run:
+            rows.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "planned", reason=f"archive->{destination}"))
+            continue
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, destination)
+        except OSError as exc:
+            rows.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "failed", reason=str(exc)))
+            failed = True
+            continue
+        if source.exists() or source.is_symlink() or not (destination.exists() or destination.is_symlink()):
+            rows.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "partial", reason=f"archive postcondition failed for {destination}"))
+            partial = True
+            continue
+        rows.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "applied", reason=f"archived to {destination}", postcondition=f"archived:{destination}"))
+        tombstones.append({
+            "resource_id": original.resource_id, "candidate_id": original.candidate_id, "path": original.path,
+            "owner": original.owner, "provider": original.provider, "destination": original.destination,
+            "reason": "cleanup-archive-plan-applied", "archive_path": str(destination),
+            "source_snapshot": dict(original.source_snapshot),
+        })
+    status = "failed" if failed and not any(row.status == "applied" for row in rows) else "partial" if failed or partial else "applied"
+    payload = {"plan_id": plan.plan_id, "status": status, "results": [row.as_dict() for row in rows]}
+    return CleanupReceipt(
+        receipt_id="cleanup-receipt:" + _digest(payload)[:32], plan_id=plan.plan_id, repository_id=plan.repository_id,
+        scope=plan.scope, destination=plan.destination, status=status, results=tuple(rows), reclaimed_bytes=0,
+        tombstones=tuple(tombstones),
     )
 
 
@@ -953,6 +1037,13 @@ def provider_cleanup_receipt_from_results(
     )
 
 
+def _reference_path(value: str) -> str:
+    text = str(value or "").strip()
+    if text.startswith("file:") and "#sha256=" in text:
+        return text[5:].rsplit("#sha256=", 1)[0]
+    return text
+
+
 def _run_catalog_references(repo_root: Path) -> tuple[list[GeneratedOutputDescriptor], list[CleanupReference]]:
     from .core_runtime import private_run_root
     from .run_store import RunCatalog
@@ -991,7 +1082,7 @@ def _run_catalog_references(repo_root: Path) -> tuple[list[GeneratedOutputDescri
     for run_id, row in catalog.runs.items():
         if not isinstance(row, Mapping):
             continue
-        for key in ("reuse_materialization_refs", "reuse_outputs", "rer_output_paths", "seal_paths"):
+        for key in ("reuse_materialization_refs", "reuse_source_proof_refs", "reuse_outputs", "rer_output_paths", "seal_paths"):
             values = row.get(key) or ()
             if isinstance(values, str):
                 values = (values,)
@@ -1002,9 +1093,38 @@ def _run_catalog_references(repo_root: Path) -> tuple[list[GeneratedOutputDescri
                 if text:
                     refs.append(CleanupReference(
                         reference_id=f"run:{run_id}:{key}:{_digest(text)[:12]}", source="RER" if "reuse" in key or "rer" in key else "seal",
-                        path=text, reason="reusable/seal evidence protects this resource",
+                        path=_reference_path(text), reason="reusable/seal evidence protects this resource",
                     ))
     return descriptors, refs
+
+
+def _execution_history_reuse_references() -> list[CleanupReference]:
+    """Rebuild source-proof retention directly from canonical EXO history.
+
+    This closes the direct ``run_specs``/library ingress as well as CLI ingress:
+    cleanup does not depend on the CLI finalizer having copied proof references
+    into RUN V3 before it can protect materialization sources.
+    """
+    try:
+        from .execution_scheduler_truth import execution_history_root, source_proof_refs_from_history
+    except ImportError:
+        return []
+    root = execution_history_root()
+    if not root.exists():
+        return []
+    refs: list[CleanupReference] = []
+    for path in sorted(root.glob("*/execution.json")):
+        run_id = path.parent.name
+        for value in source_proof_refs_from_history(path):
+            actual = _reference_path(value)
+            if not actual:
+                continue
+            refs.append(CleanupReference(
+                reference_id=f"execution-history:{run_id}:reuse-proof:{_digest(value)[:12]}",
+                source="RER", path=actual, state="terminal", protective=True,
+                reason="canonical EXO history retains reusable source proof",
+            ))
+    return refs
 
 
 def _artifact_registry_projection(repo_root: Path) -> tuple[list[GeneratedOutputDescriptor], list[CleanupReference]]:
@@ -1041,18 +1161,54 @@ def _artifact_registry_projection(repo_root: Path) -> tuple[list[GeneratedOutput
     return descriptors, refs
 
 
+def _repository_pack_projection(repo_root: Path) -> tuple[list[GeneratedOutputDescriptor], list[CleanupReference]]:
+    try:
+        from .repository_pack_registry import load_repository_pack_registry, repository_pack_registry_path
+    except ImportError:
+        return [], []
+    path = repository_pack_registry_path(repo_root)
+    if not path.is_file():
+        return [], []
+    data = load_repository_pack_registry(repo_root, strict=True)
+    descriptors: list[GeneratedOutputDescriptor] = []
+    refs: list[CleanupReference] = []
+    for item in data.get("items", []):
+        if not isinstance(item, Mapping) or str(item.get("state") or "active") == "tombstoned":
+            continue
+        raw_path = str(item.get("output") or "").strip()
+        if not raw_path:
+            continue
+        record_id = str(item.get("pack_id") or item.get("receipt_id") or _digest(item)[:20])
+        protected = bool(item.get("pin")) or str(item.get("retention") or "policy").lower() in {"release", "final", "forever", "keep", "pinned"}
+        descriptor = GeneratedOutputDescriptor.create(
+            raw_path, owner="repository-pack", provider="repository-pack", category="repository-pack",
+            producer_id=record_id, lifecycle="retained" if protected else "rebuildable", rebuild_cost="high",
+            scope=CleanupScope.DURABLE_HISTORY, provenance={"pack_id": record_id, "retention": item.get("retention", "policy")},
+            managed=True, published=protected,
+        )
+        descriptors.append(descriptor)
+        if protected:
+            refs.append(CleanupReference(
+                reference_id=f"repository-pack:{record_id}", source="repository-pack", resource_id=descriptor.resource_id,
+                path=raw_path, reason="pinned/release repository pack is retained",
+            ))
+    return descriptors, refs
+
+
 def build_cleanup_ownership_view(
     repo_root: str | Path,
     descriptors: Iterable[GeneratedOutputDescriptor] = (),
     *,
     policy_generation: str = "default",
     references: Iterable[CleanupReference] = (),
+    retired_reference_ids: Iterable[str] = (),
     strict_authorities: bool = False,
 ) -> CleanupOwnershipView:
     root = _canonical_path(repo_root)
     repo_identity = build_repository_identity(root)
     owned = list(descriptors)
     refs = list(references)
+    retired_ids = {str(item) for item in retired_reference_ids if str(item)}
     authority_sources: set[str] = set()
     blockers: list[str] = []
 
@@ -1069,6 +1225,14 @@ def build_cleanup_ownership_view(
             authority_errors.append(f"RUN/RER: {type(exc).__name__}: {exc}")
 
     try:
+        history_refs = _execution_history_reuse_references()
+        refs.extend(history_refs)
+        if history_refs:
+            authority_sources.add("EXO/RER-history")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        authority_errors.append(f"EXO/RER-history: {type(exc).__name__}: {exc}")
+
+    try:
         artifact_descriptors, artifact_refs = _artifact_registry_projection(root)
         owned.extend(artifact_descriptors)
         refs.extend(artifact_refs)
@@ -1078,6 +1242,37 @@ def build_cleanup_ownership_view(
         from .artifact_registry import registry_path
         if registry_path(root).exists():
             authority_errors.append(f"artifact-registry: {type(exc).__name__}: {exc}")
+
+    try:
+        pack_descriptors, pack_refs = _repository_pack_projection(root)
+        owned.extend(pack_descriptors)
+        refs.extend(pack_refs)
+        if pack_descriptors or pack_refs:
+            authority_sources.add("repository-pack")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        try:
+            from .repository_pack_registry import repository_pack_registry_path
+            pack_path = repository_pack_registry_path(root)
+        except Exception:
+            pack_path = root / ".devtool" / "private" / "repository-packs" / "registry.json"
+        if pack_path.exists():
+            authority_errors.append(f"repository-pack: {type(exc).__name__}: {exc}")
+
+    try:
+        from .provider_resource_registry import provider_resource_projection
+        provider_descriptors, provider_refs = provider_resource_projection(root, strict=strict_authorities)
+        owned.extend(provider_descriptors)
+        refs.extend(provider_refs)
+        if provider_descriptors or provider_refs:
+            authority_sources.add("provider-resource-registry")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        try:
+            from .provider_resource_registry import provider_resource_registry_path
+            provider_path = provider_resource_registry_path(root)
+        except Exception:
+            provider_path = root / ".devtool" / "private" / "provider-resources" / "registry.json"
+        if provider_path.exists():
+            authority_errors.append(f"provider-resource-registry: {type(exc).__name__}: {exc}")
 
     try:
         from .transactions import find_active_transactions, read_transaction
@@ -1127,7 +1322,7 @@ def build_cleanup_ownership_view(
 
     # Stable order + de-dup by resource/reference identity.
     desc_map = {item.resource_id: item for item in owned}
-    ref_map = {item.reference_id: item for item in refs}
+    ref_map = {item.reference_id: item for item in refs if item.reference_id not in retired_ids}
     return CleanupOwnershipView(
         repository_id=repo_identity.fingerprint,
         repository_root=str(root),
@@ -1136,6 +1331,7 @@ def build_cleanup_ownership_view(
         references=tuple(ref_map[key] for key in sorted(ref_map)),
         global_blockers=tuple(dict.fromkeys(blockers)),
         authority_sources=tuple(sorted(authority_sources)),
+        retired_reference_ids=tuple(sorted(retired_ids)),
     )
 
 

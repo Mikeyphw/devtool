@@ -10,6 +10,7 @@ allowed to start.
 
 from dataclasses import dataclass
 import hashlib
+import json
 from pathlib import Path
 import re
 import shlex
@@ -91,6 +92,14 @@ _TRANSPORT_KEYS = (
     "federation_source_transport_requested",
     "federation_source_transport_effective",
     "federation_source_transport_evidence_digest",
+    "federation_current_source_trace_schema_version",
+    "federation_current_source_trace_kind",
+    "federation_current_source_trace_digest",
+    "federation_current_source_lock_digest",
+    "federation_current_source_equivalence_digest",
+    "federation_current_source_start_commit",
+    "federation_current_source_config_sha256",
+    "federation_current_source_git_remote_sha256",
 )
 
 
@@ -101,6 +110,59 @@ def _canonical(value: str | Path) -> str:
 def _safe_component(value: str, fallback: str = "child") -> str:
     text = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip()).strip(".-")
     return text[:96] or fallback
+
+
+def _transport_digest(payload: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            dict(payload),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        ).encode("utf-8", "surrogatepass")
+    ).hexdigest()
+
+
+def _current_source_trace_metadata(
+    *,
+    lineage: Mapping[str, Any],
+    local_root: str,
+    remote_root: str,
+    execution_environment: str,
+    path_mapping: str,
+    attestation: FederationRepositoryAttestation,
+) -> dict[str, Any]:
+    git_lineage = lineage.get("git_lineage") if isinstance(lineage.get("git_lineage"), Mapping) else {}
+    source_lock = str(lineage.get("frozen_source_lock_digest") or "").strip()
+    source_equivalence = str(lineage.get("frozen_source_equivalence_digest") or "").strip()
+    trace = {
+        "schema_version": 1,
+        "kind": "federation-current-source-trace",
+        "parent_run_id": str(lineage.get("parent_run_id") or ""),
+        "parent_node_id": str(lineage.get("parent_node_id") or ""),
+        "child_run_id": str(lineage.get("child_run_id") or ""),
+        "federation_ref": str(lineage.get("federation_ref") or ""),
+        "execution_environment": str(execution_environment or ""),
+        "path_mapping": str(path_mapping or ""),
+        "local_root": str(local_root or ""),
+        "remote_root": str(remote_root or ""),
+        "frozen_source_lock_digest": source_lock,
+        "frozen_source_equivalence_digest": source_equivalence,
+        "start_commit": str((git_lineage or {}).get("start_commit") or attestation.start_commit or ""),
+        "config_sha256": str(attestation.config_sha256 or ""),
+        "git_remote_sha256": str(attestation.git_remote_sha256 or ""),
+    }
+    return {
+        "federation_current_source_trace_schema_version": 1,
+        "federation_current_source_trace_kind": "federation-current-source-trace",
+        "federation_current_source_trace_digest": _transport_digest(trace),
+        "federation_current_source_lock_digest": source_lock,
+        "federation_current_source_equivalence_digest": source_equivalence,
+        "federation_current_source_start_commit": str(trace["start_commit"]),
+        "federation_current_source_config_sha256": str(trace["config_sha256"]),
+        "federation_current_source_git_remote_sha256": str(trace["git_remote_sha256"]),
+    }
 
 
 def _lineage(metadata: Mapping[str, Any]) -> dict[str, Any]:
@@ -558,7 +620,7 @@ def build_federation_transport_metadata(
         else:
             mapping = "identity"
 
-    return {
+    transport_payload = {
         "federation_source_repository": str(lineage.get("source_repository") or ""),
         "federation_group": str(lineage.get("federation_group") or ""),
         "federation_child_repository": repository,
@@ -589,6 +651,15 @@ def build_federation_transport_metadata(
         "federation_attestation_git_remote_sha256": attestation.git_remote_sha256,
         "federation_attestation_required": remote_required,
     }
+    transport_payload.update(_current_source_trace_metadata(
+        lineage=lineage,
+        local_root=local,
+        remote_root=remote,
+        execution_environment=environment,
+        path_mapping=mapping,
+        attestation=attestation,
+    ))
+    return transport_payload
 
 
 def attach_federation_transport_metadata(
@@ -600,6 +671,72 @@ def attach_federation_transport_metadata(
     if transport:
         updated.update(transport)
     return updated
+
+
+
+_CURRENT_SOURCE_TRACE_REQUIRED_KEYS = (
+    "federation_child_repository_fingerprint",
+    "federation_child_local_root",
+    "federation_child_remote_root",
+    "federation_execution_environment",
+    "federation_path_mapping",
+    "federation_current_source_trace_schema_version",
+    "federation_current_source_trace_kind",
+    "federation_current_source_trace_digest",
+    "federation_current_source_lock_digest",
+)
+
+
+def _federated_child_metadata(metadata: Mapping[str, Any]) -> bool:
+    lineage = metadata.get("run_lineage")
+    if isinstance(lineage, Mapping) and str(lineage.get("relationship") or "").strip() == "child":
+        return True
+    return any(
+        str(metadata.get(key) or "").strip()
+        for key in (
+            "federation_parent_run_id",
+            "federation_parent_node_id",
+            "federation_child_run_id",
+            "federation_ref",
+            "federation_child_repository",
+        )
+    )
+
+
+def current_source_trace_errors(metadata: Mapping[str, Any]) -> list[str]:
+    """Return missing current-source trace bindings for federated child evidence.
+
+    Production evidence for a federation child may not persist only a provider
+    label or a repository name.  It must carry the concrete trace digest that
+    binds parent/child lineage, frozen source lock, local root, provider-resolved
+    remote root, execution substrate, path mapping and portable repository
+    attestation.
+    """
+
+    if not _federated_child_metadata(metadata):
+        return []
+    missing = [key for key in _CURRENT_SOURCE_TRACE_REQUIRED_KEYS if not str(metadata.get(key) or "").strip()]
+    if str(metadata.get("federation_current_source_trace_kind") or "") != "federation-current-source-trace":
+        missing.append("federation_current_source_trace_kind=federation-current-source-trace")
+    portable_source = any(
+        str(metadata.get(key) or "").strip()
+        for key in (
+            "federation_current_source_start_commit",
+            "federation_current_source_config_sha256",
+            "federation_current_source_git_remote_sha256",
+        )
+    )
+    if not portable_source:
+        missing.append("federation_current_source portable identity signal")
+    return missing
+
+
+def require_current_source_trace(metadata: Mapping[str, Any], *, context: str = "federated execution evidence") -> None:
+    missing = current_source_trace_errors(metadata)
+    if missing:
+        raise FederationTransportError(
+            f"{context} is missing current-source trace bindings: " + ", ".join(sorted(set(missing)))
+        )
 
 
 def federation_transport_provenance(metadata: Mapping[str, Any]) -> dict[str, Any]:
@@ -621,9 +758,11 @@ __all__ = [
     "build_federation_attestation_shell",
     "build_federation_transport_metadata",
     "build_repository_attestation",
+    "current_source_trace_errors",
     "federation_attestation_environment",
     "federation_attestation_from_environment",
     "federation_transport_provenance",
+    "require_current_source_trace",
     "require_federation_remote_attestation_environment",
     "verify_federation_environment_attestation",
 ]

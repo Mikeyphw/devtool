@@ -189,26 +189,60 @@ def _artifacts(operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _execution_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
-    if str(metadata.get("execution_mode") or "") != "ssh-command" and not metadata.get("ssh_destination"):
-        return {}
-    returned = metadata.get("ssh_return") if isinstance(metadata.get("ssh_return"), dict) else {}
-    return {
-        "transport": "ssh",
-        "profile": str(metadata.get("ssh_profile") or ""),
-        "destination": str(metadata.get("ssh_destination") or ""),
-        "worker_platform": str(metadata.get("ssh_worker_platform") or ""),
-        "worker_architecture": str(metadata.get("ssh_worker_architecture") or ""),
-        "workspace_id": str(metadata.get("ssh_workspace_id") or ""),
-        "workspace_instance_id": str(metadata.get("ssh_workspace_instance_id") or ""),
-        "workspace_path": str(metadata.get("ssh_workspace_path") or metadata.get("ssh_cwd") or ""),
-        "source_sync_id": str(metadata.get("ssh_source_sync_id") or ""),
-        "source_revision": dict(metadata.get("ssh_source_revision") or {}) if isinstance(metadata.get("ssh_source_revision"), dict) else {},
-        "session": str(metadata.get("ssh_session") or ""),
-        "return_state": str(returned.get("state") or ""),
-        "return_manifest": str(metadata.get("ssh_return_manifest") or ""),
-        "return_recoverable": bool(returned.get("recoverable")),
-    }
+    from .federation_transport import federation_transport_provenance, require_current_source_trace
 
+    require_current_source_trace(metadata, context="RUN test-operation evidence")
+    federation = federation_transport_provenance(metadata).get("federation", {})
+    returned = metadata.get("ssh_return") if isinstance(metadata.get("ssh_return"), dict) else {}
+    mode = str(metadata.get("execution_mode") or "").strip()
+    is_ssh = mode in {"ssh-command", "ssh-proot-oci"} or bool(metadata.get("ssh_destination"))
+    if is_ssh:
+        provenance: dict[str, Any] = {
+            "transport": "ssh",
+            "profile": str(metadata.get("ssh_profile") or ""),
+            "destination": str(metadata.get("ssh_destination") or ""),
+            "worker_platform": str(metadata.get("ssh_worker_platform") or ""),
+            "worker_architecture": str(metadata.get("ssh_worker_architecture") or ""),
+            "workspace_id": str(metadata.get("ssh_workspace_id") or ""),
+            "workspace_instance_id": str(metadata.get("ssh_workspace_instance_id") or ""),
+            "workspace_path": str(metadata.get("ssh_workspace_path") or metadata.get("ssh_cwd") or ""),
+            "source_sync_id": str(metadata.get("ssh_source_sync_id") or ""),
+            "source_revision": dict(metadata.get("ssh_source_revision") or {}) if isinstance(metadata.get("ssh_source_revision"), dict) else {},
+            "session": str(metadata.get("ssh_session") or ""),
+            "return_state": str(returned.get("state") or ""),
+            "return_manifest": str(metadata.get("ssh_return_manifest") or ""),
+            "return_recoverable": bool(returned.get("recoverable")),
+        }
+    else:
+        provenance = {}
+        if mode:
+            provenance["transport"] = mode
+        environment = str(metadata.get("execution_environment") or "").strip()
+        if environment:
+            provenance["execution_environment"] = environment
+        if mode == "proot-distro":
+            provenance["distribution"] = str(
+                metadata.get("proot_distribution")
+                or metadata.get("distribution")
+                or metadata.get("distro")
+                or ""
+            )
+    if federation:
+        provenance["federation"] = federation
+    return {key: value for key, value in provenance.items() if value not in ("", None, {}, [])}
+
+
+
+
+def _attach_execution_provenance(payload: dict[str, Any], provenance: dict[str, Any]) -> dict[str, Any]:
+    if not provenance:
+        return payload
+    updated = dict(payload)
+    metadata = updated.get("metadata")
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    metadata["execution_provenance"] = dict(provenance)
+    updated["metadata"] = metadata
+    return updated
 
 def _build_artifact_records(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     artifacts = metadata.get("artifacts") if isinstance(metadata.get("artifacts"), dict) else {}
@@ -308,6 +342,7 @@ def _operation_from_result(result: Any) -> dict[str, Any] | None:
     ).strip()
     operation_id = f"{scope}:{spec_id}" if scope else spec_id
     counts = _canonical_counts(canonical)
+    provenance = _execution_provenance(metadata)
     return {
         "name": str(getattr(result, "name", "")),
         "operation_id": operation_id,
@@ -317,11 +352,11 @@ def _operation_from_result(result: Any) -> dict[str, Any] | None:
             "skipped": counts["compat_skipped"],
             "total": counts["total"],
         },
-        "test_result": canonical,
+        "test_result": _attach_execution_provenance(canonical, provenance),
         "log_path": str(getattr(result, "log_path", "") or ""),
         "reports": _report_records(metadata),
         "build_artifacts": _build_artifact_records(metadata),
-        "provenance": _execution_provenance(metadata),
+        "provenance": provenance,
     }
 
 

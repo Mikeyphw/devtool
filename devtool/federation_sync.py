@@ -319,9 +319,7 @@ def _plan_bootstrap(parent: Any, locked: FederationSourceRepository, *, apply: b
 
     root.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".devtool-{name}-bootstrap-", dir=str(root.parent)))
-    shutil.rmtree(staging)
     try:
-        staging.mkdir()
         _git(staging, "init", "-q")
         _git(staging, "remote", "add", "origin", locator)
         _git(staging, "fetch", "--prune", "origin", timeout=120)
@@ -335,7 +333,8 @@ def _plan_bootstrap(parent: Any, locked: FederationSourceRepository, *, apply: b
             raise FederationSyncError(f"destination appeared during bootstrap: {root}")
         os.replace(staging, root)
     except Exception as exc:
-        shutil.rmtree(staging, ignore_errors=True)
+        # Retain the failed bootstrap staging checkout for recovery/audit instead
+        # of deleting provider-owned source evidence from the sync path.
         return FederationSyncAction(
             name, str(root), "bootstrap", "failed", mutation="clone-exact",
             reason=str(exc), commands=commands,

@@ -24,7 +24,7 @@ from devtool.distributed_provider_control import (
     ssh_provider_event_channel,
     typed_tool_argv_evidence,
 )
-from devtool.distributed_transport import DelegatedEventReceiver
+from devtool.distributed_transport import DelegatedEventReceiver, TransportProtocolCapabilities
 from devtool.federation_operations import request_federated_child_control
 from devtool.run_store import AttachmentDescriptor, RunCatalog
 from devtool.ssh_tmux_runner import SSHRunnerConfig
@@ -210,7 +210,13 @@ def test_ssh_metadata_and_detached_reconnect_use_canonical_run_journal(monkeypat
     assert metadata["dist_private_transport_hook_id"]
 
     events = [
-        _complete(RunStarted(run_id="child-run", command="check"), 1),
+        _complete(RunStarted(
+            run_id="child-run", command="check",
+            metadata={
+                "dist_transport_peer": "ssh-remote-devtool",
+                "dist_transport_capabilities": TransportProtocolCapabilities().as_dict(),
+            },
+        ), 1),
         _complete(NodeDiscovered(run_id="child-run", node_id="n", label="compile"), 2),
         _complete(RunFinished(run_id="child-run", status="succeeded", exit_code=0), 3),
     ]

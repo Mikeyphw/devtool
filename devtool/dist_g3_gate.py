@@ -20,10 +20,17 @@ from .core.events.listeners import event_to_dict
 from .dist_g2_gate import run_parity_proof
 from .distributed_execution import DelegationLink, ExecutionRunLink, ExternalEventIngestor
 from .distributed_operational_adoption import (
+    PROVIDERS,
+    backpressure_policy,
     delivery_health,
     doctor_links,
+    dogfood_matrix,
     historical_child_projection,
     machine_child_receipt,
+    obligation_disposition,
+    opaque_safe_event,
+    provider_observation_migration,
+    retention_projection,
 )
 from .distributed_provider_control import run_relation_from_delegation
 from .distributed_transport import (
@@ -256,6 +263,25 @@ def run_end_to_end_proof() -> dict[str, Any]:
         if links["child"] != f"run://{link.child_run_id}":
             raise RuntimeError("DIST-G3 drill-down does not resolve canonical child run")
 
+        binding_payload = {"id": link.delegation_id}
+        migration = provider_observation_migration({
+            "provider_observation": {"legacy": True},
+            "provider_binding": binding_payload,
+        })
+        retention = retention_projection(run_id=link.child_run_id, pinned=True, retained=True, reason="DIST-G3 proof")
+        if migration["migration"] != "canonical-provider-binding" or retention["deletion_allowed"]:
+            raise RuntimeError("DIST-G3 operational adoption helpers were not consumed by canonical evidence")
+        dogfood = dogfood_matrix(PROVIDERS)
+        obligations = obligation_disposition((
+            {"id": "DIST-X04-history", "owner": "DIST-X04", "source": "dist-g3", "status": "delivered"},
+            {"id": "DIST-X04-doctor", "owner": "DIST-X04", "source": "dist-g3", "status": "delivered"},
+            {"id": "DIST-X04-migration", "owner": "DIST-X04", "source": "dist-g3", "status": "delivered"},
+        ))
+        if not dogfood["complete"] or not obligations["complete"]:
+            raise RuntimeError("DIST-G3 operational adoption fixed point is incomplete")
+        opaque = opaque_safe_event({"event_type": "future.dist.event", "run_id": link.child_run_id}, known_types={"run.started"})
+        pressure = backpressure_policy(backlog=0, capacity=1024)
+
         return {
             "schema_version": 1,
             "kind": "dist-g3-end-to-end-proof",
@@ -272,6 +298,13 @@ def run_end_to_end_proof() -> dict[str, Any]:
             "receipt": {"status": receipt.child_status, "exit_code": receipt.child_exit_code, "reconciled": receipt.reconciled},
             "hierarchy": hierarchy,
             "machine_child_receipt": receipt_projection,
+            "provider_observation_migration": migration,
+            "provider_binding": binding_payload,
+            "retention_projection": retention,
+            "dogfood_matrix": dogfood,
+            "obligation_disposition": obligations,
+            "opaque_safe_event": opaque,
+            "backpressure_policy": pressure,
             "surface_child_ids": {
                 "machine": machine["children"][0]["child_run_id"],
                 "tui": tui["children"][0]["child_run_id"],

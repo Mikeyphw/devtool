@@ -513,6 +513,7 @@ def _chroot_wrapped_argv(destination: BootstrapDestination, request: BootstrapRe
         repo_root=workspace,
         env=os.environ,
         path_map=mappings,
+        dry_run=dry_run,
     )
     if len(wrapped) != 1:
         raise RuntimeError("Failed to construct chroot bootstrap command")

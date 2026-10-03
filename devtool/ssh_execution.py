@@ -12,6 +12,7 @@ missing Termux JDK/Gradle packages when policy permits.
 """
 
 from dataclasses import dataclass, field
+import json
 import os
 from pathlib import Path
 import re
@@ -50,7 +51,7 @@ class SSHExecutionPreparation:
     session_prefix: str = ""
 
     def metadata(self) -> dict[str, Any]:
-        return {
+        payload = {
             "ssh_profile": self.worker.profile,
             "ssh_worker_platform": self.worker.platform,
             "ssh_worker_architecture": self.worker.architecture,
@@ -75,7 +76,49 @@ class SSHExecutionPreparation:
             "ssh_capacity": dict(self.capacity),
             "ssh_run_id": self.run_id,
             "ssh_session_prefix": self.session_prefix,
+            # Actual destination inventory returned by the worker probe.  This
+            # is execution evidence, not controller-side planning state.
+            "ssh_worker_tools": dict(self.worker.tools),
+            "ssh_worker_versions": dict(self.worker.versions),
         }
+        try:
+            from .environment_lifecycle import destination_python_snapshot
+            python = str(self.worker.tools.get("python") or "").strip()
+            python_version = str(self.worker.versions.get("python") or "").strip()
+            if python and python_version:
+                snapshot = destination_python_snapshot(
+                    destination=self.worker.destination or self.worker.profile or "ssh",
+                    executable=python,
+                    version=python_version,
+                )
+                payload["destination_python_snapshot"] = snapshot.identity_payload()
+                payload["destination_python_snapshot_identity"] = snapshot.identity()
+        except (ValueError, TypeError):
+            pass
+        go_env = self.toolchain.get("go_environment")
+        if isinstance(go_env, dict):
+            try:
+                from .environment_lifecycle import GoTarget, destination_go_snapshot
+                go = str(self.toolchain.get("go") or self.worker.tools.get("go") or "").strip()
+                version = str(self.toolchain.get("go_version") or self.worker.versions.get("go") or "").strip()
+                if go and version and go_env.get("GOOS") and go_env.get("GOARCH"):
+                    target = GoTarget(
+                        str(go_env.get("GOOS")), str(go_env.get("GOARCH")),
+                        str(go_env.get("CGO_ENABLED") or "0") == "1",
+                        str(go_env.get("CC") or "") or None,
+                    )
+                    snapshot = destination_go_snapshot(
+                        destination=self.worker.destination or self.worker.profile or "ssh",
+                        executable=go,
+                        version=version,
+                        target=target,
+                        env={str(k): str(v) for k, v in go_env.items()},
+                    )
+                    payload["destination_go_snapshot"] = snapshot.identity_payload()
+                    payload["destination_go_snapshot_identity"] = snapshot.identity()
+            except (ValueError, TypeError):
+                pass
+        return payload
 
 
 def _external_specs(specs: Iterable[Any]) -> list[Any]:
@@ -275,8 +318,24 @@ def ensure_remote_toolchain(
         remote_version = str(worker.versions.get("go") or "").strip()
         if not remote_go:
             raise ValueError("SSH Go worker does not provide a usable go executable; remote Go execution is not qualified")
+        go_environment: dict[str, str] = {}
+        if not dry_run:
+            probe = _run_remote(
+                config,
+                shlex.quote(remote_go) + " env -json GOOS GOARCH CGO_ENABLED CC GOROOT GOCACHE GOMODCACHE",
+                timeout=30.0,
+            )
+            if probe.returncode != 0:
+                detail = (probe.stderr or probe.stdout or "").strip()
+                raise ValueError(f"SSH Go destination environment probe failed: {detail or probe.returncode}")
+            try:
+                parsed = json.loads(probe.stdout or "{}")
+            except json.JSONDecodeError as exc:
+                raise ValueError("SSH Go destination environment probe returned invalid JSON") from exc
+            go_environment = {str(k): str(v) for k, v in parsed.items() if v not in (None, "")}
         return {
             "ok": True, "kind": "go", "go": remote_go, "go_version": remote_version,
+            "go_environment": go_environment,
             "persistent_caches": ["$HOME/.cache/go-build", "$HOME/go/pkg/mod"],
             "detail": f"Go remote toolchain ready: {remote_version or remote_go}",
         }

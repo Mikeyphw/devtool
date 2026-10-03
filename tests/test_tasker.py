@@ -100,6 +100,40 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertFalse((Path(tmp) / "runs" / "shared-run.json").exists())
 
 
+    def test_reset_run_files_uses_life_cleanup_for_stale_hud_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            state = root / "hud"
+            state.mkdir()
+            for name in ("state.json", "latest_event.json", "notification.json", "events.jsonl"):
+                (state / name).write_text("stale", encoding="utf-8")
+            (state / "events").mkdir()
+            (state / "events" / "old.json").write_text("{}", encoding="utf-8")
+            (state / "runs").mkdir()
+            (state / "runs" / "old.json").write_text("{}", encoding="utf-8")
+            sink = TaskerProgressSink(
+                directory=state,
+                command="validate",
+                repo_root=str(repo),
+                repo_name="demo",
+                enabled=True,
+                run_id="tasker-life",
+            )
+
+            sink.reset_run_files()
+
+            self.assertFalse((state / "state.json").exists())
+            self.assertFalse((state / "latest_event.json").exists())
+            self.assertFalse((state / "notification.json").exists())
+            self.assertFalse((state / "events.jsonl").exists())
+            self.assertEqual(list((state / "events").iterdir()), [])
+            self.assertEqual(list((state / "runs").iterdir()), [])
+            receipts = list((repo / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+            self.assertTrue(receipts)
+
+
     def test_sink_persists_per_run_overlay_preference(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             sink = TaskerProgressSink(

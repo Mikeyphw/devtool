@@ -79,6 +79,9 @@ from .repository_pack import (
     RepositoryPackCompression, RepositoryPackMode, RepositoryPackRequest,
     create_repository_pack, plan_repository_pack,
 )
+from .repository_pack_registry import (
+    list_repository_packs, prune_repository_packs, repository_pack_status, set_repository_pack_pin,
+)
 from .api_output import extract_universal_json_flag, run_json_invocation
 from .core import configure_logging, finalize_execution_run
 from .core.events import BuildStarted, OverlayApplied, configure_event_console, publish_event
@@ -4201,17 +4204,49 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
         details = "; ".join(f"{item.name}: {item.detail}" for item in failures)
         raise SystemExit(f"Execution environment preflight failed ({plan.effective}): {details}")
 
+    def _materialize_backend_signing(values: list[CommandSpec], backend: str) -> list[CommandSpec]:
+        """Resolve Android signing secrets only when a protected wrapper owns them.
+
+        The returned specs are transient: the destination wrapper must strip
+        the sensitive env values and mark them staged before they can reach
+        ``run_specs`` or any durable execution surface.
+        """
+        if bool(getattr(args, "dry_run", False)):
+            return values
+        from .android.signing import SIGNING_ENV_KEYS, signing_environment_for_protected_backend
+        materialized: list[CommandSpec] = []
+        for spec in values:
+            metadata = dict(spec.metadata or {})
+            if not bool(metadata.get("android_signing_required")):
+                materialized.append(spec)
+                continue
+            base = dict(os.environ)
+            base.update(config.env)
+            base.update(spec.env)
+            resolved = signing_environment_for_protected_backend(
+                config, metadata, env=base, backend=backend,
+            )
+            secret_env = {key: resolved[key] for key in SIGNING_ENV_KEYS if key in resolved}
+            transient_env = dict(spec.env)
+            transient_env.update(secret_env)
+            metadata["android_signing_backend_secret_pending"] = True
+            metadata["android_signing_secret_transport_backend"] = backend
+            materialized.append(replace(spec, env=transient_env, metadata=metadata))
+        return materialized
+
     if plan.uses_chroot and plan.current != EXECUTION_CHROOT:
         host_specs = [spec for spec in specs if str(spec.metadata.get("execution_environment") or "") == "android-device"]
         chroot_specs = [spec for spec in specs if spec not in host_specs]
         if plan.current == EXECUTION_NATIVE_TERMUX:
             from .termux_chroot_runner import wrap_specs_for_termux_host_chroot
 
+            chroot_specs = _materialize_backend_signing(chroot_specs, "termux-host-chroot")
             chroot_specs = wrap_specs_for_termux_host_chroot(
                 chroot_specs,
                 plan.chroot_name,
                 repo_root=config.repo_root,
                 path_map=[mapping.as_tuple() for mapping in plan.path_map],
+                dry_run=bool(getattr(args, "dry_run", False)),
             )
         else:
             # preflight_execution rejects this path. Keep the branch defensive
@@ -4236,6 +4271,7 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
         from .proot_distro_runner import resolve_proot_config, wrap_specs_for_proot_distro
         try:
             proot_config = resolve_proot_config(config, args)
+            specs = _materialize_backend_signing(specs, "proot-distro")
             specs = wrap_specs_for_proot_distro(
                 specs, proot_config, repo_root=config.repo_root, dry_run=bool(getattr(args, "dry_run", False)),
                 project_env=config.env,
@@ -4263,6 +4299,8 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
         if not isinstance(ssh_config, SSHRunnerConfig):
             raise SystemExit("SSH command execution was selected without resolved SSH connection settings.")
         try:
+            signing_backend = "ssh-proot-oci" if ssh_config.execution_provider == "ssh-proot-oci" else "ssh-command"
+            specs = _materialize_backend_signing(specs, signing_backend)
             specs = wrap_specs_for_ssh_commands(
                 specs,
                 ssh_config,
@@ -5410,6 +5448,7 @@ def _finalize_validation_session(
             results,
             artifact=final_args.artifact,
             delete_on_failure=final_args.delete_artifact_on_failure,
+            repo_root=history_root,
         )
         if cleanup is not None:
             if cleanup.returncode != 0:
@@ -7635,6 +7674,11 @@ def _finalize_cli_run_instance(args: argparse.Namespace, run_id: str, *, status:
                 row["execution_attachment_refs"] = refs
                 row["execution_projection_dir"] = str(execution_dir)
                 row["execution_history_path"] = str(history_path) if history_path.is_file() else ""
+            if history_path.is_file():
+                from .execution_scheduler_truth import source_proof_refs_from_history
+                source_refs = source_proof_refs_from_history(history_path)
+                if source_refs:
+                    row["reuse_source_proof_refs"] = list(source_refs)
         except Exception as attach_exc:
             row["execution_attachment_warning"] = f"{type(attach_exc).__name__}: {attach_exc}"
         catalog.add_run(row)
@@ -10194,6 +10238,7 @@ def _run_sequential_overlays(
                 all_results,
                 artifact=getattr(args, "artifact", ""),
                 delete_on_failure=delete_on_failure,
+                repo_root=config.repo_root,
             )
             if cleanup is not None:
                 from .cleanup_lifecycle import preserve_primary_lifecycle_failure
@@ -10364,6 +10409,7 @@ def _delete_original_artifact_after_apply(
     *,
     artifact: str = "",
     delete_on_failure: bool = False,
+    repo_root: str | Path | None = None,
 ) -> OperationResult | None:
     """Delete the source artifact after success, or after failure when requested."""
     failed = any(result.returncode != 0 for result in results)
@@ -10382,45 +10428,126 @@ def _delete_original_artifact_after_apply(
     if not artifact_paths:
         return None
 
-    started = datetime.now(timezone.utc)
-    start_ts = started.timestamp()
-    removed: list[str] = []
-    errors: list[str] = []
+    start_ts = datetime.now(timezone.utc).timestamp()
     reason = "after failed apply" if failed or rolled_back else "after successful apply"
+    root = Path(repo_root or Path.cwd()).expanduser().resolve(strict=False)
+    candidates: list[Path] = []
+    for raw_path in artifact_paths:
+        path = Path(raw_path)
+        for candidate in _artifact_paths_for_cleanup(path):
+            resolved = candidate.expanduser().resolve(strict=False)
+            if resolved not in candidates:
+                candidates.append(resolved)
+    if not candidates:
+        return None
+    existing_candidates = [path for path in candidates if path.exists() or path.is_symlink()]
+    if not existing_candidates:
+        return OperationResult(
+            "artifact-cleanup", ["cleanup-life", *artifact_paths], 0,
+            datetime.now(timezone.utc).timestamp() - start_ts,
+            "Original artifact cleanup skipped; artifact(s) were already absent.", [],
+            metadata={"cleanup_authority": "LIFE", "cleanup_status": "no-op"},
+        )
+
     try:
-        for raw_path in artifact_paths:
-            path = Path(raw_path)
-            for candidate in _artifact_paths_for_cleanup(path):
-                try:
-                    if candidate.exists() or candidate.is_symlink():
-                        candidate.unlink()
-                        removed.append(str(candidate))
-                except Exception as exc:
-                    errors.append(f"{candidate}: {type(exc).__name__}: {exc}")
-        if errors:
+        from .cleanup_lifecycle import (
+            CleanupScope,
+            GeneratedOutputDescriptor,
+            apply_cleanup_plan,
+            build_cleanup_ownership_view,
+            compile_cleanup_plan,
+            persist_cleanup_receipt,
+        )
+
+        descriptors = [
+            GeneratedOutputDescriptor.create(
+                candidate,
+                owner="artifact-apply-source",
+                provider="artifact-apply",
+                category="consumed-artifact-source",
+                producer_id=f"apply-source:{candidate.name}",
+                lifecycle="transient",
+                rebuild_cost="unknown",
+                scope=CleanupScope.PROJECT,
+                managed=True,
+                published=False,
+                provenance={
+                    "delete_reason": reason,
+                    "explicit_apply_cleanup": True,
+                    "source_artifact": str(candidate),
+                },
+            )
+            for candidate in existing_candidates
+        ]
+        ownership = build_cleanup_ownership_view(
+            root,
+            descriptors,
+            policy_generation="life-r03b-artifact-source-cleanup-v1",
+            strict_authorities=True,
+        )
+        plan = compile_cleanup_plan(ownership, scope=CleanupScope.PROJECT, destination="local")
+        receipt = apply_cleanup_plan(plan, ownership=ownership, confirm=True)
+        receipt_path = persist_cleanup_receipt(
+            root, receipt, run_id=str(os.environ.get("DEVTOOL_RUN_ID") or ""),
+        )
+        removed = [row.path for row in receipt.results if row.status == "applied"]
+        protected = [
+            f"{row.path}: {row.reason or row.status}"
+            for row in receipt.results
+            if row.status not in {"applied", "planned"}
+        ]
+        failures = [row for row in receipt.results if row.status == "failed"]
+        expected_existing = {str(path) for path in existing_candidates}
+        deleted_existing = set(removed)
+        incomplete = sorted(expected_existing - deleted_existing)
+        if failures or incomplete:
+            details = protected or [str(path) for path in incomplete]
             return OperationResult(
                 "artifact-cleanup",
-                ["delete", *artifact_paths],
+                ["cleanup-life", *artifact_paths],
                 1,
                 datetime.now(timezone.utc).timestamp() - start_ts,
-                f"Failed to delete original artifact(s) {reason}.\n" + "\n".join(errors),
+                f"Canonical LIFE cleanup refused or failed to delete original artifact(s) {reason}.\n"
+                + "\n".join(details),
                 [],
                 failure_kind="artifact_cleanup_failure",
+                metadata={
+                    "cleanup_authority": "LIFE",
+                    "cleanup_receipt_id": receipt.receipt_id,
+                    "cleanup_receipt_path": str(receipt_path),
+                    "cleanup_status": receipt.status,
+                },
             )
         if not removed:
             output = "Original artifact cleanup skipped; artifact(s) were already absent."
         else:
-            output = f"Deleted original artifact(s) {reason}.\n" + "\n".join(f"removed: {item}" for item in removed)
-        return OperationResult("artifact-cleanup", ["delete", *artifact_paths], 0, datetime.now(timezone.utc).timestamp() - start_ts, output, [])
+            output = f"Deleted original artifact(s) {reason} through canonical LIFE cleanup.\n" + "\n".join(
+                f"removed: {item}" for item in removed
+            )
+        return OperationResult(
+            "artifact-cleanup",
+            ["cleanup-life", *artifact_paths],
+            0,
+            datetime.now(timezone.utc).timestamp() - start_ts,
+            output,
+            [],
+            metadata={
+                "cleanup_authority": "LIFE",
+                "cleanup_receipt_id": receipt.receipt_id,
+                "cleanup_receipt_path": str(receipt_path),
+                "cleanup_status": receipt.status,
+            },
+        )
     except BaseException as exc:
         return OperationResult(
             "artifact-cleanup",
-            ["delete", str(path)],
+            ["cleanup-life", *artifact_paths],
             1,
             datetime.now(timezone.utc).timestamp() - start_ts,
-            f"Failed to delete original artifact(s) {reason}.\n{type(exc).__name__}: {exc}",
+            f"Failed canonical LIFE cleanup of original artifact(s) {reason}.\n{type(exc).__name__}: {exc}",
             [],
             failure_kind="artifact_cleanup_failure",
+            metadata={"cleanup_authority": "LIFE"},
         )
 
 
@@ -14838,10 +14965,41 @@ def _main_after_parse(
                 or bool(getattr(args, "cross_app", False))
             )
             if advanced_requested:
-                message = "ANDROID-X04 advanced matrix/shard/retry execution is EXO-planned; use --plan to inspect it before an EXO execution owner consumes the child nodes"
-                if output_format == "json": print(json.dumps({"schema_version": 1, "ok": False, "error": message}, indent=2))
-                else: print(f"Error: {message}", file=sys.stderr)
-                return 1
+                from .android.cli import android_advanced_instrumentation_payload
+                try:
+                    payload = android_advanced_instrumentation_payload(
+                        instrumentation_config,
+                        classes=list(getattr(args, "instrumentation_classes", []) or []),
+                        methods=list(getattr(args, "instrumentation_methods", []) or []),
+                        annotations=list(getattr(args, "instrumentation_annotations", []) or []),
+                        not_annotations=list(getattr(args, "instrumentation_not_annotations", []) or []),
+                        size=str(getattr(args, "instrumentation_size", "") or ""),
+                        runner_args={str(item).split("=", 1)[0]: str(item).split("=", 1)[1] for item in list(getattr(args, "instrumentation_runner_args", []) or []) if "=" in str(item)},
+                        shard_count=max(1, int(getattr(args, "shards", 1) or 1)),
+                        retry_failed_attempts=max(1, int(getattr(args, "retry_failed_attempts", 1) or 1)),
+                        quarantine=list(getattr(args, "quarantine", []) or []),
+                        orchestrator_qualification_id=str(getattr(args, "orchestrator_qualification", "") or ""),
+                        orchestrator_target=str(getattr(args, "orchestrator_target", "") or ""),
+                        ui_automator=bool(getattr(args, "ui_automator", False)),
+                        cross_app=bool(getattr(args, "cross_app", False)),
+                        skip_build=bool(getattr(args, "skip_build", False)),
+                    )
+                except Exception as exc:
+                    if output_format == "json": print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2))
+                    else: print(f"Error: {exc}", file=sys.stderr)
+                    return 1
+                if output_format == "json":
+                    print(json.dumps(payload, indent=2, ensure_ascii=False))
+                else:
+                    evidence = payload.get("evidence") or {}
+                    render_status_table([
+                        ("status", "passed" if payload.get("ok") else "failed"),
+                        ("plan", str((payload.get("plan") or {}).get("plan_id") or "-")),
+                        ("children", str(len(evidence.get("children") or []))),
+                        ("spawned", str(evidence.get("process_spawned_children") or 0)),
+                        ("evidence", str(payload.get("evidence_attachment_id") or "-")),
+                    ])
+                return 0 if payload.get("ok") else 1
             try:
                 payload = android_instrumentation_payload(instrumentation_config, classes=list(getattr(args, "instrumentation_classes", []) or []), methods=list(getattr(args, "instrumentation_methods", []) or []), annotations=list(getattr(args, "instrumentation_annotations", []) or []), not_annotations=list(getattr(args, "instrumentation_not_annotations", []) or []), size=str(getattr(args, "instrumentation_size", "") or ""), runner_args={str(item).split("=", 1)[0]: str(item).split("=", 1)[1] for item in list(getattr(args, "instrumentation_runner_args", []) or []) if "=" in str(item)}, skip_build=bool(getattr(args, "skip_build", False)))
             except Exception as exc:
@@ -15080,22 +15238,45 @@ def _main_after_parse(
         return 0 if plan.executable else 1
 
     if args.command == "repo-pack":
-        roots = tuple(str(Path(item).expanduser().resolve()) for item in (args.repositories or [args.repo or Path.cwd()]))
-        request = RepositoryPackRequest(
-            repositories=roots, output=str(args.output), mode=RepositoryPackMode(str(args.mode)),
-            compression=RepositoryPackCompression(str(args.compression)), include_git_bundle=bool(args.git_bundle),
-            commit=str(args.commit or ""), pin=bool(args.pin), retention=str(args.retention or "policy"),
-        )
+        repo = Path(args.repo or Path.cwd()).expanduser().resolve(strict=False)
+        action = str(getattr(args, "repo_pack_command", "") or "")
         try:
-            plan = plan_repository_pack(request)
-            payload = plan.as_dict() if args.repo_pack_command == "plan" else create_repository_pack(plan).as_dict()
+            if action in {"plan", "create"}:
+                roots = tuple(str(Path(item).expanduser().resolve()) for item in (args.repositories or [repo]))
+                request = RepositoryPackRequest(
+                    repositories=roots, output=str(args.output), mode=RepositoryPackMode(str(args.mode)),
+                    compression=RepositoryPackCompression(str(args.compression)), include_git_bundle=bool(args.git_bundle),
+                    commit=str(args.commit or ""), pin=bool(args.pin), retention=str(args.retention or "policy"),
+                )
+                plan = plan_repository_pack(request)
+                payload = plan.as_dict() if action == "plan" else create_repository_pack(plan).as_dict()
+            elif action in {"list", "ls"}:
+                payload = {"items": list_repository_packs(repo, include_tombstoned=bool(getattr(args, "all", False)))}
+            elif action in {"status", "show"}:
+                payload = repository_pack_status(repo, str(args.selector))
+            elif action in {"pin", "unpin"}:
+                payload = set_repository_pack_pin(repo, str(args.selector), pin=action == "pin")
+            elif action == "prune":
+                payload = prune_repository_packs(
+                    repo, older_than_days=float(getattr(args, "older_than_days", 30.0) or 0.0),
+                    dry_run=bool(getattr(args, "dry_run", False)),
+                )
+            else:
+                raise ValueError(f"unsupported repo-pack action {action!r}")
         except Exception as exc:
             print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
             return 2
         if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
-            render_status_table([(str(k), str(v)) for k, v in payload.items() if k in {"request_id", "plan_id", "pack_id", "receipt_id", "output", "sha256", "size", "verified", "published"}])
+            if action in {"list", "ls"}:
+                rows = [
+                    (str(item.get("pack_id") or "-"), f"{item.get('state') or 'published'} | {item.get('retention') or 'policy'} | {'pinned' if item.get('pin') else 'unpinned'} | {item.get('output') or '-'}")
+                    for item in payload.get("items", [])
+                ]
+                render_status_table(rows or [("repository-packs", "none")])
+            else:
+                render_status_table([(str(k), str(v)) for k, v in payload.items() if k in {"request_id", "plan_id", "pack_id", "receipt_id", "output", "sha256", "size", "verified", "published", "exists", "state", "pin", "retention", "status", "remaining"}])
         return 0
 
     if args.command == "signing-identity":
@@ -15949,6 +16130,7 @@ def _main_after_parse(
                         results,
                         artifact=getattr(args, "artifact", ""),
                         delete_on_failure=delete_on_failure,
+                        repo_root=config.repo_root,
                     )
                     if cleanup_result is not None:
                         from .cleanup_lifecycle import preserve_primary_lifecycle_failure

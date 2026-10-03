@@ -53,6 +53,18 @@ def _config(root: Path, **go_options: object) -> ProjectConfig:
     )
 
 
+def test_go_build_driver_has_no_recursive_shell_delete(tmp_path: Path) -> None:
+    _module(tmp_path)
+    _main(tmp_path, "cmd/demo")
+    spec = GoRunner().build_specs(_config(tmp_path), "build")[0]
+    script = spec.argv[2]
+
+    assert "rm -rf" not in script
+    assert "Go publish staging path already exists; refusing destructive replacement" in script
+    assert "cleanup_devtool_go_temp" in script
+    assert "rmdir" in script
+
+
 def test_go_build_discovers_main_packages_and_writes_real_executables(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path)
     _main(tmp_path, "cmd/foo")

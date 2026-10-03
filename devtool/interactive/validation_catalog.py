@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 import copy
 from pathlib import Path
 import re
-import subprocess
 from typing import Any
 
 from ..config import load_project_config
@@ -26,6 +25,7 @@ class ValidationCatalog:
     configured_tasks: list[str] = field(default_factory=list)
     detected_tasks: list[str] = field(default_factory=list)
     task_error: str = ""
+    task_probe: dict[str, Any] = field(default_factory=dict)
     pytest_tests: list[str] = field(default_factory=list)
     pytest_discovery_source: str = ""
     pytest_discovery_error: str = ""
@@ -96,8 +96,9 @@ def build_catalog(
     detected = static_gradle_tasks(config.repo_root)
     runtime: list[str] = []
     task_error = ""
+    task_probe: dict[str, Any] = {}
     if include_runtime_tasks and config.kind in {"android", "gradle"}:
-        runtime, task_error = runtime_gradle_tasks(config)
+        runtime, task_error, task_probe = runtime_gradle_task_probe(config)
     tasks = sorted(dict.fromkeys([*configured, *detected, *runtime]))
 
     pytest_tests: list[str] = []
@@ -125,6 +126,7 @@ def build_catalog(
         configured_tasks=configured,
         detected_tasks=detected,
         task_error=task_error,
+        task_probe=task_probe,
         pytest_tests=pytest_tests,
         pytest_discovery_source=pytest_discovery_source,
         pytest_discovery_error=pytest_discovery_error,
@@ -236,25 +238,45 @@ def static_gradle_tasks(repo_root: Path) -> list[str]:
     return sorted(dict.fromkeys(task for task in tasks if task))
 
 
-def runtime_gradle_tasks(config: ProjectConfig) -> tuple[list[str], str]:
+def runtime_gradle_task_probe(config: ProjectConfig) -> tuple[list[str], str, dict[str, Any]]:
     root = Path(config.project_root).expanduser() if config.project_root else config.repo_root
     if not root.is_absolute():
         root = config.repo_root / root
     wrapper = root / "gradlew"
-    command = [str(wrapper), "tasks", "--all", "-q"] if wrapper.is_file() else ["gradle", "tasks", "--all", "-q"]
+    requested_launcher = "wrapper" if wrapper.is_file() else "system"
     try:
-        completed = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=45, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return [], str(exc)
+        from ..gradle_takeover import run_gradle_probe
+        completed, receipt = run_gradle_probe(
+            config, ["tasks", "--all", "-q"], cwd=root,
+            requested_launcher=requested_launcher, timeout=45,
+        )
+    except (OSError, TimeoutError) as exc:
+        return [], str(exc), {}
+    except Exception as exc:
+        return [], str(exc), {}
+    probe = {
+        "intent": "probe",
+        "receipt_id": receipt.receipt_id,
+        "launcher_identity": receipt.launcher_identity,
+        "destination_identity": receipt.destination_identity,
+        "configuration_identity": receipt.configuration_identity,
+        "returncode": int(completed.returncode),
+    }
     if completed.returncode != 0:
         message = (completed.stderr or completed.stdout).strip()
-        return [], message[-2000:]
+        return [], message[-2000:], probe
     tasks: list[str] = []
     for line in completed.stdout.splitlines():
         match = re.match(r"^([:\w.-]+)\s+-\s+", line.strip())
         if match:
             tasks.append(match.group(1))
-    return sorted(dict.fromkeys(tasks)), ""
+    return sorted(dict.fromkeys(tasks)), "", probe
+
+
+def runtime_gradle_tasks(config: ProjectConfig) -> tuple[list[str], str]:
+    """Compatibility projection for callers that do not need probe evidence."""
+    tasks, error, _probe = runtime_gradle_task_probe(config)
+    return tasks, error
 
 
 def dependency_closure(phases: list[dict[str, Any]], selected_names: list[str]) -> tuple[list[str], list[str]]:

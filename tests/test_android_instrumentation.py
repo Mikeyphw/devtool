@@ -227,136 +227,95 @@ INSTRUMENTATION_STATUS_CODE: -2
             with self.assertRaisesRegex(ValueError, "conflicts with variant-bound task"):
                 build_specs(config, "instrumentation")
 
-    def test_instrumentation_build_injects_native_aapt2_override(self) -> None:
+    def test_direct_module_without_canonical_flag_lowers_to_canonical_orchestrator(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            gradlew = root / "gradlew"
-            gradlew.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            gradlew.chmod(0o755)
-            app = root / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
-            test = root / "app" / "build" / "outputs" / "apk" / "androidTest" / "debug" / "app-debug-androidTest.apk"
-            app.parent.mkdir(parents=True)
-            test.parent.mkdir(parents=True)
-            app.write_bytes(b"app")
-            test.write_bytes(b"test")
-            calls: list[list[str]] = []
+            seen: dict[str, object] = {}
 
-            def fake_run(argv: list[str], *, check: bool = True):
-                calls.append(list(argv))
-                if "list" in argv and "instrumentation" in argv:
-                    return mock.Mock(returncode=0, stdout="instrumentation:demo.test/Runner (target=demo)\n", stderr="")
-                if "instrument" in argv:
-                    return mock.Mock(
-                        returncode=0,
-                        stdout="INSTRUMENTATION_STATUS: numtests=1\nINSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: 0\n",
-                        stderr="",
-                    )
-                return mock.Mock(returncode=0, stdout="", stderr="")
+            class FakeOps:
+                @classmethod
+                def from_config(cls, config):
+                    seen["config"] = config
+                    return object()
 
-            aapt2 = Path("/data/data/com.termux/files/usr/bin/aapt2")
-            with mock.patch("devtool.android_instrumentation._instrumentation_aapt2", return_value=aapt2), mock.patch(
-                "devtool.android_instrumentation._resolve_execution_serial", return_value=""
+            class FakeResult:
+                status = "passed"
+                reason = ""
+                failed = 0
+                returncode = 0
+                ok = True
+
+                def as_dict(self):
+                    return {"status": self.status, "ok": True, "failed": 0, "returncode": 0}
+
+            class FakeOrchestrator:
+                def __init__(self, ops, *, config, gradle_receipts):
+                    seen["ops"] = ops
+                    seen["orchestrator_config"] = config
+                    seen["gradle_receipts"] = gradle_receipts
+
+                def run(self, request):
+                    seen["request"] = request
+                    return FakeResult()
+
+            with mock.patch("devtool.android.device_ops.AndroidDeviceOperations", FakeOps), mock.patch(
+                "devtool.android.instrumentation.AndroidInstrumentationOrchestrator", FakeOrchestrator
             ), mock.patch(
-                "devtool.android_instrumentation._resolve_local_command", side_effect=lambda argv: list(argv)
+                "devtool.android.instrumentation.gradle_receipts_from_current_run", return_value=()
             ), mock.patch(
-                "devtool.android_instrumentation.run", side_effect=fake_run
+                "devtool.android_instrumentation.run", side_effect=AssertionError("legacy raw command path executed")
             ):
-                rc = android_instrumentation.main([str(root)])
+                rc = android_instrumentation.main([str(root), "--skip-build"])
 
             self.assertEqual(rc, 0)
-            build_command = calls[0]
-            self.assertIn(f"-Pandroid.aapt2FromMavenOverride={aapt2}", build_command)
-            self.assertIn(
-                "-Pandroid.sync.suppressAgpWarnings=UNSUPPORTED_PROJECT_OPTION_USE",
-                build_command,
-            )
-            self.assertEqual(sum(item.startswith("--console=") for item in build_command), 1)
+            self.assertIn("request", seen)
+            self.assertIs(seen["config"], seen["orchestrator_config"])
 
-    def test_failed_instrumentation_uninstalls_test_package_and_writes_report(self) -> None:
+    def test_canonical_compatibility_flag_is_not_required_for_direct_entrypoint(self) -> None:
+        parser = android_instrumentation.build_parser()
+        parsed = parser.parse_args(["."])
+        self.assertFalse(parsed.canonical)
+        source = Path(android_instrumentation.__file__).read_text(encoding="utf-8")
+        main_source = source[source.index("def main("):source.index("\n\nif __name__ == \"__main__\":")]
+        self.assertNotIn("if args.canonical:", main_source)
+        self.assertNotIn("_resolve_execution_serial(", main_source)
+        self.assertNotIn("_install(app_apk", main_source)
+        self.assertNotIn("run(command, check=False)", main_source)
+
+    def test_direct_entrypoint_failure_uses_orchestrator_failure_dimension(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            app = root / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
-            test = root / "app" / "build" / "outputs" / "apk" / "androidTest" / "debug" / "app-debug-androidTest.apk"
-            app.parent.mkdir(parents=True)
-            test.parent.mkdir(parents=True)
-            app.write_bytes(b"app")
-            test.write_bytes(b"test")
-            report = root / "instrumentation.json"
-            calls: list[list[str]] = []
 
-            def fake_run(argv: list[str], *, check: bool = True):
-                calls.append(list(argv))
-                if "list" in argv and "instrumentation" in argv:
-                    return mock.Mock(returncode=0, stdout="instrumentation:demo.test/Runner (target=demo)\n", stderr="")
-                if "instrument" in argv:
-                    return mock.Mock(
-                        returncode=1,
-                        stdout=(
-                            "INSTRUMENTATION_STATUS: numtests=1\n"
-                            "INSTRUMENTATION_STATUS: class=demo.UiTest\n"
-                            "INSTRUMENTATION_STATUS: test=fails\n"
-                            "INSTRUMENTATION_STATUS_CODE: -2\n"
-                        ),
-                        stderr="",
-                    )
-                return mock.Mock(returncode=0, stdout="", stderr="")
+            class FakeOps:
+                @classmethod
+                def from_config(cls, config):
+                    return object()
 
-            with mock.patch(
-                "devtool.android_instrumentation._resolve_execution_serial", return_value=""
+            class FakeResult:
+                status = "failed"
+                reason = "device readiness failed"
+                failed = 0
+                returncode = 7
+                ok = False
+
+                def as_dict(self):
+                    return {
+                        "status": self.status, "reason": self.reason, "failed": 0,
+                        "executed": 0, "returncode": self.returncode, "ok": False,
+                    }
+
+            class FakeOrchestrator:
+                def __init__(self, *args, **kwargs):
+                    pass
+
+                def run(self, request):
+                    return FakeResult()
+
+            with mock.patch("devtool.android.device_ops.AndroidDeviceOperations", FakeOps), mock.patch(
+                "devtool.android.instrumentation.AndroidInstrumentationOrchestrator", FakeOrchestrator
             ), mock.patch(
-                "devtool.android_instrumentation._resolve_local_command", side_effect=lambda argv: list(argv)
-            ), mock.patch("devtool.android_instrumentation.run", side_effect=fake_run):
-                rc = android_instrumentation.main([str(root), "--skip-build", "--report", str(report)])
+                "devtool.android.instrumentation.gradle_receipts_from_current_run", return_value=()
+            ):
+                rc = android_instrumentation.main([str(root), "--skip-build", "--policy", "required"])
 
-            self.assertEqual(rc, 1)
-            self.assertTrue(report.is_file())
-            self.assertTrue(any(call[-2:] == ["uninstall", "demo.test"] for call in calls))
-
-    def test_instrumentation_error_writes_structured_report(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            report = root / "instrumentation.json"
-            with mock.patch("devtool.android_instrumentation._resolve_execution_serial", return_value=""):
-                rc = android_instrumentation.main([str(root), "--skip-build", "--report", str(report)])
-
-            self.assertEqual(rc, 1)
-            self.assertTrue(report.is_file())
-            self.assertIn('"error"', report.read_text(encoding="utf-8"))
-
-    def test_configured_runner_cleanup_runs_when_setup_fails_after_install(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            app = root / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
-            test = root / "app" / "build" / "outputs" / "apk" / "androidTest" / "debug" / "app-debug-androidTest.apk"
-            app.parent.mkdir(parents=True)
-            test.parent.mkdir(parents=True)
-            app.write_bytes(b"app")
-            test.write_bytes(b"test")
-            report = root / "instrumentation.json"
-            calls: list[list[str]] = []
-
-            def fake_run(argv: list[str], *, check: bool = True):
-                calls.append(list(argv))
-                if argv and str(argv[-1]).endswith("app-debug-androidTest.apk"):
-                    raise android_instrumentation.InstrumentationError("test install failed")
-                return mock.Mock(returncode=0, stdout="", stderr="")
-
-            with mock.patch(
-                "devtool.android_instrumentation._resolve_execution_serial", return_value=""
-            ), mock.patch(
-                "devtool.android_instrumentation._resolve_local_command", side_effect=lambda argv: list(argv)
-            ), mock.patch("devtool.android_instrumentation.run", side_effect=fake_run):
-                rc = android_instrumentation.main([
-                    str(root),
-                    "--skip-build",
-                    "--report",
-                    str(report),
-                    "--runner",
-                    "demo.test/Runner",
-                ])
-
-            self.assertEqual(rc, 1)
-            self.assertTrue(report.is_file())
-            payload = json.loads(report.read_text(encoding="utf-8"))
-            self.assertEqual(payload["test_package"], "demo.test")
-            self.assertTrue(any(call[-2:] == ["uninstall", "demo.test"] for call in calls))
+            self.assertEqual(rc, 7)

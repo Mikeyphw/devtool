@@ -92,7 +92,9 @@ def test_return_fragment_is_resumable_and_does_not_replace_build_rc(tmp_path: Pa
     assert "--delay-updates" in fragment
     assert "return_rc=$?" in fragment
     assert 'if [ "$rc" -eq 125 ]' in fragment
-    assert "rm -rf --" in fragment
+    assert "rm -rf --" not in fragment
+    assert "blocked-existing-local-mirror" in fragment
+    assert "Run SSH return recovery so LIFE/RUN/RER can revalidate" in fragment
     assert "transfer.status.tmp" in fragment
     assert "mv -f --" in fragment
     assert "transfer.status" in fragment
@@ -335,6 +337,44 @@ def test_recovery_clears_stale_bundle_files_before_retry(tmp_path: Path, monkeyp
     assert result["ok"] is True
     assert not stale.exists()
     assert repo.is_dir()
+    row = result["results"][0]
+    assert row["local_mirror_cleanup_authority"] == "LIFE"
+    assert Path(row["local_mirror_cleanup_receipt"]).is_file()
+
+
+def test_recovery_retains_run_referenced_local_mirror_instead_of_direct_rmtree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from devtool import ssh_worker
+    from devtool.core_runtime import private_run_root
+    from devtool.run_store import AttachmentDescriptor, RunCatalog
+
+    root = tmp_path / ".devtool" / "ssh-return" / "run-protected" / "session"
+    repo = root / "repo"
+    protected = repo / "build" / "outputs" / "app.apk"
+    protected.parent.mkdir(parents=True)
+    protected.write_bytes(b"referenced")
+    _repo_name, workspace_id = ssh_workspace.repository_identity(tmp_path)
+    remote_root = f"/home/u/.cache/devtool/workspaces/{workspace_id}"
+    (root / "manifest.json").write_text(json.dumps({
+        "kind":"ssh-return-bundle", "destination":"u0_a123@tablet", "remote_root":remote_root,
+        "local_return_repo_root":str(repo), "patterns":["**/build/outputs/***"],
+        "run_id":"run-protected", "session":"session",
+    }), encoding="utf-8")
+    catalog = RunCatalog.open(private_run_root(tmp_path))
+    catalog.add_run({"schema_version": 3, "run_id": "durable-run", "status": "succeeded"})
+    catalog.add_attachment(AttachmentDescriptor.from_file(
+        run_id="durable-run", path=protected, kind="artifact", privacy="private"
+    ))
+    catalog.save()
+    probe = _probe(); probe.home = "/home/u"
+    monkeypatch.setattr(ssh_worker, "probe_worker", lambda config: probe)
+    monkeypatch.setattr(ssh_returns, "_local_rsync", lambda: "/usr/bin/rsync")
+
+    with pytest.raises(ValueError, match="SSH return local mirror cleanup was refused by LIFE authority"):
+        ssh_returns.recover_return_bundles(_cfg(), tmp_path, run_id="run-protected")
+
+    assert protected.is_file(), "RUN-referenced returned evidence must not be erased by recovery retry cleanup"
+    receipts = list((tmp_path / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+    assert receipts
 
 
 def test_recovery_reconciles_runstore_provenance_without_changing_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

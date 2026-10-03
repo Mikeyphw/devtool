@@ -22,6 +22,7 @@ from devtool.android.signing import (
     tasks_require_release_signing,
 )
 from devtool.android_integration import android_builder_arguments_for_tasks
+from devtool.artifact_trust import SecretProviderRef, SigningIdentityId, SigningIdentityRecord, SigningIdentityRegistry
 from devtool.cli import build_parser
 from devtool.models import CommandSpec, ProjectConfig
 from devtool.termux_toolchains import RuntimeIdentity
@@ -38,6 +39,30 @@ def _config(root: Path, android: dict, *, env: dict[str, str] | None = None) -> 
         runner_options={"android": android, "gradle": {"structured_events": False}},
         env=dict(env or {}),
     )
+
+
+def _register_android_signing_identity(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    keystore: Path,
+    *,
+    secret_kind: str = "local",
+    secret_reference: str = "APP_STORE",
+    identity_id: str = "android-release",
+) -> str:
+    registry = root / "signing-identities.json"
+    monkeypatch.setenv("DEVTOOL_SIGNING_IDENTITY_REGISTRY", str(registry))
+    SigningIdentityRegistry(registry).register(SigningIdentityRecord(
+        identity_id=SigningIdentityId(identity_id),
+        provider="android-pkcs12",
+        key_reference=str(keystore),
+        alias="release",
+        certificate_sha256="a" * 64,
+        purposes=("android-signing",),
+        variants=("release",),
+        secret_provider=SecretProviderRef(secret_kind, secret_reference),
+    ))
+    return identity_id
 
 
 
@@ -68,13 +93,13 @@ def test_release_signing_is_task_scoped() -> None:
 def test_devtool_signing_init_script_never_persists_password_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     keystore = tmp_path / "release.p12"
     keystore.write_bytes(b"placeholder")
+    _register_android_signing_identity(tmp_path, monkeypatch, keystore)
     runtime = tmp_path / "runtime"
     monkeypatch.setenv("DEVTOOL_ANDROID_SIGNING_RUNTIME_DIR", str(runtime))
     config = _config(tmp_path, {
         "signing": {"release": {
             "mode": "devtool", "policy": "release-required",
-            "keystore": str(keystore), "alias": "release",
-            "store_password_env": "APP_STORE", "key_password_env": "APP_KEY",
+            "identity_id": "android-release", "key_password_env": "APP_KEY",
         }}
     })
     env = {"APP_STORE": "super-secret-store", "APP_KEY": "super-secret-key"}
@@ -92,11 +117,12 @@ def test_devtool_signing_init_script_never_persists_password_values(tmp_path: Pa
 def test_builder_only_injects_signing_for_release_producer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     keystore = tmp_path / "release.p12"
     keystore.write_bytes(b"placeholder")
+    _register_android_signing_identity(tmp_path, monkeypatch, keystore)
     monkeypatch.setenv("DEVTOOL_ANDROID_SIGNING_RUNTIME_DIR", str(tmp_path / "runtime"))
     config = _config(tmp_path, {
         "signing": {"release": {
-            "mode": "devtool", "policy": "release-required", "keystore": str(keystore), "alias": "release",
-            "store_password_env": "APP_STORE", "key_password_env": "APP_KEY",
+            "mode": "devtool", "policy": "release-required", "identity_id": "android-release",
+            "key_password_env": "APP_KEY",
         }}
     })
     monkeypatch.setenv("APP_STORE", "one")
@@ -110,11 +136,12 @@ def test_builder_only_injects_signing_for_release_producer(tmp_path: Path, monke
 def test_missing_release_secret_fails_before_gradle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     keystore = tmp_path / "release.p12"
     keystore.write_bytes(b"placeholder")
+    _register_android_signing_identity(tmp_path, monkeypatch, keystore, secret_reference="MISSING_STORE")
     monkeypatch.setenv("DEVTOOL_ANDROID_SIGNING_RUNTIME_DIR", str(tmp_path / "runtime"))
     config = _config(tmp_path, {
         "signing": {"release": {
-            "mode": "devtool", "policy": "release-required", "keystore": str(keystore), "alias": "release",
-            "store_password_env": "MISSING_STORE", "key_password_env": "MISSING_KEY",
+            "mode": "devtool", "policy": "release-required", "identity_id": "android-release",
+            "key_password_env": "MISSING_KEY",
         }}
     })
     with pytest.raises(Exception, match="MISSING_STORE"):
@@ -312,9 +339,9 @@ def test_fd_secret_is_not_consumed_by_signing_init_preflight(tmp_path: Path, mon
         os.close(write_fd)
         write_fd = -1
         monkeypatch.setenv("DEVTOOL_ANDROID_SIGNING_RUNTIME_DIR", str(tmp_path / "runtime"))
+        _register_android_signing_identity(tmp_path, monkeypatch, keystore, secret_kind="fd", secret_reference=str(read_fd))
         config = _config(tmp_path, {"signing": {"release": {
-            "mode": "devtool", "policy": "release-required", "keystore": str(keystore), "alias": "release",
-            "store_password_fd": read_fd,
+            "mode": "devtool", "policy": "release-required", "identity_id": "android-release",
         }}})
         # Staging validates only the fd descriptor; it must not consume the pipe.
         assert stage_gradle_signing_init_script(config, [":app:assembleRelease"], env={}) is not None
@@ -333,14 +360,15 @@ def test_planned_android_spec_never_contains_signing_secret_values(tmp_path: Pat
     _gradle_project(tmp_path)
     keystore = tmp_path / "release.p12"
     keystore.write_bytes(b"placeholder")
+    _register_android_signing_identity(tmp_path, monkeypatch, keystore)
     monkeypatch.setenv("DEVTOOL_ANDROID_SIGNING_RUNTIME_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("APP_STORE", "planned-store-secret")
     monkeypatch.setenv("APP_KEY", "planned-key-secret")
     config = _config(tmp_path, {
         "instrumentation": {"policy": "required"},
         "signing": {"release": {
-            "mode": "devtool", "policy": "release-required", "keystore": str(keystore), "alias": "release",
-            "store_password_env": "APP_STORE", "key_password_env": "APP_KEY",
+            "mode": "devtool", "policy": "release-required", "identity_id": "android-release",
+            "key_password_env": "APP_KEY",
         }},
     })
     config.runner_options["test_selection"] = {"instrumented": True}
@@ -358,11 +386,12 @@ def test_planned_android_spec_never_contains_signing_secret_values(tmp_path: Pat
 def test_signing_secrets_materialize_only_at_native_execution_boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     keystore = tmp_path / "release.p12"
     keystore.write_bytes(b"placeholder")
+    _register_android_signing_identity(tmp_path, monkeypatch, keystore)
     monkeypatch.setenv("APP_STORE", "runtime-store")
     monkeypatch.setenv("APP_KEY", "runtime-key")
     config = _config(tmp_path, {"signing": {"release": {
-        "mode": "devtool", "policy": "release-required", "keystore": str(keystore), "alias": "release",
-        "store_password_env": "APP_STORE", "key_password_env": "APP_KEY",
+        "mode": "devtool", "policy": "release-required", "identity_id": "android-release",
+        "key_password_env": "APP_KEY",
     }}})
     metadata = signing_plan_metadata(config, [":app:assembleRelease"], env=os.environ)
     planned = {"SAFE": "value"}
@@ -376,10 +405,10 @@ def test_signing_secrets_materialize_only_at_native_execution_boundary(tmp_path:
 def test_signing_secret_transport_fails_closed_for_shell_wrapped_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     keystore = tmp_path / "release.p12"
     keystore.write_bytes(b"placeholder")
+    _register_android_signing_identity(tmp_path, monkeypatch, keystore)
     monkeypatch.setenv("APP_STORE", "runtime-store")
     config = _config(tmp_path, {"signing": {"release": {
-        "mode": "devtool", "policy": "release-required", "keystore": str(keystore), "alias": "release",
-        "store_password_env": "APP_STORE",
+        "mode": "devtool", "policy": "release-required", "identity_id": "android-release",
     }}})
     metadata = signing_plan_metadata(config, [":app:assembleRelease"], env=os.environ)
     metadata["execution_mode"] = "termux-host-chroot"
@@ -404,12 +433,12 @@ def test_validation_session_never_persists_internal_signing_passwords() -> None:
     assert "store-secret" not in rendered and "key-secret" not in rendered
 
 
-def test_project_env_cannot_be_used_as_signing_secret_storage(tmp_path: Path) -> None:
+def test_project_env_cannot_be_used_as_signing_secret_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     keystore = tmp_path / "release.p12"
     keystore.write_bytes(b"placeholder")
+    _register_android_signing_identity(tmp_path, monkeypatch, keystore)
     config = _config(tmp_path, {"signing": {"release": {
-        "mode": "devtool", "policy": "release-required", "keystore": str(keystore), "alias": "release",
-        "store_password_env": "APP_STORE",
+        "mode": "devtool", "policy": "release-required", "identity_id": "android-release",
     }}}, env={"APP_STORE": "must-not-live-in-toml"})
     with pytest.raises(Exception, match="process environment, not project"):
         signing_plan_metadata(config, [":app:assembleRelease"], env={"APP_STORE": "must-not-live-in-toml"})
@@ -458,3 +487,35 @@ def test_aops03_public_surfaces_document_signing_list_and_secret_boundary() -> N
     assert "signing list" in manpage
     assert "execution-boundary" in signing
     assert "signing_environment_for_execution" in signing
+
+
+def test_life_a04_signing_plan_carries_full_non_secret_transport_matrix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from devtool.android.signing import (
+        PROTECTED_SIGNING_BACKENDS,
+        signing_environment_for_protected_backend,
+        signing_transport_matrix,
+    )
+    keystore = tmp_path / "release.p12"
+    keystore.write_bytes(b"placeholder")
+    _register_android_signing_identity(tmp_path, monkeypatch, keystore)
+    monkeypatch.setenv("APP_STORE", "runtime-store")
+    monkeypatch.setenv("APP_KEY", "runtime-key")
+    config = _config(tmp_path, {"signing": {"release": {
+        "mode": "devtool", "policy": "release-required", "identity_id": "android-release",
+        "key_password_env": "APP_KEY",
+    }}})
+
+    metadata = signing_plan_metadata(config, [":app:assembleRelease"], env=os.environ)
+    matrix = metadata["android_signing_transport_matrix"]
+
+    assert matrix == signing_transport_matrix()
+    assert tuple(matrix["all_supported_backends"]) == PROTECTED_SIGNING_BACKENDS
+    assert set(matrix["protected_destination_backends"]) == {
+        "ssh-command", "ssh-proot-oci", "termux-host-chroot", "proot-distro"
+    }
+    rendered = repr(metadata)
+    assert "runtime-store" not in rendered and "runtime-key" not in rendered
+    for backend in matrix["protected_destination_backends"]:
+        resolved = signing_environment_for_protected_backend(config, metadata, env=os.environ, backend=backend)
+        assert resolved["DEVTOOL_ANDROID_SIGNING_STORE_PASSWORD"] == "runtime-store"
+        assert resolved["DEVTOOL_ANDROID_SIGNING_KEY_PASSWORD"] == "runtime-key"

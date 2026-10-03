@@ -842,20 +842,95 @@ def _other_shell_takeover_enabled(repo_root: Path | str) -> bool:
     return False
 
 
+
+
+def _remove_shell_takeover_assets_through_life(
+    config: ProjectConfig,
+    candidates: tuple[Path, ...],
+) -> tuple[list[str], list[dict[str, str]], str]:
+    """Remove global Gradle takeover shell assets through LIFE cleanup.
+
+    Shell shims live in user state rather than inside the project tree, but they
+    are still Devtool-managed generated outputs.  Disabling takeover must not
+    directly unlink them while RUN/validation/provider evidence can still refer
+    to the exact asset path.
+    """
+    existing = [path for path in candidates if path.exists() or path.is_symlink()]
+    if not existing:
+        return [], [], ""
+    try:
+        from .cleanup_lifecycle import (
+            CleanupScope,
+            GeneratedOutputDescriptor,
+            apply_cleanup_plan,
+            build_cleanup_ownership_view,
+            compile_cleanup_plan,
+            persist_cleanup_receipt,
+        )
+
+        descriptors = [
+            GeneratedOutputDescriptor.create(
+                path,
+                owner="gradle-takeover",
+                provider="gradle-takeover",
+                category="shell-asset",
+                producer_id=f"shell:{path.name}",
+                lifecycle="rebuildable",
+                rebuild_cost="low",
+                scope=CleanupScope.USER_GLOBAL,
+                provenance={"takeover_mode": "disable", "repo_root": str(config.repo_root)},
+                managed=True,
+                published=False,
+            )
+            for path in existing
+        ]
+        ownership = build_cleanup_ownership_view(
+            config.repo_root,
+            descriptors,
+            policy_generation="life-r03b-gradle-takeover-shell-disable-v1",
+        )
+        plan = compile_cleanup_plan(
+            ownership,
+            scope=CleanupScope.USER_GLOBAL,
+            destination="local",
+            include_user_global=True,
+        )
+        receipt = apply_cleanup_plan(plan, ownership=ownership, confirm=True)
+        receipt_path = persist_cleanup_receipt(config.repo_root, receipt)
+        by_resource = {row.resource_id: row for row in receipt.results}
+        removed: list[str] = []
+        protected: list[dict[str, str]] = []
+        for descriptor in descriptors:
+            row = by_resource.get(descriptor.resource_id)
+            path = Path(descriptor.path)
+            if row is not None and row.status == "applied" and not path.exists():
+                removed.append(str(path))
+            else:
+                protected.append({
+                    "path": str(path),
+                    "reason": str(getattr(row, "reason", "") or "protected by lifecycle authority"),
+                })
+        return removed, protected, str(receipt_path)
+    except Exception as exc:
+        return [], [{"path": str(path), "reason": f"LIFE cleanup authority unavailable: {type(exc).__name__}: {exc}"} for path in existing], ""
+
 def disable_takeover(config: ProjectConfig) -> dict[str, object]:
     state = {"enabled": False, "mode": "off", "scope": "devtool", "shell_adapter": False, "schema": 1}
     path = _write_runtime_state(config.repo_root, state)
     removed: list[str] = []
     retained_for_other_repositories = _other_shell_takeover_enabled(config.repo_root)
+    protected: list[dict[str, str]] = []
+    cleanup_receipt = ""
     if not retained_for_other_repositories:
-        for candidate in (shell_bin_dir() / "gradle", shell_bin_dir() / ".devtool-gradle-takeover-shim", shell_adapter_path()):
-            try:
-                candidate.unlink()
-                removed.append(str(candidate))
-            except FileNotFoundError:
-                pass
+        removed, protected, cleanup_receipt = _remove_shell_takeover_assets_through_life(
+            config,
+            (shell_bin_dir() / "gradle", shell_bin_dir() / ".devtool-gradle-takeover-shim", shell_adapter_path()),
+        )
     return {
         "state_path": str(path), "state": state, "removed": removed,
+        "protected": protected,
+        "cleanup_authority": "LIFE" if cleanup_receipt else "not-needed" if retained_for_other_repositories or not protected else "LIFE-unavailable",
+        "cleanup_receipt_path": cleanup_receipt,
         "shell_assets_retained_for_other_repositories": retained_for_other_repositories,
     }
 
@@ -987,3 +1062,52 @@ def execute_real_gradle(config: ProjectConfig, argv: Sequence[str], *, requested
     process_env = dict(os.environ if env is None else env)
     process_env["DEVTOOL_GRADLE_TAKEOVER_CAPABILITY"] = _ensure_capability()
     return subprocess.run([resolution.executable, *argv], cwd=str(config.project_root or config.repo_root), env=process_env, check=False).returncode
+
+
+def run_gradle_probe(
+    config: ProjectConfig,
+    argv: Sequence[str],
+    *,
+    cwd: str | Path | None = None,
+    requested_launcher: str = "auto",
+    env: Mapping[str, str] | None = None,
+    timeout: float | None = None,
+) -> tuple[subprocess.CompletedProcess[str], GradleTakeoverReceipt]:
+    """Execute a typed Gradle PROBE through the canonical launcher broker.
+
+    Probe/control operations intentionally do not enter the WORK planner, but
+    they still receive canonical launcher/destination/configuration identity
+    and a durable receipt identity.  Interactive discovery must use this
+    boundary rather than spawning ``gradle``/``gradlew`` directly.
+    """
+
+    root = Path(cwd or config.project_root or config.repo_root).expanduser().resolve(strict=False)
+    roots, raw = parse_shell_gradle_args(tuple(str(item) for item in argv))
+    request = GradleInvocationRequest(
+        caller="interactive:gradle-probe",
+        action="probe",
+        project_root=str(root),
+        requested_roots=roots,
+        raw_args=raw,
+    )
+    values = dict(os.environ if env is None else env)
+    decision = broker_gradle_invocation(
+        config,
+        request,
+        origin=GradleOrigin.DEVTOOL,
+        intent=GradleIntent.PROBE,
+        requested_launcher=requested_launcher,
+        env=values,
+    )
+    process_env = dict(values)
+    process_env["DEVTOOL_GRADLE_TAKEOVER_CAPABILITY"] = _ensure_capability()
+    completed = subprocess.run(
+        [decision.launcher.executable, *[str(item) for item in argv]],
+        cwd=str(root),
+        env=process_env,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    return completed, decision.receipt

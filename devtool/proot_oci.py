@@ -1293,16 +1293,21 @@ root="$HOME/.cache/devtool/oci/definitions"
 archive="$root/context-{context_sha256}.tar"
 dst="$root/sha256-{definition_digest}"
 mkdir -p "$root"
-tmp="$archive.part.$$"; trap 'rm -rf "$tmp" "$dst.part.$$"' EXIT HUP INT TERM
+tmp="$archive.part.$$"; work=""
+trap 'rm -f "$tmp"; if [ -n "$work" ] && [ -d "$work" ]; then rmdir "$work" 2>/dev/null || true; fi' EXIT HUP INT TERM
 cat > "$tmp"
 actual="$(sha256sum "$tmp" | awk '{{print $1}}')"
 [ "$actual" = {shlex.quote(context_sha256)} ] || {{ echo 'OCI build-context SHA-256 mismatch after SSH transfer' >&2; exit 65; }}
 mv -f "$tmp" "$archive"
-if [ ! -f "$dst/.context-sha256" ] || [ "$(cat "$dst/.context-sha256" 2>/dev/null || true)" != {shlex.quote(context_sha256)} ]; then
-  work="$dst.part.$$"; rm -rf "$work"; mkdir -p "$work"
+if [ -d "$dst" ] && [ "$(cat "$dst/.context-sha256" 2>/dev/null || true)" != {shlex.quote(context_sha256)} ]; then
+  echo 'OCI image definition cache has drifted; refusing destructive replacement outside LIFE/provider reconciliation' >&2; exit 66
+fi
+if [ ! -d "$dst" ]; then
+  work="$(mktemp -d "$root/.definition-work.XXXXXX")"
   tar -xf "$archive" -C "$work"
-  printf '%s\n' {shlex.quote(context_sha256)} > "$work/.context-sha256"
-  rm -rf "$dst"; mv "$work" "$dst"
+  printf '%s\\n' {shlex.quote(context_sha256)} > "$work/.context-sha256"
+  mv "$work" "$dst"
+  work=""
 fi
 trap - EXIT HUP INT TERM
 printf 'context_path=%s\ncontext_sha256=%s\ndefinition_digest=%s\n' "$dst" {shlex.quote(context_sha256)} {shlex.quote(definition_digest)}

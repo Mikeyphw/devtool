@@ -240,7 +240,8 @@ def test_commands_mode_wraps_actual_command_not_remote_devtool(tmp_path: Path) -
     assert "/srv/demo/gradlew" in shell
     assert " devtool " not in shell
     assert "scp -P 22 -r" in shell and "buildbox:" in shell and "/outputs/." in shell
-    assert "rm -rf -- /srv/demo/.devtool/build-artifacts" in shell
+    assert "rm -rf -- /srv/demo/.devtool/build-artifacts" not in shell
+    assert "refuses to replace existing native artifact output outside LIFE/provider cleanup" in shell
     assert "cp -a -- /srv/demo/.devtool/build-artifacts/." in shell
     assert command.metadata["ssh_mode"] == "commands"
 

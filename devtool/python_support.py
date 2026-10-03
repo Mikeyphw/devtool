@@ -2903,13 +2903,57 @@ def _write_snapshot(args: argparse.Namespace) -> int:
 
 
 
+def _clear_dist_through_life(root: Path, dist: Path) -> None:
+    """Retire stale Python dist output through canonical cleanup authority.
+
+    Preparing a build is a destructive operation when an old ``dist`` path is
+    present.  R03B requires this normal build ingress to use the same LIFE
+    ownership/revalidation/tombstone path as explicit cleanup commands instead
+    of carrying a private ``rmtree``/``unlink`` authority.
+    """
+    from .cleanup_lifecycle import (
+        CleanupScope,
+        GeneratedOutputDescriptor,
+        apply_cleanup_plan,
+        build_cleanup_ownership_view,
+        compile_cleanup_plan,
+        persist_cleanup_receipt,
+    )
+
+    descriptor = GeneratedOutputDescriptor.create(
+        dist,
+        owner="python-runner",
+        provider="python",
+        category="dist-preparation",
+        producer_id="python:prepare-dist",
+        lifecycle="disposable",
+        rebuild_cost="low",
+        scope=CleanupScope.PROJECT,
+        destination="local",
+        provenance={"normal_ingress": "prepare-dist", "authority": "LIFE-R03B"},
+        managed=True,
+        published=False,
+    )
+    ownership = build_cleanup_ownership_view(
+        root,
+        [descriptor],
+        policy_generation="life-r03b-python-prepare-dist-v1",
+    )
+    plan = compile_cleanup_plan(ownership, scope=CleanupScope.PROJECT, destination="local")
+    receipt = apply_cleanup_plan(plan, ownership=ownership, confirm=True)
+    persist_cleanup_receipt(root, receipt)
+    if dist.exists() or dist.is_symlink():
+        protected = next((item for item in receipt.results if item.resource_id == descriptor.resource_id), None)
+        reason = protected.reason if protected is not None and protected.reason else receipt.status
+        raise PythonProjectError(
+            f"Refusing to prepare Python dist because existing dist path is protected by cleanup authority: {reason}"
+        )
+
+
 def prepare_dist(root: Path) -> Path:
     dist = root.resolve() / "dist"
-    if dist.exists():
-        if dist.is_dir():
-            shutil.rmtree(dist)
-        else:
-            dist.unlink()
+    if dist.exists() or dist.is_symlink():
+        _clear_dist_through_life(root.resolve(), dist)
     dist.mkdir(parents=True, exist_ok=True)
     return dist
 

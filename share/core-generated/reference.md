@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `41e678c3673abb6b5690db606309d40dc0a2d52de665edbb74238e71c67a4a28`
+Registry digest: `2eb4db785b71be086a97187c54bd6034bed09d96a6a4fe736808d13f92ed9098`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -287,6 +287,11 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
+- `repo-pack list`
+- `repo-pack status`
+- `repo-pack pin`
+- `repo-pack unpin`
+- `repo-pack prune`
 
 ## Configuration documents
 

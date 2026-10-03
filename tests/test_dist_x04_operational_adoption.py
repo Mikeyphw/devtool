@@ -1,3 +1,5 @@
+from pathlib import Path
+import pytest
 from devtool.distributed_operational_adoption import *
 
 def test_delivery_states():
@@ -38,3 +40,36 @@ def test_dogfood_requires_every_provider_class():
 def test_obligation_disposition_fails_closed():
     assert obligation_disposition([{"id":"a","owner":"dist","source":"x03","status":"delivered"}])["complete"]
     assert not obligation_disposition([{"id":"a","status":"unknown"}])["complete"]
+
+
+def test_dist_x04_all_helpers_have_production_consumers_in_final_gate_source():
+    source = Path("devtool/dist_g3_gate.py").read_text(encoding="utf-8")
+    for symbol in (
+        "delivery_health",
+        "historical_child_projection",
+        "machine_child_receipt",
+        "provider_observation_migration",
+        "retention_projection",
+        "doctor_links",
+        "dogfood_matrix",
+        "obligation_disposition",
+    ):
+        assert symbol in source
+
+
+def test_dist_a07_peer_capability_negotiation_rejects_missing_required_feature():
+    from devtool.distributed_transport import (
+        FEATURE_CURSOR_ACK,
+        FEATURE_EVENT_ENVELOPE,
+        FEATURE_GAP_CATCHUP,
+        ProtocolNegotiationError,
+        TransportProtocolCapabilities,
+        negotiate_transport_protocol,
+    )
+    remote = TransportProtocolCapabilities(features=frozenset({FEATURE_EVENT_ENVELOPE, FEATURE_CURSOR_ACK}))
+    with pytest.raises(ProtocolNegotiationError, match="gap.catchup"):
+        negotiate_transport_protocol(
+            TransportProtocolCapabilities(),
+            remote,
+            required_features={FEATURE_EVENT_ENVELOPE, FEATURE_CURSOR_ACK, FEATURE_GAP_CATCHUP},
+        )

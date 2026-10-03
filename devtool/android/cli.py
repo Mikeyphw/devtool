@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import os
+from pathlib import Path
+import sys
+from typing import Any, Mapping
 
 from ..models import ProjectConfig
 from .operations import resolve_android_operations
@@ -376,6 +379,320 @@ def android_smoke_payload(
     return {"schema_version": 1, "result": result.as_dict()}
 
 
+
+
+def _build_instrumentation_artifacts(config: ProjectConfig) -> list[dict[str, Any]]:
+    """Build instrumentation producer artifacts once through canonical Gradle."""
+    from ..project_runners import AndroidGradleRunner
+    from ..runners import run_specs
+
+    gradle_receipts: list[dict[str, Any]] = []
+    planned = AndroidGradleRunner().build_specs(config, "instrumentation")
+    build_specs = [spec for spec in planned if spec.metadata.get("gradle_execution_plan")]
+    results, _ = run_specs(config, build_specs, verbose=False)
+    for item in results:
+        receipt = item.metadata.get("gradle_execution_receipt") if isinstance(item.metadata, dict) else None
+        if isinstance(receipt, dict):
+            gradle_receipts.append(dict(receipt))
+    failed = [result for result in results if int(result.returncode or 0) != 0]
+    if failed:
+        first = failed[0]
+        raise RuntimeError(
+            f"Canonical instrumentation Gradle build failed in {first.name} with exit {first.returncode}"
+        )
+    return gradle_receipts
+
+
+def _advanced_device_capacities(config: ProjectConfig, *, attempt_id: str):
+    """Bind X04 execution to real X02 DeviceLease objects.
+
+    ``device_policy=all`` is the explicit multi-device opt-in.  Every other
+    policy resolves exactly one canonical lease, avoiding accidental fan-out
+    merely because multiple ADB devices happen to be attached.
+    """
+    from .advanced_execution import DeviceCapacity
+    from .environment import EnvironmentView, resolve_android_environment
+    from .execution_snapshot import acquire_device_lease, device_requirements_from_config, resolve_android_transport
+
+    view = EnvironmentView.from_config(config)
+    _request, _qualification, environment = resolve_android_environment(
+        config, action="instrumentation", env=view.values, device_required=True, fail_closed=True,
+    )
+    if environment is None:
+        raise RuntimeError("Canonical Android instrumentation environment did not resolve")
+    transport = resolve_android_transport(
+        config, environment, action="instrumentation", env_view=view, device_required=True,
+    )
+    if transport is None:
+        raise RuntimeError("Advanced Android instrumentation requires a device transport")
+    operations = resolve_android_operations(config, env=view.values)
+    android = config.runner_options.get("android", {})
+    android = dict(android) if isinstance(android, Mapping) else {}
+    adb = android.get("adb", {})
+    adb = dict(adb) if isinstance(adb, Mapping) else {}
+    policy = str(adb.get("device_policy") or "exactly-one").strip().lower()
+
+    leases = []
+    if policy == "all":
+        devices = [item for item in operations.devices.list_devices(enrich=True) if str(item.state).lower() == "device"]
+        if not devices:
+            raise RuntimeError("Advanced Android device matrix requested but no usable devices are connected")
+        for index, device in enumerate(devices):
+            requirements = device_requirements_from_config(
+                config, overrides={"device_policy": "serial", "serial": device.serial},
+            )
+            leases.append(acquire_device_lease(
+                transport, requirements, env=view.values,
+                attempt_id=f"{attempt_id}:device:{index}:{device.serial}", manager=operations.devices,
+            ))
+    else:
+        requirements = device_requirements_from_config(config)
+        leases.append(acquire_device_lease(
+            transport, requirements, env=view.values, attempt_id=attempt_id, manager=operations.devices,
+        ))
+    return tuple(DeviceCapacity(lease, max_concurrency=1) for lease in leases)
+
+
+def _advanced_worker_result(output: str) -> dict[str, Any]:
+    marker = "DEVTOOL_ANDROID_ADVANCED_RESULT "
+    rows = [line[len(marker):] for line in str(output or "").splitlines() if line.startswith(marker)]
+    if not rows:
+        return {}
+    try:
+        value = json.loads(rows[-1])
+    except json.JSONDecodeError:
+        return {}
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _persist_advanced_matrix_evidence(
+    config: ProjectConfig, *, parent_run_id: str, plan_id: str, payload: Mapping[str, Any],
+) -> str:
+    from ..core_runtime import private_run_root
+    from ..run_store import AttachmentDescriptor, RunCatalog
+
+    root = private_run_root(config.repo_root)
+    path = root / "evidence" / parent_run_id / "android-advanced" / f"{plan_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(dict(payload), indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    try:
+        tmp.chmod(0o600)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+    catalog = RunCatalog.open(root)
+    row = dict(catalog.runs.get(parent_run_id, {"run_id": parent_run_id}))
+    row.setdefault("command_id", "android.instrumentation")
+    row["android_advanced_plan_id"] = plan_id
+    row["android_advanced_evidence_path"] = str(path)
+    catalog.add_run(row)
+    ref = catalog.add_attachment(AttachmentDescriptor.from_file(
+        run_id=parent_run_id, path=path, kind="android-advanced-matrix-evidence", privacy="private",
+        media_type="application/json",
+    ))
+    catalog.save()
+    return ref.ref_id
+
+
+def android_advanced_instrumentation_payload(
+    config: ProjectConfig, *, classes: list[str] | None = None, methods: list[str] | None = None,
+    annotations: list[str] | None = None, not_annotations: list[str] | None = None, size: str = "",
+    runner_args: Mapping[str, str] | None = None, shard_count: int = 1, retry_failed_attempts: int = 1,
+    quarantine: list[str] | None = None, orchestrator_qualification_id: str = "",
+    orchestrator_target: str = "", ui_automator: bool = False, cross_app: bool = False,
+    skip_build: bool = False,
+) -> dict[str, Any]:
+    """Execute the X04 plan as real EXO/RUN child processes.
+
+    The normal CLI owns planning and device binding.  Typed shard/orchestrator
+    capabilities cross the process boundary only through a parent-bound private
+    handoff; the worker cannot be configured into a competing public authority.
+    """
+    from ..core.execution_contract import RunId
+    from ..core_runtime import private_run_root
+    from ..invocation_origin import create_managed_run_handoff
+    from ..models import CommandSpec
+    from ..run_store import RunCatalog, RunRelation
+    from ..runners import run_specs
+    from .advanced_execution import (
+        AndroidTestOrchestratorMode, ExoRetryPolicy, QuarantinePolicy,
+        build_advanced_instrumentation_plan, create_advanced_worker_handoff, execution_profile,
+        legacy_instrumentation_migration_diagnostics, matrix_evidence,
+    )
+    from .instrumentation import instrumentation_intent, request_from_config
+
+    parent_run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip() or str(RunId.new(prefix="android-parent"))
+    gradle_receipts = [] if skip_build else _build_instrumentation_artifacts(config)
+    base_request = request_from_config(
+        config, classes=classes or [], methods=methods or [], annotations=annotations or [],
+        not_annotations=not_annotations or [], size=size, runner_args=runner_args, skip_build=True,
+    )
+    intent = instrumentation_intent(base_request)
+    capacities = _advanced_device_capacities(config, attempt_id=parent_run_id)
+    orchestrator = AndroidTestOrchestratorMode(
+        enabled=bool(orchestrator_qualification_id), qualification_id=orchestrator_qualification_id,
+        target_instrumentation=orchestrator_target if orchestrator_qualification_id else "",
+    )
+    retry = ExoRetryPolicy(
+        mode="failed-only" if int(retry_failed_attempts) > 1 else "disabled",
+        max_attempts=max(1, int(retry_failed_attempts)),
+    )
+    qids = tuple(quarantine or ())
+    quarantine_policy = QuarantinePolicy(qids, mode="evidence-only" if qids else "disabled")
+    profile = execution_profile(ui_automator=ui_automator, cross_app=cross_app)
+    android_options = config.runner_options.get("android", {})
+    android_options = dict(android_options) if isinstance(android_options, Mapping) else {}
+    # One worker keeps RUN catalog writes serialized. Device identity still
+    # rotates through the real lease matrix, and TEST-X03 owns wave scheduling.
+    plan = build_advanced_instrumentation_plan(
+        intent, device_capacities=capacities, shard_count=max(1, int(shard_count)), workers=1,
+        orchestrator=orchestrator, retry=retry, quarantine=quarantine_policy, profile=profile,
+        migration_diagnostics=legacy_instrumentation_migration_diagnostics(android_options),
+    )
+
+    catalog_root = private_run_root(config.repo_root)
+    catalog = RunCatalog.open(catalog_root)
+    parent_row = dict(catalog.runs.get(parent_run_id, {"run_id": parent_run_id}))
+    parent_row.setdefault("command_id", "android.instrumentation")
+    parent_row.setdefault("status", "running")
+    parent_row["android_advanced_plan_id"] = plan.plan_id
+    catalog.add_run(parent_row)
+    catalog.save()
+
+    child_by_id = {child.child_id: child for child in plan.children}
+    final_children: list[dict[str, Any]] = []
+    any_failed = False
+    for wave_index, wave in enumerate(plan.execution_waves):
+        for child_id in wave:
+            child = child_by_id[child_id]
+            attempts: list[dict[str, Any]] = []
+            final: dict[str, Any] = {}
+            for attempt_index in range(1, retry.max_attempts + 1):
+                child_run_id = str(RunId.new(prefix="android-child"))
+                relation = RunRelation(
+                    relation_id="", parent_run_id=parent_run_id, child_run_id=child_run_id,
+                    parent_node_id=child.child_id, relationship="android-instrumentation-attempt",
+                    delegation_id=f"{plan.plan_id}:{child.child_id}:{attempt_index}",
+                    provider_identity={
+                        "provider_kind": "android-device", "serial": child.serial,
+                        "device_lease_id": child.device_lease_id, "profile_id": child.profile_id,
+                    },
+                    delivery_health="starting",
+                )
+                catalog = RunCatalog.open(catalog_root)
+                catalog.add_relation(relation)
+                catalog.save()
+
+                handoff_payload = {
+                    "child_run_id": child_run_id, "child_id": child.child_id,
+                    "parent_plan_id": plan.plan_id, "repo_root": str(config.repo_root),
+                    "config_path": str(config.config_path or ""), "target": str(config.selected_target or ""),
+                    "variant": str(config.variant or ""), "serial": child.serial,
+                    "typed_runner_args": dict(child.runner_args),
+                    "runner_options": {
+                        key: dict(value) for key, value in config.runner_options.items()
+                        if key in {"android", "gradle"} and isinstance(value, Mapping)
+                    },
+                    "request": {
+                        "classes": list(base_request.classes), "methods": list(base_request.methods),
+                        "annotations": list(base_request.annotations), "not_annotations": list(base_request.not_annotations),
+                        "size": base_request.size, "runner_args": dict(base_request.runner_args),
+                    },
+                    "gradle_receipts": list(gradle_receipts),
+                }
+                handoff = create_advanced_worker_handoff(handoff_payload)
+                # Also give the internal worker a standard managed-run handoff so
+                # any nested canonical CLI/library surface sees the same RUN ID.
+                managed = create_managed_run_handoff(child_run_id)
+                spec = CommandSpec(
+                    name=f"android-instrumentation:{child.child_id}:attempt-{attempt_index}",
+                    argv=[sys.executable, "-m", "devtool.android.advanced_worker"],
+                    env={
+                        "DEVTOOL_ANDROID_ADVANCED_HANDOFF": handoff,
+                        "DEVTOOL_MANAGED_RUN_HANDOFF": managed,
+                    },
+                    cwd=str(config.repo_root),
+                    metadata={
+                        "android_advanced_plan_id": plan.plan_id, "android_advanced_child_id": child.child_id,
+                        "android_device_lease_id": child.device_lease_id, "android_device_serial": child.serial,
+                        "android_shard_index": child.shard_index, "android_shard_count": child.shard_count,
+                        "execution_provider": "android-device",
+                    },
+                )
+                results, _raw = run_specs(
+                    config, [spec], verbose=False, continue_on_error=False, event_run_id=child_run_id,
+                    publish_workflow_plan=False,
+                )
+                op = results[-1] if results else None
+                worker = _advanced_worker_result(op.output if op is not None else "")
+                result_payload = dict(worker.get("result") or {}) if isinstance(worker.get("result"), Mapping) else {}
+                ok = bool(result_payload.get("ok")) and op is not None and int(op.returncode or 0) == 0
+                attempt = {
+                    "attempt": attempt_index, "child_run_id": child_run_id, "ok": ok,
+                    "returncode": int(op.returncode or 1) if op is not None else 1,
+                    "worker": worker,
+                }
+                attempts.append(attempt)
+                catalog = RunCatalog.open(catalog_root)
+                updated = catalog.update_relation_state(
+                    relation, delivery_health="succeeded" if ok else "failed",
+                )
+                child_row = dict(catalog.runs.get(child_run_id, {"run_id": child_run_id}))
+                child_row.update({
+                    "status": "succeeded" if ok else "failed",
+                    "android_advanced_plan_id": plan.plan_id, "android_advanced_child_id": child.child_id,
+                    "android_attempt": attempt_index, "android_device_lease_id": child.device_lease_id,
+                })
+                catalog.add_run(child_row)
+                catalog.save()
+                final = {
+                    "child_id": child.child_id, "shard_id": child.shard_id, "serial": child.serial,
+                    "device_lease_id": child.device_lease_id, "profile_id": child.profile_id,
+                    "ok": ok, "receipt_id": str(result_payload.get("receipt_id") or ""),
+                    "result": result_payload, "attempts": list(attempts),
+                    "final_child_run_id": child_run_id, "relation_id": updated.relation_id,
+                    "wave": wave_index,
+                }
+                if ok or retry.mode != "failed-only":
+                    break
+            if not final.get("ok"):
+                any_failed = True
+            final_children.append(final)
+
+    evidence = matrix_evidence(plan, final_children)
+    evidence["children"] = final_children
+    evidence["process_spawned_children"] = sum(len(item.get("attempts") or []) for item in final_children)
+    evidence["all_children_ok"] = not any_failed
+    payload: dict[str, Any] = {
+        "schema_version": 1, "kind": "android-x04-advanced-execution",
+        "ok": bool(evidence.get("complete")) and not any_failed,
+        "parent_run_id": parent_run_id, "plan": plan.as_dict(), "evidence": evidence,
+        "gradle_receipts": gradle_receipts,
+        "authorities": {
+            "planning": "ANDROID-X04", "device": "ANDROID-X02/DeviceLease",
+            "execution": "EXO/run_specs child process", "retry": "EXO child attempts",
+            "scheduling": "TEST-X03", "durability": "RUN-V3",
+        },
+    }
+    attachment_id = _persist_advanced_matrix_evidence(
+        config, parent_run_id=parent_run_id, plan_id=plan.plan_id, payload=payload,
+    )
+    payload["evidence_attachment_id"] = attachment_id
+    catalog = RunCatalog.open(catalog_root)
+    parent_row = dict(catalog.runs.get(parent_run_id, {"run_id": parent_run_id}))
+    parent_row.update({
+        "status": "succeeded" if payload["ok"] else "failed",
+        "android_advanced_plan_id": plan.plan_id, "android_advanced_evidence_attachment_id": attachment_id,
+    })
+    catalog.add_run(parent_row)
+    catalog.save()
+    return payload
+
 def android_instrumentation_payload(
     config: ProjectConfig,
     *,
@@ -394,23 +711,7 @@ def android_instrumentation_payload(
     # remains authoritative for device install/run/collection only.
     gradle_receipts: list[dict[str, Any]] = []
     if not skip_build:
-        from ..project_runners import AndroidGradleRunner
-        from ..runners import run_specs
-
-        planned = AndroidGradleRunner().build_specs(config, "instrumentation")
-        build_specs = [spec for spec in planned if spec.metadata.get("gradle_execution_plan")]
-        results, _ = run_specs(config, build_specs, verbose=False)
-        for item in results:
-            receipt = item.metadata.get("gradle_execution_receipt") if isinstance(item.metadata, dict) else None
-            if isinstance(receipt, dict):
-                gradle_receipts.append(dict(receipt))
-        failed = [result for result in results if int(result.returncode or 0) != 0]
-        if failed:
-            first = failed[0]
-            raise RuntimeError(
-                f"Canonical instrumentation Gradle build failed in {first.name} "
-                f"with exit {first.returncode}"
-            )
+        gradle_receipts = _build_instrumentation_artifacts(config)
         skip_build = True
 
     orchestrator = AndroidInstrumentationOrchestrator.from_config(config, gradle_receipts=gradle_receipts)
@@ -426,4 +727,4 @@ def render_android_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
 
-__all__ = ["android_environment_payload", "android_environment_diff_payload", "android_qualification_payload", "android_action_doctor_payload", "android_advanced_instrumentation_plan_payload", "android_capabilities_payload", "android_devices_payload", "android_device_doctor_payload", "android_signing_payload", "android_device_operation_payload", "android_smoke_payload", "android_instrumentation_payload", "render_android_payload"]
+__all__ = ["android_environment_payload", "android_environment_diff_payload", "android_qualification_payload", "android_action_doctor_payload", "android_advanced_instrumentation_plan_payload", "android_capabilities_payload", "android_devices_payload", "android_device_doctor_payload", "android_signing_payload", "android_device_operation_payload", "android_smoke_payload", "android_instrumentation_payload", "android_advanced_instrumentation_payload", "render_android_payload"]

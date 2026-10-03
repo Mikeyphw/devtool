@@ -4984,6 +4984,96 @@
       },
       "options": [],
       "stable_id": "cli.command.wrapper.verify"
+    },
+    {
+      "aliases": [
+        [
+          "repo-pack",
+          "ls"
+        ]
+      ],
+      "canonical_path": [
+        "repo-pack",
+        "list"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "repo-pack",
+        "stability": "stable",
+        "summary": "",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.repo_pack.list"
+    },
+    {
+      "aliases": [
+        [
+          "repo-pack",
+          "show"
+        ]
+      ],
+      "canonical_path": [
+        "repo-pack",
+        "status"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "repo-pack",
+        "stability": "stable",
+        "summary": "",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.repo_pack.status"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "repo-pack",
+        "pin"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "repo-pack",
+        "stability": "stable",
+        "summary": "",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.repo_pack.pin"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "repo-pack",
+        "unpin"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "repo-pack",
+        "stability": "stable",
+        "summary": "",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.repo_pack.unpin"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "repo-pack",
+        "prune"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "repo-pack",
+        "stability": "stable",
+        "summary": "",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.repo_pack.prune"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -33134,6 +33224,7 @@
       "metadata": {
         "choices": [
           "tar.gz",
+          "tar.zst",
           "tar",
           "zip"
         ],
@@ -33336,6 +33427,7 @@
       "metadata": {
         "choices": [
           "tar.gz",
+          "tar.zst",
           "tar",
           "zip"
         ],
@@ -49102,6 +49194,289 @@
       "scope": "wrapper verify",
       "sensitive": false,
       "stable_id": "cli.option.ipc-server.help.aea0e981",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--all",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "all",
+        "help": "include tombstoned packs",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "list"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack list",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_list.all.98dcaa21",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "list"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack list",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_list.json.5b8e28d5",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack status",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_status.json.30772bfc",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "pin"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack pin",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_pin.json.b4651b89",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "unpin"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack unpin",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_unpin.json.ae61ffa3",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--older-than-days",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "older_than_days",
+        "help": "",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "repo-pack",
+          "prune"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack prune",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_prune.older_than_days.8d170122",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--dry-run",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "dry_run",
+        "help": "",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "prune"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack prune",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_prune.dry_run.b8c7badf",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "prune"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack prune",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_prune.json.9ccbcb66",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "list"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack list",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_list.help.40beff6e",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack status",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_status.help.451d3b68",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "pin"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack pin",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_pin.help.37cd6739",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "unpin"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack unpin",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_unpin.help.794c856f",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "repo-pack",
+          "prune"
+        ],
+        "required": false
+      },
+      "scope": "repo-pack prune",
+      "sensitive": false,
+      "stable_id": "cli.option.repo_pack_prune.help.657fc6e2",
       "value_kind": "_HelpAction"
     }
   ],
@@ -76178,6 +76553,7 @@
                         "action": "store",
                         "choices": [
                           "tar.gz",
+                          "tar.zst",
                           "tar",
                           "zip"
                         ],
@@ -76359,6 +76735,7 @@
                         "action": "store",
                         "choices": [
                           "tar.gz",
+                          "tar.zst",
                           "tar",
                           "zip"
                         ],
@@ -76440,6 +76817,291 @@
                         "nargs": null,
                         "option_strings": [
                           "--retention"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": null,
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [
+                    "ls"
+                  ],
+                  "help": "List durable repository-pack lifecycle records",
+                  "help_present": true,
+                  "name": "list",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "all",
+                        "group": null,
+                        "help": "include tombstoned packs",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--all"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": null,
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [
+                    "show"
+                  ],
+                  "help": "Verify repository-pack bytes and retention state",
+                  "help_present": true,
+                  "name": "status",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "selector",
+                        "group": null,
+                        "help": "pack id, receipt id, or output path",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": null,
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Pin a repository pack against lifecycle GC",
+                  "help_present": true,
+                  "name": "pin",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "selector",
+                        "group": null,
+                        "help": null,
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": null,
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Release an explicit repository-pack pin",
+                  "help_present": true,
+                  "name": "unpin",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "selector",
+                        "group": null,
+                        "help": null,
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": null,
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Garbage-collect unpinned policy packs through LIFE cleanup",
+                  "help_present": true,
+                  "name": "prune",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": 30.0,
+                        "dest": "older_than_days",
+                        "group": null,
+                        "help": "minimum pack age in days",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--older-than-days"
+                        ],
+                        "required": false,
+                        "type": "float"
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "dry_run",
+                        "group": null,
+                        "help": null,
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--dry-run"
                         ],
                         "required": false,
                         "type": null

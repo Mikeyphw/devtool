@@ -482,7 +482,14 @@ class ProotRunnerTests(unittest.TestCase):
             keep = Path(td) / "keep"
             keep.mkdir()
             specs = [
-                CommandSpec("one", ["true"], metadata={"proot_stage_owned": True, "proot_stage_dir": str(stage)}),
+                CommandSpec(
+                    "one", ["true"], cwd=td,
+                    metadata={
+                        "proot_stage_owned": True,
+                        "proot_stage_dir": str(stage),
+                        "proot_repository_root": td,
+                    },
+                ),
                 CommandSpec("two", ["true"], metadata={"proot_stage_owned": False, "proot_stage_dir": str(keep)}),
             ]
             cleanup_proot_staging(specs)

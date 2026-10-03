@@ -18649,6 +18649,7 @@
         {
           "choices": [
             "tar.gz",
+            "tar.zst",
             "tar",
             "zip"
           ],
@@ -18782,6 +18783,7 @@
         {
           "choices": [
             "tar.gz",
+            "tar.zst",
             "tar",
             "zip"
           ],
@@ -29356,9 +29358,250 @@
       ],
       "stability": "stable",
       "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [
+        [
+          "repo-pack",
+          "ls"
+        ]
+      ],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.list",
+      "options": [
+        {
+          "choices": [],
+          "dest": "all",
+          "help": "include tombstoned packs",
+          "hidden": false,
+          "id": "cli.option.repo_pack_list.all.98dcaa21",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--all"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_list.json.5b8e28d5",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.repo_pack_list.help.40beff6e",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "list"
+      ],
+      "stability": "stable",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [
+        [
+          "repo-pack",
+          "show"
+        ]
+      ],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.status",
+      "options": [
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_status.json.30772bfc",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.repo_pack_status.help.451d3b68",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "status"
+      ],
+      "stability": "stable",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.pin",
+      "options": [
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_pin.json.b4651b89",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.repo_pack_pin.help.37cd6739",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "pin"
+      ],
+      "stability": "stable",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.unpin",
+      "options": [
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_unpin.json.ae61ffa3",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.repo_pack_unpin.help.794c856f",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "unpin"
+      ],
+      "stability": "stable",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.prune",
+      "options": [
+        {
+          "choices": [],
+          "dest": "older_than_days",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_prune.older_than_days.8d170122",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--older-than-days"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "dry_run",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_prune.dry_run.b8c7badf",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--dry-run"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_prune.json.9ccbcb66",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.repo_pack_prune.help.657fc6e2",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "prune"
+      ],
+      "stability": "stable",
+      "summary": ""
     }
   ],
-  "digest": "cc6d12057d9aa4d794513aebe182f67020523129f26a18321a76c046ba3368de",
+  "digest": "48df07bd686aa2ff4092215dff73ff7e1bba2870d39267867c3645dcdb58e083",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -29657,7 +29900,14 @@
       "release-notes",
       "repo-pack",
       "repo-pack create",
+      "repo-pack list",
+      "repo-pack ls",
+      "repo-pack pin",
       "repo-pack plan",
+      "repo-pack prune",
+      "repo-pack show",
+      "repo-pack status",
+      "repo-pack unpin",
       "restore",
       "resume-validation",
       "rn",
@@ -29775,11 +30025,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 404,
-    "registry_command_count": 281
+    "parser_command_count": 411,
+    "registry_command_count": 286
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "41e678c3673abb6b5690db606309d40dc0a2d52de665edbb74238e71c67a4a28",
+  "registry_digest": "2eb4db785b71be086a97187c54bd6034bed09d96a6a4fe736808d13f92ed9098",
   "registry_schema_version": 1,
   "schema_version": 1
 }

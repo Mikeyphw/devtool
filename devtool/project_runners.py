@@ -3523,13 +3523,31 @@ names=\"$tmp_base.names\"
 packages_seen=\"$tmp_base.packages\"
 plan=\"$tmp_base.plan\"
 staging=\"$tmp_base.out\"
+publish=\"\"
 : > \"$candidates\"
 : > \"$mappings\"
 : > \"$names\"
 : > \"$packages_seen\"
 : > \"$plan\"
 mkdir -p \"$staging\"
-trap 'rm -f \"$candidates\" \"$mappings\" \"$names\" \"$packages_seen\" \"$plan\"; rm -rf \"$staging\"' EXIT HUP INT TERM
+cleanup_devtool_go_temp() {{
+    rm -f -- \"$candidates\" \"$mappings\" \"$names\" \"$packages_seen\"
+    if [ -s \"$plan\" ]; then
+        tab_cleanup=$(printf '\\t')
+        while IFS=\"$tab_cleanup\" read -r _pkg cleanup_name; do
+            [ -n \"$cleanup_name\" ] || continue
+            case \"$cleanup_name\" in
+                ''|.|..|*/*|*\\\\*) continue ;;
+            esac
+            [ -d \"$staging\" ] && rm -f -- \"$staging/$cleanup_name\"
+            [ -n \"$publish\" ] && [ -d \"$publish\" ] && rm -f -- \"$publish/$cleanup_name\"
+        done < \"$plan\"
+    fi
+    rm -f -- \"$plan\"
+    [ -d \"$staging\" ] && rmdir \"$staging\" 2>/dev/null || true
+    [ -n \"$publish\" ] && [ -d \"$publish\" ] && rmdir \"$publish\" 2>/dev/null || true
+}}
+trap 'cleanup_devtool_go_temp' EXIT HUP INT TERM
 
 resolve_output_name() {{
     target=$1
@@ -3677,9 +3695,11 @@ done < "$plan"
 
 mkdir -p "$out"
 publish="$out/.devtool-go-publish-$$"
-rm -rf "$publish"
-mkdir -p "$publish"
-trap 'rm -f "$candidates" "$mappings" "$names" "$packages_seen" "$plan"; rm -rf "$staging" "$publish"' EXIT HUP INT TERM
+if [ -e "$publish" ]; then
+    echo "devtool: Go publish staging path already exists; refusing destructive replacement: $publish" >&2
+    exit 2
+fi
+mkdir "$publish"
 
 # Copy all successfully built binaries onto the output filesystem first, then
 # replace final paths with same-filesystem renames. Compilation still happens

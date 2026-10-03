@@ -14,14 +14,21 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .cleanup_lifecycle import CleanupScope, GeneratedOutputDescriptor
-from .distributed_execution import DelegationLink, canonical_digest
+from .distributed_execution import DelegationLink, canonical_digest, reconcile_terminal_truth
 from .distributed_transport import (
     DeliveryAck,
     DeliveryCursorStore,
     DelegatedEventReceiver,
+    DelegatedExecutionReceipt,
     EventDeliveryState,
+    FEATURE_CURSOR_ACK,
+    FEATURE_EVENT_ENVELOPE,
+    FEATURE_GAP_CATCHUP,
+    NegotiatedTransportProtocol,
     TransportFrame,
+    TransportProtocolCapabilities,
     frames_from_origin_journal_text,
+    negotiate_transport_protocol,
 )
 
 DIST_CONTROL_SCHEMA_VERSION = 1
@@ -466,6 +473,8 @@ def ssh_phase_dist_metadata(
     destination: str,
     provider_kind: str,
     provider_evidence_digest: str = "",
+    stage_path: str = "",
+    provider_state_root: str = "~/.cache/devtool/ssh-runs",
     secret_keys: Iterable[str] = (),
     secret_reference_ids: Iterable[str] = (),
     original_argv: Sequence[str] = (),
@@ -474,7 +483,7 @@ def ssh_phase_dist_metadata(
         return {}
     root = str(remote_root or "").rstrip("/") or "."
     journal = str(PurePosixPath(root) / ".devtool" / "private" / "run-v3" / child_run_id / "execution-events.jsonl")
-    state_root = str(PurePosixPath("~/.cache/devtool/ssh-runs") / child_run_id / session)
+    state_root = str(PurePosixPath(str(provider_state_root or "~/.cache/devtool/ssh-runs").rstrip("/")) / child_run_id / session)
     cursor_path = str(PurePosixPath(state_root) / "event-cursor.json")
     result: dict[str, Any] = {
         "dist_child_run_id": child_run_id,
@@ -503,7 +512,7 @@ def ssh_phase_dist_metadata(
         provider=provider_kind,
         run_id=child_run_id,
         session=session,
-        stage_path=root,
+        stage_path=stage_path,
         state_path=state_root,
         cursor_path=cursor_path,
         delegation_id=str(link.delegation_id if link is not None else ""),
@@ -578,6 +587,7 @@ class SSHProviderEventChannel:
     binding: ProviderSessionBinding
     cursor_store: DeliveryCursorStore
     read_journal_text: Callable[[], str]
+    protocol: NegotiatedTransportProtocol
 
     def frames_after_ack(self, *, delivery_mode: str = "catch-up") -> tuple[TransportFrame, ...]:
         cursor = self.cursor_store.load(link=self.link)
@@ -629,6 +639,83 @@ class SSHProviderEventChannel:
             last_error=cursor.last_error,
         )
 
+    def receipt(
+        self,
+        *,
+        child_snapshot: Any | None,
+        transport_exit_code: int | None = None,
+    ) -> DelegatedExecutionReceipt:
+        state = self.health()
+        terminal_sequence = int(getattr(child_snapshot, "last_sequence", 0) or 0) if child_snapshot is not None else 0
+        child_status = str(getattr(child_snapshot, "status", "") or "") if child_snapshot is not None else ""
+        child_exit = getattr(child_snapshot, "exit_code", None) if child_snapshot is not None else None
+        snapshot_payload = (
+            child_snapshot.to_dict() if child_snapshot is not None and hasattr(child_snapshot, "to_dict") else {
+                "run_id": self.link.child_run_id,
+                "status": child_status,
+                "exit_code": child_exit,
+                "last_sequence": terminal_sequence,
+            }
+        )
+        snapshot_digest = canonical_digest(snapshot_payload) if child_snapshot is not None else ""
+        frames = frames_from_origin_journal_text(
+            self.read_journal_text(),
+            child_run_id=self.link.child_run_id,
+            link=self.link,
+            acknowledged_sequence=0,
+            delivery_mode="receipt",
+        )
+        first_sequence = int(frames[0].sequence) if frames else 0
+        last_sequence = int(frames[-1].sequence) if frames else 0
+        integrity_error = ""
+        reconciled = False
+        if child_snapshot is None:
+            integrity_error = "child terminal snapshot unavailable"
+        elif state.acknowledged_sequence != terminal_sequence:
+            integrity_error = "SSH delivery cursor has not reached the child terminal snapshot"
+        elif state.unresolved_gaps:
+            integrity_error = "SSH delivery cursor retains unresolved origin gaps"
+        else:
+            terminal = reconcile_terminal_truth(
+                transport_exit_code=(
+                    int(transport_exit_code)
+                    if transport_exit_code is not None
+                    else int(child_exit if child_exit is not None else 0)
+                ),
+                child_snapshot=child_snapshot,
+            )
+            reconciled = terminal.ok
+            integrity_error = terminal.integrity_error
+        if integrity_error:
+            reconciled = False
+        final_health = "reconciled" if reconciled else (state.health if state.health != "idle" else "degraded")
+        if final_health != state.health:
+            state = EventDeliveryState(
+                state.delegation_id, state.child_run_id, final_health,
+                state.acknowledged_sequence, state.pending_hint_count, state.replay_count,
+                state.unresolved_gaps, state.overflow_count, state.last_error,
+            )
+        provider_identity = dict(self.link.provider_identity)
+        provider_identity["provider_session_binding"] = self.binding.as_dict()
+        provider_identity["transport"] = "ssh"
+        return DelegatedExecutionReceipt(
+            delegation_id=self.link.delegation_id,
+            child_run_id=self.link.child_run_id,
+            delivery=state,
+            first_origin_sequence=first_sequence,
+            last_origin_sequence=max(last_sequence, terminal_sequence),
+            terminal_sequence=terminal_sequence,
+            terminal_snapshot_digest=snapshot_digest,
+            child_status=child_status,
+            child_exit_code=(int(child_exit) if child_exit is not None else None),
+            transport_exit_code=(int(transport_exit_code) if transport_exit_code is not None else None),
+            reconciled=reconciled,
+            integrity_error=integrity_error,
+            provider_identity=provider_identity,
+            protocol=self.protocol.as_dict(),
+            raw_stream_references=sum(1 for frame in frames if frame.content_class == "raw-stream-reference-v1"),
+        )
+
 
 def run_relation_from_delegation(
     link: DelegationLink,
@@ -674,40 +761,97 @@ def record_delegation_relation(
     relation = run_relation_from_delegation(link, delivery_health=delivery_health, pinned=pinned)
     with lock:
         catalog = RunCatalog.open(private_run_root(repo_root))
-        catalog.add_relation(relation)
+        catalog.update_relation_state(
+            relation,
+            delivery_health=str(delivery_health or "unknown"),
+            pinned=bool(pinned) if pinned else None,
+        )
         catalog.save()
+        if str(delivery_health or "").strip().lower() in {"reconciled", "completed", "terminal"}:
+            from .provider_resource_registry import release_provider_resources
+            release_provider_resources(
+                repo_root,
+                delegation_id=link.delegation_id,
+                run_id=link.child_run_id,
+                reason=f"RUN relation delivery health {delivery_health}",
+            )
     return relation
+
+
+def _ssh_peer_capabilities_from_journal(text: str) -> TransportProtocolCapabilities:
+    for raw in str(text or "").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, Mapping) or str(payload.get("event_type") or "") != "run.started":
+            continue
+        metadata = payload.get("metadata")
+        capabilities = metadata.get("dist_transport_capabilities") if isinstance(metadata, Mapping) else None
+        peer = str(metadata.get("dist_transport_peer") or "") if isinstance(metadata, Mapping) else ""
+        if peer != "ssh-remote-devtool" or not isinstance(capabilities, Mapping):
+            raise ProviderSessionBindingError(
+                "SSH remote RUN journal lacks authenticated remote Devtool transport capabilities"
+            )
+        return TransportProtocolCapabilities.from_dict(capabilities)
+    raise ProviderSessionBindingError(
+        "SSH remote RUN journal has no RunStarted peer-capability record yet"
+    )
 
 
 def ssh_provider_event_channel(
     config: Any,
     *,
     link: DelegationLink,
-    session: str,
+    session: str = "",
     cursor_path: str | Path,
 ) -> SSHProviderEventChannel:
-    """Bind existing SSH durable history to canonical semantic RUN journal forwarding."""
+    """Bind the *actual* SSH worker RUN journal to DIST delivery.
+
+    ``session`` may be omitted by a federation parent.  In that case the
+    provider is queried by canonical child run id and the observed worker
+    session becomes the binding identity.  Planned delegation/session identity
+    is then checked before any remote journal is admitted.
+    """
     from .ssh_resilience import read_remote_run_journal
 
     observation = read_remote_run_journal(config, run_id=link.child_run_id, session=session)
-    lineage = observation.get("lineage") if isinstance(observation, Mapping) else {}
-    metadata = observation.get("metadata") if isinstance(observation, Mapping) else {}
-    if not isinstance(lineage, Mapping):
-        lineage = {}
-    if not isinstance(metadata, Mapping):
-        metadata = {}
+    if not isinstance(observation, Mapping):
+        raise ProviderSessionBindingError("SSH provider journal observation is malformed")
+    observed_child = str(observation.get("child_run_id") or observation.get("run_id") or "").strip()
+    if observed_child and observed_child != link.child_run_id:
+        raise ProviderSessionBindingError("SSH provider journal child run does not match delegation")
+    observed_delegation = str(observation.get("delegation_id") or "").strip()
+    if observed_delegation and observed_delegation != link.delegation_id:
+        raise ProviderSessionBindingError("SSH provider journal delegation does not match planned delegation")
+    observed_session = str(observation.get("session") or session or "").strip()
+    if not observed_session:
+        raise ProviderSessionBindingError("SSH provider journal did not identify its worker session")
     binding = ProviderSessionBinding.bind(
         link,
-        session_id=session,
+        session_id=observed_session,
         profile=str(getattr(config, "profile", "") or ""),
         destination=str(getattr(config, "destination", "") or ""),
-        provider_kind=str(metadata.get("execution_provider") or link.provider_identity.get("provider_kind") or "ssh"),
+        provider_kind=str(link.provider_identity.get("provider_kind") or "ssh"),
         provider_evidence_digest=str(link.provider_identity.get("provider_evidence_digest") or ""),
-        attestation_digest=str(metadata.get("dist_attestation_digest") or link.attestation_digest),
+        attestation_digest=link.attestation_digest,
+    )
+    observed_binding = str(observation.get("provider_session_binding_id") or "").strip()
+    if observed_binding and observed_binding != binding.binding_id:
+        raise ProviderSessionBindingError("SSH provider session binding does not match remote RUN evidence")
+
+    initial_journal = str(observation.get("journal") or "")
+    remote_capabilities = _ssh_peer_capabilities_from_journal(initial_journal)
+    protocol = negotiate_transport_protocol(
+        TransportProtocolCapabilities(),
+        remote_capabilities,
+        required_features={FEATURE_EVENT_ENVELOPE, FEATURE_CURSOR_ACK, FEATURE_GAP_CATCHUP},
     )
 
     def read() -> str:
-        payload = read_remote_run_journal(config, run_id=link.child_run_id, session=session)
+        payload = read_remote_run_journal(config, run_id=link.child_run_id, session=observed_session)
         return str(payload.get("journal") or "") if isinstance(payload, Mapping) else ""
 
     return SSHProviderEventChannel(
@@ -715,7 +859,68 @@ def ssh_provider_event_channel(
         binding=binding,
         cursor_store=DeliveryCursorStore(cursor_path),
         read_journal_text=read,
+        protocol=protocol,
     )
+
+
+def dispatch_ssh_provider_control(
+    config: Any,
+    *,
+    link: DelegationLink,
+    reason: str = "Federation parent cancellation",
+    requested_by_run_id: str = "",
+    telemetry_health: str = "unknown",
+) -> DelegatedControlAck:
+    """Dispatch typed cancellation through the real SSH provider substrate.
+
+    The remote worker record is first observed to bind the concrete session.
+    Cancellation then calls ``ssh_resilience.cancel_remote_run`` rather than
+    local IPC.  The resulting ack therefore cannot claim provider control when
+    no matching remote run/session exists.
+    """
+    from .ssh_resilience import cancel_remote_run, read_remote_run_journal
+
+    observation = read_remote_run_journal(config, run_id=link.child_run_id)
+    if not isinstance(observation, Mapping):
+        raise ProviderSessionBindingError("SSH provider control observation is malformed")
+    observed_delegation = str(observation.get("delegation_id") or "").strip()
+    if observed_delegation and observed_delegation != link.delegation_id:
+        raise ProviderSessionBindingError("SSH provider control delegation does not match remote RUN evidence")
+    session = str(observation.get("session") or "").strip()
+    if not session:
+        raise ProviderSessionBindingError("SSH provider control could not resolve a remote worker session")
+    binding = ProviderSessionBinding.bind(
+        link,
+        session_id=session,
+        profile=str(getattr(config, "profile", "") or ""),
+        destination=str(getattr(config, "destination", "") or ""),
+        provider_kind=str(link.provider_identity.get("provider_kind") or "ssh"),
+        provider_evidence_digest=str(link.provider_identity.get("provider_evidence_digest") or ""),
+        attestation_digest=link.attestation_digest,
+    )
+    observed_binding = str(observation.get("provider_session_binding_id") or "").strip()
+    if observed_binding and observed_binding != binding.binding_id:
+        raise ProviderSessionBindingError("SSH provider control binding does not match remote RUN evidence")
+    request = DelegatedControlRequest.cancel(
+        delegation_id=link.delegation_id,
+        child_run_id=link.child_run_id,
+        reason=reason,
+        provider_session_binding_id=binding.binding_id,
+        requested_by_run_id=requested_by_run_id,
+    )
+    channel = DelegatedControlChannel()
+
+    def cancel(candidate: str, why: str) -> tuple[bool, str]:
+        payload = cancel_remote_run(config, run_id=candidate, session=session)
+        ok = bool(payload.get("ok")) if isinstance(payload, Mapping) else False
+        cancelled = payload.get("cancelled") if isinstance(payload, Mapping) else ()
+        detail = (
+            f"SSH provider cancelled {len(cancelled or ())} remote phase(s) in session {session}"
+            if ok else "SSH provider rejected cancellation"
+        )
+        return ok, detail
+
+    return channel.dispatch(request, cancel=cancel, telemetry_health=telemetry_health)
 
 
 __all__ = [
@@ -740,4 +945,5 @@ __all__ = [
     "run_relation_from_delegation",
     "record_delegation_relation",
     "ssh_provider_event_channel",
+    "dispatch_ssh_provider_control",
 ]

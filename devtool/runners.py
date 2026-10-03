@@ -149,7 +149,10 @@ def _execution_provenance(metadata: Mapping[str, object], argv: Sequence[str]) -
 
 
 def _attach_test_provenance(payload: dict[str, object], metadata: Mapping[str, object]) -> dict[str, object]:
-    provenance = _ssh_execution_provenance(metadata)
+    progress_argv = metadata.get("progress_argv")
+    if isinstance(progress_argv, str) or not isinstance(progress_argv, Sequence):
+        progress_argv = ()
+    provenance = _execution_provenance(metadata, progress_argv)
     if not provenance:
         return payload
     updated = dict(payload)

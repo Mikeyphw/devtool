@@ -5,7 +5,6 @@ import contextlib
 import json
 import math
 import os
-import shutil
 import shlex
 import subprocess
 import sys
@@ -156,6 +155,52 @@ def _read_hud_singleton() -> dict[str, Any]:
 def _write_hud_singleton(*, pid: int, mode: str, directory: Path, follow_active: bool) -> None:
     payload = {"pid": int(pid), "mode": mode, "directory": str(directory), "follow_active": bool(follow_active), "started_at": utc_now_iso()}
     _atomic_write_json(hud_singleton_file(), payload)
+
+
+def _cleanup_tasker_run_state_through_life(repo_root: str | Path, paths: list[Path], *, run_id: str) -> None:
+    """Retire stale Tasker/HUD live-state files through LIFE cleanup."""
+    existing = [path for path in paths if path.exists() or path.is_symlink()]
+    if not existing:
+        return
+    from .cleanup_lifecycle import (
+        CleanupScope,
+        GeneratedOutputDescriptor,
+        apply_cleanup_plan,
+        build_cleanup_ownership_view,
+        compile_cleanup_plan,
+        persist_cleanup_receipt,
+    )
+
+    descriptors = [
+        GeneratedOutputDescriptor.create(
+            path,
+            owner="tasker-hud",
+            provider="tasker",
+            category="live-state",
+            producer_id=f"tasker:{run_id}:{path.name}",
+            lifecycle="transient",
+            rebuild_cost="low",
+            scope=CleanupScope.USER_GLOBAL,
+            provenance={"run_id": run_id, "hud_state_reset": True},
+            managed=True,
+            published=False,
+        )
+        for path in existing
+    ]
+    authority_root = Path(repo_root).expanduser().resolve(strict=False)
+    ownership = build_cleanup_ownership_view(
+        authority_root,
+        descriptors,
+        policy_generation="life-r03b-tasker-live-state-reset-v1",
+    )
+    plan = compile_cleanup_plan(
+        ownership,
+        scope=CleanupScope.USER_GLOBAL,
+        destination="local",
+        include_user_global=True,
+    )
+    receipt = apply_cleanup_plan(plan, ownership=ownership, confirm=True)
+    persist_cleanup_receipt(authority_root, receipt, run_id=run_id)
 
 
 def _terminate_pid(pid: int, *, timeout_s: float = 1.5) -> bool:
@@ -921,16 +966,20 @@ class TaskerProgressSink:
     def reset_run_files(self) -> None:
         """Initialize the one active HUD run and discard stale live state."""
         try:
-            for path in (self.state_file, self.latest_event_file, self.notification_file, self.events_jsonl_file):
-                path.unlink(missing_ok=True)
-            if self.events_dir.exists():
-                shutil.rmtree(self.events_dir, ignore_errors=True)
-            if self.runs_dir.exists():
-                shutil.rmtree(self.runs_dir, ignore_errors=True)
+            _cleanup_tasker_run_state_through_life(
+                self.repo_root,
+                [self.state_file, self.latest_event_file, self.notification_file, self.events_jsonl_file, self.events_dir, self.runs_dir],
+                run_id=self.run_id,
+            )
             self.events_dir.mkdir(parents=True, exist_ok=True)
             self.runs_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            pass
+        except Exception:
+            # HUD state reset is housekeeping. If LIFE cannot prove the old
+            # state disposable, fail closed by retaining it rather than falling
+            # back to direct unlink/rmtree.
+            with contextlib.suppress(OSError):
+                self.events_dir.mkdir(parents=True, exist_ok=True)
+                self.runs_dir.mkdir(parents=True, exist_ok=True)
         self.sequence = 0
         self.current_phase = None
         self.failed_phase = None

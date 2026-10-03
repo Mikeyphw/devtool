@@ -33,8 +33,26 @@ def compact_event_document(
     *,
     max_output_chars: int = MAX_JOURNAL_PROCESS_OUTPUT_CHARS,
 ) -> dict[str, Any]:
-    """Bound and redact the durable journal representation of one event."""
+    """Bound and redact the durable journal representation of one event.
+
+    A federated RUN produced by a real remote SSH Devtool advertises the
+    transport protocol implemented by *that remote process* in its canonical
+    RunStarted journal entry.  The parent can then negotiate against actual
+    peer bytes rather than assuming its own local version is present remotely.
+    """
     payload = bound_event_reference_fields(redact_sensitive_value(event_to_dict(event)))
+    if (
+        str(payload.get("event_type") or "") == "run.started"
+        and str(os.environ.get("DEVTOOL_INSIDE_SSH") or "").strip().lower() in {"1", "true", "yes", "on"}
+        and str(os.environ.get("DEVTOOL_FEDERATION_RELATIONSHIP") or "").strip() == "child"
+    ):
+        from ..distributed_transport import TransportProtocolCapabilities
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            payload["metadata"] = metadata
+        metadata["dist_transport_peer"] = "ssh-remote-devtool"
+        metadata["dist_transport_capabilities"] = TransportProtocolCapabilities().as_dict()
     if str(payload.get("event_type") or "") == "process.output":
         text = str(payload.get("text") or "")
         if len(text) > max_output_chars:

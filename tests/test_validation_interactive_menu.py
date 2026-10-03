@@ -668,3 +668,54 @@ def test_termux_chroot_command_round_trips_through_cli_parser() -> None:
     assert parsed._devtool_validation_api_action == "run"
     assert parsed.if_revision == 33
     assert parsed.through == "package"
+
+
+def test_runtime_gradle_task_probe_uses_canonical_takeover_broker(tmp_path, monkeypatch):
+    from dataclasses import dataclass
+    from devtool.interactive.validation_catalog import runtime_gradle_task_probe
+    from devtool.models import ProjectConfig
+
+    root = tmp_path
+    (root / "settings.gradle").write_text("", encoding="utf-8")
+
+    @dataclass
+    class Receipt:
+        receipt_id: str = "receipt-1"
+        launcher_identity: str = "launcher-identity"
+        destination_identity: str = "destination-identity"
+        configuration_identity: str = "configuration-identity"
+        bypass_reason: str = "typed-probe-bypass"
+
+    class Completed:
+        returncode = 0
+        stdout = "assemble - Builds the project\n:app:testDebugUnitTest - Runs tests\n"
+        stderr = ""
+
+    calls = []
+
+    def fake_probe(config, argv, *, cwd=None, requested_launcher="", timeout=None, env=None):
+        calls.append({
+            "argv": list(argv),
+            "cwd": str(cwd),
+            "requested_launcher": requested_launcher,
+            "timeout": timeout,
+        })
+        return Completed(), Receipt()
+
+    monkeypatch.setattr("devtool.gradle_takeover.run_gradle_probe", fake_probe)
+    config = ProjectConfig(repo_root=root, project_root=str(root), kind="gradle", runner="gradle")
+    tasks, error, probe = runtime_gradle_task_probe(config)
+
+    assert error == ""
+    assert tasks == [":app:testDebugUnitTest", "assemble"]
+    assert calls == [{
+        "argv": ["tasks", "--all", "-q"],
+        "cwd": str(root),
+        "requested_launcher": "system",
+        "timeout": 45,
+    }]
+    assert probe["intent"] == "probe"
+    assert probe["receipt_id"] == "receipt-1"
+    assert probe["launcher_identity"] == "launcher-identity"
+    assert probe["destination_identity"] == "destination-identity"
+    assert probe["configuration_identity"] == "configuration-identity"

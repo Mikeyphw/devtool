@@ -566,234 +566,128 @@ def _runner_args(values: Sequence[str]) -> dict[str, str]:
     return result
 
 def main(raw_args: Sequence[str] | None = None) -> int:
+    """Execute the supported instrumentation entrypoint through one authority.
+
+    ``--canonical`` remains accepted for wrapper/backward CLI compatibility, but
+    there is no longer an independently executable legacy install/am/Gradle
+    path.  Direct ``python -m devtool.android_instrumentation`` callers and the
+    normal Devtool runner therefore lower into the same Android environment,
+    DeviceLease, ArtifactPair, instrumentation receipt, and cleanup authority.
+    """
     args = build_parser().parse_args(raw_args)
     project = args.project.expanduser().resolve()
     if not project.is_dir():
         print(f"Instrumentation project does not exist: {project}", file=sys.stderr)
         return 2
-    if args.canonical:
-        from .android.device_ops import AndroidDeviceOperations
-        from .android.instrumentation import (
-            AndroidInstrumentationOrchestrator, InstrumentationRequest,
-            gradle_receipts_from_current_run, request_from_config,
-        )
-        from .models import ProjectConfig
-        android_cfg = {
-            "adb": {"provider": args.adb_provider, "path": args.adb_path, "device_policy": args.device_policy, "serial": args.device_serial},
-            "instrumentation": {
-                "policy": args.policy,
-                "test_runner": args.runner,
-                "target_package": args.target_package,
-                "keep_installed": args.keep_installed,
-                "capture_logcat_on_failure": True,
-                "capture_screenshot_on_failure": True,
-                "size": args.size,
-                "wait_timeout_seconds": args.wait_timeout_seconds,
-                "cleanup_app": args.cleanup_app,
-            },
-            "aapt2": args.aapt2,
-            "aapt2_provider": args.aapt2_provider,
-        }
-        cfg = ProjectConfig(repo_root=project, project_root=str(project), kind="android", runner="android", variant=args.variant, device_serial=args.device_serial, runner_options={"android": android_cfg})
-        try:
-            if str(args.target or "").strip():
-                from .config import load_project_config
-                cfg = load_project_config(
-                    str(project), None, target_name=str(args.target).strip(),
-                    variant_name=str(args.variant or "").strip(), allow_parent_config=True,
-                )
-                request = request_from_config(
-                    cfg, classes=list(args.classes), methods=list(args.methods),
-                    annotations=list(args.annotation), not_annotations=list(args.not_annotation), size=args.size,
-                    runner_args=_runner_args(args.runner_arg), skip_build=args.skip_build, report=args.report,
-                )
-            else:
-                request = InstrumentationRequest(
-                    project=project, variant=args.variant, policy=args.policy, serial=args.device_serial, device_policy=args.device_policy,
-                    runner=args.runner, target_package=args.target_package, classes=list(args.classes), methods=list(args.methods),
-                    annotations=list(args.annotation), not_annotations=list(args.not_annotation), size=args.size,
-                    runner_args=_runner_args(args.runner_arg),
-                    gradle=args.gradle, gradle_args=list(args.gradle_arg),
-                    aapt2=args.aapt2, aapt2_provider=args.aapt2_provider, skip_build=args.skip_build, keep_installed=args.keep_installed,
-                    wait_timeout_seconds=args.wait_timeout_seconds, cleanup_app=args.cleanup_app,
-                    capture_logcat_on_failure=not args.no_logcat_on_failure, capture_screenshot_on_failure=not args.no_screenshot_on_failure, report=args.report,
-                )
-            gradle_receipts = gradle_receipts_from_current_run(
-                cfg.repo_root, run_id=str(os.environ.get("DEVTOOL_RUN_ID") or ""),
-            )
-            device_ops = AndroidDeviceOperations.from_config(cfg)
-            orchestrator = AndroidInstrumentationOrchestrator(
-                device_ops, config=cfg, gradle_receipts=gradle_receipts,
-            )
-            result = orchestrator.run(request)
-            print("DEVTOOL_INSTRUMENTATION_RESULT " + json.dumps(result.as_dict(), separators=(",", ":")))
-            if result.status == "skipped":
-                print(f"Instrumentation skipped: {result.reason}")
-            elif result.status == "failed":
-                print(f"Instrumentation failed: {result.reason or f'{result.failed} test(s) failed'}", file=sys.stderr)
-            return 0 if result.ok else (result.returncode or 1)
-        except Exception as exc:
-            print(f"Instrumentation failed: {exc}", file=sys.stderr)
-            return 1
-    variant_title = _variant_title(args.variant)
-    installed_test_package = ""
-    old_adb_provider = os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER")
-    old_adb_path = os.environ.get("DEVTOOL_ANDROID_ADB_PATH")
-    os.environ["DEVTOOL_ANDROID_ADB_PROVIDER"] = str(args.adb_provider or "auto")
-    if args.adb_path:
-        os.environ["DEVTOOL_ANDROID_ADB_PATH"] = str(args.adb_path)
-    else:
-        os.environ.pop("DEVTOOL_ANDROID_ADB_PATH", None)
 
+    from .android.device_ops import AndroidDeviceOperations
+    from .android.instrumentation import (
+        AndroidInstrumentationOrchestrator, InstrumentationRequest,
+        gradle_receipts_from_current_run, request_from_config,
+    )
+    from .models import ProjectConfig
+
+    android_cfg = {
+        "adb": {
+            "provider": args.adb_provider,
+            "path": args.adb_path,
+            "device_policy": args.device_policy,
+            "serial": args.device_serial,
+        },
+        "instrumentation": {
+            "policy": args.policy,
+            "test_runner": args.runner,
+            "target_package": args.target_package,
+            "keep_installed": args.keep_installed,
+            "capture_logcat_on_failure": not args.no_logcat_on_failure,
+            "capture_screenshot_on_failure": not args.no_screenshot_on_failure,
+            "size": args.size,
+            "wait_timeout_seconds": args.wait_timeout_seconds,
+            "cleanup_app": args.cleanup_app,
+        },
+        "aapt2": args.aapt2,
+        "aapt2_provider": args.aapt2_provider,
+    }
+    gradle_options: dict[str, Any] = {"args": list(args.gradle_arg)}
+    if str(args.gradle or "").strip() not in {"", "./gradlew", "gradlew"}:
+        gradle_options["command"] = str(args.gradle)
+    cfg = ProjectConfig(
+        repo_root=project,
+        project_root=str(project),
+        kind="android",
+        runner="android",
+        variant=args.variant,
+        device_serial=args.device_serial,
+        runner_options={"android": android_cfg, "gradle": gradle_options},
+    )
     try:
-        try:
-            args.device_serial = _resolve_execution_serial(
-                args.device_serial,
-                install_command=args.install_command,
-                am_command=args.am_command,
+        if str(args.target or "").strip():
+            from .config import load_project_config
+            cfg = load_project_config(
+                str(project),
+                None,
+                target_name=str(args.target).strip(),
+                variant_name=str(args.variant or "").strip(),
+                allow_parent_config=True,
             )
-        except InstrumentationUnavailable as exc:
-            return _write_skipped_result(
-                project,
+            request = request_from_config(
+                cfg,
+                classes=list(args.classes),
+                methods=list(args.methods),
+                annotations=list(args.annotation),
+                not_annotations=list(args.not_annotation),
+                size=args.size,
+                runner_args=_runner_args(args.runner_arg),
+                skip_build=args.skip_build,
                 report=args.report,
+            )
+        else:
+            request = InstrumentationRequest(
+                project=project,
+                variant=args.variant,
+                policy=args.policy,
+                serial=args.device_serial,
+                device_policy=args.device_policy,
                 runner=args.runner,
-                reason=str(exc),
+                target_package=args.target_package,
+                classes=list(args.classes),
+                methods=list(args.methods),
+                annotations=list(args.annotation),
+                not_annotations=list(args.not_annotation),
+                size=args.size,
+                runner_args=_runner_args(args.runner_arg),
+                gradle=args.gradle,
+                gradle_args=list(args.gradle_arg),
+                aapt2=args.aapt2,
+                aapt2_provider=args.aapt2_provider,
+                skip_build=args.skip_build,
+                keep_installed=args.keep_installed,
+                wait_timeout_seconds=args.wait_timeout_seconds,
+                cleanup_app=args.cleanup_app,
+                capture_logcat_on_failure=not args.no_logcat_on_failure,
+                capture_screenshot_on_failure=not args.no_screenshot_on_failure,
+                report=args.report,
             )
-
-        if args.runner and "/" in args.runner:
-            installed_test_package = args.runner.split("/", 1)[0].strip()
-
-        if not args.skip_build:
-            gradle = _resolve_gradle(project, args.gradle)
-            aapt2 = _instrumentation_aapt2(
-                project,
-                configured=args.aapt2,
-                provider=args.aapt2_provider,
-            )
-            gradle_arguments = android_build.gradle_arguments_with_aapt2_override(
-                [
-                    f"assemble{variant_title}",
-                    f"assemble{variant_title}AndroidTest",
-                    *args.gradle_arg,
-                    "--console=plain",
-                ],
-                aapt2,
-                plain_console=True,
-            )
-            run([str(gradle), *gradle_arguments], check=True)
-
-        app_apk, test_apk = _find_apks(project, args.variant)
-        print(f"DEVTOOL_EVENT {json.dumps({'kind': 'instrumentation-apks', 'app': str(app_apk), 'test': str(test_apk)})}")
-        _install(app_apk, serial=args.device_serial, install_command=args.install_command)
-        _install(test_apk, serial=args.device_serial, install_command=args.install_command)
-
-        runner, resolved_target_package = _choose_runner(
-            _pm_instrumentations(args.device_serial, install_command=args.install_command),
-            configured=args.runner,
-            target_package=args.target_package,
+        gradle_receipts = gradle_receipts_from_current_run(
+            cfg.repo_root, run_id=str(os.environ.get("DEVTOOL_RUN_ID") or ""),
         )
-        installed_test_package = runner.split("/", 1)[0]
-        command = [*_instrument_command(args.device_serial, am_command=args.am_command), "-w", "-r"]
-        selected_classes = list(args.classes)
-        for method in args.methods:
-            if "#" in method:
-                selected_classes.append(method)
-            elif "." in method:
-                class_name, method_name = method.rsplit(".", 1)
-                selected_classes.append(f"{class_name}#{method_name}")
-            else:
-                selected_classes.append(method)
-        if selected_classes:
-            command.extend(["-e", "class", ",".join(selected_classes)])
-        if args.annotation:
-            command.extend(["-e", "annotation", ",".join(args.annotation)])
-        if args.not_annotation:
-            command.extend(["-e", "notAnnotation", ",".join(args.not_annotation)])
-        command.append(runner)
-        result = run(command, check=False)
-        output = result.stdout + "\n" + result.stderr
-        # The compatibility runner consumes the same canonical execution
-        # classification as AOPS03. A runner/setup crash may use Android's -2
-        # status code without any concrete testcase having executed; never turn
-        # that process failure into a fabricated failed testcase.
-        from .android.instrumentation import _execution_classification
-        counts, failed_ids, failure_kind, classification_reason = _execution_classification(output, result.returncode)
-        payload: dict[str, Any] = {
-            "framework": "android-instrumentation",
-            "runner": runner,
-            "target_package": resolved_target_package,
-            "test_package": runner.split("/", 1)[0],
-            "app_apk": str(app_apk),
-            "test_apk": str(test_apk),
-            **counts,
-            "failed_ids": failed_ids,
-            "returncode": result.returncode,
-            "failure_kind": failure_kind,
-            "reason": classification_reason,
-        }
-        report = args.report or (project / ".devtool" / "reports" / "android-instrumentation.json")
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        print(f"DEVTOOL_INSTRUMENTATION_RESULT {json.dumps(payload, separators=(',', ':'))}")
-        if result.returncode != 0 or failure_kind or counts["failed"] or counts.get("executed", 0) <= 0:
-            if counts.get("executed", 0) <= 0 and not failure_kind:
-                payload["failure_kind"] = "setup-error"
-                payload["reason"] = "Instrumentation executed zero tests"
-            # Execution failure is represented by the action return/failure kind,
-            # not by inventing a failed testcase.
-            report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            return result.returncode or 1
-        return 0
-    except InstrumentationError as exc:
+        device_ops = AndroidDeviceOperations.from_config(cfg)
+        orchestrator = AndroidInstrumentationOrchestrator(
+            device_ops, config=cfg, gradle_receipts=gradle_receipts,
+        )
+        result = orchestrator.run(request)
+        print("DEVTOOL_INSTRUMENTATION_RESULT " + json.dumps(result.as_dict(), separators=(",", ":")))
+        if result.status == "skipped":
+            print(f"Instrumentation skipped: {result.reason}")
+        elif result.status == "failed":
+            print(
+                f"Instrumentation failed: {result.reason or f'{result.failed} test(s) failed'}",
+                file=sys.stderr,
+            )
+        return 0 if result.ok else (result.returncode or 1)
+    except Exception as exc:
         print(f"Instrumentation failed: {exc}", file=sys.stderr)
-        report = args.report or (project / ".devtool" / "reports" / "android-instrumentation.json")
-        payload = {
-            "framework": "android-instrumentation",
-            "error": str(exc),
-            "runner": args.runner,
-            "test_package": installed_test_package,
-            "returncode": 1,
-            "discovered": 0,
-            "selected": 0,
-            "executed": 0,
-            "passed": 0,
-            "failed": 0,
-            "skipped": 0,
-            "total": 0,
-            "failed_ids": [],
-            "failure_kind": "setup-error",
-        }
-        try:
-            report.parent.mkdir(parents=True, exist_ok=True)
-            report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        except OSError as report_error:
-            print(f"Instrumentation report write failed: {report_error}", file=sys.stderr)
-        print(
-            f"DEVTOOL_INSTRUMENTATION_RESULT "
-            f"{json.dumps(payload, separators=(',', ':'))}"
-        )
         return 1
-    finally:
-        if installed_test_package and not args.keep_installed:
-            try:
-                _uninstall_test_package(
-                    installed_test_package,
-                    serial=args.device_serial,
-                    install_command=args.install_command,
-                )
-            except InstrumentationError as cleanup_error:
-                print(
-                    f"Instrumentation cleanup warning: {cleanup_error}",
-                    file=sys.stderr,
-                )
-        if old_adb_provider is None:
-            os.environ.pop("DEVTOOL_ANDROID_ADB_PROVIDER", None)
-        else:
-            os.environ["DEVTOOL_ANDROID_ADB_PROVIDER"] = old_adb_provider
-        if old_adb_path is None:
-            os.environ.pop("DEVTOOL_ANDROID_ADB_PATH", None)
-        else:
-            os.environ["DEVTOOL_ANDROID_ADB_PATH"] = old_adb_path
 
 
 if __name__ == "__main__":

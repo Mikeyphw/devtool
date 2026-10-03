@@ -497,10 +497,109 @@ def _child_argv(
     environment = str(execution_environment or "auto").strip()
     if profile:
         argv.extend(["--ssh-profile", profile])
-    elif environment not in {"", "auto", "ssh", "proot-distro"}:
+    elif environment not in {"", "auto", "ssh"}:
         argv.extend(["--execution-environment", environment])
     argv.extend(["invoke", workflow, "--target", target])
     return argv
+
+
+def _is_ssh_placement(placement: Mapping[str, Any], *, provider_profile: str = "", execution_environment: str = "") -> bool:
+    kind = str(placement.get("provider_kind") or placement.get("kind") or "").strip().lower().replace("_", "-")
+    environment = str(execution_environment or placement.get("execution_environment") or "").strip().lower().replace("_", "-")
+    return bool(str(provider_profile or "").strip()) or kind.startswith("ssh") or environment in {"ssh", "ssh-native"}
+
+
+def _resolve_federation_ssh_config(
+    parent: ProjectConfig,
+    resolution: Any,
+    *,
+    provider_profile: str = "",
+):
+    """Resolve the same SSH profile used by normal Devtool whole-run routing."""
+    from .ssh_tmux_runner import resolve_ssh_config
+
+    argv = ["--repo", str(resolution.root)]
+    profile = str(provider_profile or "").strip()
+    if profile:
+        argv.extend(["--ssh-profile", profile])
+    return resolve_ssh_config(argv, cwd=str(parent.repo_root))
+
+
+def _ssh_delivery_cursor_path(parent: ProjectConfig, link: DelegationLink) -> Path:
+    from .core_runtime import private_run_root
+
+    return private_run_root(parent.repo_root) / "provider-cursors" / f"ssh-{link.delegation_id}.json"
+
+
+def _catch_up_real_ssh_child(
+    parent: ProjectConfig,
+    *,
+    config: Any,
+    link: DelegationLink,
+    publish: Callable[[Any], None] = publish_event,
+    transport_exit_code: int | None = None,
+) -> tuple[Any | None, dict[str, Any]]:
+    """Import actual remote RUN bytes and return a provider-backed receipt.
+
+    This is deliberately not a local-journal adapter with an ``ssh`` label.
+    The channel resolves the real worker session through ``ssh_resilience``,
+    negotiates capabilities from the remote RunStarted bytes, persists a
+    durable acknowledgement cursor, and ingests those exact events into the
+    parent's canonical execution store.
+    """
+    from .distributed_provider_control import record_delegation_relation, ssh_provider_event_channel
+
+    bus = get_event_bus() if publish is publish_event else getattr(publish, "__self__", None)
+    if bus is None or not hasattr(bus, "ingest_preserved") or not hasattr(bus, "execution_store"):
+        raise FederationExecutionError(
+            "real SSH federation delivery requires an authoritative EventBus-backed publish ingress"
+        )
+    channel = ssh_provider_event_channel(
+        config,
+        link=link,
+        cursor_path=_ssh_delivery_cursor_path(parent, link),
+    )
+    cursor = channel.cursor_store.load(link=link)
+    receiver = DelegatedEventReceiver.from_cursor(
+        ExternalEventIngestor(bus),
+        link=link,
+        cursor=cursor,
+    )
+    record_delegation_relation(parent.repo_root, link, delivery_health="live")
+    channel.catch_up(receiver)
+    snapshot = bus.execution_store.snapshot(link.child_run_id)
+    receipt = channel.receipt(
+        child_snapshot=snapshot,
+        transport_exit_code=transport_exit_code,
+    ).as_dict()
+    health = str(receipt.get("delivery", {}).get("health") or "reconciled")
+    record_delegation_relation(parent.repo_root, link, delivery_health=health)
+    return snapshot, receipt
+
+
+def _dispatch_real_ssh_cancel(
+    parent: ProjectConfig,
+    *,
+    config: Any,
+    link: DelegationLink,
+    reason: str,
+    requested_by_run_id: str,
+) -> Any:
+    from .distributed_provider_control import dispatch_ssh_provider_control, record_delegation_relation
+
+    ack = dispatch_ssh_provider_control(
+        config,
+        link=link,
+        reason=reason,
+        requested_by_run_id=requested_by_run_id,
+        telemetry_health="reconnecting",
+    )
+    record_delegation_relation(
+        parent.repo_root,
+        link,
+        delivery_health=("reconnecting" if ack.accepted else "degraded"),
+    )
+    return ack
 
 
 def _provider_capabilities_for_workflow(
@@ -700,6 +799,8 @@ def _run_federated_workflow_sequential(
     active_lineage: dict[str, Any] = {}
     active_parent_node = ""
     active_child_started = 0.0
+    active_delegation_link: DelegationLink | None = None
+    active_ssh_config: Any | None = None
 
     parent_lineage = {
         "kind": "federation",
@@ -910,6 +1011,18 @@ def _run_federated_workflow_sequential(
             from .distributed_provider_control import DelegationRoute, record_delegation_relation
             dist_route = DelegationRoute.from_json(os.environ.get("DEVTOOL_DIST_ROUTE")).append(delegation_link)
             record_delegation_relation(parent.repo_root, delegation_link, delivery_health="starting")
+            active_delegation_link = delegation_link
+            active_ssh_config = (
+                _resolve_federation_ssh_config(
+                    parent, resolution, provider_profile=scheduler_node.provider_profile
+                )
+                if _is_ssh_placement(
+                    placement,
+                    provider_profile=scheduler_node.provider_profile,
+                    execution_environment=scheduler_node.execution_environment,
+                )
+                else None
+            )
             if federation_group:
                 lineage["federation_group"] = federation_group
             active_target = target
@@ -997,7 +1110,18 @@ def _run_federated_workflow_sequential(
                     provider_profile=scheduler_node.provider_profile,
                     execution_environment=scheduler_node.execution_environment,
                 )
-            child_snapshot = snapshot_lookup(child_run_id)
+            delivery_receipt: dict[str, Any] = {}
+            if active_ssh_config is not None:
+                remote_snapshot, delivery_receipt = _catch_up_real_ssh_child(
+                    parent,
+                    config=active_ssh_config,
+                    link=delegation_link,
+                    publish=publish,
+                    transport_exit_code=rc,
+                )
+                child_snapshot = remote_snapshot or snapshot_lookup(child_run_id)
+            else:
+                child_snapshot = snapshot_lookup(child_run_id)
             persisted_lineage = _assert_child_snapshot_authority(
                 repository=step.repository,
                 child_run_id=child_run_id,
@@ -1019,9 +1143,16 @@ def _run_federated_workflow_sequential(
                 resume_checkpoint=resume_checkpoint,
             ).as_dict()
             active_child_run_id = ""
+            active_delegation_link = None
+            active_ssh_config = None
             terminal = reconcile_terminal_truth(transport_exit_code=rc, child_snapshot=child_snapshot)
             child_status = terminal.authoritative_status
             rc = terminal.authoritative_exit_code
+            record_delegation_relation(
+                parent.repo_root,
+                delegation_link,
+                delivery_health=("reconciled" if child_snapshot is not None else "degraded"),
+            )
             git_lineage = _finalize_child_git_lineage_preserving_primary_failure(
                 resolution,
                 planned_git_lineage,
@@ -1050,6 +1181,7 @@ def _run_federated_workflow_sequential(
                     "run_lineage": persisted_lineage or lineage,
                     "delegation_link": delegation_link.as_dict(),
                     "terminal_reconciliation": terminal.as_dict(),
+                    "delegated_execution_receipt": delivery_receipt,
                     "operational_ownership": operational,
                     "git_lineage": git_lineage,
                     "artifact_inputs": {key: value for key, value in artifact_inputs.items() if key != "__manifest__"},
@@ -1086,7 +1218,16 @@ def _run_federated_workflow_sequential(
     except KeyboardInterrupt:
         if active_child_run_id:
             try:
-                request_child_cancel(active_child_run_id)
+                if active_ssh_config is not None and active_delegation_link is not None:
+                    _dispatch_real_ssh_cancel(
+                        parent,
+                        config=active_ssh_config,
+                        link=active_delegation_link,
+                        reason="Federation parent interrupted",
+                        requested_by_run_id=run_id,
+                    )
+                else:
+                    request_child_cancel(active_child_run_id)
             except Exception:
                 pass
             snapshot = snapshot_lookup(active_child_run_id)
@@ -1392,6 +1533,7 @@ def _run_federated_workflow_parallel(
 
     active_lock = threading.RLock()
     active_children: dict[str, str] = {}
+    active_provider_controls: dict[str, tuple[Any, DelegationLink]] = {}
     outcomes: dict[str, FederatedChildRun] = {}
     cancelled = False
     failed = False
@@ -1403,7 +1545,19 @@ def _run_federated_workflow_parallel(
             if child_run_id == except_run_id:
                 continue
             try:
-                request_child_cancel(child_run_id)
+                with active_lock:
+                    provider_control = active_provider_controls.get(child_run_id)
+                if provider_control is not None:
+                    ssh_config, link = provider_control
+                    _dispatch_real_ssh_cancel(
+                        parent,
+                        config=ssh_config,
+                        link=link,
+                        reason="Federation parent cancelled parallel child",
+                        requested_by_run_id=run_id,
+                    )
+                else:
+                    request_child_cancel(child_run_id)
             except Exception:
                 pass
 
@@ -1480,6 +1634,17 @@ def _run_federated_workflow_parallel(
         from .distributed_provider_control import DelegationRoute, record_delegation_relation
         dist_route = DelegationRoute.from_json(os.environ.get("DEVTOOL_DIST_ROUTE")).append(delegation_link)
         record_delegation_relation(parent.repo_root, delegation_link, delivery_health="starting")
+        ssh_config = (
+            _resolve_federation_ssh_config(
+                parent, resolution, provider_profile=scheduler_node.provider_profile
+            )
+            if child_executor is None and _is_ssh_placement(
+                placement,
+                provider_profile=scheduler_node.provider_profile,
+                execution_environment=scheduler_node.execution_environment,
+            )
+            else None
+        )
         if federation_group:
             lineage["federation_group"] = federation_group
 
@@ -1538,7 +1703,7 @@ def _run_federated_workflow_parallel(
 
         live_forwarder: AsyncJournalForwarder | None = None
         live_transport_error = ""
-        if publish is publish_event:
+        if publish is publish_event and ssh_config is None:
             parent_bus = get_event_bus()
             adapter = distributed_provider_adapter(
                 "federation",
@@ -1571,6 +1736,8 @@ def _run_federated_workflow_parallel(
         child_started = time.monotonic()
         with active_lock:
             active_children[child_run_id] = step.step_id
+            if ssh_config is not None:
+                active_provider_controls[child_run_id] = (ssh_config, delegation_link)
         publish(NodeStarted(
             run_id=run_id,
             node_id=parent_node,
@@ -1614,7 +1781,16 @@ def _run_federated_workflow_parallel(
                     ))
             except KeyboardInterrupt:
                 try:
-                    request_child_cancel(child_run_id)
+                    if ssh_config is not None:
+                        _dispatch_real_ssh_cancel(
+                            parent,
+                            config=ssh_config,
+                            link=delegation_link,
+                            reason="Federation child interrupted",
+                            requested_by_run_id=run_id,
+                        )
+                    else:
+                        request_child_cancel(child_run_id)
                 except Exception:
                     pass
                 rc = 130
@@ -1628,7 +1804,18 @@ def _run_federated_workflow_parallel(
                     # import and the receipt records degraded transport health.
                     live_transport_error = str(exc)
 
-            child_snapshot = snapshot_lookup(child_run_id)
+            delivery_receipt: dict[str, Any] = {}
+            if ssh_config is not None:
+                remote_snapshot, delivery_receipt = _catch_up_real_ssh_child(
+                    parent,
+                    config=ssh_config,
+                    link=delegation_link,
+                    publish=publish,
+                    transport_exit_code=rc,
+                )
+                child_snapshot = remote_snapshot or snapshot_lookup(child_run_id)
+            else:
+                child_snapshot = snapshot_lookup(child_run_id)
             snapshot_terminal = bool(
                 child_snapshot is not None
                 and str(getattr(child_snapshot, "status", "") or "")
@@ -1640,7 +1827,11 @@ def _run_federated_workflow_parallel(
                     ExecutionStatus.CANCELLED.value,
                 }
             )
-            if (child_snapshot is None or not snapshot_terminal) and publish is publish_event:
+            if (
+                ssh_config is None
+                and (child_snapshot is None or not snapshot_terminal)
+                and publish is publish_event
+            ):
                 child_snapshot = import_child_run_journal(
                     child_state_dir,
                     child_run_id=child_run_id,
@@ -1679,7 +1870,6 @@ def _run_federated_workflow_parallel(
             terminal = reconcile_terminal_truth(transport_exit_code=rc, child_snapshot=child_snapshot)
             child_status = terminal.authoritative_status
             rc = terminal.authoritative_exit_code
-            delivery_receipt = {}
             if live_forwarder is not None:
                 receipt = live_forwarder.receipt(
                     child_snapshot=child_snapshot,
@@ -1688,6 +1878,19 @@ def _run_federated_workflow_parallel(
                 delivery_receipt = receipt.as_dict()
                 if live_transport_error:
                     delivery_receipt["secondary_transport_error"] = live_transport_error
+            record_delegation_relation(
+                parent.repo_root,
+                delegation_link,
+                delivery_health=(
+                    str(
+                        (delivery_receipt.get("delivery") or {}).get("health")
+                        or delivery_receipt.get("delivery_health")
+                        or delivery_receipt.get("health")
+                        or "reconciled"
+                    )
+                    if not live_transport_error else "degraded"
+                ),
+            )
             git_lineage = _finalize_child_git_lineage_preserving_primary_failure(
                 resolution,
                 planned_git_lineage,
@@ -1761,6 +1964,7 @@ def _run_federated_workflow_parallel(
                     pass
             with active_lock:
                 active_children.pop(child_run_id, None)
+                active_provider_controls.pop(child_run_id, None)
 
     try:
         for wave in schedule.waves:

@@ -35,6 +35,8 @@ def _child(tmp_path: Path) -> tuple[Path, dict, dict]:
         "child_run_id": "fed-child-1",
         "federation_workflow": "release",
         "federation_step": "child",
+        "frozen_source_lock_digest": "lock-digest-1",
+        "frozen_source_equivalence_digest": "equivalence-digest-1",
         "repository": "child",
         "source_repository": "source-parent-fingerprint",
         "requested_repository": "child",
@@ -117,6 +119,125 @@ def test_termux_chroot_uses_translated_repository_root(tmp_path: Path, monkeypat
     assert meta["federation_child_remote_root"] == "/home/mike/Code/child"
     assert meta["federation_path_mapping"] == "chroot-path-map"
     assert meta["federation_parent_run_id"] == "federation-parent"
+
+
+
+
+def test_current_source_trace_is_emitted_for_all_remote_execution_substrates(tmp_path: Path) -> None:
+    root, identity, lineage = _child(tmp_path)
+    lineage = dict(
+        lineage,
+        frozen_source_lock_digest="lock-digest-1",
+        frozen_source_equivalence_digest="equivalence-digest-1",
+    )
+    environments = {
+        "ssh-command": ("~/Code/child", "ssh-workspace"),
+        "termux-host-chroot": ("/home/mike/Code/child", "chroot-path-map"),
+        "proot-distro": ("/workspace/project", "proot-bind"),
+        "ssh-proot-oci": ("~/workspaces/child", "oci-workspace"),
+    }
+
+    digests: set[str] = set()
+    for environment, (remote_root, mapping) in environments.items():
+        meta = build_federation_transport_metadata(
+            _metadata(identity, lineage),
+            local_root=root,
+            execution_environment=environment,
+            remote_root=remote_root,
+            path_mapping=mapping,
+        )
+        assert meta["federation_current_source_trace_kind"] == "federation-current-source-trace"
+        assert meta["federation_current_source_lock_digest"] == "lock-digest-1"
+        assert meta["federation_current_source_equivalence_digest"] == "equivalence-digest-1"
+        assert meta["federation_current_source_config_sha256"] == meta["federation_attestation_config_sha256"]
+        assert meta["federation_current_source_trace_digest"]
+        digests.add(meta["federation_current_source_trace_digest"])
+
+    assert len(digests) == len(environments), "current-source trace must bind the concrete substrate/root"
+
+
+def _result(name: str, metadata: dict) -> SimpleNamespace:
+    return SimpleNamespace(
+        name=name,
+        log_path="",
+        metadata={
+            **metadata,
+            "test_result": {
+                "id": name,
+                "status": "passed",
+                "counts": {"passed": 1, "failed": 0, "skipped": 0, "total": 1},
+                "metadata": {},
+            },
+        },
+    )
+
+
+def test_canonical_run_evidence_preserves_current_source_trace_for_all_substrates(tmp_path: Path) -> None:
+    from devtool import test_runstore
+
+    root, identity, lineage = _child(tmp_path)
+    environments = {
+        "ssh-command": ("/srv/child", "ssh-workspace"),
+        "termux-host-chroot": ("/home/mike/Code/child", "chroot-path-map"),
+        "proot-distro": ("/workspace/project", "proot-bind"),
+        "ssh-proot-oci": ("/workspace/project", "oci-workspace"),
+        "native-linux": (root, "identity"),
+    }
+
+    results = []
+    expected_by_name: dict[str, dict[str, str]] = {}
+    for environment, (remote_root, mapping) in environments.items():
+        transport = build_federation_transport_metadata(
+            _metadata(identity, lineage),
+            local_root=root,
+            execution_environment=environment,
+            remote_root=remote_root,
+            path_mapping=mapping,
+        )
+        metadata = {
+            **_metadata(identity, lineage),
+            **transport,
+            "execution_mode": environment,
+            "progress_argv": ["echo", "ok"],
+        }
+        name = f"trace-{environment}"
+        results.append(_result(name, metadata))
+        expected_by_name[name] = {
+            "environment": environment,
+            "remote_root": str(transport["federation_child_remote_root"]),
+            "mapping": mapping,
+            "trace_digest": str(transport["federation_current_source_trace_digest"]),
+        }
+
+    payload = test_runstore.build_run_payload(root, results, run_id="fed-child-1")
+    assert payload is not None
+    assert len(payload["operations"]) == len(environments)
+    for operation in payload["operations"]:
+        expected = expected_by_name[operation["name"]]
+        provenance = operation["provenance"]
+        federation = provenance["federation"]
+        assert federation["current_source_trace_digest"] == expected["trace_digest"]
+        assert federation["current_source_lock_digest"] == "lock-digest-1"
+        assert federation["child_local_root"] == str(root.resolve())
+        assert federation["child_remote_root"] == expected["remote_root"]
+        assert federation["execution_environment"] == expected["environment"]
+        assert federation["path_mapping"] == expected["mapping"]
+        assert federation["parent_run_id"] == "federation-parent"
+        assert federation["child_run_id"] == "fed-child-1"
+        canonical_metadata = operation["test_result"]["metadata"]
+        assert canonical_metadata["execution_provenance"]["federation"]["current_source_trace_digest"] == expected["trace_digest"]
+
+
+def test_canonical_run_evidence_fails_closed_without_current_source_trace(tmp_path: Path) -> None:
+    from devtool import test_runstore
+
+    root, identity, lineage = _child(tmp_path)
+    with pytest.raises(FederationTransportError, match="missing current-source trace bindings"):
+        test_runstore.build_run_payload(
+            root,
+            [_result("missing-trace", {**_metadata(identity, lineage), "execution_mode": "proot-distro"})],
+            run_id="fed-child-1",
+        )
 
 
 def test_local_remote_parent_metadata_retains_child_identity(tmp_path: Path) -> None:
@@ -327,3 +448,37 @@ def test_whole_run_remote_federation_refuses_missing_or_truncated_attestation(mo
     with mock.patch.dict(os.environ, truncated, clear=False):
         with pytest.raises(FederationTransportError, match="availability marker"):
             build_remote_tmux_script(SSHRunnerConfig(host="worker", user="mike", cwd="/srv/child"), ["status"])
+
+
+def test_dist_a03_child_argv_preserves_non_ssh_provider_execution_environment() -> None:
+    from devtool.federation_execution import _child_argv
+
+    proot = _child_argv(
+        root="/repo/child",
+        target="app",
+        workflow="check",
+        invocation_command="parent:child",
+        execution_environment="proot-distro",
+    )
+    assert proot[:4] == ["--repo", "/repo/child", "--execution-environment", "proot-distro"]
+    assert proot == ["--repo", "/repo/child", "--execution-environment", "proot-distro", "invoke", "check", "--target", "app"]
+
+    chroot = _child_argv(
+        root="/repo/child",
+        target="app",
+        workflow="check",
+        invocation_command="parent:child",
+        execution_environment="chroot",
+    )
+    assert "--execution-environment" in chroot and "chroot" in chroot
+
+    ssh = _child_argv(
+        root="/repo/child",
+        target="app",
+        workflow="check",
+        invocation_command="parent:child",
+        provider_profile="tablet",
+        execution_environment="ssh",
+    )
+    assert "--ssh-profile" in ssh and "tablet" in ssh
+    assert "--execution-environment" not in ssh
