@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from collections import Counter, defaultdict, deque
+import hashlib
 import json
 import os
 import re
@@ -28,18 +29,13 @@ from .artifacts import (
     _is_skipped_artifact_payload_member,
     _archive_member_is_root_directory,
     is_overlay_bundle,
-    materialize_overlay_bundle_entries,
     open_tar_archive,
-    preview_artifact,
-    preview_overlay_bundle,
     create_overlay_bundle,
     read_artifact_manifest,
     artifact_solution,
     artifact_target,
-    read_delete_manifest,
     resolve_artifact_path,
     sha256_file,
-    validate_artifact,
     _safe_rel as _safe_archive_rel,
 )
 from .artifact_validation import run_artifact_preflight_script
@@ -3571,63 +3567,393 @@ def _register_artifact_config(repo_root: Path, manifest: dict, *, target_overrid
     return ensure_artifact_target_config(repo_root, **declaration)
 
 
-def _bundle_config_declarations(bundle: Path) -> list[dict[str, str]]:
-    declarations: list[dict[str, str]] = []
-    with tempfile.TemporaryDirectory(prefix="devtool-bundle-config-") as tmp:
-        _manifest, entries = materialize_overlay_bundle_entries(bundle, tmp)
-        for entry in entries:
-            declaration = _artifact_config_declaration(read_artifact_manifest(entry.path))
-            if entry.target:
-                declaration["target"] = entry.target
-            if _declaration_has_dotnet_target(declaration):
-                declarations.append(declaration)
-    return declarations
-
-
-def _direct_artifact_validation_failure(
+def _resolve_executable_artifact_plan(
     repo_root: Path,
-    artifact_path: Path,
+    artifact: str | Path,
     *,
-    artifact_type: str,
-    operation: str,
-    argv: list[str],
-    log_path: Path | str | None,
-    ignore_checksum: bool,
-) -> OperationResult | None:
-    """Fail closed when a low-level apply caller bypasses the CLI validation gate.
+    resolved_plan: object | None = None,
+    ignore_checksum: bool = False,
+):
+    from .artifact_lifecycle import ArtifactEnvelopeResolver, ResolvedArtifactPlan
+    if resolved_plan is not None:
+        if not isinstance(resolved_plan, ResolvedArtifactPlan):
+            raise TypeError("resolved_plan must be a ResolvedArtifactPlan")
+        plan = resolved_plan
+    else:
+        plan = ArtifactEnvelopeResolver().resolve_qualified_plan(
+            artifact, repo_root=repo_root, public_runner=False,
+            isolation=str(os.environ.get("DEVTOOL_TRANSACTION_ISOLATION") or "worktree"),
+            ignore_checksum=ignore_checksum,
+        )
+    actual = resolve_artifact_path(artifact).resolve(strict=False)
+    planned = Path(str(plan.artifact.source.get("path") or "")).resolve(strict=False)
+    if planned != actual:
+        raise RuntimeError(f"ResolvedArtifactPlan source mismatch: planned {planned}, requested {actual}")
+    # Qualification binds the transport bytes, not merely a pathname. A caller
+    # must not be able to replace an artifact between plan construction and
+    # mutation and then rely on --ignore-checksum to execute stale authority.
+    if not actual.is_file():
+        raise RuntimeError(f"ResolvedArtifactPlan artifact is unavailable: {actual}")
+    actual_transport_sha256 = sha256_file(actual)
+    planned_transport_sha256 = str(plan.artifact.identities.transport_sha256 or "")
+    if not planned_transport_sha256 or actual_transport_sha256 != planned_transport_sha256:
+        raise RuntimeError(
+            "ResolvedArtifactPlan transport identity mismatch: qualified bytes changed "
+            f"(planned={planned_transport_sha256 or '<missing>'}, actual={actual_transport_sha256})"
+        )
+    if not plan.executable:
+        detail = "; ".join(f"{item.code}: {item.message}" for item in plan.qualification.blockers)
+        raise RuntimeError("Canonical artifact qualification failed: " + (detail or "plan is not executable"))
+    return plan
 
-    The CLI validates artifacts before dispatch, but ``apply_overlay`` and
-    ``apply_overlay_bundle`` are also public runner entry points used by tests,
-    integrations, and plugins.  They must not turn a validation rejection into
-    a successful repository mutation merely because the caller skipped the CLI.
+
+def _plan_mutation_owner(source_identity: str) -> str:
+    value = str(source_identity or "")
+    if "::" in value:
+        return value.split("::", 1)[0]
+    return value
+
+
+def _plan_mutation_is_generated_config(source_identity: str) -> bool:
+    return str(source_identity or "").endswith("devtool:artifact-config-registration")
+
+
+def _canonical_snapshot_extra_paths(repo_root: Path, plan: object) -> list[str]:
+    from .artifact_lifecycle import ResolvedArtifactPlan
+    if not isinstance(plan, ResolvedArtifactPlan) or not plan.expected_final_tree.exact:
+        return []
+    present = {str(item.path) for item in plan.expected_final_tree.entries if item.state == "present"}
+    preserve = {str(item.path) for item in plan.expected_final_tree.entries if item.state == "preserve"}
+
+    def protected(rel: str, path: Path) -> bool:
+        if rel in present or rel in preserve:
+            return True
+        # Preserving a directory preserves its subtree. Existing directories
+        # that are required as parents of an expected file must also survive.
+        if any(rel.startswith(prefix.rstrip("/") + "/") for prefix in preserve):
+            return True
+        if path.is_dir() and any(item.startswith(rel.rstrip("/") + "/") for item in present | preserve):
+            return True
+        return False
+
+    candidates: list[str] = []
+    root = repo_root.resolve()
+    for path in sorted(root.rglob("*"), key=lambda item: (len(item.relative_to(root).parts), item.as_posix())):
+        rel_path = path.relative_to(root)
+        if any(part in {".git", ".devtool"} for part in rel_path.parts):
+            continue
+        rel = rel_path.as_posix()
+        if protected(rel, path):
+            continue
+        candidates.append(rel)
+
+    # A directory deletion already covers its descendants. Keep only minimal
+    # roots so transaction backup/rollback does not independently own the same
+    # bytes through multiple overlapping affected-path entries.
+    selected: list[str] = []
+    for rel in candidates:
+        if any(rel == parent or rel.startswith(parent.rstrip("/") + "/") for parent in selected):
+            continue
+        selected.append(rel)
+    return selected
+
+
+def _canonical_plan_preview(repo_root: Path, plan: object) -> dict[str, object]:
+    from .artifact_lifecycle import MutationKind, ResolvedArtifactPlan
+    if not isinstance(plan, ResolvedArtifactPlan):
+        raise TypeError("canonical preview requires ResolvedArtifactPlan")
+    root = repo_root.resolve()
+    changes_by_path: dict[str, dict[str, str]] = {}
+    order: list[str] = []
+
+    def record(path: str, kind: str) -> None:
+        rel = str(path or "").replace("\\", "/").strip("/")
+        if not rel:
+            return
+        if rel not in changes_by_path:
+            order.append(rel)
+        changes_by_path[rel] = {"path": rel, "kind": kind, "authority": "resolved-artifact-plan"}
+
+    for mutation in plan.mutations.mutations:
+        if mutation.kind == MutationKind.PRESERVE:
+            continue
+        if mutation.kind == MutationKind.DELETE:
+            record(mutation.path, "delete")
+            continue
+        destination = _safe_destination_path(root, Path(mutation.path))
+        record(mutation.path, "modify" if destination.exists() or destination.is_symlink() else "add")
+
+    for rel in _canonical_snapshot_extra_paths(root, plan):
+        record(rel, "delete")
+
+    for lease in plan.write_leases:
+        if lease.path in changes_by_path:
+            continue
+        kind = f"{str(lease.owner or 'artifact')}-write"
+        record(lease.path, kind)
+
+    changes = [changes_by_path[path] for path in order]
+    counts: dict[str, int] = {}
+    for change in changes:
+        kind = str(change["kind"])
+        counts[kind] = counts.get(kind, 0) + 1
+    return {
+        "artifact": str(plan.artifact.source.get("path") or ""),
+        "plan_id": plan.plan_id,
+        "canonical_mutation_contract": True,
+        "snapshot": bool(plan.expected_final_tree.exact),
+        "files": sum(1 for item in plan.mutations.mutations if item.kind not in {MutationKind.DELETE, MutationKind.PRESERVE}),
+        "changes": changes,
+        "counts": counts,
+    }
+
+
+def _member_map_for_plan_source(artifact_path: Path) -> dict[str, object]:
+    from .artifacts import list_archive_members
+    result: dict[str, object] = {}
+    for member in list_archive_members(artifact_path, include_data=True):
+        if not member.is_dir:
+            result[str(member.name)] = member
+    return result
+
+
+def _materialize_plan_bundle_entries(artifact_path: Path, plan: object, target_dir: Path) -> list[tuple[object, Path]]:
+    """Materialize nested archives using only descriptors already captured by the plan."""
+    from .artifact_lifecycle import ResolvedArtifactPlan
+    if not isinstance(plan, ResolvedArtifactPlan):
+        raise TypeError("canonical bundle materialization requires ResolvedArtifactPlan")
+    if not plan.bundle_entries:
+        raise RuntimeError("Canonical bundle plan has no resolved bundle entries")
+    members = _member_map_for_plan_source(artifact_path)
+    result: list[tuple[object, Path]] = []
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for entry in plan.bundle_entries:
+        member = members.get(entry.bundle_path)
+        if member is None or getattr(member, "is_dir", False):
+            if entry.required:
+                raise RuntimeError(f"Canonical bundle member is unavailable: {entry.bundle_path}")
+            continue
+        data = getattr(member, "data", None)
+        if data is None:
+            raise RuntimeError(f"Canonical bundle member bytes are unavailable: {entry.bundle_path}")
+        if entry.size is not None and len(data) != int(entry.size):
+            raise RuntimeError(f"Canonical bundle member size changed: {entry.bundle_path}")
+        if entry.sha256 and hashlib.sha256(data).hexdigest().lower() != entry.sha256.lower():
+            raise RuntimeError(f"Canonical bundle member digest changed: {entry.bundle_path}")
+        destination = target_dir / entry.bundle_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+        result.append((entry, destination))
+    return result
+
+
+def _verify_mutation_source_state(execution_root: Path, mutation: object) -> None:
+    expected_source = str(getattr(mutation, "source_sha256", "") or "").strip()
+    if not expected_source:
+        return
+    destination = _safe_destination_path(execution_root, Path(str(getattr(mutation, "path"))))
+    if not destination.is_file() or destination.is_symlink():
+        raise RuntimeError(
+            f"Canonical mutation source mismatch for {getattr(mutation, 'path')}: "
+            "expected an existing regular file"
+        )
+    actual = sha256_file(destination)
+    if actual != expected_source:
+        raise RuntimeError(
+            f"Canonical mutation source mismatch for {getattr(mutation, 'path')}: "
+            f"expected {expected_source}, actual {actual}"
+        )
+
+
+def _execute_plan_mutations(
+    execution_root: Path,
+    artifact_path: Path,
+    plan: object,
+    *,
+    source_owner: str | None = None,
+) -> dict[str, object]:
+    """Execute only mutations already authorized by ``ResolvedArtifactPlan``.
+
+    Archive membership, delete manifests, and snapshot synchronization are not
+    reinterpreted here. The archive supplies bytes; the plan supplies authority.
     """
-    validation = validate_artifact(
-        repo_root,
-        artifact_path,
-        artifact_type=artifact_type,
-        check_source_state=True,
-        ignore_checksum=ignore_checksum,
+    from .artifact_lifecycle import MutationKind, ResolvedArtifactPlan
+    if not isinstance(plan, ResolvedArtifactPlan):
+        raise TypeError("canonical mutation execution requires ResolvedArtifactPlan")
+    root = execution_root.resolve()
+    members = _member_map_for_plan_source(artifact_path)
+    applied = 0
+    deleted: list[str] = []
+    skipped_generated = 0
+
+    selected = []
+    for mutation in plan.mutations.mutations:
+        if source_owner is not None and _plan_mutation_owner(mutation.source_identity) != source_owner:
+            continue
+        selected.append(mutation)
+
+    # Snapshot exactness is part of the top-level plan and happens once, before
+    # payload writes. A bundle never carries exact snapshot semantics.
+    if source_owner is None and plan.expected_final_tree.exact:
+        for rel in sorted(_canonical_snapshot_extra_paths(root, plan), key=lambda item: (item.count("/"), item), reverse=True):
+            target = _safe_destination_path(root, Path(rel))
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+                deleted.append(rel)
+            elif target.exists() or target.is_symlink():
+                target.unlink()
+                deleted.append(rel)
+
+    for mutation in selected:
+        if mutation.kind == MutationKind.PRESERVE:
+            continue
+        if _plan_mutation_is_generated_config(mutation.source_identity):
+            skipped_generated += 1
+            continue
+        destination = _safe_destination_path(root, Path(mutation.path))
+        _verify_mutation_source_state(root, mutation)
+        if mutation.kind == MutationKind.DELETE:
+            if destination == root:
+                raise RuntimeError("Canonical mutation contract attempted to delete repository root")
+            if destination.is_dir() and not destination.is_symlink():
+                shutil.rmtree(destination)
+                deleted.append(mutation.path)
+            elif destination.exists() or destination.is_symlink():
+                destination.unlink()
+                deleted.append(mutation.path)
+            applied += 1
+            continue
+
+        member = members.get(str(mutation.path))
+        if member is None:
+            raise RuntimeError(
+                f"Canonical mutation {mutation.kind.value} for {mutation.path} has no matching payload member"
+            )
+        data = bytes(getattr(member, "data", None) or b"")
+        actual_sha = hashlib.sha256(data).hexdigest()
+        expected_sha = str(mutation.expected_sha256 or "").strip()
+        if expected_sha and actual_sha != expected_sha:
+            raise RuntimeError(
+                f"Canonical mutation payload mismatch for {mutation.path}: "
+                f"expected {expected_sha}, actual {actual_sha}"
+            )
+        _prepare_file_destination(destination, str(mutation.path))
+        destination.write_bytes(data)
+        _apply_member_mode(destination, getattr(member, "mode", None))
+        applied += 1
+
+    return {"applied": applied, "deleted": deleted, "generated": skipped_generated}
+
+
+def _plan_authorizes_config_registration(plan: object, *, source_owner: str | None = None) -> bool:
+    from .artifact_lifecycle import ResolvedArtifactPlan
+    if not isinstance(plan, ResolvedArtifactPlan):
+        return False
+    for mutation in plan.mutations.mutations:
+        if source_owner is not None and _plan_mutation_owner(mutation.source_identity) != source_owner:
+            continue
+        if mutation.path == ".devtool.toml" and _plan_mutation_is_generated_config(mutation.source_identity):
+            return True
+    return False
+
+
+def _persist_artifact_execution_record(repo_root: Path, plan: object, result: OperationResult) -> None:
+    from .artifact_lifecycle import ArtifactExecutionRecord, ResolvedArtifactPlan
+    from .core_runtime import private_run_root
+    from .run_store import AttachmentDescriptor, RunCatalog
+    import uuid as _uuid
+    from datetime import datetime, timezone
+
+    if not isinstance(plan, ResolvedArtifactPlan):
+        return
+    root = private_run_root(repo_root)
+    catalog = RunCatalog.open(root)
+
+    # Reuse ambient run identity only when RUN-V3 itself confirms this is a live
+    # canonical operation. Direct/library callers with stale process environment
+    # receive an independent durable run without mutating os.environ.
+    ambient = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
+    ambient_row = dict(catalog.runs.get(ambient, {})) if ambient else {}
+    ambient_live = bool(ambient and str(ambient_row.get("status") or "") == "running")
+    run_id = ambient if ambient_live else _uuid.uuid4().hex
+
+    final_identity = hashlib.sha256(json.dumps({
+        "returncode": int(result.returncode or 0),
+        "transaction": str((result.metadata or {}).get("transaction_id") or ""),
+        "artifact": plan.artifact.identities.semantic_sha256,
+        "plan": plan.plan_id,
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    record = ArtifactExecutionRecord.create(
+        run_id=run_id,
+        artifact_id=plan.artifact.artifact_id,
+        plan_id=plan.plan_id,
+        qualification_receipt_id=plan.qualification.receipt_id,
+        transaction_id=str((result.metadata or {}).get("transaction_id") or ""),
+        rollback_receipt_id=str((result.metadata or {}).get("rollback_receipt_id") or ""),
+        trust_evidence_ids=plan.qualification.trust_evidence_ids,
+        final_state_identity=final_identity,
     )
-    if validation.ok:
-        return None
-    detail = "\n".join(validation.messages) or "Artifact validation rejected the artifact."
-    output = "Artifact validation failed before direct apply:\n" + detail
-    path = str(write_log(output, log_path, append=log_path is not None))
-    return OperationResult(
-        operation,
-        argv,
-        1,
-        0.0,
-        output,
-        [],
-        log_path=path,
-        failure_kind="artifact_failure",
-        metadata={
-            "artifact_path": str(artifact_path),
-            "artifact_validation_enforced": True,
-            "artifact_validation_messages": list(validation.messages),
-        },
+    record_dir = root / run_id / "artifacts"
+    record_dir.mkdir(parents=True, exist_ok=True)
+
+    qualification_path = record_dir / (plan.qualification.receipt_id.replace(":", "-") + ".json")
+    qualification_tmp = qualification_path.with_suffix(qualification_path.suffix + ".tmp")
+    qualification_tmp.write_text(
+        json.dumps(plan.qualification.as_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
+    os.replace(qualification_tmp, qualification_path)
+
+    record_path = record_dir / (record.record_id.replace(":", "-") + ".json")
+    tmp = record_path.with_suffix(record_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(record.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, record_path)
+
+    status = "succeeded" if int(result.returncode or 0) == 0 else "failed"
+    row = dict(catalog.runs.get(run_id, {}))
+    row.update({
+        "schema_version": 3,
+        "run_id": run_id,
+        "operation_id": hashlib.sha256(json.dumps({
+            "artifact": plan.artifact.identities.semantic_sha256,
+            "plan": plan.plan_id,
+        }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32],
+        "command_id": str(row.get("command_id") or "artifact.apply"),
+        "status": str(row.get("status") or status) if ambient_live else status,
+        "provider": str(row.get("provider") or "local"),
+        "artifact_id": plan.artifact.artifact_id,
+        "artifact_plan_id": plan.plan_id,
+        "artifact_qualification_receipt_id": plan.qualification.receipt_id,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    if not ambient_live:
+        row.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+    catalog.add_run(row)
+
+    qualification_attachment = AttachmentDescriptor.from_file(
+        run_id=run_id,
+        path=qualification_path,
+        kind="artifact-qualification-receipt",
+        media_type="application/json",
+    )
+    execution_attachment = AttachmentDescriptor.from_file(
+        run_id=run_id,
+        path=record_path,
+        kind="artifact-execution-record",
+        media_type="application/json",
+    )
+    qualification_ref = catalog.add_attachment(qualification_attachment)
+    execution_ref = catalog.add_attachment(execution_attachment)
+    catalog.save()
+
+    result.metadata.setdefault("resolved_artifact_plan_id", plan.plan_id)
+    result.metadata.setdefault("artifact_qualification_receipt_id", plan.qualification.receipt_id)
+    result.metadata.setdefault("artifact_qualification_attachment_id", qualification_attachment.attachment_id)
+    result.metadata.setdefault("artifact_qualification_reference", qualification_ref.ref_id)
+    result.metadata.setdefault("artifact_execution_record_id", record.record_id)
+    result.metadata.setdefault("artifact_execution_attachment_id", execution_attachment.attachment_id)
+    result.metadata.setdefault("artifact_execution_reference", execution_ref.ref_id)
+    result.metadata.setdefault("run_id", run_id)
 
 
 def apply_overlay(
@@ -3644,6 +3970,7 @@ def apply_overlay(
     lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None,
     render_hook_progress: bool = False,
     stream_hook_output: bool = False,
+    resolved_plan: object | None = None,
 ) -> OperationResult:
     """Apply one overlay without leaking transaction-root process state."""
 
@@ -3660,7 +3987,7 @@ def apply_overlay(
             skip_artifact_validation=skip_artifact_validation,
             lifecycle_progress=lifecycle_progress,
             render_hook_progress=render_hook_progress,
-            stream_hook_output=stream_hook_output,
+            stream_hook_output=stream_hook_output, resolved_plan=resolved_plan,
         )
 
 
@@ -3678,9 +4005,11 @@ def _apply_overlay_impl(
     lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None,
     render_hook_progress: bool = False,
     stream_hook_output: bool = False,
+    resolved_plan: object | None = None,
 ) -> OperationResult:
     artifact_path = resolve_artifact_path(artifact)
-    if is_overlay_bundle(artifact_path):
+    plan = _resolve_executable_artifact_plan(repo_root, artifact_path, resolved_plan=resolved_plan, ignore_checksum=ignore_checksum)
+    if str(plan.artifact.subtype.value) == "bundle":
         return apply_overlay_bundle(
             repo_root,
             artifact,
@@ -3693,22 +4022,10 @@ def _apply_overlay_impl(
             skip_artifact_validation=skip_artifact_validation,
             lifecycle_progress=lifecycle_progress,
             render_hook_progress=render_hook_progress,
-            stream_hook_output=stream_hook_output,
+            stream_hook_output=stream_hook_output, resolved_plan=plan,
         )
     argv = ["devtool", "extract-overlay", str(artifact_path), "-C", str(repo_root)]
-    if not dry_run and not skip_artifact_validation:
-        rejected = _direct_artifact_validation_failure(
-            repo_root,
-            artifact_path,
-            artifact_type="overlay",
-            operation="apply-overlay",
-            argv=argv,
-            log_path=log_path,
-            ignore_checksum=ignore_checksum,
-        )
-        if rejected is not None:
-            return rejected
-    return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum, lifecycle_progress=lifecycle_progress, render_hook_progress=render_hook_progress, stream_hook_output=stream_hook_output)
+    return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum, lifecycle_progress=lifecycle_progress, render_hook_progress=render_hook_progress, stream_hook_output=stream_hook_output, resolved_plan=plan)
 
 
 def apply_overlay_bundle(
@@ -3726,6 +4043,7 @@ def apply_overlay_bundle(
     lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None,
     render_hook_progress: bool = False,
     stream_hook_output: bool = False,
+    resolved_plan: object | None = None,
 ) -> OperationResult:
     """Apply an overlay bundle without leaking transaction-root process state."""
 
@@ -3741,7 +4059,7 @@ def apply_overlay_bundle(
             log_path=log_path, preview=preview, source_artifacts=source_artifacts,
             ignore_checksum=ignore_checksum, skip_artifact_validation=skip_artifact_validation,
             lifecycle_progress=lifecycle_progress, render_hook_progress=render_hook_progress,
-            stream_hook_output=stream_hook_output,
+            stream_hook_output=stream_hook_output, resolved_plan=resolved_plan,
         )
 
 
@@ -3760,6 +4078,7 @@ def _apply_overlay_bundle_impl(
     lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None,
     render_hook_progress: bool = False,
     stream_hook_output: bool = False,
+    resolved_plan: object | None = None,
 ) -> OperationResult:
     raw_artifacts = [artifact] if isinstance(artifact, (str, Path)) else list(artifact)
     if not raw_artifacts:
@@ -3776,20 +4095,9 @@ def _apply_overlay_bundle_impl(
             temp_dir = tempfile.TemporaryDirectory(prefix="devtool-adhoc-overlays-")
             original_paths = [resolve_artifact_path(item) for item in raw_artifacts]
             artifact_path = create_overlay_bundle(Path(temp_dir.name) / "adhoc_overlay_bundle.zip", original_paths, name="adhoc_overlay_bundle")
+        plan = _resolve_executable_artifact_plan(repo_root, artifact_path, resolved_plan=resolved_plan, ignore_checksum=ignore_checksum)
         argv = ["devtool", "apply-overlays", *(str(item) for item in original_paths), "-C", str(repo_root)]
         start = time.perf_counter()
-        if not dry_run and not skip_artifact_validation:
-            rejected = _direct_artifact_validation_failure(
-                repo_root,
-                artifact_path,
-                artifact_type="overlay_bundle",
-                operation="apply-overlays",
-                argv=argv,
-                log_path=log_path,
-                ignore_checksum=ignore_checksum,
-            )
-            if rejected is not None:
-                return rejected
         if dry_run:
             text = "$ " + " ".join(argv)
             path = str(write_log(text, log_path, append=log_path is not None))
@@ -3805,12 +4113,11 @@ def _apply_overlay_bundle_impl(
         failure_kind = ""
         preflight_results: list[OperationResult] = []
         try:
-            bundle_manifest = read_artifact_manifest(artifact_path)
-            declarations = _bundle_config_declarations(artifact_path)
-            preview_data = _preview_with_config_registration(
-                preview or preview_overlay_bundle(repo_root, artifact_path),
-                declarations,
-            )
+            # The qualified plan is the only mutation authority. The bundle
+            # manifest here is the immutable projection captured by that plan;
+            # preview/delete/config discovery must not reparse the archive.
+            bundle_manifest = dict(plan.artifact.manifest)
+            preview_data = _canonical_plan_preview(repo_root, plan)
             checksum_paths = [
                 str(item.get("path") or "")
                 for item in preview_data.get("changes", [])
@@ -3821,6 +4128,7 @@ def _apply_overlay_bundle_impl(
                 artifact_path,
                 artifact_type="overlay_bundle",
                 preview=preview_data,
+                canonical_plan=True,
             )
             execution_root = transaction_execution_root(transaction)
             os.environ["DEVTOOL_TRANSACTION_REPO_ROOT"] = str(execution_root)
@@ -3844,23 +4152,17 @@ def _apply_overlay_bundle_impl(
             applied: list[str] = []
             registrations: list[dict[str, str]] = []
             with tempfile.TemporaryDirectory(prefix="devtool-bundle-apply-") as tmp:
-                _manifest, entries = materialize_overlay_bundle_entries(artifact_path, tmp)
-                for entry in entries:
-                    validation = validate_artifact(
-                        execution_root,
-                        entry.path,
-                        artifact_type="overlay",
-                        check_source_state=True,
-                        ignore_checksum=ignore_checksum,
-                    )
-                    if not skip_artifact_validation and not validation.ok:
-                        label = entry.label or Path(entry.bundle_path).name
-                        raise RuntimeError(f"Nested overlay validation failed for {label}: " + "; ".join(validation.messages))
+                entries = _materialize_plan_bundle_entries(artifact_path, plan, Path(tmp))
+                for entry, entry_path in entries:
+                    # All nested mutation/config/hook semantics are immutable
+                    # projections captured by ResolvedArtifactPlan. The runner
+                    # reads archive bytes only; it never reparses a nested manifest.
+                    nested_manifest = entry.manifest
                     nested_before = _run_required_preflight(
                         execution_root,
-                        entry.path,
+                        entry_path,
                         phase="before_extract",
-                        manifest=validation.manifest,
+                        manifest=nested_manifest,
                         target=entry.target,
                         log_path=log_path,
                         ignore_checksum=ignore_checksum,
@@ -3871,16 +4173,22 @@ def _apply_overlay_bundle_impl(
                     )
                     if nested_before is not None:
                         preflight_results.append(nested_before)
-                    skipped_metadata += _extract_archive(entry.path, execution_root)
-                    deleted_paths.extend(_apply_delete_manifest(execution_root, entry.path))
-                    registration = _register_artifact_config(execution_root, validation.manifest, target_override=entry.target)
-                    if registration:
-                        registrations.append(registration)
+                    source_owner = entry.source_owner
+                    mutation_result = _execute_plan_mutations(
+                        execution_root, entry_path, plan, source_owner=source_owner,
+                    )
+                    deleted_paths.extend(str(item) for item in mutation_result.get("deleted", []))
+                    if _plan_authorizes_config_registration(plan, source_owner=source_owner):
+                        registration = _register_artifact_config(
+                            execution_root, nested_manifest, target_override=entry.target
+                        )
+                        if registration:
+                            registrations.append(registration)
                     nested_after = _run_required_preflight(
                         execution_root,
-                        entry.path,
+                        entry_path,
                         phase="after_extract",
-                        manifest=validation.manifest,
+                        manifest=nested_manifest,
                         target=entry.target,
                         log_path=log_path,
                         ignore_checksum=ignore_checksum,
@@ -3969,7 +4277,7 @@ def _apply_overlay_bundle_impl(
             if rollback_result is not None:
                 metadata["rollback_returncode"] = rollback_result.returncode
                 metadata["rolled_back_during_apply"] = True
-        return OperationResult(
+        result = OperationResult(
             "apply-overlays",
             argv,
             rc,
@@ -3980,12 +4288,14 @@ def _apply_overlay_bundle_impl(
             metadata=metadata,
             failure_kind=failure_kind,
         )
+        _persist_artifact_execution_record(repo_root, plan, result)
+        return result
     finally:
         if temp_dir is not None:
             temp_dir.cleanup()
 
 
-def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False, skip_artifact_validation: bool = False) -> OperationResult:
+def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False, skip_artifact_validation: bool = False, resolved_plan: object | None = None) -> OperationResult:
     with preserve_environment_keys((
         "DEVTOOL_TRANSACTION_REPO_ROOT",
         "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
@@ -3995,17 +4305,24 @@ def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: 
         os.environ.setdefault("DEVTOOL_TRANSACTION_ISOLATION", "worktree")
         artifact_path = resolve_artifact_path(artifact)
         argv = ["snapshot", str(artifact_path)]
-        if not dry_run and not skip_artifact_validation:
-            rejected = _direct_artifact_validation_failure(
-                repo_root, artifact_path, artifact_type="snapshot", operation="apply-snapshot",
-                argv=argv, log_path=log_path, ignore_checksum=ignore_checksum,
+        try:
+            plan = _resolve_executable_artifact_plan(
+                repo_root, artifact_path, resolved_plan=resolved_plan,
+                ignore_checksum=ignore_checksum,
             )
-            if rejected is not None:
-                return rejected
-        return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
+        except Exception as exc:
+            output = f"{type(exc).__name__}: {exc}"
+            path = str(write_log(output, log_path, append=log_path is not None))
+            return OperationResult(
+                "apply-snapshot", argv, 1, 0.0, output, [], log_path=path,
+                failure_kind="artifact_failure",
+                metadata={"artifact_path": str(artifact_path)},
+            )
+        return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum, resolved_plan=plan)
 
 
-def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False, lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None, render_hook_progress: bool = False, stream_hook_output: bool = False) -> OperationResult:
+def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False, lifecycle_progress: Callable[[str, str, OperationResult | None], None] | None = None, render_hook_progress: bool = False, stream_hook_output: bool = False, resolved_plan: object | None = None) -> OperationResult:
+    plan = _resolve_executable_artifact_plan(repo_root, artifact_path, resolved_plan=resolved_plan, ignore_checksum=ignore_checksum)
     start = time.perf_counter()
     if dry_run:
         text = "$ " + " ".join(argv)
@@ -4026,12 +4343,8 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
     try:
         # Snapshot is a first-class lifecycle artifact: its declared hooks and
         # validation contract must be the same manifest the qualification gate saw.
-        manifest = read_artifact_manifest(artifact_path)
-        declarations = [_artifact_config_declaration(manifest)] if manifest else []
-        preview_data = _preview_with_config_registration(
-            preview or preview_artifact(repo_root, artifact_path, snapshot=snapshot),
-            declarations,
-        )
+        manifest = dict(plan.artifact.manifest)
+        preview_data = _canonical_plan_preview(repo_root, plan)
         checksum_paths = [
             str(item.get("path") or "")
             for item in preview_data.get("changes", [])
@@ -4042,6 +4355,7 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
             artifact_path,
             artifact_type="snapshot" if snapshot else "overlay",
             preview=preview_data,
+            canonical_plan=True,
         )
         execution_root = transaction_execution_root(transaction)
         os.environ["DEVTOOL_TRANSACTION_REPO_ROOT"] = str(execution_root)
@@ -4061,42 +4375,25 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         if before is not None:
             preflight_results.append(before)
         skipped_metadata = 0
-        deleted_paths: list[str] = []
-        if snapshot:
-            tmpdir = Path(tempfile.mkdtemp(prefix="devtool-snapshot-"))
-            try:
-                skipped_metadata += _extract_archive(artifact_path, tmpdir)
-                _sync_snapshot(tmpdir, execution_root)
-            finally:
-                shutil.rmtree(tmpdir, ignore_errors=True)
-            after = _run_required_preflight(
-                execution_root, artifact_path, phase="after_extract", manifest=manifest,
-                log_path=log_path, ignore_checksum=ignore_checksum, checksum_paths=checksum_paths,
-                lifecycle_progress=lifecycle_progress, render_hook_progress=render_hook_progress,
-                stream_hook_output=stream_hook_output,
-            )
-            if after is not None:
-                preflight_results.append(after)
-            checkpoint_transaction_applied(transaction.get("path"))
-        else:
-            skipped_metadata += _extract_archive(artifact_path, execution_root)
-            deleted_paths = _apply_delete_manifest(execution_root, artifact_path)
+        mutation_result = _execute_plan_mutations(execution_root, artifact_path, plan)
+        deleted_paths = [str(item) for item in mutation_result.get("deleted", [])]
+        if _plan_authorizes_config_registration(plan):
             registration = _register_artifact_config(execution_root, manifest)
-            after = _run_required_preflight(
-                execution_root,
-                artifact_path,
-                phase="after_extract",
-                manifest=manifest,
-                log_path=log_path,
-                ignore_checksum=ignore_checksum,
-                checksum_paths=checksum_paths,
-                lifecycle_progress=lifecycle_progress,
-                render_hook_progress=render_hook_progress,
-                stream_hook_output=stream_hook_output,
-            )
-            if after is not None:
-                preflight_results.append(after)
-            checkpoint_transaction_applied(transaction.get("path"))
+        after = _run_required_preflight(
+            execution_root,
+            artifact_path,
+            phase="after_extract",
+            manifest=manifest,
+            log_path=log_path,
+            ignore_checksum=ignore_checksum,
+            checksum_paths=checksum_paths,
+            lifecycle_progress=lifecycle_progress,
+            render_hook_progress=render_hook_progress,
+            stream_hook_output=stream_hook_output,
+        )
+        if after is not None:
+            preflight_results.append(after)
+        checkpoint_transaction_applied(transaction.get("path"))
         # The original artifact is intentionally not deleted here.  Apply is now
         # transactional across extraction plus any later validation/commit steps,
         # so cleanup is deferred until the CLI knows no rollback happened.
@@ -4155,7 +4452,7 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         if rollback_result is not None:
             metadata["rollback_returncode"] = rollback_result.returncode
             metadata["rolled_back_during_apply"] = True
-    return OperationResult(
+    result = OperationResult(
         "apply-snapshot" if snapshot else "apply-overlay",
         argv,
         rc,
@@ -4166,6 +4463,8 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         metadata=metadata,
         failure_kind=failure_kind,
     )
+    _persist_artifact_execution_record(repo_root, plan, result)
+    return result
 
 
 
@@ -4315,21 +4614,6 @@ def _safe_destination_path(base: Path, member_path: Path) -> Path:
     return destination
 
 
-
-def _apply_delete_manifest(repo_root: Path, artifact_path: Path) -> list[str]:
-    deleted: list[str] = []
-    root = repo_root.resolve()
-    for raw_entry in read_delete_manifest(artifact_path):
-        target = _safe_destination_path(root, Path(raw_entry))
-        if target == root:
-            raise RuntimeError("Refusing to delete repo root from .devtool-delete")
-        if target.is_dir():
-            shutil.rmtree(target)
-            deleted.append(raw_entry)
-        elif target.exists() or target.is_symlink():
-            target.unlink()
-            deleted.append(raw_entry)
-    return deleted
 
 def _sync_snapshot(snapshot_root: Path, repo_root: Path) -> None:
     existing = {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "digest": "e5e0ad62b150e77a9e6dc7a93bf8bfeeea103ee109a80f2cd1f3be675318216b",
+  "digest": "a7c2805fc64dba461ac148f888bf04577127be39a3840a7d7e870789fa022df0",
   "documents": {
     "global": {
       "allow_unknown_top_level": [
@@ -111,6 +111,19 @@
           "sensitive": false,
           "serialization": "normal",
           "value_kind": "string"
+        },
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.trust.artifacts",
+          "path": [
+            "trust",
+            "artifacts"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "table"
         }
       ],
       "name": "global"
@@ -258,6 +271,19 @@
           "sensitive": false,
           "serialization": "normal",
           "value_kind": "string"
+        },
+        {
+          "choices": [],
+          "default": null,
+          "field_id": "cfg.trust.artifacts",
+          "path": [
+            "trust",
+            "artifacts"
+          ],
+          "reserved_namespace": null,
+          "sensitive": false,
+          "serialization": "normal",
+          "value_kind": "table"
         }
       ],
       "name": "repo"
@@ -452,7 +478,7 @@
       "option_id": "cli.option.target.330e55a5.27766db2"
     }
   ],
-  "registry_digest": "5c035ec0f2aebb4297b790f928fa6fbea4662e6ecc8582a90dfd34e2862775bc",
+  "registry_digest": "41e678c3673abb6b5690db606309d40dc0a2d52de665edbb74238e71c67a4a28",
   "registry_schema_version": 1,
   "reserved_namespaces": [
     "devtool",

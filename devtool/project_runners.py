@@ -994,6 +994,13 @@ class AndroidGradleRunner(ProjectRunner):
                 runner_args = {}
             if not isinstance(runner_args, dict):
                 raise SystemExit("android.instrumentation.runner_args must be a table/object of key/value pairs")
+            from .android.instrumentation import InstrumentationError, validate_runner_secret_bindings
+            try:
+                runner_args = validate_runner_secret_bindings({str(key): str(value) for key, value in runner_args.items()})
+            except InstrumentationError as exc:
+                # Fail before CommandSpec construction so raw credentials never
+                # enter child argv, process events, or durable execution state.
+                raise SystemExit(str(exc)) from exc
             for key, value in sorted(runner_args.items()):
                 if not str(key).strip():
                     raise SystemExit("android.instrumentation.runner_args keys cannot be empty")
@@ -3722,8 +3729,11 @@ done < "$plan"
         env = _optimized_env(config, self.kind)
         env.update(destination_go_environment(root, config.execution_environment))
         for key, value in resolved_go.environment:
-            if key != "GOAUTH":
-                env.setdefault(key, value)
+            # GOAUTH is sensitive in general, but the literal offline sentinel
+            # is policy rather than a credential and must reach the Go process.
+            if key == "GOAUTH" and value != "off":
+                continue
+            env.setdefault(key, value)
         workers = resolve_build_policy(config, self.kind).max_workers
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
         if explicit:

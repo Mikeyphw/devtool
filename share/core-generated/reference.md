@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `5c035ec0f2aebb4297b790f928fa6fbea4662e6ecc8582a90dfd34e2862775bc`
+Registry digest: `41e678c3673abb6b5690db606309d40dc0a2d52de665edbb74238e71c67a4a28`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -298,6 +298,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `cli.secrets.token` (`cfg.cli.secrets.token`): string
 - `environment.default_chroot` (`cfg.environment.default_chroot`): string
 - `ui.profile` (`cfg.ui.profile`): string
+- `trust.artifacts` (`cfg.trust.artifacts`): table
 
 ### repo
 
@@ -308,3 +309,4 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper.commands` (`cfg.wrapper.commands`): table
 - `federation.repositories` (`cfg.federation.repositories`): table
 - `ui.profile` (`cfg.ui.profile`): string
+- `trust.artifacts` (`cfg.trust.artifacts`): table

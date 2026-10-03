@@ -28,6 +28,50 @@ INSTRUMENTATION_POLICIES = {"disabled", "when-device-present", "required"}
 X04_TYPED_RUNNER_ARGS = {"numShards", "shardIndex", "targetInstrumentation"}
 
 
+_SECRET_RUNNER_ARG_RE = re.compile(r"(?:token|password|passwd|secret|credential|api[_-]?key|auth|private[_-]?key)", re.IGNORECASE)
+_SECRET_BINDING_PREFIXES = ("@env:", "@file:", "@fd:")
+
+
+def _sensitive_runner_arg(name: str) -> bool:
+    return bool(_SECRET_RUNNER_ARG_RE.search(str(name or "")))
+
+
+def validate_runner_secret_bindings(values: Mapping[str, str]) -> dict[str, str]:
+    normalized = {str(k): str(v) for k, v in values.items()}
+    for key, value in normalized.items():
+        if _sensitive_runner_arg(key) and not value.startswith(_SECRET_BINDING_PREFIXES):
+            raise InstrumentationError(
+                f"Sensitive instrumentation runner argument {key!r} must use a private "
+                "@env:/@file:/@fd: binding reference; raw secret values are forbidden."
+            )
+    return normalized
+
+
+def _resolve_runner_secret_reference(reference: str) -> str:
+    value = str(reference)
+    if value.startswith("@env:"):
+        name = value[5:].strip()
+        if not name or name not in os.environ:
+            raise InstrumentationError(f"Instrumentation secret environment binding {name!r} is unavailable")
+        return os.environ[name]
+    if value.startswith("@file:"):
+        path = Path(value[6:].strip()).expanduser()
+        if not path.is_file():
+            raise InstrumentationError(f"Instrumentation secret file binding does not exist: {path}")
+        return path.read_text(encoding="utf-8").rstrip("\r\n")
+    if value.startswith("@fd:"):
+        raw_fd = value[4:].strip()
+        try:
+            fd = int(raw_fd)
+        except ValueError as exc:
+            raise InstrumentationError(f"Invalid instrumentation secret fd binding: {raw_fd!r}") from exc
+        try:
+            return os.read(fd, 1024 * 1024).decode("utf-8", errors="strict").rstrip("\r\n")
+        except OSError as exc:
+            raise InstrumentationError(f"Unable to read instrumentation secret fd {fd}: {exc}") from exc
+    return value
+
+
 def _stable(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8", "surrogatepass")
@@ -123,7 +167,7 @@ def instrumentation_intent(request: "InstrumentationRequest") -> Instrumentation
         "requested_runner": str(request.runner or ""), "requested_target_package": str(request.target_package or ""),
         "classes": list(request.classes), "methods": list(request.methods), "annotations": list(request.annotations),
         "not_annotations": list(request.not_annotations), "size": str(request.size or ""),
-        "runner_args": {str(k): str(v) for k, v in sorted(request.runner_args.items())},
+        "runner_args": validate_runner_secret_bindings({str(k): str(v) for k, v in sorted(request.runner_args.items())}),
         "cleanup_app": bool(request.cleanup_app), "keep_installed": bool(request.keep_installed),
         "capture_logcat_on_failure": bool(request.capture_logcat_on_failure),
         "capture_screenshot_on_failure": bool(request.capture_screenshot_on_failure),
@@ -666,9 +710,23 @@ class AndroidInstrumentationOrchestrator:
         if intent.size:
             args.extend(["-e", "size", intent.size])
         for key, value in intent.runner_args:
+            # Secret-bearing values are resolved only at the device execution
+            # boundary and transported via stdin.  The canonical plan/argv
+            # contains neither the value nor a value-bearing reference operand.
+            if _sensitive_runner_arg(key):
+                continue
             args.extend(["-e", key, value])
         args.append(runner)
         return args
+
+    @staticmethod
+    def _private_runner_bindings(intent: InstrumentationIntent) -> list[tuple[str, str, str]]:
+        bindings: list[tuple[str, str, str]] = []
+        for key, reference in intent.runner_args:
+            if not _sensitive_runner_arg(key):
+                continue
+            bindings.append((key, reference, _resolve_runner_secret_reference(reference)))
+        return bindings
 
     def _cleanup_authority(self, request: InstrumentationRequest, report_path: Path, *, plan_id: str) -> dict[str, Any]:
         """Refresh LIFE ownership/protection roots immediately before cleanup."""
@@ -816,7 +874,13 @@ class AndroidInstrumentationOrchestrator:
                     target_package=target_package, test_package=installed_test_package, command=command,
                 )
                 command = list(plan.command)
-            execution = self.device_ops.shell(command, serial=device.serial, policy="serial", timeout=1800, check=False)
+            private_bindings = self._private_runner_bindings(intent)
+            if private_bindings:
+                execution = self.device_ops.shell_with_private_bindings(
+                    command, private_bindings, serial=device.serial, policy="serial", timeout=1800, check=False,
+                )
+            else:
+                execution = self.device_ops.shell(command, serial=device.serial, policy="serial", timeout=1800, check=False)
             output = execution.stdout + "\n" + execution.stderr
             counts, failed_ids, failure_kind, classification_reason = _execution_classification(output, execution.returncode)
             zero_required = policy == "required" and counts["total"] <= 0 and failure_kind != "setup-crash"
@@ -1063,7 +1127,7 @@ __all__ = [
     "AndroidInstrumentationOrchestrator", "InstrumentationError", "InstrumentationRequest", "InstrumentationResult",
     "InstrumentationIntent", "ResolvedInstrumentationPlan", "InstrumentationExecutionReceipt", "gradle_receipts_from_current_run",
     "InstrumentationUnavailable", "INSTRUMENTATION_POLICIES", "build_parser", "instrumentation_config", "main",
-    "instrumentation_intent", "resolve_instrumentation_plan", "normalize_instrumentation_policy",
+    "instrumentation_intent", "resolve_instrumentation_plan", "normalize_instrumentation_policy", "validate_runner_secret_bindings",
     "request_from_config", "resolve_instrumentation_policy", "_parse_counts", "_parse_failed_ids", "_execution_classification",
 ]
 

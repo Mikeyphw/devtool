@@ -341,11 +341,16 @@ def test_bundle_compiler_uses_deterministic_last_writer_semantics(tmp_path: Path
     envelope = resolver.resolve(bundle)
     qualification = resolver.qualify(envelope, repo_root=repo, public_runner=False)
     plan = resolver.plan(envelope, qualification)
-    assert len(plan.mutations.mutations) == 1
-    mutation = plan.mutations.mutations[0]
-    assert mutation.path == "same.txt"
-    assert mutation.expected_sha256 == _sha(payload2)
-    assert mutation.source_identity
+    # The executable canonical plan preserves both ordered bundle writes so
+    # nested hooks observe the same intermediate state as production apply.
+    # Deterministic last-writer semantics remain authoritative in the final
+    # tree projection rather than erasing execution history.
+    assert [item.path for item in plan.mutations.mutations] == ["same.txt", "same.txt"]
+    assert plan.mutations.mutations[-1].expected_sha256 == _sha(payload2)
+    assert all(item.source_identity for item in plan.mutations.mutations)
+    finals = [item for item in plan.expected_final_tree.entries if item.path == "same.txt"]
+    assert len(finals) == 1
+    assert finals[0].sha256 == _sha(payload2)
 
 
 def test_certificate_continuity_requires_explicit_authorization() -> None:

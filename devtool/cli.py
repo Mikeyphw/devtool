@@ -7712,18 +7712,22 @@ def _single_run_reservation(config: ProjectConfig, args: argparse.Namespace) -> 
                 snapshot = command in {"apply-snapshot", "as"}
                 if not snapshot and (command in {"apply-overlays", "aos"} or is_overlay_bundle(artifact_path)):
                     return target, (), False, forced_pending_id
-                manifest = _read_artifact_manifest(str(artifact_path))
-                target = artifact_target(manifest) or target
-                preview = preview_artifact(config.repo_root, artifact_path, snapshot=snapshot)
+                resolver = ArtifactEnvelopeResolver()
+                plan = resolver.resolve_qualified_plan(
+                    artifact_path, repo_root=config.repo_root, public_runner=False,
+                    isolation=str(getattr(args, "isolation", "worktree") or "worktree"),
+                    ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+                )
+                args._devtool_resolved_artifact_plan_object = plan
+                args._devtool_resolved_artifact_plan = plan.as_dict()
+                target = artifact_target(dict(plan.artifact.manifest)) or target
+                # Reservation is a projection of the exact canonical mutation
+                # contract used later by the runner, not an independent archive
+                # preview/delete-manifest interpretation.
+                from .runners import _canonical_plan_preview
+                preview = _canonical_plan_preview(config.repo_root, plan)
                 args._devtool_artifact_preview = preview
                 paths = affected_paths_from_preview(preview)
-                if not snapshot:
-                    seen = set(paths)
-                    for raw in read_delete_manifest(artifact_path):
-                        value = str(raw).strip()
-                        if value and value not in seen:
-                            seen.add(value)
-                            paths.append(value)
                 return target, tuple(paths), True, ""
             except Exception:
                 return target, (), False, forced_pending_id
@@ -8659,43 +8663,59 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         args._devtool_artifact_path = str(artifact_path)
         args._devtool_artifact_sha = sha256_file(artifact_path) if artifact_path.exists() else ""
         args._devtool_artifact_size = artifact_path.stat().st_size if artifact_path.exists() and artifact_path.is_file() else None
-        validation = validate_artifact(
-            config.repo_root,
-            artifact_path,
-            artifact_type=artifact_type,
-            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
-        )
-        args._devtool_artifact_manifest = validation.manifest
+        # REMED-R01B: canonical lifecycle qualification is the sole apply-time
+        # acceptance/mutation authority. Standalone artifact validation remains
+        # available for diagnostics, but apply does not make a second decision.
         # LIFE-X02: compile every local apply through the canonical delivery model
         # before mutation. Compatibility artifacts are not rejected solely for
         # legacy assurance here; their assurance remains explicit in the plan.
         resolver = ArtifactEnvelopeResolver()
-        envelope = resolver.resolve(artifact_path, repo_root=config.repo_root)
-        qualification = resolver.qualify(
-            envelope, repo_root=config.repo_root, public_runner=False,
-            isolation=str(getattr(args, "isolation", "worktree") or "worktree"),
-            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
-        )
-        resolved_plan = resolver.plan(
-            envelope, qualification, isolation=str(getattr(args, "isolation", "worktree") or "worktree")
-        )
+        resolved_plan = getattr(args, "_devtool_resolved_artifact_plan_object", None)
+        planned_path = ""
+        if resolved_plan is not None:
+            try:
+                planned_path = str(resolved_plan.artifact.source.get("path") or "")
+            except Exception:
+                resolved_plan = None
+        if resolved_plan is None or Path(planned_path).resolve(strict=False) != artifact_path.resolve(strict=False):
+            envelope = resolver.resolve(artifact_path, repo_root=config.repo_root)
+            qualification = resolver.qualify(
+                envelope, repo_root=config.repo_root, public_runner=False,
+                isolation=str(getattr(args, "isolation", "worktree") or "worktree"),
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+            )
+            resolved_plan = resolver.plan(
+                envelope, qualification, isolation=str(getattr(args, "isolation", "worktree") or "worktree")
+            )
+        else:
+            envelope = resolved_plan.artifact
+            qualification = resolved_plan.qualification
+        artifact_manifest = dict(envelope.manifest)
+        args._devtool_artifact_manifest = artifact_manifest
         args._devtool_resolved_artifact_plan = resolved_plan.as_dict()
+        # Private in-process authority. UI/history receive only the safe dict
+        # projection while mutation runners consume this exact immutable plan.
+        args._devtool_resolved_artifact_plan_object = resolved_plan
         args._devtool_artifact_semantic_sha = envelope.identities.semantic_sha256
         args._devtool_artifact_content_sha = envelope.identities.content_sha256
         args._devtool_artifact_trust_identity = envelope.identities.trust_identity
         if not qualification.qualified:
             detail = "; ".join(f"{item.code}: {item.message}" for item in qualification.blockers)
             raise RuntimeError("Canonical artifact qualification failed: " + detail)
-        args._devtool_bundle_targets = overlay_bundle_targets(artifact_path) if artifact_type == "overlay_bundle" else []
-        args._devtool_workspace_validations = artifact_workspaces(validation.manifest) if artifact_type == "overlay" else []
+        args._devtool_bundle_targets = (
+            list(dict.fromkeys(entry.target for entry in resolved_plan.bundle_entries if entry.target))
+            if artifact_type == "overlay_bundle" else []
+        )
+        args._devtool_workspace_validations = artifact_workspaces(artifact_manifest) if artifact_type == "overlay" else []
         if tasker_progress is not None:
             manifest_targets = [str(item.get("target") or "").strip() for item in args._devtool_workspace_validations if isinstance(item, dict)]
             manifest_targets.extend(str(item).strip() for item in args._devtool_bundle_targets)
-            embedded_target = artifact_target(validation.manifest)
+            embedded_target = artifact_target(artifact_manifest)
             if embedded_target:
                 manifest_targets.insert(0, embedded_target)
             tasker_progress.set_targets(manifest_targets)
-        preview = preview_artifact(config.repo_root, artifact_path, snapshot=snapshot)
+        from .runners import _canonical_plan_preview
+        preview = _canonical_plan_preview(config.repo_root, resolved_plan)
         args._devtool_artifact_preview = preview
     except Exception as exc:
         detail = _format_artifact_exception(exc, artifact=artifact, artifact_type=artifact_type)
@@ -8714,7 +8734,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     # or snapshot overwrite prompts.  --yes/-y confirms this prompt too.
     preview_only = getattr(args, "preview", False) or (getattr(args, "diff", False) and not getattr(args, "interactive", False))
     try:
-        _show_and_confirm_artifact_manifest(args, validation.manifest, confirm=not preview_only, ui_config=config.ui_config)
+        _show_and_confirm_artifact_manifest(args, artifact_manifest, confirm=not preview_only, ui_config=config.ui_config)
     except SystemExit as exc:
         result = OperationResult(
             "artifact-cancelled",
@@ -8726,19 +8746,6 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             failure_kind="artifact_failure",
         )
         return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
-
-    if not getattr(args, "no_manifest_check", False) and not validation.ok:
-        output = "\n".join(validation.messages)
-        result = OperationResult(
-            "artifact-manifest",
-            [name, artifact],
-            1,
-            0.0,
-            output,
-            [],
-            failure_kind="artifact_failure",
-        )
-        return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + output)
 
     try:
         _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=name, ui_config=config.ui_config)
@@ -8846,6 +8853,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 lifecycle_progress=_artifact_lifecycle_progress,
                 render_hook_progress=render_hook_progress,
                 stream_hook_output=stream_hook_output,
+                resolved_plan=getattr(args, "_devtool_resolved_artifact_plan_object", None),
             )
         elif name.startswith("apply-overlay") or name == "ao":
             result = apply_overlay(
@@ -8861,6 +8869,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 lifecycle_progress=_artifact_lifecycle_progress,
                 render_hook_progress=render_hook_progress,
                 stream_hook_output=stream_hook_output,
+                resolved_plan=getattr(args, "_devtool_resolved_artifact_plan_object", None),
             )
         else:
             result = apply_snapshot(
@@ -8872,6 +8881,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 log_path=log_path,
                 preview=preview,
                 ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+                resolved_plan=getattr(args, "_devtool_resolved_artifact_plan_object", None),
             )
     finally:
         if _previous_transaction_commit_mode is None:
@@ -8916,7 +8926,12 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 known.add(relative)
         preview_data["changes"] = changes
         args._devtool_artifact_preview = preview_data
-    manifest_note = "" if getattr(args, "no_manifest_check", False) else "\n" + "\n".join(validation.messages)
+    qualification_messages = [
+        f"{item.code}: {item.message}" for item in qualification.warnings
+    ]
+    manifest_note = "" if getattr(args, "no_manifest_check", False) else (
+        "\n" + "\n".join(qualification_messages) if qualification_messages else ""
+    )
     if manifest_note.strip():
         _append_run_log(log_path, manifest_note)
     text = "$ " + " ".join(result.argv) + "\n" + result.output + manifest_note
@@ -15718,7 +15733,7 @@ def _main_after_parse(
             else:
                 results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path, tasker_progress=tasker_progress)
                 transaction_path = _apply_transaction_path(results)
-                applied_manifest = read_artifact_manifest(args.artifact)
+                applied_manifest = dict(getattr(args, "_devtool_artifact_manifest", {}) or read_artifact_manifest(args.artifact))
                 if results and results[-1].returncode == 0 and not getattr(args, "validate_only", False):
                     config = _reload_config_after_artifact_apply(args, config, applied_manifest)
                 _apply_artifact_validation_defaults(config, args, applied_manifest)
@@ -15760,7 +15775,7 @@ def _main_after_parse(
                         raw_output += "\n\n" + validation_raw
                     if not _exclusive_validation_task_values(args) and not any(result.returncode != 0 for result in results):
                         artifact_path = resolve_artifact_path(args.artifact)
-                        manifest = read_artifact_manifest(artifact_path)
+                        manifest = applied_manifest
                         script_result, script_raw = _artifact_script_result(
                             config,
                             args,
@@ -15777,7 +15792,7 @@ def _main_after_parse(
                             raw_output += "\n\n" + script_raw
 
                     required_guard = _required_artifact_validation_execution_guard(
-                        read_artifact_manifest(args.artifact),
+                        applied_manifest,
                         validation_requested=True,
                         validation_results=validation_results,
                         artifact_validation_result=artifact_validation_result,
@@ -15787,13 +15802,13 @@ def _main_after_parse(
                         results.append(required_guard)
                         raw_output += "\n\n=== Required validation guard ===\n" + required_guard.output
 
-                    expectation = _validation_expectation_result(read_artifact_manifest(args.artifact), results)
+                    expectation = _validation_expectation_result(applied_manifest, results)
                     if expectation is not None:
                         results.append(expectation)
                         raw_output += "\n\n=== Validation expectations ===\n" + expectation.output
                 if getattr(args, "static_validate", False) and results and results[-1].returncode == 0:
                     artifact_path = resolve_artifact_path(args.artifact)
-                    manifest = read_artifact_manifest(artifact_path)
+                    manifest = applied_manifest
                     script_result, script_raw = _artifact_script_result(
                         config, args, artifact_path, manifest,
                         target=str(getattr(args, "target", "") or artifact_target(manifest)),
@@ -15809,7 +15824,7 @@ def _main_after_parse(
                         results.append(expectation)
                         raw_output += "\n\n=== Validation expectations ===\n" + expectation.output
 
-                validation_policy = artifact_validation_policy(read_artifact_manifest(args.artifact))
+                validation_policy = artifact_validation_policy(applied_manifest)
                 rollback_enabled = _rollback_on_failure_enabled(args, validation_policy)
                 if transaction_path and rollback_enabled and _has_failed_after_apply(results):
                     evidence_path = preserve_validation_evidence(

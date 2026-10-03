@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import time
 from typing import Any, Mapping, Sequence
@@ -234,6 +235,76 @@ class AndroidDeviceOperations:
 
     def shell(self, argv: Sequence[str], *, serial: str = "", policy: str = "", timeout: float = 60, check: bool = True) -> DeviceOperationResult:
         return self._run("shell", ["shell", *argv], serial=serial, policy=policy, timeout=timeout, check=check, metadata={"argv": list(argv)})
+
+    def shell_with_private_bindings(
+        self,
+        argv: Sequence[str],
+        bindings: Sequence[tuple[str, str, str]],
+        *,
+        serial: str = "",
+        policy: str = "",
+        timeout: float = 60,
+        check: bool = True,
+    ) -> DeviceOperationResult:
+        """Run an Android shell command while transporting secret extras via stdin.
+
+        ``bindings`` entries are ``(runner_key, safe_reference, secret_value)``.
+        Secret values never enter host adb argv, operation metadata, or the
+        canonical instrumentation plan. The remote shell receives them through
+        stdin and expands private variables only at the ``am instrument`` edge.
+        """
+        public = [str(item) for item in argv]
+        if not public:
+            raise AndroidDeviceOperationError("Private Android shell binding requires a command")
+        if any("\n" in secret or "\r" in secret for _, _, secret in bindings):
+            raise AndroidDeviceOperationError("Android private runner bindings cannot contain newline characters")
+        device = self.select_device(serial=serial, policy=policy)
+        runner = public[-1]
+        base = public[:-1]
+        reads: list[str] = []
+        private_args: list[str] = []
+        safe_refs: dict[str, str] = {}
+        secret_values: list[str] = []
+        for index, (key, reference, secret) in enumerate(bindings):
+            var = f"DEVTOOL_PRIVATE_{index}"
+            reads.append(f"IFS= read -r {var}")
+            private_args.extend(["-e", shlex.quote(str(key)), f'"${{{var}}}"'])
+            safe_refs[str(key)] = str(reference)
+            secret_values.append(str(secret))
+        command = " ".join([*(shlex.quote(item) for item in base), *private_args, shlex.quote(runner)])
+        script = "; ".join([*reads, f"exec {command}"])
+        adb_argv = [*self.manager.command_prefix(device.serial), "shell", "sh", "-c", script]
+        started = time.monotonic()
+        try:
+            result = subprocess.run(
+                adb_argv, text=True, input="\n".join(secret_values) + "\n", capture_output=True,
+                check=False, timeout=timeout, env=self.env,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise AndroidDeviceOperationError(f"shell failed to execute: {exc}") from exc
+        duration = int((time.monotonic() - started) * 1000)
+        # A remote runner may echo a secret value.  The transport boundary is
+        # therefore also a redaction boundary: result/evidence text must never
+        # persist any private binding bytes even when the device process does.
+        def _redact_private(text: str) -> str:
+            clean = str(text or "")
+            for secret in sorted((value for value in secret_values if value), key=len, reverse=True):
+                clean = clean.replace(secret, "<redacted>")
+            return redact_sensitive_text(clean)
+
+        stdout = _redact_private(result.stdout)
+        stderr = _redact_private(result.stderr)
+        detail = ""
+        status = "passed" if result.returncode == 0 else "failed"
+        if result.returncode:
+            detail = (stderr or stdout).strip().splitlines()[-1] if (stderr or stdout).strip() else f"exit {result.returncode}"
+        outcome = DeviceOperationResult(
+            "shell", status, device.serial, result.returncode, duration, stdout, stderr, detail,
+            {"argv": public, "private_bindings": safe_refs},
+        )
+        if check and not outcome.ok:
+            raise AndroidDeviceOperationError(f"shell failed on {device.serial}: {detail}")
+        return outcome
 
     def push(self, source: str | Path, destination: str, *, serial: str = "", policy: str = "") -> DeviceOperationResult:
         source_path = Path(source).expanduser().resolve(strict=False)

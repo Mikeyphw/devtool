@@ -551,6 +551,7 @@ def build_core_registry() -> CoreRegistry:
             ConfigFieldSpec("cfg.wrapper.commands", ("wrapper", "commands"), "table"),
             ConfigFieldSpec("cfg.federation.repositories", ("federation", "repositories"), "table"),
             ConfigFieldSpec("cfg.ui.profile", ("ui", "profile"), "string"),
+            ConfigFieldSpec("cfg.trust.artifacts", ("trust", "artifacts"), "table"),
         ),
         allow_unknown_top_level=("jobs", "tasks", "artifacts", "python", "node", "rust", "go", "maven", "cmake", "meson", "make", "test_profiles", "variants", "ssh"),
     )
@@ -563,6 +564,7 @@ def build_core_registry() -> CoreRegistry:
             ConfigFieldSpec("cfg.cli.secrets.token", ("cli", "secrets", "token"), "string", sensitive=True),
             ConfigFieldSpec("cfg.environment.default_chroot", ("environment", "default_chroot"), "string"),
             ConfigFieldSpec("cfg.ui.profile", ("ui", "profile"), "string"),
+            ConfigFieldSpec("cfg.trust.artifacts", ("trust", "artifacts"), "table"),
         ),
         allow_unknown_top_level=("termux_chroot", "termux", "proot", "android", "gradle", "dotnet", "terminal", "bootstrap", "chroots", "features", "ssh"),
     )

@@ -1,0 +1,273 @@
+{
+  "authoritative_promise_maxima": {
+    "ANDROID": "ANDROID-P099",
+    "CORE": "CORE-P084",
+    "ENV": "ENV-P131",
+    "EXEC": "EXEC-P087",
+    "LIFE": "LIFE-P127"
+  },
+  "base": {
+    "device_commit": "7f7b6fd",
+    "source": "post-REMED-R01A-v5 content-equivalent bytes"
+  },
+  "delivered_findings": [
+    "EXEC-A03",
+    "ENV-A03",
+    "ENV-A04",
+    "ANDROID-A12",
+    "LIFE-A01",
+    "LIFE-A02",
+    "LIFE-A05"
+  ],
+  "known_deferred_boundaries": [
+    {
+      "boundary": "bundle/sequential validation manifest orchestration",
+      "owner": "REMED-R02B",
+      "reason": "validation semantics, not artifact mutation authority"
+    },
+    {
+      "boundary": "legacy destructive cleanup/snapshot compatibility helpers",
+      "owner": "REMED-R03B",
+      "reason": "destructive cleanup authority fixed-point is later lifecycle scope"
+    }
+  ],
+  "next": {
+    "next_major_scope": "CORE-G3R 79/93",
+    "overlay": "REMED-R02A",
+    "position": "73/93",
+    "remaining_implementation_overlays_before_g3r": 6
+  },
+  "position": {
+    "full_plan": "72/93",
+    "gate_window": "2/8"
+  },
+  "qualification": "IMPLEMENTATION_ONLY_PENDING_G3R",
+  "roadmap_id": "REMED-R01B",
+  "rows": [
+    {
+      "current_promises": [
+        "EXEC-P009",
+        "EXEC-P062..EXEC-P066"
+      ],
+      "evidence": [
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_validation_state_never_persists_raw_credentials"
+        },
+        {
+          "file_sha256": "eb0037f301929e15c9efbc258c00e8db869218f530f7f8aa5681dcecb7939641",
+          "reference": "tests/test_validation_sessions.py"
+        },
+        {
+          "file_sha256": "2d9cb6a8e4fe47838c1f8f7a93849bff41eb0d333a4ea1ec10c12a6447431dcd",
+          "reference": "tests/test_rem07_validation_truth_sessions.py"
+        }
+      ],
+      "implementation": [
+        "devtool/validation_sessions.py"
+      ],
+      "requalification_owner": "EXEC-G3R",
+      "source_obligation": "EXEC-A03",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED"
+    },
+    {
+      "current_promises": [
+        "ENV-P057..ENV-P072"
+      ],
+      "evidence": [
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_go_offline_policy_reaches_real_command_environment"
+        },
+        {
+          "file_sha256": "0a839ba584f95e7ab2e370e65489d0fadd639a8057d8f26c3e6a7221a23dd0bd",
+          "reference": "tests/test_env_x02_language_environment_convergence.py"
+        },
+        {
+          "file_sha256": "134f5767d40dc85e814915ce58ad4e8f5084f940098194cac871c7a4573dceba",
+          "reference": "tests/test_go_executable_builds.py"
+        }
+      ],
+      "implementation": [
+        "devtool/go_environment.py",
+        "devtool/project_runners.py"
+      ],
+      "requalification_owner": "ENV-G3R",
+      "source_obligation": "ENV-A03",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED"
+    },
+    {
+      "current_promises": [
+        "ENV-P030..ENV-P042",
+        "ENV-P107",
+        "ENV-P123"
+      ],
+      "evidence": [
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_repository_cannot_self_authorize_direnv"
+        },
+        {
+          "file_sha256": "0a839ba584f95e7ab2e370e65489d0fadd639a8057d8f26c3e6a7221a23dd0bd",
+          "reference": "tests/test_env_x02_language_environment_convergence.py"
+        }
+      ],
+      "implementation": [
+        "devtool/environment_qualification.py",
+        "devtool/config.py"
+      ],
+      "requalification_owner": "ENV-G3R",
+      "source_obligation": "ENV-A04",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED"
+    },
+    {
+      "current_promises": [
+        "ANDROID-P017",
+        "ANDROID-P018",
+        "ANDROID-P065",
+        "ANDROID-P091"
+      ],
+      "evidence": [
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_sensitive_android_runner_binding_is_private"
+        },
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_sensitive_android_runner_config_fails_before_child_argv"
+        },
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_private_android_transport_redacts_echoed_secret"
+        },
+        {
+          "file_sha256": "e0babf0a8849723cf08da4250ae49969463f013d55ec0f61f7a032ae33e02328",
+          "reference": "tests/test_android_instrumentation.py"
+        },
+        {
+          "file_sha256": "e9ac7d6a35a00ad97f28a63c0c8009e79362be7738b44d3d6dbbd016760f449c",
+          "reference": "tests/test_android_x03_instrumentation_lifecycle.py"
+        }
+      ],
+      "implementation": [
+        "devtool/android/instrumentation.py",
+        "devtool/android/device_ops.py",
+        "devtool/project_runners.py"
+      ],
+      "requalification_owner": "ANDROID-G3R",
+      "source_obligation": "ANDROID-A12",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED"
+    },
+    {
+      "current_promises": [
+        "LIFE-P013",
+        "LIFE-P014",
+        "LIFE-P018",
+        "LIFE-P025",
+        "LIFE-P104",
+        "LIFE-P127"
+      ],
+      "evidence": [
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_supplied_resolved_artifact_plan_is_execution_authority"
+        },
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_resolved_plan_rejects_artifact_replacement_before_mutation"
+        },
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_bundle_runner_does_not_reparse_nested_semantics_after_plan"
+        },
+        {
+          "file_sha256": "aff6b11ed2c7f44e02e13649dbeaac93d46150c46bbe56be30f7648672f98b67",
+          "reference": "tests/test_life_x02_canonical_artifact_trust_pack.py"
+        }
+      ],
+      "implementation": [
+        "devtool/artifact_lifecycle.py",
+        "devtool/runners.py",
+        "devtool/transactions.py",
+        "devtool/cli.py"
+      ],
+      "requalification_owner": "LIFE-G3R",
+      "source_obligation": "LIFE-A01",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED"
+    },
+    {
+      "current_promises": [
+        "LIFE-P005",
+        "LIFE-P041",
+        "LIFE-P048",
+        "LIFE-P050",
+        "LIFE-P101"
+      ],
+      "evidence": [
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_required_artifact_trust_rejects_unknown_or_fake_signature"
+        },
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_host_trust_policy_cannot_be_weakened_by_artifact"
+        },
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_valid_artifact_signature_qualifies"
+        },
+        {
+          "file_sha256": "aff6b11ed2c7f44e02e13649dbeaac93d46150c46bbe56be30f7648672f98b67",
+          "reference": "tests/test_life_x02_canonical_artifact_trust_pack.py"
+        }
+      ],
+      "implementation": [
+        "devtool/artifact_trust.py",
+        "devtool/artifact_lifecycle.py",
+        "devtool/config.py",
+        "devtool/core_registry.py"
+      ],
+      "requalification_owner": "LIFE-G3R",
+      "source_obligation": "LIFE-A02",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED"
+    },
+    {
+      "current_promises": [
+        "LIFE-P003",
+        "LIFE-P038",
+        "LIFE-P101"
+      ],
+      "evidence": [
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_artifact_apply_persists_run_linked_execution_record"
+        }
+      ],
+      "implementation": [
+        "devtool/runners.py",
+        "devtool/artifact_lifecycle.py"
+      ],
+      "requalification_owner": "LIFE-G3R",
+      "source_obligation": "LIFE-A05",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED"
+    },
+    {
+      "current_promises": [
+        "G3R shared evidence-resolution substrate"
+      ],
+      "evidence": [
+        {
+          "file_sha256": "89f779c598e95081d2b9eefa6b4c0180494fe2dd85446fcca3d4ad1745398d34",
+          "reference": "tests/test_remed_r01b_trust_resolution_mutation.py::test_r01_evidence_resolver_rejects_missing_and_stale_references"
+        }
+      ],
+      "implementation": [
+        "devtool/evidence_resolver.py"
+      ],
+      "requalification_owner": "REMED-R04B/G3R",
+      "source_obligation": "REMED-R01-SHARED-EVIDENCE",
+      "status": "IMPLEMENTED_AND_PRODUCTION_ADOPTED"
+    }
+  ],
+  "schema_version": 1
+}

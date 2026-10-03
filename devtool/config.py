@@ -39,7 +39,7 @@ CONFIG_NAME = ".devtool.toml"
 GLOBAL_CONFIG_NAME = "config.toml"
 GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
     "cli", "environment", "termux_chroot", "termux", "proot", "android", "gradle", "dotnet", "terminal",
-    "bootstrap", "chroots", "features", "ui", "ssh", "privilege",
+    "bootstrap", "chroots", "features", "ui", "ssh", "privilege", "trust",
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
     "project", "workspace", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
@@ -51,7 +51,7 @@ REPO_SAFE_TOP_LEVEL_SECTIONS = frozenset({
     "env", "execution", "toolchain", "git", "ui", "variants", "test", "tests", "workflows", "test_profiles", "test_selection",
     "android", "gradle", "dotnet", "python", "node", "rust", "go", "maven", "cmake", "meson", "make",
     "build", "terminal", "termux_chroot", "termux", "proot", "ssh", "bootstrap", "chroots", "features",
-    "validation", "release", "repositories", "workspace_groups", "plugins", "extensions",
+    "validation", "release", "repositories", "workspace_groups", "plugins", "extensions", "trust",
 })
 
 

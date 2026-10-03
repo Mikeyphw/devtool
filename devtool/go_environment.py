@@ -284,7 +284,15 @@ def resolve_go_environment(
         if value:
             values[name] = _safe_env_value(name, str(value))
     if request.offline:
-        values["DEVTOOL_GO_OFFLINE"] = "1"
+        # Enforce offline mode in the Go toolchain itself.  A Devtool marker is
+        # retained for receipts, but it is not the policy mechanism.
+        values.update({
+            "DEVTOOL_GO_OFFLINE": "1",
+            "GOPROXY": "off",
+            "GOSUMDB": "off",
+            "GOTOOLCHAIN": "local",
+            "GOAUTH": "off",
+        })
 
     return ResolvedGoEnvironment(
         request=request,

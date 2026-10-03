@@ -77,6 +77,11 @@ description = "Run REMED-R01A canonical authority and identity targeted validati
 workflow = "remed-r01a"
 target = "devtool"
 
+[wrapper.commands.remed-r01b]
+description = "Run REMED-R01B trust resolution and mutation closure targeted validation"
+workflow = "remed-r01b"
+target = "devtool"
+
 [wrapper.commands.core-g3]
 description = "Run CORE-G3 final identity/config/wrapper/RUN seal"
 workflow = "core-g3"
@@ -870,6 +875,11 @@ remed-r01a = [
   { id = "retained-core", ref = "test:remed-r01a-retained-core", depends_on = ["authority"] },
   { id = "wrapper-federation", ref = "test:remed-r01a-wrapper-federation", depends_on = ["authority"] },
   { id = "config-env-signing", ref = "test:remed-r01a-config-env-signing", depends_on = ["managed-child-runtime", "retained-core", "wrapper-federation"] },
+]
+remed-r01b = [
+  { id = "trust-mutation", ref = "test:remed-r01b-trust-mutation", depends_on = [] },
+  { id = "execution-environment", ref = "test:remed-r01b-exec-env", depends_on = ["trust-mutation"] },
+  { id = "android-generated", ref = "test:remed-r01b-android-generated", depends_on = ["execution-environment"] },
 ]
 core-g3 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
@@ -4250,6 +4260,27 @@ name = "REMED-R01A config environment and signing authority regressions"
 runner = "pytest"
 timeout_seconds = 600
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_config.py", "tests/test_global_config.py", "tests/test_frx02_federation_config.py", "tests/test_python_support.py", "tests/test_aops03_android_signing_instrumentation_operations.py", "tests/test_wrap01_wrapper_config_contract.py", "tests/test_ov06_ssh_contracts.py", "tests/test_ui03_ui04_preferences_tokens_copy.py"]
+
+[[test]]
+id = "remed-r01b-trust-mutation"
+name = "REMED-R01B artifact trust resolution mutation and RUN evidence"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_remed_r01b_trust_resolution_mutation.py", "tests/test_life_x02_canonical_artifact_trust_pack.py", "tests/test_life_x01_immediate_lifecycle_safety.py", "tests/test_life_x01_transaction_lifecycle_recovery.py", "tests/test_artifact_validation_fail_closed_hotfix.py"]
+
+[[test]]
+id = "remed-r01b-exec-env"
+name = "REMED-R01B validation secret and environment policy regressions"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_validation_sessions.py", "tests/test_rem07_validation_truth_sessions.py", "tests/test_env_x02_language_environment_convergence.py", "tests/test_go_executable_builds.py"]
+
+[[test]]
+id = "remed-r01b-android-generated"
+name = "REMED-R01B Android private transport and canonical generated surfaces"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_android_instrumentation.py", "tests/test_android_x03_instrumentation_lifecycle.py", "tests/test_android_g2_instrumentation_device_gate.py", "tests/test_rem11_android_devices_release_gates.py", "tests/test_core_x01_registry.py", "tests/test_core_x04_generated_surfaces.py"]
 
 [[test]]
 id = "core-g3-remediation"

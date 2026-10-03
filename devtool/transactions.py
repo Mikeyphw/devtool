@@ -1127,6 +1127,7 @@ def create_apply_transaction(
     *,
     artifact_type: str,
     preview: dict[str, Any] | None = None,
+    canonical_plan: bool = False,
 ) -> dict[str, Any]:
     """Create an active apply transaction with recoverable Git pre-state.
 
@@ -1139,7 +1140,11 @@ def create_apply_transaction(
     artifact_path = artifact_path.resolve()
     preview = preview or preview_artifact(repo_root, artifact_path, snapshot=artifact_type == "snapshot")
     affected = affected_paths_from_preview(preview)
-    if artifact_type == "overlay":
+    if artifact_type == "overlay" and not canonical_plan:
+        # Compatibility callers without a ResolvedArtifactPlan still need the
+        # legacy delete-manifest fallback. Canonical callers already supplied
+        # the exact mutation/write set in ``preview`` and must not re-interpret
+        # artifact deletion semantics here.
         seen = set(affected)
         for raw in read_delete_manifest(artifact_path):
             rel = str(_safe_rel(raw))

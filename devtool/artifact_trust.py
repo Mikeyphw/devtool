@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -230,6 +231,58 @@ def merge_trust_policy(global_policy: TrustPolicy, repository_policy: TrustPolic
     )
 
 
+def trust_policy_from_mapping(raw: Mapping[str, Any] | None) -> TrustPolicy:
+    data = raw if isinstance(raw, Mapping) else {}
+    assurance = str(data.get("minimum_assurance") or "legacy").strip().lower()
+    if assurance not in _ASSURANCE_ORDER:
+        raise ValueError(f"Unsupported artifact trust assurance: {assurance!r}")
+    allowed_raw = data.get("allowed_identity_ids") or ()
+    if isinstance(allowed_raw, str):
+        allowed_raw = (allowed_raw,)
+    if not isinstance(allowed_raw, (list, tuple, set)):
+        raise ValueError("artifact trust allowed_identity_ids must be a list of identity ids")
+    allowed = tuple(sorted({str(item).strip() for item in allowed_raw if str(item).strip()}))
+    return TrustPolicy(
+        require_signature=bool(data.get("require_signature", data.get("required", False))),
+        require_known_identity=bool(data.get("require_known_identity", data.get("required", False))),
+        minimum_assurance=assurance,
+        allowed_identity_ids=allowed,
+    )
+
+
+def effective_artifact_trust_policy(
+    repo_root: str | Path,
+    artifact_policy: Mapping[str, Any] | None,
+) -> TrustPolicy:
+    """Resolve trusted host + repository + artifact policy monotonically.
+
+    Global config is host/user controlled. Repository policy may only strengthen
+    it because ``merge_trust_policy`` ORs requirements, takes the strongest
+    assurance, and intersects allow-lists. Artifact policy is the final,
+    narrowest layer.
+    """
+    from .config import CONFIG_NAME, global_config_path, load_config_document
+
+    repo = Path(repo_root).expanduser().resolve(strict=False)
+    global_doc = load_config_document(global_config_path(), scope="global", required=False)
+    repo_doc = load_config_document(repo / CONFIG_NAME, scope="repository", required=False)
+
+    def section(data: Mapping[str, Any]) -> Mapping[str, Any]:
+        trust = data.get("trust") if isinstance(data.get("trust"), Mapping) else {}
+        artifacts = trust.get("artifacts") if isinstance(trust.get("artifacts"), Mapping) else {}
+        return artifacts
+
+    return merge_trust_policy(
+        trust_policy_from_mapping(section(global_doc.data)),
+        trust_policy_from_mapping(section(repo_doc.data)),
+        trust_policy_from_mapping(artifact_policy),
+    )
+
+
+def trust_policy_allows_assurance(policy: TrustPolicy, assurance: str) -> bool:
+    return _ASSURANCE_ORDER.get(str(assurance or "legacy").strip().lower(), -1) >= _ASSURANCE_ORDER.get(policy.minimum_assurance, 0)
+
+
 @contextmanager
 def stage_ephemeral_secret(
     data: bytes,
@@ -354,6 +407,64 @@ class SigningIdentityRegistry:
         return self.register(record, replace=False)
 
 
+def _secret_bytes_for_verification(identity: SigningIdentityRecord) -> bytes:
+    provider = identity.secret_provider
+    if provider is None:
+        raise ValueError(f"Signing identity {identity.identity_id} has no verification secret provider")
+    if provider.kind == "private-file":
+        path = Path(provider.reference).expanduser()
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"Could not read verification key for {identity.identity_id}: {exc}") from exc
+        if not data:
+            raise ValueError(f"Verification key for {identity.identity_id} is empty")
+        return data
+    if provider.kind == "local":
+        value = str(os.environ.get(provider.reference) or "")
+        if not value:
+            raise ValueError(f"Verification key environment reference {provider.reference!r} is unavailable")
+        return value.encode("utf-8")
+    if provider.kind == "fd":
+        try:
+            return os.read(int(provider.reference), 1024 * 1024)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Could not read verification key fd {provider.reference!r}: {exc}") from exc
+    raise ValueError(f"Signing provider {provider.kind!r} is not supported for artifact signature verification")
+
+
+def verify_artifact_signature(
+    identity: SigningIdentityRecord,
+    artifact: str | Path,
+    signature_hex: str,
+) -> SigningEvidence:
+    """Cryptographically verify a detached signature over exact artifact bytes.
+
+    R01 introduces a deliberately small provider contract. HMAC-SHA256 is
+    supported immediately for private/local qualification; unsupported
+    providers fail closed until a public-key verifier is registered.
+    """
+    provider = str(identity.provider or "").strip().lower()
+    if provider not in {"hmac-sha256", "artifact-hmac-sha256"}:
+        raise ValueError(f"Signing identity {identity.identity_id} provider {identity.provider!r} cannot verify delivery artifacts")
+    path = Path(artifact).expanduser().resolve(strict=True)
+    key = _secret_bytes_for_verification(identity)
+    expected = hmac.new(key, path.read_bytes(), hashlib.sha256).hexdigest()
+    supplied = str(signature_hex or "").strip().lower()
+    if len(supplied) != 64 or any(ch not in "0123456789abcdef" for ch in supplied):
+        raise ValueError("Artifact signature must be a hexadecimal HMAC-SHA256 digest")
+    if not hmac.compare_digest(expected, supplied):
+        raise ValueError(f"Artifact signature verification failed for identity {identity.identity_id}")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return SigningEvidence.create(
+        identity=identity,
+        artifact_sha256=digest,
+        variant="delivery-artifact",
+        verification_tool="devtool:hmac-sha256",
+        verification_result="verified",
+    )
+
+
 __all__ = [
     "SecretProviderRef",
     "SigningEvidence",
@@ -364,5 +475,9 @@ __all__ = [
     "TrustPolicy",
     "assert_certificate_continuity",
     "merge_trust_policy",
+    "trust_policy_from_mapping",
+    "effective_artifact_trust_policy",
+    "trust_policy_allows_assurance",
     "stage_ephemeral_secret",
+    "verify_artifact_signature",
 ]

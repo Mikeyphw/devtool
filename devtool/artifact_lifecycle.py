@@ -154,6 +154,8 @@ class ArtifactQualificationReceipt:
     blockers: tuple[QualificationIssue, ...]
     warnings: tuple[QualificationIssue, ...]
     unsafe_authorizations: tuple[UnsafeAuthorization, ...]
+    trust_evidence_ids: tuple[str, ...] = ()
+    trust_evidence: tuple[Mapping[str, Any], ...] = ()
 
     @property
     def qualified(self) -> bool:
@@ -179,6 +181,8 @@ class ArtifactQualificationReceipt:
             "blockers": [item.as_dict() for item in self.blockers],
             "warnings": [item.as_dict() for item in self.warnings],
             "unsafe_authorizations": [item.as_dict() for item in self.unsafe_authorizations],
+            "trust_evidence_ids": list(self.trust_evidence_ids),
+            "trust_evidence": [dict(item) for item in self.trust_evidence],
         }
 
 
@@ -213,6 +217,47 @@ class ResolvedValidationContract:
             "failure_action": self.failure_action,
             "allow_deferred": self.allow_deferred,
             "required_checkpoints": list(self.required_checkpoints),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedBundleEntry:
+    entry_id: str
+    bundle_path: str
+    target: str
+    label: str
+    required: bool
+    sha256: str
+    size: int | None
+    index: int
+    validation_tasks: tuple[str, ...] = ()
+    validation_tasks_declared: bool = False
+    manifest_json: str = "{}"
+
+    @property
+    def manifest(self) -> dict[str, Any]:
+        value = json.loads(self.manifest_json)
+        if not isinstance(value, dict):
+            raise ValueError("Resolved bundle entry manifest must be an object")
+        return value
+
+    @property
+    def source_owner(self) -> str:
+        return self.entry_id or self.bundle_path
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "entry_id": self.entry_id,
+            "bundle_path": self.bundle_path,
+            "target": self.target,
+            "label": self.label,
+            "required": self.required,
+            "sha256": self.sha256,
+            "size": self.size,
+            "index": self.index,
+            "validation_tasks": list(self.validation_tasks),
+            "validation_tasks_declared": self.validation_tasks_declared,
+            "manifest": self.manifest,
         }
 
 
@@ -328,6 +373,7 @@ class ExternalEffectLedger:
 @dataclass(frozen=True, slots=True)
 class ArtifactExecutionRecord:
     record_id: str
+    run_id: str
     artifact_id: str
     plan_id: str
     qualification_receipt_id: str
@@ -348,6 +394,7 @@ class ArtifactExecutionRecord:
         *,
         artifact_id: str,
         plan_id: str,
+        run_id: str = "",
         qualification_receipt_id: str,
         validation_evidence_id: str = "",
         transaction_id: str = "",
@@ -357,7 +404,7 @@ class ArtifactExecutionRecord:
         durability: str = "durable",
     ) -> "ArtifactExecutionRecord":
         basis = {
-            "artifact_id": artifact_id, "plan_id": plan_id,
+            "run_id": run_id, "artifact_id": artifact_id, "plan_id": plan_id,
             "qualification_receipt_id": qualification_receipt_id,
             "validation_evidence_id": validation_evidence_id, "transaction_id": transaction_id,
             "rollback_receipt_id": rollback_receipt_id, "trust_evidence_ids": list(trust_evidence_ids),
@@ -377,6 +424,7 @@ class ResolvedArtifactPlan:
     artifact: ArtifactEnvelope
     qualification: ArtifactQualificationReceipt
     mutations: MutationSet
+    bundle_entries: tuple[ResolvedBundleEntry, ...]
     expected_final_tree: ExpectedFinalTree
     validation: ResolvedValidationContract
     write_leases: tuple[WriteLease, ...]
@@ -397,6 +445,7 @@ class ResolvedArtifactPlan:
             "artifact": self.artifact.as_dict(),
             "qualification": self.qualification.as_dict(),
             "mutations": self.mutations.as_dict(),
+            "bundle_entries": [item.as_dict() for item in self.bundle_entries],
             "expected_final_tree": self.expected_final_tree.as_dict(),
             "validation": self.validation.as_dict(),
             "write_leases": [asdict(item) for item in self.write_leases],
@@ -432,11 +481,7 @@ def _assurance(manifest: Mapping[str, Any]) -> AssuranceLevel:
 def _trust_identity(manifest: Mapping[str, Any]) -> str:
     trust = manifest.get("trust") if isinstance(manifest.get("trust"), Mapping) else {}
     signing = manifest.get("signing") if isinstance(manifest.get("signing"), Mapping) else {}
-    basis = {
-        "trust": {k: v for k, v in trust.items() if "secret" not in str(k).lower() and "password" not in str(k).lower()},
-        "signing": {k: v for k, v in signing.items() if "secret" not in str(k).lower() and "password" not in str(k).lower()},
-    }
-    return _digest(basis) if basis["trust"] or basis["signing"] else ""
+    return _normal_text(trust.get("identity_id") or signing.get("identity_id"))
 
 
 def _content_identity(manifest: Mapping[str, Any]) -> str:
@@ -518,6 +563,53 @@ def _validation_contract(manifest: Mapping[str, Any]) -> ResolvedValidationContr
     )
 
 
+
+def _compile_bundle_execution(artifact_path: Path) -> tuple[MutationSet, tuple[ResolvedBundleEntry, ...]]:
+    """Compile bundle execution order and nested semantics into the canonical plan.
+
+    The applicator may later read archive bytes, but it must not reparse bundle or
+    nested manifests to decide mutation/config/hook semantics after this point.
+    """
+    from .artifacts import materialize_overlay_bundle_entries, read_artifact_manifest
+
+    sequence: list[Mutation] = []
+    resolved_entries: list[ResolvedBundleEntry] = []
+    with tempfile.TemporaryDirectory(prefix="devtool-life-x02-bundle-") as tmp:
+        _bundle_manifest, entries = materialize_overlay_bundle_entries(artifact_path, tmp)
+        for entry in entries:
+            nested_manifest = read_artifact_manifest(entry.path)
+            nested_subtype = _artifact_subtype(nested_manifest, bundle=False)
+            nested = _compile_mutations(nested_manifest, nested_subtype, artifact_path=entry.path)
+            source_owner = entry.id or entry.bundle_path
+            for nested_order, mutation in enumerate(nested.mutations):
+                sequence.append(Mutation(
+                    path=mutation.path,
+                    kind=mutation.kind,
+                    source_sha256=mutation.source_sha256,
+                    expected_sha256=mutation.expected_sha256,
+                    source_identity=(
+                        f"{source_owner}::{mutation.source_identity}"
+                        if mutation.source_identity.startswith("devtool:")
+                        else source_owner
+                    ),
+                    order=(entry.index * 100000) + nested_order,
+                ))
+            resolved_entries.append(ResolvedBundleEntry(
+                entry_id=str(entry.id or ""),
+                bundle_path=str(entry.bundle_path),
+                target=str(entry.target or ""),
+                label=str(entry.label or ""),
+                required=bool(entry.required),
+                sha256=str(entry.sha256 or ""),
+                size=entry.size,
+                index=int(entry.index),
+                validation_tasks=tuple(str(item) for item in (entry.validation_tasks or ())),
+                validation_tasks_declared=bool(entry.validation_tasks_declared),
+                manifest_json=json.dumps(nested_manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+            ))
+    return MutationSet(tuple(sequence)), tuple(resolved_entries)
+
+
 def _compile_mutations(
     manifest: Mapping[str, Any],
     subtype: ArtifactSubtype,
@@ -525,34 +617,38 @@ def _compile_mutations(
     artifact_path: Path | None = None,
 ) -> MutationSet:
     if subtype == ArtifactSubtype.BUNDLE and artifact_path is not None:
-        from .artifacts import materialize_overlay_bundle_entries, read_artifact_manifest
-
-        final: dict[str, Mutation] = {}
-        order: list[str] = []
-        with tempfile.TemporaryDirectory(prefix="devtool-life-x02-bundle-") as tmp:
-            _bundle_manifest, entries = materialize_overlay_bundle_entries(artifact_path, tmp)
-            for entry in entries:
-                nested_manifest = read_artifact_manifest(entry.path)
-                nested_subtype = _artifact_subtype(nested_manifest, bundle=False)
-                nested = _compile_mutations(nested_manifest, nested_subtype, artifact_path=entry.path)
-                for mutation in nested.mutations:
-                    item = Mutation(
-                        path=mutation.path,
-                        kind=mutation.kind,
-                        source_sha256=mutation.source_sha256,
-                        expected_sha256=mutation.expected_sha256,
-                        source_identity=entry.id or entry.bundle_path,
-                        order=entry.index,
-                    )
-                    if item.path not in final:
-                        order.append(item.path)
-                    # Bundle order is authoritative: the last nested writer wins.
-                    final[item.path] = item
-        return MutationSet(tuple(final[path] for path in order))
+        return _compile_bundle_execution(artifact_path)[0]
 
     inventory = manifest.get("inventory")
     entries = inventory.get("entries") if isinstance(inventory, Mapping) else None
     raw_entries = entries if isinstance(entries, list) else []
+    # Legacy/minimal artifacts (notably snapshots) may not carry an inventory.
+    # Canonical execution still needs a complete mutation contract, so compile
+    # the actual archive payload into immutable mutation rows here instead of
+    # letting the runner rediscover it later.
+    if not raw_entries and artifact_path is not None:
+        from .artifacts import (
+            artifact_inventory_metadata_payload_paths,
+            is_skipped_artifact_payload_member,
+            list_archive_members,
+        )
+        allowed_metadata = artifact_inventory_metadata_payload_paths(dict(manifest))
+        synthesized: list[dict[str, Any]] = []
+        for member in list_archive_members(artifact_path, include_data=True):
+            if member.is_dir:
+                continue
+            # Explicitly permitted metadata payloads are repository payload; all
+            # ordinary Devtool metadata remains outside the mutation contract.
+            if is_skipped_artifact_payload_member(member.name) and member.name not in allowed_metadata:
+                continue
+            data = member.data or b""
+            synthesized.append({
+                "path": member.name,
+                "action": "modify",
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "source": "archive-payload",
+            })
+        raw_entries = synthesized
     mutations: list[Mutation] = []
     final_by_path: dict[str, int] = {}
     for index, raw in enumerate(raw_entries):
@@ -580,6 +676,29 @@ def _compile_mutations(
             final_by_path[path] = len(mutations)
             mutations.append(item)
 
+    solution = _normal_text(manifest.get("solution"))
+    project = _normal_text(manifest.get("run_project") or manifest.get("project"))
+    if (solution or project) and ".devtool.toml" not in final_by_path:
+        final_by_path[".devtool.toml"] = len(mutations)
+        mutations.append(Mutation(
+            path=".devtool.toml", kind=MutationKind.MODIFY,
+            source_identity="devtool:artifact-config-registration",
+            order=len(mutations),
+        ))
+
+    if subtype == ArtifactSubtype.OVERLAY and artifact_path is not None:
+        # Legacy .devtool-delete is parsed exactly once by the canonical planner
+        # and lowered into ordinary DELETE mutations. The runner never reads it.
+        from .artifacts import read_delete_manifest
+        for value in read_delete_manifest(artifact_path):
+            path = _normal_text(value).replace("\\", "/")
+            if not path:
+                continue
+            mutations.append(Mutation(
+                path=path, kind=MutationKind.DELETE,
+                source_identity="devtool:delete-manifest", order=len(mutations),
+            ))
+
     if subtype == ArtifactSubtype.SNAPSHOT:
         deletes = []
         for key in ("delete", "deleted_paths", "deletions"):
@@ -600,15 +719,22 @@ def _compile_mutations(
 
 
 def _expected_tree(mutations: MutationSet, subtype: ArtifactSubtype) -> ExpectedFinalTree:
-    entries = []
+    # MutationSet preserves execution order (including repeated writes in a
+    # bundle). ExpectedFinalTree is instead a final-state projection, therefore
+    # only the last authoritative state for each path belongs here.
+    final: dict[str, ExpectedPath] = {}
+    order: list[str] = []
     for item in mutations.mutations:
         if item.kind == MutationKind.DELETE:
-            entries.append(ExpectedPath(item.path, "missing", None))
+            expected = ExpectedPath(item.path, "missing", None)
         elif item.kind == MutationKind.PRESERVE:
-            entries.append(ExpectedPath(item.path, "preserve", None))
+            expected = ExpectedPath(item.path, "preserve", None)
         else:
-            entries.append(ExpectedPath(item.path, "present", item.expected_sha256))
-    return ExpectedFinalTree(tuple(entries), exact=subtype == ArtifactSubtype.SNAPSHOT)
+            expected = ExpectedPath(item.path, "present", item.expected_sha256)
+        if item.path not in final:
+            order.append(item.path)
+        final[item.path] = expected
+    return ExpectedFinalTree(tuple(final[path] for path in order), exact=subtype == ArtifactSubtype.SNAPSHOT)
 
 
 class ArtifactEnvelopeResolver:
@@ -667,7 +793,10 @@ class ArtifactEnvelopeResolver:
         validation = (
             validate_overlay_bundle(repo, artifact_path, ignore_checksum=ignore_checksum)
             if envelope.subtype == ArtifactSubtype.BUNDLE
-            else validate_artifact(repo, artifact_path, ignore_checksum=ignore_checksum)
+            else validate_artifact(
+                repo, artifact_path, artifact_type=envelope.subtype.value,
+                ignore_checksum=ignore_checksum,
+            )
         )
         for message in validation.messages:
             issue = QualificationIssue("artifact-validation", str(message), "artifact", not bool(validation.ok))
@@ -694,14 +823,59 @@ class ArtifactEnvelopeResolver:
             or not validation_contract.required
         )
         if validation_contract.required and not validation_executable:
-            blockers.append(QualificationIssue("required-validation-unresolved", "Required artifact validation has no executable task/ref contract.", "validation", True))
+            blockers.append(QualificationIssue(
+                "required-validation-unresolved",
+                "Required artifact validation has no executable task/ref/script contract.",
+                "validation", True,
+            ))
         hooks = [envelope.manifest.get(name) for name in ("preflight", "validation", "finalize")]
         hook_readiness = all(not isinstance(item, Mapping) or bool(item) for item in hooks)
         trust = envelope.manifest.get("trust") if isinstance(envelope.manifest.get("trust"), Mapping) else {}
-        trust_required = bool(trust.get("required"))
-        trust_ready = not trust_required or bool(envelope.identities.trust_identity)
-        if trust_required and not trust_ready:
-            blockers.append(QualificationIssue("trust-not-ready", "Artifact requires trust/signature evidence that is not resolvable.", "trust", True))
+        trust_evidence_ids: list[str] = []
+        trust_evidence: list[Mapping[str, Any]] = []
+        try:
+            from .artifact_trust import (
+                SigningIdentityRegistry, assert_certificate_continuity,
+                effective_artifact_trust_policy, trust_policy_allows_assurance,
+                verify_artifact_signature,
+            )
+            effective_trust = effective_artifact_trust_policy(repo, trust)
+            if not trust_policy_allows_assurance(effective_trust, envelope.assurance.value):
+                raise ValueError(
+                    f"artifact assurance {envelope.assurance.value!r} is below required "
+                    f"{effective_trust.minimum_assurance!r}"
+                )
+            identity_id = _normal_text(trust.get("identity_id") or envelope.identities.trust_identity)
+            identity = None
+            if effective_trust.require_known_identity or effective_trust.require_signature or identity_id:
+                if not identity_id:
+                    raise ValueError("effective trust policy requires a registered signing identity")
+                identity = SigningIdentityRegistry().get(identity_id)
+                if identity is None:
+                    raise ValueError(f"signing identity {identity_id!r} is not registered")
+                if effective_trust.allowed_identity_ids and identity_id not in effective_trust.allowed_identity_ids:
+                    raise ValueError(f"signing identity {identity_id!r} is not allowed by effective trust policy")
+                expected_cert = _normal_text(trust.get("certificate_sha256"))
+                if expected_cert:
+                    assert_certificate_continuity(identity, expected_cert, allow_change=False)
+            if effective_trust.require_signature:
+                if identity is None:
+                    raise ValueError("effective trust policy requires signature verification but no identity resolved")
+                sidecar_raw = _normal_text(trust.get("signature_sidecar"))
+                sidecar = Path(sidecar_raw).expanduser() if sidecar_raw else artifact_path.with_name(artifact_path.name + ".sig")
+                if not sidecar.is_absolute():
+                    sidecar = artifact_path.parent / sidecar
+                try:
+                    signature = sidecar.read_text(encoding="utf-8").strip()
+                except OSError as exc:
+                    raise ValueError(f"detached signature sidecar is unavailable: {sidecar}: {exc}") from exc
+                evidence = verify_artifact_signature(identity, artifact_path, signature)
+                trust_evidence_ids.append(evidence.evidence_id)
+                trust_evidence.append(evidence.as_dict())
+            trust_ready = True
+        except Exception as exc:
+            trust_ready = False
+            blockers.append(QualificationIssue("trust-verification-failed", str(exc), "trust", True))
         apply = envelope.manifest.get("apply") if isinstance(envelope.manifest.get("apply"), Mapping) else {}
         commit = apply.get("commit") if isinstance(apply.get("commit"), Mapping) else {}
         commit_ready = not bool(commit.get("enabled")) or bool(_normal_text(commit.get("message")))
@@ -711,8 +885,10 @@ class ArtifactEnvelopeResolver:
             "assurance": envelope.assurance.value,
             "validation": validation_contract.as_dict(),
             "trust": trust,
+            "effective_trust": (effective_trust.as_dict() if "effective_trust" in locals() else {}),
             "isolation": isolation,
             "unsafe": [item.as_dict() for item in authorizations],
+            "trust_evidence_ids": list(trust_evidence_ids),
         }
         base_identity = {k: envelope.source.get(k) for k in ("base_commit", "base_tree") if envelope.source.get(k)}
         receipt_payload = {
@@ -741,6 +917,8 @@ class ArtifactEnvelopeResolver:
             blockers=tuple(blockers),
             warnings=tuple(warnings),
             unsafe_authorizations=authorizations,
+            trust_evidence_ids=tuple(trust_evidence_ids),
+            trust_evidence=tuple(dict(item) for item in trust_evidence),
         )
 
     def plan(
@@ -750,13 +928,33 @@ class ArtifactEnvelopeResolver:
         *,
         isolation: str = "worktree",
     ) -> ResolvedArtifactPlan:
-        mutations = _compile_mutations(envelope.manifest, envelope.subtype, artifact_path=Path(str(envelope.source.get("path") or "")))
+        artifact_path = Path(str(envelope.source.get("path") or ""))
+        if envelope.subtype == ArtifactSubtype.BUNDLE:
+            mutations, bundle_entries = _compile_bundle_execution(artifact_path)
+        else:
+            mutations = _compile_mutations(envelope.manifest, envelope.subtype, artifact_path=artifact_path)
+            bundle_entries = ()
         validation = _validation_contract(envelope.manifest)
-        leases = tuple(
-            WriteLease(item.path, "artifact", (1, 2, 3, 4, 5))
-            for item in mutations.mutations
-            if item.kind != MutationKind.PRESERVE
-        )
+        from .artifacts import artifact_finalize_write_paths, artifact_preflight_write_paths, artifact_validation_write_paths
+        lease_rows: list[WriteLease] = []
+        seen_leases: set[str] = set()
+        for item in mutations.mutations:
+            if item.kind == MutationKind.PRESERVE or item.path in seen_leases:
+                continue
+            seen_leases.add(item.path)
+            lease_rows.append(WriteLease(item.path, "artifact", (1, 2, 3, 4, 5)))
+        for owner, values in (
+            ("preflight", artifact_preflight_write_paths(dict(envelope.manifest))),
+            ("validation", artifact_validation_write_paths(dict(envelope.manifest))),
+            ("finalize", artifact_finalize_write_paths(dict(envelope.manifest))),
+        ):
+            for raw in values:
+                path = _normal_text(raw).replace("\\", "/")
+                if not path or path in seen_leases:
+                    continue
+                seen_leases.add(path)
+                lease_rows.append(WriteLease(path, owner, (1, 2, 3, 4, 5)))
+        leases = tuple(lease_rows)
         external_raw = envelope.manifest.get("external_effects") if isinstance(envelope.manifest.get("external_effects"), list) else []
         effects: list[ExternalEffect] = []
         for index, item in enumerate(external_raw):
@@ -786,6 +984,7 @@ class ArtifactEnvelopeResolver:
             "artifact": envelope.identities.semantic_sha256,
             "qualification": qualification.receipt_id,
             "mutations": mutations.as_dict(),
+            "bundle_entries": [item.as_dict() for item in bundle_entries],
             "validation": validation.as_dict(),
             "isolation": isolation,
             "external_effects": [asdict(item) for item in effects],
@@ -795,6 +994,7 @@ class ArtifactEnvelopeResolver:
             artifact=envelope,
             qualification=qualification,
             mutations=mutations,
+            bundle_entries=bundle_entries,
             expected_final_tree=_expected_tree(mutations, envelope.subtype),
             validation=validation,
             write_leases=leases,
@@ -845,6 +1045,7 @@ __all__ = [
     "MutationSet",
     "QualificationIssue",
     "ResolvedArtifactPlan",
+    "ResolvedBundleEntry",
     "ResolvedValidationContract",
     "UnsafeAuthorization",
     "WriteLease",

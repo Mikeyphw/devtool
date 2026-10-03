@@ -29358,7 +29358,7 @@
       "summary": ""
     }
   ],
-  "digest": "f194913e6ed8b6554d935be87c168824df8e0844114de7a4375b417623484bde",
+  "digest": "cc6d12057d9aa4d794513aebe182f67020523129f26a18321a76c046ba3368de",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -29779,7 +29779,7 @@
     "registry_command_count": 281
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "5c035ec0f2aebb4297b790f928fa6fbea4662e6ecc8582a90dfd34e2862775bc",
+  "registry_digest": "41e678c3673abb6b5690db606309d40dc0a2d52de665edbb74238e71c67a4a28",
   "registry_schema_version": 1,
   "schema_version": 1
 }
