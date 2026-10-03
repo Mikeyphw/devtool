@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "REMED-R02",
+  "title": "Execution, Validation, Scheduler, Test, and RUN Truth whole-scope fixed-point audit",
+  "artifact_version": "whole-audit-hotfix-v1",
+  "base_requirement": "Apply on top of the current tree where REMED-R02A v2 and REMED-R02B v2 are already present.",
+  "current_maxima": {
+    "CORE": "CORE-P084",
+    "EXEC": "EXEC-P087",
+    "ENV": "ENV-P131",
+    "ANDROID": "ANDROID-P111",
+    "LIFE": "LIFE-P127"
+  },
+  "whole_scope_status": "IMPLEMENTATION_WINDOW_DELIVERED_WITH_EXPLICIT_EXPORTS",
+  "fully_delivered_findings": [
+    "EXEC-A04",
+    "EXEC-A05",
+    "EXEC-A07",
+    "TEST-A02",
+    "TEST-A09",
+    "TEST-A13",
+    "ANDROID-A05",
+    "ANDROID-A06"
+  ],
+  "partial_findings": [
+    "EXEC-A01",
+    "EXEC-A02",
+    "EXEC-A06",
+    "EXEC-A13",
+    "TEST-A01",
+    "TEST-A03",
+    "TEST-A05",
+    "TEST-A06",
+    "TEST-A07",
+    "TEST-A10",
+    "TEST-A14",
+    "TEST-A15",
+    "ANDROID-A03",
+    "ANDROID-A04",
+    "ANDROID-A07",
+    "ANDROID-A08",
+    "ANDROID-A10",
+    "ANDROID-A11"
+  ],
+  "deferred_or_exported_findings": [
+    "EXEC-A08",
+    "R03 provider/lifecycle/cleanup ownership",
+    "R04 evidence/gate/final-seal truth",
+    "G3R current-HEAD fixed-point evidence/hash requalification"
+  ],
+  "audit_conclusion": "R02A v2 plus R02B v2 are valid as the R02 implementation window, but R02 must not be represented as a final whole-scope closure. Several findings remain partial/deferred and are explicitly exported to later remediation overlays or G3R gates.",
+  "production_truth_checked": {
+    "scheduler_boundary": "Normal run_specs ingress consults execution_scheduler_truth before process spawn and no longer accepts exec_scheduler_enabled=false as a bypass.",
+    "reuse_history_authority": "Reuse decisions are rebuilt from EXO/RUN execution history rather than projection-only reuse-index files.",
+    "materialize_boundary": "MATERIALIZE verifies file:...#sha256 refs before restoring output bytes and skips process spawn only for authoritative decisions.",
+    "validation_state": "Validation state/events are projection-marked and attempts no longer persist replayable argv, but validation resume/progress/control state is still compatibility state and remains partial for EXEC-A01/A02.",
+    "test_receipts": "Test run projections point at canonical RUN-V3 TestRunReceipts with digest checks; direct run_specs binds receipts to event_run_id.",
+    "failed_history_selection": "Failed-test selection prefers the latest valid canonical receipt and a clean receipt suppresses stale projection failures.",
+    "android_count_truth": "Android setup/readiness/zero-test failures do not fabricate testcase failures, but broader Android TestResult/evidence taxonomy remains partial/exported."
+  },
+  "corrected_false_implication": {
+    "file": "REMED_R02B_PROMISE_DISPOSITION.json",
+    "old_problem": "The folded H01 hotfix listed EXEC-A01 and EXEC-A02 under fixed_findings even though the same disposition correctly kept them partial.",
+    "new_disposition": "H01 fixed TEST-A09/TEST-A13 production gaps and only touched EXEC-A01/EXEC-A02; it did not close those validation-state authority findings."
+  },
+  "validation": {
+    "native_termux_workflow": "./devtoolw remed-r02-whole-audit",
+    "local_targeted": "tests/test_remed_r02_whole_scope_audit.py plus retained R02A/R02B tests",
+    "maximum_warnings": 0
+  },
+  "next": {
+    "next_overlay": "REMED-R03A Provider & Lifecycle Authority",
+    "next_full_plan_position": "75/93",
+    "remaining_remediation_implementation_overlays_before_g3r": 4,
+    "next_major_phase": "CORE-G3R at 79/93"
+  }
+}

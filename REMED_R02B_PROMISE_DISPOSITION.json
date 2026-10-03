@@ -46,7 +46,7 @@
   "gate_window_position": "4/8",
   "hotfixes": [
     {
-      "disposition": "Folded into v2 so the artifact applies directly to post-R02A-v2 without requiring v1 first.",
+      "disposition": "Folded into v2. It fixes direct/library receipt RUN identity and failed-history authority gaps; EXEC-A01/A02 remain partial because full validation-state authority reduction requires later G3R fixed-point audit over every validation consumer.",
       "evidence": [
         "tests/test_remed_r02b_validation_test_truth.py::test_direct_run_specs_persists_test_receipt_with_event_run_id",
         "tests/test_remed_r02b_validation_test_truth.py::test_clean_canonical_receipt_with_zero_failures_suppresses_stale_projection",
@@ -54,9 +54,7 @@
       ],
       "fixed_findings": [
         "TEST-A09",
-        "TEST-A13",
-        "EXEC-A01",
-        "EXEC-A02"
+        "TEST-A13"
       ],
       "id": "REMED-R02B-v2-folded-H01",
       "production_changes": [
@@ -64,7 +62,11 @@
         "devtool.test_selection.load_failed_test_ids treats a latest valid clean canonical receipt as authoritative",
         "devtool.test_runstore validates canonical receipt sha256 before using it as selection authority"
       ],
-      "reason": "Post-v1 audit found direct/library run_specs receipt identity fallback and stale failed-test projection resurrection."
+      "reason": "Post-v1 audit found direct/library run_specs receipt identity fallback and stale failed-test projection resurrection; these are fixed without reclassifying validation-state authority findings as fully delivered.",
+      "partial_findings_touched": [
+        "EXEC-A01",
+        "EXEC-A02"
+      ]
     }
   ],
   "next_major_phase": "CORE-G3R (79/93)",

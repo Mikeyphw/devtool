@@ -97,6 +97,12 @@ description = "Run REMED-R02B validation and test truth targeted validation"
 workflow = "remed-r02b"
 target = "devtool"
 
+
+[wrapper.commands.remed-r02-whole-audit]
+description = "Run REMED-R02 whole-scope fixed-point audit validation"
+workflow = "remed-r02-whole-audit"
+target = "devtool"
+
 [wrapper.commands.core-g3]
 description = "Run CORE-G3 final identity/config/wrapper/RUN seal"
 workflow = "core-g3"
@@ -907,6 +913,13 @@ remed-r02b = [
   { id = "validation-test-truth", ref = "test:remed-r02b-validation-test-truth", depends_on = [] },
   { id = "retained-validation-test", ref = "test:remed-r02b-retained-validation-test", depends_on = ["validation-test-truth"] },
 ]
+
+remed-r02-whole-audit = [
+  { id = "whole-scope", ref = "test:remed-r02-whole-audit", depends_on = [] },
+  { id = "r02a-retained", ref = "test:remed-r02a-scheduler-run", depends_on = ["whole-scope"] },
+  { id = "r02b-retained", ref = "test:remed-r02b-validation-test-truth", depends_on = ["whole-scope"] },
+]
+
 core-g3 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "source-dispositions", ref = "test:core-g3-source-dispositions", depends_on = ["syntax"] },
@@ -4342,6 +4355,14 @@ name = "REMED-R02B retained validation, TEST, and Android regressions"
 runner = "pytest"
 timeout_seconds = 900
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_validation_sessions.py", "tests/test_exec_g2_validation_proof_gate.py", "tests/test_test_selection.py", "tests/test_test_runstore.py", "tests/test_android_instrumentation.py"]
+
+
+[[test]]
+id = "remed-r02-whole-audit"
+name = "REMED-R02 whole-scope fixed-point audit"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_remed_r02_whole_scope_audit.py"]
 
 [[test]]
 id = "core-g3-remediation"
