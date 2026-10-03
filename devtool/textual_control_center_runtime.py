@@ -801,6 +801,18 @@ def create_textual_control_center_app(
         #inline-apply-log-title { width: 1fr; height: 1; content-align: left middle; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
         #inline-apply-log-toggle, #inline-apply-raw-toggle, #inline-apply-close { width: auto; min-width: 8; margin-left: 1; }
         #inline-apply-log { height: 1fr; min-height: 1; border-top: solid $surface-lighten-2; }
+        .result-completed #inline-apply-context { border-bottom: solid $success; }
+        .result-completed #inline-apply-title,
+        .result-completed #inline-apply-meta,
+        .result-completed #inline-apply-notice { color: $success; }
+        .result-failed #inline-apply-context { border-bottom: solid $error; }
+        .result-failed #inline-apply-title,
+        .result-failed #inline-apply-meta,
+        .result-failed #inline-apply-notice { color: $error; }
+        .result-cancelled #inline-apply-context { border-bottom: solid $warning; }
+        .result-cancelled #inline-apply-title,
+        .result-cancelled #inline-apply-meta,
+        .result-cancelled #inline-apply-notice { color: $warning; }
         .compact #inline-apply-review { margin-left: 0; margin-right: 0; border-left: none; border-right: none; }
         .compact #inline-apply-stage,
         .compact #inline-apply-progress-row,
@@ -1003,6 +1015,11 @@ def create_textual_control_center_app(
                 self._drain_source_lines()
                 outcome = "COMPLETED" if rc == 0 else "CANCELLED" if rc == 130 else "FAILED"
                 self.query_one("#inline-apply-meta", Static).update(f"{outcome} · canonical lifecycle finished")
+                for result_class in ("result-completed", "result-failed", "result-cancelled"):
+                    self.remove_class(result_class)
+                self.add_class(
+                    "result-completed" if rc == 0 else "result-cancelled" if rc == 130 else "result-failed"
+                )
                 self._refresh_stage_line()
                 self.query_one("#inline-apply-phase", Static).update(
                     "Artifact applied successfully." if rc == 0 else ("Artifact apply cancelled." if rc == 130 else f"Artifact apply failed · exit {rc}")
@@ -1011,6 +1028,10 @@ def create_textual_control_center_app(
                     self.query_one("#inline-apply-progress", ProgressBar).display = True
                     self.query_one("#inline-apply-progress", ProgressBar).update(progress=100.0)
                     self.query_one("#inline-apply-progress-meta", Static).update("100%")
+                symbol = "✓" if rc == 0 else ("■" if rc == 130 else "✕")
+                self.query_one("#inline-apply-notice", Static).update(
+                    f"{symbol} {outcome} · inspect the result, then press Back or q"
+                )
                 self.query_one("#inline-apply-close", Button).disabled = False
                 self._stop_timer()
             except NoMatches:

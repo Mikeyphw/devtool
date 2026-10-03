@@ -21,7 +21,7 @@ from typing import Any, Callable, Mapping
 
 from rich.console import Console
 
-from .textual_ux import TEXTUAL_SHARED_CSS, fit_middle, progress_counter, progress_percent, responsive_class_names, status_label
+from .textual_ux import TEXTUAL_SHARED_CSS, fit_middle, normalized_status, progress_counter, progress_percent, responsive_class_names, status_label
 
 
 _TRUE = {"1", "true", "yes", "on"}
@@ -133,6 +133,8 @@ def build_textual_execution_app(source: Any) -> Any:
         BINDINGS = [
             ("ctrl+c", "request_cancel", "Cancel"),
             ("l", "toggle_logs", "Logs"),
+            ("q", "close_finished", "Close"),
+            ("enter", "close_finished", "Close"),
         ]
         CSS = TEXTUAL_SHARED_CSS + """
         #execution-root { height: 1fr; min-height: 0; }
@@ -148,6 +150,18 @@ def build_textual_execution_app(source: Any) -> Any:
         #execution-log-toggle { width: auto; min-width: 10; }
         #execution-log { height: 1fr; min-height: 1; border-top: solid $surface-lighten-2; }
         #execution-cancel { height: auto; min-height: 0; max-height: 1; padding: 0 1; color: $warning; overflow-x: hidden; overflow-y: hidden; }
+        .result-completed #execution-context { border-bottom: solid $success; }
+        .result-completed #execution-status,
+        .result-completed #execution-meta,
+        .result-completed #execution-cancel { color: $success; }
+        .result-failed #execution-context { border-bottom: solid $error; }
+        .result-failed #execution-status,
+        .result-failed #execution-meta,
+        .result-failed #execution-cancel { color: $error; }
+        .result-cancelled #execution-context { border-bottom: solid $warning; }
+        .result-cancelled #execution-status,
+        .result-cancelled #execution-meta,
+        .result-cancelled #execution-cancel { color: $warning; }
         .compact #execution-progress-row,
         .compact #execution-detail,
         .compact #execution-log-toolbar,
@@ -165,6 +179,7 @@ def build_textual_execution_app(source: Any) -> Any:
             self._cancel_armed_until = 0.0
             self._logs_visible = True
             self._last_snapshot: dict[str, Any] = {}
+            self._finished = False
 
         def compose(self) -> ComposeResult:
             yield Header()
@@ -211,8 +226,10 @@ def build_textual_execution_app(source: Any) -> Any:
                 except Empty:
                     break
                 if kind == "stop":
-                    self.exit()
-                    return
+                    # Presenter completion must not dismiss the result workspace.
+                    # The user closes it explicitly after inspecting the final state.
+                    self._finished = True
+                    continue
                 if kind == "line":
                     if self._logs_visible:
                         self.query_one("#execution-log", RichLog).write(str(payload))
@@ -229,9 +246,20 @@ def build_textual_execution_app(source: Any) -> Any:
             if target:
                 title += f" · {target}"
             self.query_one("#execution-status", Static).update(fit_middle(title, max(24, self.size.width - 2)))
-            completion = status_label(snapshot.get("completion_status") or "running")
+            raw_completion = snapshot.get("completion_status") or "running"
+            completion = status_label(raw_completion)
             meta = f"{completion} · canonical RUN/EXO projection"
             self.query_one("#execution-meta", Static).update(meta)
+            normalized = normalized_status(raw_completion)
+            if normalized in {"completed", "failed", "cancelled"}:
+                self._finished = True
+                for result_class in ("result-completed", "result-failed", "result-cancelled"):
+                    self.screen.remove_class(result_class)
+                self.screen.add_class(f"result-{normalized}")
+                symbol = "✓" if normalized == "completed" else ("✕" if normalized == "failed" else "■")
+                self.query_one("#execution-cancel", Static).update(
+                    f"{symbol} {completion} · press q or Enter to close"
+                )
             detail = str(snapshot.get("detail") or snapshot.get("completion_status") or "Working…")
             self.query_one("#execution-detail", Static).update(fit_middle(detail, max(24, self.size.width - 2)))
             percent = progress_percent(snapshot)
@@ -247,6 +275,12 @@ def build_textual_execution_app(source: Any) -> Any:
             self._logs_visible = not self._logs_visible
             log.display = self._logs_visible
             self.query_one("#execution-log-toggle", Button).label = "Hide logs" if self._logs_visible else "Show logs"
+
+        def action_close_finished(self) -> None:
+            if not self._finished:
+                self.notify("Command is still running · use Ctrl+C to cancel it.", severity="warning")
+                return
+            self.exit()
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             if (event.button.id or "") == "execution-log-toggle":

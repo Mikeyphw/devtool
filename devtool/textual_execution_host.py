@@ -255,11 +255,12 @@ class ExecutionTextualHostSource:
                         "command": self.command,
                         "phase_name": "Complete" if rc == 0 else "Failed",
                         "detail": "Completed successfully" if rc == 0 else ("Cancelled" if rc == 130 else f"Exited with {rc}"),
-                        "completion_status": "ok" if rc == 0 else "failed",
+                        "completion_status": "ok" if rc == 0 else ("cancelled" if rc == 130 else "failed"),
                         "percent": 100.0 if rc == 0 else None,
                     })
-                    time.sleep(0.35)
-                    self.presenter._offer("stop", None)
+                    # Keep the completed workspace on screen until the operator
+                    # explicitly closes it. The terminal snapshot above is the
+                    # final presentation event; canonical execution is already done.
                     return
                 time.sleep(0.08)
 

@@ -482,6 +482,8 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             ("l", "toggle_logs", "Logs"),
             ("d", "toggle_details", "Details"),
             ("r", "toggle_raw", "Raw log"),
+            ("q", "close_finished", "Close"),
+            ("enter", "close_finished", "Close"),
         ]
         CSS = TEXTUAL_SHARED_CSS + """
         #apply-root { height: 1fr; min-height: 0; }
@@ -500,6 +502,18 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
         #apply-log-title { width: 1fr; height: 1; content-align: left middle; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
         #apply-log-toggle, #apply-raw-toggle { width: auto; min-width: 10; margin-left: 1; }
         #apply-log { height: 1fr; min-height: 1; border-top: solid $surface-lighten-2; }
+        .result-completed #apply-context { border-bottom: solid $success; }
+        .result-completed #apply-status,
+        .result-completed #apply-meta,
+        .result-completed #apply-notice { color: $success; }
+        .result-failed #apply-context { border-bottom: solid $error; }
+        .result-failed #apply-status,
+        .result-failed #apply-meta,
+        .result-failed #apply-notice { color: $error; }
+        .result-cancelled #apply-context { border-bottom: solid $warning; }
+        .result-cancelled #apply-status,
+        .result-cancelled #apply-meta,
+        .result-cancelled #apply-notice { color: $warning; }
         .compact #apply-review, .narrow #apply-review { margin-left: 0; margin-right: 0; border-left: none; border-right: none; }
         .compact #apply-stage,
         .compact #apply-progress-row,
@@ -524,6 +538,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             self._show_raw = False
             self._details_visible = False
             self._finish_seen_at: float | None = None
+            self._returncode: int | None = None
             self._started_child = False
             self._started_at = 0.0
             self._poll_timer: Any | None = None
@@ -661,10 +676,14 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             try:
                 source.start(force_yes=force_yes)
             except Exception as exc:
+                self._returncode = 1
+                self._finish_seen_at = time.monotonic()
+                self.screen.add_class("result-failed")
                 self.query_one("#apply-meta", Static).update("FAILED · could not start canonical child")
                 self.query_one("#apply-phase", Static).update(f"{type(exc).__name__}: {exc}")
                 self.query_one("#apply-log", RichLog).write(f"{type(exc).__name__}: {exc}")
-                self._finish_seen_at = time.monotonic()
+                self.query_one("#apply-notice", Static).update("✕ FAILED · press q or Enter to close")
+                self._stop_polling()
 
         def _apply_state(self, state: Mapping[str, Any]) -> None:
             self._last_state = dict(state)
@@ -738,8 +757,13 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                 self._drain_source_lines()
                 if self._finish_seen_at is None:
                     self._finish_seen_at = time.monotonic()
+                    self._returncode = int(rc)
+                    outcome = "completed" if rc == 0 else "cancelled" if rc == 130 else "failed"
                     label = "completed successfully" if rc == 0 else ("cancelled" if rc == 130 else f"failed · exit {rc}")
-                    self.query_one("#apply-meta", Static).update(status_label("completed" if rc == 0 else "cancelled" if rc == 130 else "failed") + " · canonical lifecycle finished")
+                    self.query_one("#apply-meta", Static).update(status_label(outcome) + " · canonical lifecycle finished")
+                    for result_class in ("result-completed", "result-failed", "result-cancelled"):
+                        self.screen.remove_class(result_class)
+                    self.screen.add_class(f"result-{outcome}")
                     self._refresh_stage_line()
                     # Completion is lifecycle state, not a replacement phase.
                     # Preserve the last canonical semantic phase so operators
@@ -754,10 +778,12 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                         self.query_one("#apply-progress", ProgressBar).display = True
                         self.query_one("#apply-progress", ProgressBar).update(progress=100.0)
                         self.query_one("#apply-progress-meta", Static).update("100%")
-                    return
-                if time.monotonic() - self._finish_seen_at >= 0.45:
+                    symbol = "✓" if rc == 0 else ("■" if rc == 130 else "✕")
+                    self.query_one("#apply-notice", Static).update(
+                        f"{symbol} {status_label(outcome)} · press q or Enter to close"
+                    )
                     self._stop_polling()
-                    self.exit(int(rc))
+                return
             except NoMatches:
                 self._stop_polling()
                 return
@@ -791,6 +817,14 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                             log.write(line)
             self.query_one("#apply-raw-toggle", Button).label = "Activity" if self._show_raw else "Raw"
             self._refresh_activity()
+
+        def action_close_finished(self) -> None:
+            if source.running or self._returncode is None:
+                self.query_one("#apply-notice", Static).update(
+                    "Artifact apply is still running · use Ctrl+C to cancel it."
+                )
+                return
+            self.exit(self._returncode)
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             button_id = event.button.id or ""
