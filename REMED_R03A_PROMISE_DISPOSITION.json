@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "roadmap_id": "REMED-R03A",
+  "title": "Provider & Lifecycle Authority",
+  "full_plan_position": "75/93",
+  "gate_window_position": "5/8",
+  "artifact_version": "v2",
+  "base_requirement": "Apply on top of the current tree containing REMED-R02A v2, REMED-R02B v2, and REMED-R02 whole-scope audit hotfix.",
+  "delivered_findings": [
+    {
+      "id": "LIFE-A11",
+      "status": "delivered",
+      "evidence": "apply_cleanup_plan() refreshes cleanup ownership with strict authority reads and raises CleanupAuthorityUnavailableError before mutation when RUN/RER, artifact-registry, active transaction, or active validation protection authority is corrupt/unreadable."
+    }
+  ],
+  "partial_findings": [
+    {
+      "id": "DIST-A11",
+      "status": "partial",
+      "evidence": "Normal SSH provider phase metadata now carries RUN/LIFE lifecycle authority, cleanup descriptor count, and cleanup descriptor digest derived from provider_cleanup_descriptors(). R03B still owns universal retention/GC enforcement and reference-release semantics."
+    }
+  ],
+  "deferred_or_exported_findings": [
+    "EXEC-A09",
+    "ENV-A05",
+    "ENV-A06",
+    "ENV-A08",
+    "ANDROID-A13",
+    "ANDROID-A14",
+    "ANDROID-A16",
+    "LIFE-A04",
+    "LIFE-A06",
+    "LIFE-A07",
+    "LIFE-A08",
+    "LIFE-A09",
+    "LIFE-A10",
+    "DIST-A01",
+    "DIST-A02",
+    "DIST-A03",
+    "DIST-A04",
+    "DIST-A05",
+    "DIST-A06",
+    "DIST-A07",
+    "DIST-A12",
+    "DIST-A13",
+    "TEST-A11"
+  ],
+  "production_ingress_changed": [
+    "cleanup_lifecycle.apply_cleanup_plan strict cleanup-authority refresh before destructive mutation",
+    "distributed_provider_control.ssh_phase_dist_metadata lifecycle-authority digest/count for normal SSH provider phases",
+    "oci_resilience.phase_metadata_lines public RUN/LIFE lifecycle authority key survives redaction"
+  ],
+  "targeted_validation": {
+    "wrapper": "./devtoolw remed-r03a",
+    "local_result": "51 passed, 0 failed",
+    "maximum_warnings": 0
+  },
+  "next": {
+    "next_overlay": "REMED-R03B Retention, Cleanup & Repository-Pack Convergence",
+    "next_full_plan_position": "76/93",
+    "remaining_remediation_implementation_overlays_before_g3r": 3,
+    "next_major_phase": "CORE-G3R at 79/93"
+  },
+  "v2_audit_corrections": [
+    "Active transaction markers are verified in strict cleanup mode before find_active_transactions() can prune malformed markers.",
+    "Corrupt active validation markers are translated into CleanupAuthorityUnavailableError during strict cleanup refresh.",
+    "Added adversarial tests for corrupt transaction marker and corrupt validation marker fail-closed behavior."
+  ]
+}

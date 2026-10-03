@@ -420,6 +420,42 @@ def typed_tool_argv_evidence(argv: Sequence[str]) -> dict[str, Any]:
     }
 
 
+def provider_cleanup_authority_metadata(
+    *,
+    destination: str,
+    provider: str,
+    run_id: str,
+    session: str,
+    stage_path: str = "",
+    state_path: str = "",
+    cursor_path: str = "",
+    delegation_id: str = "",
+) -> dict[str, Any]:
+    """Return lifecycle metadata proving provider resources are LIFE-owned.
+
+    Production SSH/federation provider phases persist only a digest and count in
+    ordinary phase metadata.  Full path descriptors remain reconstructable via
+    ``provider_cleanup_descriptors`` and provider status queries, avoiding a
+    second cleanup authority or public leakage of remote staging paths.
+    """
+    descriptors = provider_cleanup_descriptors(
+        destination=destination,
+        provider=provider,
+        run_id=run_id,
+        session=session,
+        stage_path=stage_path,
+        state_path=state_path,
+        cursor_path=cursor_path,
+        delegation_id=delegation_id,
+    )
+    payload = [item.as_dict() for item in descriptors]
+    return {
+        "dist_provider_lifecycle_authority": "RUN/LIFE",
+        "dist_provider_cleanup_descriptor_count": len(payload),
+        "dist_provider_cleanup_digest": canonical_digest(payload),
+    }
+
+
 def ssh_phase_dist_metadata(
     *,
     link: DelegationLink | None,
@@ -439,11 +475,12 @@ def ssh_phase_dist_metadata(
     root = str(remote_root or "").rstrip("/") or "."
     journal = str(PurePosixPath(root) / ".devtool" / "private" / "run-v3" / child_run_id / "execution-events.jsonl")
     state_root = str(PurePosixPath("~/.cache/devtool/ssh-runs") / child_run_id / session)
+    cursor_path = str(PurePosixPath(state_root) / "event-cursor.json")
     result: dict[str, Any] = {
         "dist_child_run_id": child_run_id,
         "dist_origin_journal_path": journal,
         "dist_provider_state_path": state_root,
-        "dist_event_cursor_path": str(PurePosixPath(state_root) / "event-cursor.json"),
+        "dist_event_cursor_path": cursor_path,
         "dist_tool_argv_digest": typed_tool_argv_evidence(original_argv)["argv_digest"],
         "dist_tool_argv_token_count": len(tuple(original_argv)),
     }
@@ -461,6 +498,16 @@ def ssh_phase_dist_metadata(
             "dist_attestation_digest": link.attestation_digest,
             "dist_provider_session_binding_id": binding.binding_id,
         })
+    result.update(provider_cleanup_authority_metadata(
+        destination=destination,
+        provider=provider_kind,
+        run_id=child_run_id,
+        session=session,
+        stage_path=root,
+        state_path=state_root,
+        cursor_path=cursor_path,
+        delegation_id=str(link.delegation_id if link is not None else ""),
+    ))
     hook = PrivateTransportHook(
         secret_reference_ids=tuple(secret_reference_ids),
         secret_key_names=tuple(secret_keys),
@@ -687,6 +734,7 @@ __all__ = [
     "PrivateTransportHook",
     "typed_tool_argv_evidence",
     "ssh_phase_dist_metadata",
+    "provider_cleanup_authority_metadata",
     "provider_cleanup_descriptors",
     "SSHProviderEventChannel",
     "run_relation_from_delegation",

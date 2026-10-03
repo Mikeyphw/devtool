@@ -48,6 +48,16 @@ class CleanupActionKind(StrEnum):
     PROVIDER = "provider"
 
 
+class CleanupAuthorityUnavailableError(RuntimeError):
+    """Raised when cleanup cannot read a required protection authority.
+
+    Destructive cleanup is only safe when RUN/RER, artifact registry, transaction,
+    and validation protection roots can be observed.  Missing stores are valid for
+    fresh repositories; unreadable/corrupt stores are not.
+    """
+
+
+
 def _stable(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
 
@@ -635,7 +645,75 @@ def _same_snapshot(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
     return all(left.get(key) == right.get(key) for key in ("exists", "kind", "size", "mtime_ns", "sha256", "tree_sha256"))
 
 
-def refresh_cleanup_ownership_view(ownership: CleanupOwnershipView) -> CleanupOwnershipView:
+
+def _read_existing_json_authority(path: Path, *, label: str) -> Mapping[str, Any]:
+    """Read an existing lifecycle authority JSON file without mutating it."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CleanupAuthorityUnavailableError(
+            f"Cannot read {label} cleanup authority {path}: {type(exc).__name__}: {exc}"
+        ) from exc
+    if not isinstance(data, Mapping):
+        raise CleanupAuthorityUnavailableError(
+            f"Cannot read {label} cleanup authority {path}: expected JSON object."
+        )
+    return data
+
+
+def _verify_active_transaction_authority_markers(repo_root: Path) -> None:
+    """Fail closed on corrupt active transaction pointers before cleanup mutates.
+
+    transactions.find_active_transactions() intentionally prunes malformed legacy
+    markers for ordinary rollback/recovery UX.  Destructive cleanup has a stricter
+    contract: an existing active transaction pointer is itself cleanup-critical
+    authority and must be readable, point at an existing transaction record, and
+    resolve to a readable transaction before any deletion can proceed.
+    """
+    try:
+        from .transactions import transaction_root, read_transaction
+    except Exception as exc:
+        raise CleanupAuthorityUnavailableError(
+            f"Cannot load transaction cleanup authority helpers: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    root = transaction_root(repo_root)
+    markers: list[Path] = []
+    legacy = root / "active.json"
+    if legacy.exists():
+        markers.append(legacy)
+    active_dir = root / "active"
+    if active_dir.exists():
+        try:
+            markers.extend(sorted(active_dir.glob("*.json")))
+        except OSError as exc:
+            raise CleanupAuthorityUnavailableError(
+                f"Cannot enumerate transaction cleanup authority {active_dir}: {type(exc).__name__}: {exc}"
+            ) from exc
+
+    for marker in markers:
+        data = _read_existing_json_authority(marker, label="transaction")
+        transaction_path = Path(str(data.get("path") or ""))
+        if not transaction_path.is_absolute():
+            raise CleanupAuthorityUnavailableError(
+                f"Cannot read transaction cleanup authority {marker}: missing absolute transaction path."
+            )
+        if not transaction_path.exists():
+            raise CleanupAuthorityUnavailableError(
+                f"Cannot read transaction cleanup authority {marker}: transaction path is missing: {transaction_path}"
+            )
+        try:
+            tx = read_transaction(marker)
+        except Exception as exc:
+            raise CleanupAuthorityUnavailableError(
+                f"Cannot read transaction cleanup authority {marker}: {type(exc).__name__}: {exc}"
+            ) from exc
+        if not isinstance(tx, Mapping):
+            raise CleanupAuthorityUnavailableError(
+                f"Cannot read transaction cleanup authority {marker}: expected transaction JSON object."
+            )
+
+def refresh_cleanup_ownership_view(ownership: CleanupOwnershipView, *, strict_authorities: bool = False) -> CleanupOwnershipView:
     """Re-read live lifecycle protection roots immediately before mutation.
 
     Caller-supplied descriptors/references remain conservative inputs, while RUN,
@@ -648,6 +726,7 @@ def refresh_cleanup_ownership_view(ownership: CleanupOwnershipView) -> CleanupOw
         ownership.descriptors,
         policy_generation=ownership.policy_generation,
         references=ownership.references,
+        strict_authorities=strict_authorities,
     )
 
 
@@ -698,7 +777,7 @@ def apply_cleanup_plan(
     if plan.confirmation_required and not confirm and not dry_run:
         raise RuntimeError("Cleanup plan requires explicit confirmation")
 
-    live_ownership = refresh_cleanup_ownership_view(ownership)
+    live_ownership = refresh_cleanup_ownership_view(ownership, strict_authorities=True)
     if live_ownership.repository_id != plan.repository_id:
         raise RuntimeError("Cleanup repository identity drifted during revalidation")
     refreshed = compile_cleanup_plan(
@@ -935,6 +1014,8 @@ def _artifact_registry_projection(repo_root: Path) -> tuple[list[GeneratedOutput
     if not path.is_file():
         return [], []
     data = _load_registry_unlocked(repo_root, preserve_corrupt=False)
+    if data.get("warning") or data.get("warnings"):
+        raise ValueError(str(data.get("warning") or data.get("warnings")))
     descriptors: list[GeneratedOutputDescriptor] = []
     refs: list[CleanupReference] = []
     for item in data.get("items", []):
@@ -966,6 +1047,7 @@ def build_cleanup_ownership_view(
     *,
     policy_generation: str = "default",
     references: Iterable[CleanupReference] = (),
+    strict_authorities: bool = False,
 ) -> CleanupOwnershipView:
     root = _canonical_path(repo_root)
     repo_identity = build_repository_identity(root)
@@ -974,14 +1056,17 @@ def build_cleanup_ownership_view(
     authority_sources: set[str] = set()
     blockers: list[str] = []
 
+    authority_errors: list[str] = []
+
     try:
         run_descriptors, run_refs = _run_catalog_references(root)
         owned.extend(run_descriptors)
         refs.extend(run_refs)
         if run_descriptors or run_refs:
             authority_sources.add("RUN/RER")
-    except (OSError, ValueError, json.JSONDecodeError):
-        pass
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        if (root / ".devtool" / "private" / "run-v3" / "catalog.json").exists():
+            authority_errors.append(f"RUN/RER: {type(exc).__name__}: {exc}")
 
     try:
         artifact_descriptors, artifact_refs = _artifact_registry_projection(root)
@@ -989,17 +1074,25 @@ def build_cleanup_ownership_view(
         refs.extend(artifact_refs)
         if artifact_descriptors:
             authority_sources.add("artifact-registry")
-    except (OSError, ValueError, json.JSONDecodeError):
-        pass
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        from .artifact_registry import registry_path
+        if registry_path(root).exists():
+            authority_errors.append(f"artifact-registry: {type(exc).__name__}: {exc}")
 
     try:
         from .transactions import find_active_transactions, read_transaction
+        if strict_authorities:
+            _verify_active_transaction_authority_markers(root)
         active = find_active_transactions(root, include_live=True)
         for transaction_path in active:
             authority_sources.add("transactions")
             try:
                 data = read_transaction(transaction_path)
-            except Exception:
+            except Exception as exc:
+                if strict_authorities:
+                    raise CleanupAuthorityUnavailableError(
+                        f"Cannot read active transaction cleanup authority {transaction_path}: {type(exc).__name__}: {exc}"
+                    ) from exc
                 data = {}
             transaction_id = str(data.get("transaction_id") or transaction_path.name)
             blockers.append(f"active artifact transaction {transaction_id} protects repository cleanup")
@@ -1007,11 +1100,13 @@ def build_cleanup_ownership_view(
                 reference_id=f"transaction:{transaction_id}", source="transaction", path=str(transaction_path),
                 state=str(data.get("status") or "active"), reason="active transaction/recovery state is cleanup-critical",
             ))
-    except (OSError, ValueError):
-        pass
+    except CleanupAuthorityUnavailableError:
+        raise
+    except (OSError, ValueError, RuntimeError) as exc:
+        authority_errors.append(f"transactions: {type(exc).__name__}: {exc}")
 
     try:
-        from .validation_sessions import load_active_session
+        from .validation_sessions import ValidationSessionError, load_active_session
         session = load_active_session(root)
         if session is not None and str(getattr(session, "status", "")) not in {"", "completed", "failed", "aborted"}:
             authority_sources.add("validation")
@@ -1021,8 +1116,14 @@ def build_cleanup_ownership_view(
                 path=str(getattr(session, "transaction_path", "") or ""), state=str(session.status),
                 reason="active/resumable validation is a cleanup protection root",
             ))
-    except (OSError, ValueError, json.JSONDecodeError):
-        pass
+    except (OSError, ValueError, json.JSONDecodeError, ValidationSessionError) as exc:
+        authority_errors.append(f"validation: {type(exc).__name__}: {exc}")
+
+    if authority_errors and strict_authorities:
+        raise CleanupAuthorityUnavailableError(
+            "Cleanup protection authority is unreadable; refusing destructive cleanup: "
+            + "; ".join(authority_errors)
+        )
 
     # Stable order + de-dup by resource/reference identity.
     desc_map = {item.resource_id: item for item in owned}
@@ -1166,7 +1267,7 @@ __all__ = [
     "CleanupPlan", "CleanupReceipt", "CleanupReference", "CleanupSafetyClass", "CleanupScope",
     "DestinationCleanupResult",
     "GeneratedOutputDescriptor", "OpaqueCleanupAction", "RepositoryCacheMigrationPlan",
-    "annotate_cleanup_specs", "apply_cleanup_plan", "build_cleanup_ownership_view",
+    "CleanupAuthorityUnavailableError", "annotate_cleanup_specs", "apply_cleanup_plan", "build_cleanup_ownership_view",
     "compile_cleanup_plan", "descriptor_from_path", "explain_cleanup_candidate",
     "preserve_primary_lifecycle_failure", "refresh_cleanup_ownership_view",
     "opaque_action_from_spec", "persist_cleanup_receipt", "plan_repository_cache_relocation",

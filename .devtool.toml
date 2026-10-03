@@ -103,6 +103,11 @@ description = "Run REMED-R02 whole-scope fixed-point audit validation"
 workflow = "remed-r02-whole-audit"
 target = "devtool"
 
+[wrapper.commands.remed-r03a]
+description = "Run REMED-R03A provider and lifecycle authority targeted validation"
+workflow = "remed-r03a"
+target = "devtool"
+
 [wrapper.commands.core-g3]
 description = "Run CORE-G3 final identity/config/wrapper/RUN seal"
 workflow = "core-g3"
@@ -918,6 +923,10 @@ remed-r02-whole-audit = [
   { id = "whole-scope", ref = "test:remed-r02-whole-audit", depends_on = [] },
   { id = "r02a-retained", ref = "test:remed-r02a-scheduler-run", depends_on = ["whole-scope"] },
   { id = "r02b-retained", ref = "test:remed-r02b-validation-test-truth", depends_on = ["whole-scope"] },
+]
+remed-r03a = [
+  { id = "provider-lifecycle", ref = "test:remed-r03a-provider-lifecycle", depends_on = [] },
+  { id = "retained-provider-lifecycle", ref = "test:remed-r03a-retained-provider-lifecycle", depends_on = ["provider-lifecycle"] },
 ]
 
 core-g3 = [
@@ -4363,6 +4372,20 @@ name = "REMED-R02 whole-scope fixed-point audit"
 runner = "pytest"
 timeout_seconds = 600
 command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_remed_r02_whole_scope_audit.py"]
+
+[[test]]
+id = "remed-r03a-provider-lifecycle"
+name = "REMED-R03A provider and lifecycle authority"
+runner = "pytest"
+timeout_seconds = 600
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_remed_r03a_provider_lifecycle_authority.py"]
+
+[[test]]
+id = "remed-r03a-retained-provider-lifecycle"
+name = "REMED-R03A retained provider/lifecycle regressions"
+runner = "pytest"
+timeout_seconds = 900
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_life_x03_generated_cleanup_ownership.py", "tests/test_life_g2_ownership_retention_gate.py", "tests/test_dist_x03_provider_control_hierarchy.py"]
 
 [[test]]
 id = "core-g3-remediation"

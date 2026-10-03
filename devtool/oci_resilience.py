@@ -21,6 +21,11 @@ _SECRET_KEY_RE = re.compile(
 )
 _PHASE_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+PUBLIC_AUTHORITY_METADATA_KEYS: frozenset[str] = frozenset({
+    "dist_provider_lifecycle_authority",
+})
+
+
 OCI_PROVENANCE_KEYS: tuple[str, ...] = (
     "execution_mode",
     "execution_provider",
@@ -96,6 +101,9 @@ OCI_PROVENANCE_KEYS: tuple[str, ...] = (
     "dist_origin_journal_path",
     "dist_provider_state_path",
     "dist_event_cursor_path",
+    "dist_provider_lifecycle_authority",
+    "dist_provider_cleanup_descriptor_count",
+    "dist_provider_cleanup_digest",
     "dist_private_transport_hook_id",
     "dist_private_secret_count",
     "dist_tool_argv_digest",
@@ -135,7 +143,7 @@ def redacted_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in metadata.items():
         name = str(key)
-        if is_sensitive_name(name):
+        if is_sensitive_name(name) and name not in PUBLIC_AUTHORITY_METADATA_KEYS:
             result[name] = "<redacted>"
             continue
         if isinstance(value, Mapping):
