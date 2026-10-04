@@ -10411,7 +10411,13 @@ def _delete_original_artifact_after_apply(
     delete_on_failure: bool = False,
     repo_root: str | Path | None = None,
 ) -> OperationResult | None:
-    """Delete the source artifact after success, or after failure when requested."""
+    """Delete the source artifact through fresh-process canonical LIFE cleanup.
+
+    Apply can update Devtool itself. Running cleanup in the long-lived apply
+    process would then keep using already-imported cleanup policy modules from
+    before the update. A fresh worker process makes post-apply cleanup observe
+    the committed source tree and all of its cleanup dependencies.
+    """
     failed = any(result.returncode != 0 for result in results)
     rolled_back = any(
         result.failure_kind != "stale_apply_rolled_back"
@@ -10431,125 +10437,97 @@ def _delete_original_artifact_after_apply(
     start_ts = datetime.now(timezone.utc).timestamp()
     reason = "after failed apply" if failed or rolled_back else "after successful apply"
     root = Path(repo_root or Path.cwd()).expanduser().resolve(strict=False)
-    candidates: list[Path] = []
-    for raw_path in artifact_paths:
-        path = Path(raw_path)
-        for candidate in _artifact_paths_for_cleanup(path):
-            resolved = candidate.expanduser().resolve(strict=False)
-            if resolved not in candidates:
-                candidates.append(resolved)
-    if not candidates:
-        return None
-    existing_candidates = [path for path in candidates if path.exists() or path.is_symlink()]
-    if not existing_candidates:
-        return OperationResult(
-            "artifact-cleanup", ["cleanup-life", *artifact_paths], 0,
-            datetime.now(timezone.utc).timestamp() - start_ts,
-            "Original artifact cleanup skipped; artifact(s) were already absent.", [],
-            metadata={"cleanup_authority": "LIFE", "cleanup_status": "no-op"},
-        )
 
+    module_root = Path(__file__).resolve(strict=False).parent.parent
+    pythonpath: list[str] = []
+    if (root / "devtool" / "__init__.py").is_file():
+        # Self-update: prefer the just-applied repository source over the module
+        # graph that launched this command.
+        pythonpath.append(str(root))
+    if str(module_root) not in pythonpath:
+        pythonpath.append(str(module_root))
+    inherited_pythonpath = str(os.environ.get("PYTHONPATH") or "").strip()
+    if inherited_pythonpath:
+        pythonpath.append(inherited_pythonpath)
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath)
+    command = [
+        sys.executable,
+        "-m",
+        "devtool.artifact_cleanup_worker",
+        "--repo-root",
+        str(root),
+        "--reason",
+        reason,
+        "--run-id",
+        str(os.environ.get("DEVTOOL_RUN_ID") or ""),
+        "--",
+        *artifact_paths,
+    ]
+    proc = subprocess.run(
+        command,
+        cwd=str(root),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    payload: dict[str, object] | None = None
     try:
-        from .cleanup_lifecycle import (
-            CleanupScope,
-            GeneratedOutputDescriptor,
-            apply_cleanup_plan,
-            build_cleanup_ownership_view,
-            compile_cleanup_plan,
-            persist_cleanup_receipt,
-        )
+        loaded = json.loads(proc.stdout or "{}")
+        if isinstance(loaded, dict):
+            payload = loaded
+    except json.JSONDecodeError:
+        payload = None
 
-        descriptors = [
-            GeneratedOutputDescriptor.create(
-                candidate,
-                owner="artifact-apply-source",
-                provider="artifact-apply",
-                category="consumed-artifact-source",
-                producer_id=f"apply-source:{candidate.name}",
-                lifecycle="transient",
-                rebuild_cost="unknown",
-                scope=CleanupScope.PROJECT,
-                managed=True,
-                published=False,
-                provenance={
-                    "delete_reason": reason,
-                    "explicit_apply_cleanup": True,
-                    "source_artifact": str(candidate),
-                },
-            )
-            for candidate in existing_candidates
-        ]
-        ownership = build_cleanup_ownership_view(
-            root,
-            descriptors,
-            policy_generation="life-r03b-artifact-source-cleanup-v1",
-            strict_authorities=True,
-        )
-        plan = compile_cleanup_plan(ownership, scope=CleanupScope.PROJECT, destination="local")
-        receipt = apply_cleanup_plan(plan, ownership=ownership, confirm=True)
-        receipt_path = persist_cleanup_receipt(
-            root, receipt, run_id=str(os.environ.get("DEVTOOL_RUN_ID") or ""),
-        )
-        removed = [row.path for row in receipt.results if row.status == "applied"]
-        protected = [
-            f"{row.path}: {row.reason or row.status}"
-            for row in receipt.results
-            if row.status not in {"applied", "planned"}
-        ]
-        failures = [row for row in receipt.results if row.status == "failed"]
-        expected_existing = {str(path) for path in existing_candidates}
-        deleted_existing = set(removed)
-        incomplete = sorted(expected_existing - deleted_existing)
-        if failures or incomplete:
-            details = protected or [str(path) for path in incomplete]
-            return OperationResult(
-                "artifact-cleanup",
-                ["cleanup-life", *artifact_paths],
-                1,
-                datetime.now(timezone.utc).timestamp() - start_ts,
-                f"Canonical LIFE cleanup refused or failed to delete original artifact(s) {reason}.\n"
-                + "\n".join(details),
-                [],
-                failure_kind="artifact_cleanup_failure",
-                metadata={
-                    "cleanup_authority": "LIFE",
-                    "cleanup_receipt_id": receipt.receipt_id,
-                    "cleanup_receipt_path": str(receipt_path),
-                    "cleanup_status": receipt.status,
-                },
-            )
-        if not removed:
-            output = "Original artifact cleanup skipped; artifact(s) were already absent."
-        else:
-            output = f"Deleted original artifact(s) {reason} through canonical LIFE cleanup.\n" + "\n".join(
-                f"removed: {item}" for item in removed
-            )
+    synthetic_argv = ["cleanup-life", *artifact_paths]
+    duration = datetime.now(timezone.utc).timestamp() - start_ts
+    if payload is None:
+        detail = (proc.stderr or proc.stdout or "fresh cleanup worker produced no structured result").strip()
         return OperationResult(
             "artifact-cleanup",
-            ["cleanup-life", *artifact_paths],
-            0,
-            datetime.now(timezone.utc).timestamp() - start_ts,
-            output,
-            [],
-            metadata={
-                "cleanup_authority": "LIFE",
-                "cleanup_receipt_id": receipt.receipt_id,
-                "cleanup_receipt_path": str(receipt_path),
-                "cleanup_status": receipt.status,
-            },
-        )
-    except BaseException as exc:
-        return OperationResult(
-            "artifact-cleanup",
-            ["cleanup-life", *artifact_paths],
+            synthetic_argv,
             1,
-            datetime.now(timezone.utc).timestamp() - start_ts,
-            f"Failed canonical LIFE cleanup of original artifact(s) {reason}.\n{type(exc).__name__}: {exc}",
+            duration,
+            "Failed canonical LIFE cleanup in fresh process.\n" + detail,
             [],
             failure_kind="artifact_cleanup_failure",
-            metadata={"cleanup_authority": "LIFE"},
+            metadata={
+                "cleanup_authority": "LIFE",
+                "cleanup_process": "fresh-worker",
+                "worker_returncode": proc.returncode,
+            },
         )
 
+    worker_returncode = int(payload.get("returncode") or 0)
+    output = str(payload.get("output") or "")
+    failure_kind = str(payload.get("failure_kind") or "")
+    metadata = payload.get("metadata")
+    normalized_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    normalized_metadata["cleanup_authority"] = "LIFE"
+    normalized_metadata["cleanup_process"] = "fresh-worker"
+    normalized_metadata["worker_returncode"] = proc.returncode
+    if proc.stderr.strip():
+        normalized_metadata["worker_stderr"] = proc.stderr.strip()
+
+    if proc.returncode != worker_returncode and proc.returncode != 0:
+        worker_returncode = proc.returncode
+        failure_kind = failure_kind or "artifact_cleanup_failure"
+        if proc.stderr.strip():
+            output = (output + "\n" + proc.stderr.strip()).strip()
+
+    return OperationResult(
+        "artifact-cleanup",
+        synthetic_argv,
+        worker_returncode,
+        duration,
+        output,
+        [],
+        failure_kind=failure_kind if worker_returncode else "",
+        metadata=normalized_metadata,
+    )
 
 def _delete_original_artifact_after_success(results: list[OperationResult]) -> OperationResult | None:
     return _delete_original_artifact_after_apply(results, delete_on_failure=False)
