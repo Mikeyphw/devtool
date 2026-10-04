@@ -570,6 +570,45 @@ def _safety_for(descriptor: GeneratedOutputDescriptor, refs: Sequence[CleanupRef
     return CleanupSafetyClass.REBUILDABLE
 
 
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+    except ValueError:
+        return False
+    return True
+
+
+def _is_apply_source_artifact_descriptor(descriptor: GeneratedOutputDescriptor) -> bool:
+    return (
+        descriptor.owner == "artifact-apply-source"
+        and descriptor.provider == "artifact-apply"
+        and descriptor.category == "consumed-artifact-source"
+        and descriptor.scope == CleanupScope.PROJECT
+        and descriptor.destination == "local"
+        and descriptor.managed
+        and not descriptor.published
+        and descriptor.lifecycle in {"disposable", "transient"}
+    )
+
+
+def _cleanup_global_blocker_for_candidate(
+    ownership: CleanupOwnershipView,
+    descriptor: GeneratedOutputDescriptor,
+    repo_root: Path,
+) -> str:
+    if not ownership.global_blockers:
+        return ""
+    path = _canonical_path(descriptor.path)
+    if _is_apply_source_artifact_descriptor(descriptor) and not _path_is_within(path, repo_root):
+        # Active validation/transaction sessions protect repository-owned cleanup
+        # while apply finalization is in progress.  They do not make the already
+        # consumed source artifact in /sdcard/Download (or another external
+        # handoff location) durable repository evidence.  Direct references still
+        # protect the artifact through ``references_for`` and ``_safety_for``.
+        return ""
+    return ownership.global_blockers[0]
+
+
 def compile_cleanup_plan(
     ownership: CleanupOwnershipView,
     *,
@@ -590,9 +629,10 @@ def compile_cleanup_plan(
         safety = _safety_for(descriptor, refs)
         reason = ""
         selected = True
-        if ownership.global_blockers:
+        global_blocker = _cleanup_global_blocker_for_candidate(ownership, descriptor, root)
+        if global_blocker:
             selected = False
-            reason = ownership.global_blockers[0]
+            reason = global_blocker
         elif safety in {CleanupSafetyClass.DURABLE_EVIDENCE, CleanupSafetyClass.RECOVERY_CRITICAL, CleanupSafetyClass.PROTECTED_UNKNOWN}:
             selected = False
             reason = protective[0].reason if protective else "resource ownership is not sufficient for automatic deletion"
