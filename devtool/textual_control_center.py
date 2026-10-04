@@ -11,6 +11,7 @@ from hashlib import sha256
 import json
 from typing import Any, Iterable, Mapping, Sequence
 
+from .ui_core.actions import action_spec
 from .ui_core.shortcuts import TUI_NAV_SHORTCUTS, TUI_PAGES
 
 PAGES = TUI_PAGES
@@ -38,23 +39,47 @@ class OperatorActionSpec:
     destructive: bool = False
     requires_run: bool = False
     requires_node: bool = False
+    canonical_id: str = ""
+    label: str = ""
+    intent: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
 
 
+def _operator_action(
+    action_id: str,
+    canonical_id: str,
+    authority: str,
+    *,
+    requires_run: bool = False,
+    requires_node: bool = False,
+) -> OperatorActionSpec:
+    canonical = action_spec(canonical_id)
+    return OperatorActionSpec(
+        id=action_id,
+        authority=authority,
+        destructive=canonical.destructive,
+        requires_run=requires_run,
+        requires_node=requires_node,
+        canonical_id=canonical.id,
+        label=canonical.label,
+        intent=canonical.intent,
+    )
+
+
 ACTION_SPECS: dict[str, OperatorActionSpec] = {
-    "cancel": OperatorActionSpec("cancel", "EXO/RUN", destructive=True, requires_run=True),
-    "retry": OperatorActionSpec("retry", "EXO/RUN", requires_run=True),
-    "rerun": OperatorActionSpec("rerun", "EXO/RUN", requires_run=True),
-    "resume": OperatorActionSpec("resume", "EXO/RUN", requires_run=True),
-    "logs.open": OperatorActionSpec("logs.open", "RUN", requires_run=True),
-    "overlay.apply": OperatorActionSpec("overlay.apply", "LIFE", destructive=True),
-    "rollback": OperatorActionSpec("rollback", "LIFE", destructive=True),
-    "recover": OperatorActionSpec("recover", "LIFE", destructive=True),
-    "worker.recover": OperatorActionSpec("worker.recover", "DIST/SSH", destructive=True),
-    "validation.pause": OperatorActionSpec("validation.pause", "validation"),
-    "validation.stop": OperatorActionSpec("validation.stop", "validation", destructive=True),
+    "cancel": _operator_action("cancel", "operation.cancel", "EXO/RUN", requires_run=True),
+    "retry": _operator_action("retry", "operation.retry", "EXO/RUN", requires_run=True),
+    "rerun": _operator_action("rerun", "operation.rerun", "EXO/RUN", requires_run=True),
+    "resume": _operator_action("resume", "validation.resume", "EXO/RUN", requires_run=True),
+    "logs.open": _operator_action("logs.open", "logs.open", "RUN", requires_run=True),
+    "overlay.apply": _operator_action("overlay.apply", "overlay.apply", "LIFE"),
+    "rollback": _operator_action("rollback", "overlay.rollback", "LIFE"),
+    "recover": _operator_action("recover", "overlay.recover", "LIFE"),
+    "worker.recover": _operator_action("worker.recover", "worker.recover", "DIST/SSH"),
+    "validation.pause": _operator_action("validation.pause", "validation.pause", "validation"),
+    "validation.stop": _operator_action("validation.stop", "validation.stop", "validation"),
 }
 
 # This registry advertises only controls the concrete Textual application wires.

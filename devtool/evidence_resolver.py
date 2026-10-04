@@ -20,6 +20,32 @@ from .core_runtime import private_run_root
 from .run_store import RunCatalog
 
 
+DEFAULT_EVIDENCE_ALIASES: dict[str, str] = {
+    # TEST-G3 source/merged disposition symbolic rows.  These aliases are
+    # retained for human readability in the historical ledgers, but gates must
+    # resolve them to concrete source or executable evidence instead of treating
+    # any non-empty string as proof.
+    "roadmap-test-g3-trust": "tests/test_test_x01_failure_trustworthiness.py",
+    "roadmap-test-g3-inventory": "tests/test_test_x02_inventory_selection.py",
+    "roadmap-test-g3-runtime": "tests/test_test_x03_runtime_optimization.py",
+    "roadmap-test-g3-convergence": "tests/test_test_x04_convergence.py",
+    "roadmap-test-g3-final-proof": "tests/test_test_g3_final_seal.py",
+    "roadmap-test-g3-runner-semantics": "tests/test_test_g3_final_seal.py",
+    "TEST-X01/G1": "tests/test_test_g1_isolation_trust_gate.py",
+    "TEST-X02/G2": "tests/test_test_g2_lane_selection_gate.py",
+    "TEST-X03": "tests/test_test_x03_runtime_optimization.py",
+    "TEST-X04/G3": "tests/test_test_x04_convergence.py",
+    # DIST-G3 retained-substrate and final-proof aliases.
+    "roadmap-dist-g3-retained-dist": "tests/test_dist_g3_final_seal.py",
+    "roadmap-dist-g3-retained-substrate": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json",
+    "roadmap-dist-g3-final-proof": "tests/test_dist_g3_final_seal.py",
+    "DIST-X01/X02/G1": "tests/test_dist_g1_identity_delivery_recovery_gate.py",
+    "DIST-X03/G2": "tests/test_dist_g2_provider_parity_gate.py",
+    "DIST-X04": "tests/test_dist_x04_operational_adoption.py",
+    "DIST-G3": "tests/test_dist_g3_final_seal.py",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class EvidenceResolution:
     reference: str
@@ -42,8 +68,9 @@ def sha256_file(path: str | Path) -> str:
 
 
 class EvidenceResolver:
-    def __init__(self, repo_root: str | Path) -> None:
+    def __init__(self, repo_root: str | Path, *, aliases: Mapping[str, str] | None = None) -> None:
         self.repo_root = Path(repo_root).expanduser().resolve()
+        self.aliases = {**DEFAULT_EVIDENCE_ALIASES, **dict(aliases or {})}
 
     def _finish(self, reference: str, kind: str, path: Path, *, expected_sha256: str = "") -> EvidenceResolution:
         try:
@@ -112,6 +139,12 @@ class EvidenceResolver:
         ref = str(reference or "").strip()
         if not ref:
             return EvidenceResolution(ref, False, "unknown", detail="empty evidence reference")
+        alias_target = self.aliases.get(ref)
+        if alias_target:
+            resolved = self.resolve(alias_target, expected_sha256=expected_sha256, execute_pytest=execute_pytest)
+            if resolved.resolved:
+                return EvidenceResolution(ref, True, f"alias:{resolved.kind}", resolved.path, resolved.sha256, f"alias resolved to {alias_target}")
+            return EvidenceResolution(ref, False, f"alias:{resolved.kind}", resolved.path, resolved.sha256, f"alias target {alias_target!r} failed: {resolved.detail}")
         if ref.startswith("run:") and ":attachment:" in ref:
             return self._run_attachment(ref, expected_sha256=expected_sha256)
         if "::" in ref and ref.split("::", 1)[0].endswith(".py"):
@@ -134,10 +167,30 @@ class EvidenceResolver:
     def resolve_many(self, rows: Iterable[Mapping[str, Any]], *, execute_pytest: bool = True) -> tuple[EvidenceResolution, ...]:
         results: list[EvidenceResolution] = []
         for row in rows:
-            reference = str(row.get("reference") or row.get("evidence") or "")
+            raw_reference = row.get("reference")
+            if raw_reference is None:
+                raw_reference = row.get("evidence")
             expected = str(row.get("sha256") or row.get("expected_sha256") or "")
-            results.append(self.resolve(reference, expected_sha256=expected, execute_pytest=execute_pytest))
+            if isinstance(raw_reference, (list, tuple)):
+                for item in raw_reference:
+                    results.append(self.resolve(str(item), expected_sha256=expected, execute_pytest=execute_pytest))
+            else:
+                results.append(self.resolve(str(raw_reference or ""), expected_sha256=expected, execute_pytest=execute_pytest))
         return tuple(results)
+
+    def disposition_evidence_rows(self, rows: Iterable[Mapping[str, Any]]) -> tuple[dict[str, Any], ...]:
+        expanded: list[dict[str, Any]] = []
+        for row in rows:
+            evidence = row.get("evidence")
+            row_id = str(row.get("id") or row.get("source_id") or row.get("promise_id") or "<unknown>")
+            if not isinstance(evidence, (list, tuple)) or not evidence:
+                expanded.append({"reference": "", "source_row_id": row_id})
+                continue
+            hashes = row.get("evidence_sha256") if isinstance(row.get("evidence_sha256"), Mapping) else {}
+            for reference in evidence:
+                ref = str(reference)
+                expanded.append({"reference": ref, "expected_sha256": str(hashes.get(ref) or ""), "source_row_id": row_id})
+        return tuple(expanded)
 
     def require_all(self, rows: Iterable[Mapping[str, Any]], *, execute_pytest: bool = True) -> tuple[EvidenceResolution, ...]:
         results = self.resolve_many(rows, execute_pytest=execute_pytest)
@@ -148,4 +201,4 @@ class EvidenceResolver:
         return results
 
 
-__all__ = ["EvidenceResolution", "EvidenceResolver", "sha256_file"]
+__all__ = ["DEFAULT_EVIDENCE_ALIASES", "EvidenceResolution", "EvidenceResolver", "sha256_file"]

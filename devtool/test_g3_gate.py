@@ -14,6 +14,7 @@ from .test_inventory import compile_pytest_inventory, qualify_selection_environm
 from .test_runtime_optimization import TestPerformanceSample, build_performance_profile, aggregate_shards, ShardOutcome, run_attachment_manifest
 from .test_convergence import RerTestEvidenceRequest, rer_reuse_projection, DelegatedTestLineage, roadmap_evidence_binding, presentation_projection
 from .test_runstore import normalize_test_run_payload
+from .evidence_resolver import EvidenceResolver
 
 SOURCE_ALLOWED={"SATISFIED_BY_TEST","SUPERSEDED_BY_TEST","EXPORTED_TO_EXEC","EXPORTED_TO_RUN","EXPORTED_TO_RER","EXPORTED_TO_ENV","EXPORTED_TO_CFG","EXPORTED_TO_PRES","EXPORTED_TO_DIST","EXPORTED_TO_RMP","RETIRED_WITH_EVIDENCE"}
 MERGED_ALLOWED={"SATISFIED","SUPERSEDED","EXPORTED","RETIRED"}
@@ -31,11 +32,16 @@ def audit_dispositions(repo_root:str|Path='.') -> dict[str,Any]:
     if [x.get('id') for x in mp] != [f'TEST-P{i:03d}' for i in range(1,109)]: raise RuntimeError('merged promise closure must cover TEST-P001..TEST-P108')
     if [x.get('id') for x in mr] != [f'TEST-MR{i:03d}' for i in range(1,101)]: raise RuntimeError('merged regression closure is incomplete')
     bad=[]
+    concrete_rows=[]
     for row in [*sp,*sr]:
         if row.get('disposition') not in SOURCE_ALLOWED or not row.get('evidence'): bad.append(row.get('id'))
+        concrete_rows.append(row)
     for row in [*mp,*mr]:
         if row.get('status') not in MERGED_ALLOWED or not row.get('evidence'): bad.append(row.get('id'))
+        concrete_rows.append(row)
     if bad: raise RuntimeError('unmapped TEST obligations: '+', '.join(map(str,bad[:12])))
+    resolver=EvidenceResolver(root)
+    evidence_results=resolver.require_all(resolver.disposition_evidence_rows(concrete_rows), execute_pytest=False)
     return {'source_promises':84,'source_regressions':105,'merged_promises':108,'merged_regressions':100,'unmapped':0,'ok':True}
 
 def runner_semantics_proof() -> dict[str,Any]:

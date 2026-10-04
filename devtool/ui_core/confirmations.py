@@ -23,7 +23,13 @@ _ACTION_POLICY_KEYS = {
     "operation.rerun": "retry",
     "artifact.apply": "apply_artifact",
     "artifact.rollback": "rollback",
+    "overlay.apply": "apply_artifact",
+    "overlay.rollback": "rollback",
+    "overlay.recover": "rollback",
+    "worker.recover": "rollback",
     "validation.retry_failed": "retry",
+    "validation.pause": "retry",
+    "validation.stop": "rollback",
     "workflow.retry_node": "retry",
 }
 

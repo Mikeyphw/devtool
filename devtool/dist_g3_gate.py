@@ -16,6 +16,7 @@ import tempfile
 from typing import Any
 
 from .core.events import EventBus, NodeDiscovered, RunFinished, RunStarted
+from .evidence_resolver import EvidenceResolver
 from .core.events.listeners import event_to_dict
 from .dist_g2_gate import run_parity_proof
 from .distributed_execution import DelegationLink, ExecutionRunLink, ExternalEventIngestor
@@ -74,6 +75,7 @@ def audit_source_dispositions(repo_root: str | Path = ".") -> dict[str, Any]:
     if regression_ids != expected_regressions:
         raise RuntimeError("DIST-G3 NEST regression ledger is incomplete or out of order")
     unresolved = []
+    concrete_rows: list[dict[str, Any]] = []
     for row in [*promises, *regressions]:
         if not isinstance(row, dict):
             unresolved.append("<invalid-row>")
@@ -84,8 +86,11 @@ def audit_source_dispositions(repo_root: str | Path = ".") -> dict[str, Any]:
         evidence = row.get("evidence")
         if not isinstance(evidence, list) or not evidence:
             unresolved.append(str(row.get("id") or "<missing-id>"))
+        concrete_rows.append(row)
     if unresolved:
         raise RuntimeError("DIST-G3 unmapped source obligations: " + ", ".join(unresolved[:12]))
+    resolver = EvidenceResolver(root)
+    evidence_results = resolver.require_all(resolver.disposition_evidence_rows(concrete_rows), execute_pytest=False)
     return {
         "schema_version": 1,
         "kind": "dist-g3-source-disposition-audit",
