@@ -745,7 +745,7 @@ def _migrate_session_payload(payload: dict[str, Any]) -> dict[str, Any]:
     version = _coerce_int(payload.get("schema_version", 0), 0)
     if version == SESSION_SCHEMA_VERSION:
         return payload
-    if version not in {1, 2, 3, 4, 5}:
+    if version not in {1, 2, 3, 4, 5, 6}:
         raise ValidationSessionError(
             f"Unsupported validation session schema: {version or 'missing'}"
         )
