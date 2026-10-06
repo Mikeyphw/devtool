@@ -8650,6 +8650,57 @@ def _reload_config_after_artifact_apply(args: argparse.Namespace, fallback: Proj
         return fallback
 
 
+def _reload_primary_config_after_transaction_close(
+    args: argparse.Namespace,
+    fallback: ProjectConfig,
+    manifest: dict,
+) -> ProjectConfig:
+    """Rebind orchestration to the primary checkout after transaction closure.
+
+    Artifact validation intentionally reloads configuration from an isolated
+    transaction worktree so candidate config changes participate in validation.
+    Successful completion (and successful rollback) removes that worktree. Any
+    cleanup/history/summary work after that boundary must therefore stop using
+    the worktree-backed ProjectConfig before it performs filesystem or subprocess
+    operations.
+    """
+
+    primary_root = str(
+        getattr(args, "_devtool_transaction_primary_repo_root", "")
+        or fallback.repo_root
+    ).strip()
+    for key in (
+        "DEVTOOL_TRANSACTION_REPO_ROOT",
+        "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
+        "DEVTOOL_VALIDATION_STATE_REPO_ROOT",
+    ):
+        os.environ.pop(key, None)
+    for attr in (
+        "_devtool_transaction_repo_root",
+        "_devtool_transaction_primary_repo_root",
+    ):
+        if hasattr(args, attr):
+            delattr(args, attr)
+
+    target = str(getattr(args, "target", "") or artifact_target(manifest)).strip()
+    solution = str(getattr(args, "solution", "") or artifact_solution(manifest)).strip()
+    project = str(getattr(args, "project", "") or manifest.get("run_project") or manifest.get("project") or "").strip()
+    try:
+        return load_project_config(
+            primary_root,
+            args.config,
+            target_name=target,
+            variant_name=str(getattr(args, "variant", "") or ""),
+            solution_override=solution,
+            project_override=project,
+            kind_override=str(getattr(args, "project_type", "auto") or "auto"),
+        )
+    except SystemExit:
+        # The pre-apply primary config remains a valid post-lifecycle fallback.
+        # Never fall back to the candidate worktree config after its root closed.
+        return fallback
+
+
 def _append_run_log(log_path: Path | str | None, text: str) -> None:
     """Append orchestration evidence to the same durable run log as commands."""
     if log_path is None or not str(text or "").strip():
@@ -8969,15 +9020,39 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         else:
             os.environ["DEVTOOL_PRESERVE_DIRTY_REQUESTED"] = _previous_preserve_dirty
     if result.metadata:
+        transaction_path = str(result.metadata.get("transaction_path") or "").strip()
         transaction_repo_root = str(result.metadata.get("transaction_repo_root") or "").strip()
-        if transaction_repo_root:
+        transaction_live = bool(
+            result.returncode == 0
+            and transaction_path
+            and Path(transaction_path).is_file()
+            and transaction_repo_root
+            and Path(transaction_repo_root).is_dir()
+        )
+        if transaction_live:
             args._devtool_transaction_repo_root = transaction_repo_root
             os.environ["DEVTOOL_TRANSACTION_REPO_ROOT"] = transaction_repo_root
-        transaction_primary_root = str(result.metadata.get("transaction_primary_repo_root") or "").strip()
-        if transaction_primary_root:
-            args._devtool_transaction_primary_repo_root = transaction_primary_root
-            os.environ["DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT"] = transaction_primary_root
-            os.environ["DEVTOOL_VALIDATION_STATE_REPO_ROOT"] = transaction_primary_root
+            transaction_primary_root = str(result.metadata.get("transaction_primary_repo_root") or "").strip()
+            if transaction_primary_root:
+                args._devtool_transaction_primary_repo_root = transaction_primary_root
+                os.environ["DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT"] = transaction_primary_root
+                os.environ["DEVTOOL_VALIDATION_STATE_REPO_ROOT"] = transaction_primary_root
+        else:
+            # A failed apply may already have rolled its isolated transaction
+            # back and removed the worktree. Do not let the outer CLI publish a
+            # deleted execution root into later config/validation/finalization.
+            for key in (
+                "DEVTOOL_TRANSACTION_REPO_ROOT",
+                "DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT",
+                "DEVTOOL_VALIDATION_STATE_REPO_ROOT",
+            ):
+                os.environ.pop(key, None)
+            for attr in (
+                "_devtool_transaction_repo_root",
+                "_devtool_transaction_primary_repo_root",
+            ):
+                if hasattr(args, attr):
+                    delattr(args, attr)
     if _artifact_lifecycle_steps:
         result.metadata.setdefault("lifecycle_steps", []).extend(_artifact_lifecycle_steps)
         result.metadata.setdefault("lifecycle_steps_position", "before")
@@ -10254,10 +10329,21 @@ def _run_sequential_overlays(
             adhoc_bundle_temp.cleanup()
 
 def _apply_transaction_path(results: list[OperationResult]) -> str:
+    """Return only a live transaction journal owned by the apply results.
+
+    In-runner rollback may close and delete a transaction before control returns
+    to the CLI. Historical metadata must never resurrect that deleted journal as
+    an active rollback/validation target.
+    """
     for result in results:
-        path = result.metadata.get("transaction_path") if getattr(result, "metadata", None) else ""
-        if path:
-            return str(path)
+        metadata = result.metadata if getattr(result, "metadata", None) else {}
+        if not isinstance(metadata, dict):
+            continue
+        if bool(metadata.get("rolled_back_during_apply")) and int(metadata.get("rollback_returncode") or 0) == 0:
+            continue
+        raw = str(metadata.get("transaction_path") or "").strip()
+        if raw and Path(raw).is_file():
+            return raw
     return ""
 
 
@@ -15941,6 +16027,7 @@ def _main_after_parse(
                     continue_on_error=continue_on_error,
                 )
             else:
+                primary_config = config
                 results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path, tasker_progress=tasker_progress)
                 transaction_path = _apply_transaction_path(results)
                 applied_manifest = dict(getattr(args, "_devtool_artifact_manifest", {}) or read_artifact_manifest(args.artifact))
@@ -16098,6 +16185,8 @@ def _main_after_parse(
                             results.extend(finalize_results)
                             if finalize_raw:
                                 raw_output += "\n\n" + finalize_raw
+                if transaction_path and not Path(transaction_path).is_file():
+                    config = _reload_primary_config_after_transaction_close(args, primary_config, applied_manifest)
                 delete_on_failure = bool(getattr(args, "delete_artifact_on_failure", False))
                 if (
                     not getattr(args, "dry_run", False)

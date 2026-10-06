@@ -431,10 +431,20 @@ def checkpoint_transaction_applied(transaction_path: str | Path | None) -> None:
         return
     tx = _read_json(path)
     repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
+    execution_root = transaction_execution_root(tx)
+    if isolated_transaction(tx) and not execution_root.is_dir():
+        raise RuntimeError(
+            f"Isolated transaction worktree disappeared before the applied checkpoint: {execution_root}"
+        )
     for entry in tx.get("affected_paths", []) or []:
         if not isinstance(entry, dict):
             continue
         rel = _safe_rel(str(entry.get("path") or ""))
+        # ``applied_identity`` remains the primary-checkout rollback guard until
+        # integration publishes the isolated result. Record the actual mutation
+        # root separately so lifecycle evidence does not claim the untouched
+        # primary checkout was the artifact output.
+        entry["execution_applied_identity"] = _path_identity(execution_root / rel)
         entry["applied_identity"] = _path_identity(repo_root / rel)
     update_git_transaction_journal(tx, recovery_state="mutation-applied")
     tx["applied_checkpoint_at"] = _utc_now()

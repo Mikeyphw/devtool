@@ -13,6 +13,7 @@ from devtool.cli import build_parser
 from devtool.runners import apply_overlay
 from devtool.transaction_worktree import _fixture_worktree, self_refresh_repo_root, transaction_execution_root
 from devtool.transactions import (
+    checkpoint_transaction_applied,
     create_apply_transaction,
     mark_transaction_completed,
     read_transaction,
@@ -108,6 +109,32 @@ def test_runner_applies_in_worktree_and_primary_changes_only_at_completion(tmp_p
     worktree_list = _git(root, "worktree", "list", "--porcelain")
     assert str(execution_root) not in worktree_list
 
+
+
+def test_isolated_applied_checkpoint_records_execution_root_identity_without_weakening_primary_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _repo(tmp_path)
+    artifact = _artifact(tmp_path)
+    _configure(monkeypatch, tmp_path)
+    tx = create_apply_transaction(
+        root, artifact, artifact_type="overlay",
+        preview={"changes": [{"kind": "modified", "path": "tracked.txt"}], "counts": {}},
+    )
+    execution_root = transaction_execution_root(tx)
+    (execution_root / "tracked.txt").write_text("after\n", encoding="utf-8")
+
+    checkpoint_transaction_applied(tx["path"])
+    checkpointed = read_transaction(tx["path"])
+    entry = checkpointed["affected_paths"][0]
+
+    assert entry["execution_applied_identity"]["sha256"] != entry["applied_identity"]["sha256"]
+    assert entry["execution_applied_identity"]["kind"] == "file"
+    assert entry["applied_identity"]["kind"] == "file"
+    assert (root / "tracked.txt").read_text(encoding="utf-8") == "before\n"
+
+    rollback = rollback_transaction(tx["path"], reason="checkpoint fixture cleanup")
+    assert rollback.returncode == 0, rollback.output
 
 def test_isolated_no_commit_preserves_primary_head_and_index_semantics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _repo(tmp_path)

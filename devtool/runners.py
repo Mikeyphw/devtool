@@ -4460,22 +4460,29 @@ def _apply_overlay_bundle_impl(
         if transaction:
             tx_id = str(transaction.get("transaction_id") or "")
             tx_path = str(transaction.get("path") or "") if tx_id else ""
+            execution_root = transaction_execution_root(transaction)
+            rollback_closed = rollback_result is not None and rollback_result.returncode == 0
             cleanup_sources = [str(resolve_artifact_path(item)) for item in (source_artifacts or original_paths)]
             metadata = {
                 "transaction_id": tx_id,
-                "transaction_path": tx_path,
+                # A successful in-runner rollback has already removed the live
+                # transaction journal/worktree. Never advertise that deleted
+                # path as an active transaction to outer CLI orchestration.
+                "transaction_path": "" if rollback_closed else tx_path,
                 "artifact_path": str(cleanup_sources[0] if len(cleanup_sources) == 1 else artifact_path),
                 "artifact_paths": cleanup_sources,
                 "delete_artifact_on_success": True,
                 "artifact_type": "overlay_bundle",
                 "config_paths": sorted({item.get("path", "") for item in registrations if item.get("path")}),
-                "transaction_repo_root": str(transaction_execution_root(transaction)),
+                "transaction_repo_root": str(repo_root.resolve()) if rollback_closed else str(execution_root),
                 "transaction_primary_repo_root": str(repo_root.resolve()),
                 "transaction_isolation": str((transaction.get("isolation") or {}).get("effective") or "direct"),
             }
             if rollback_result is not None:
                 metadata["rollback_returncode"] = rollback_result.returncode
                 metadata["rolled_back_during_apply"] = True
+                metadata["closed_transaction_path"] = tx_path if rollback_closed else ""
+                metadata["transaction_closed"] = rollback_closed
         result = OperationResult(
             "apply-overlays",
             argv,
@@ -4638,19 +4645,26 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
     if transaction:
         tx_id = str(transaction.get("transaction_id") or "")
         tx_path = str(transaction.get("path") or "") if tx_id else ""
+        execution_root = transaction_execution_root(transaction)
+        rollback_closed = rollback_result is not None and rollback_result.returncode == 0
         metadata = {
             "transaction_id": tx_id,
-            "transaction_path": tx_path,
+            # Successful rollback closes and removes the transaction directory.
+            # Keep its identity for history, but do not leak a dead path/root as
+            # if the transaction were still resumable.
+            "transaction_path": "" if rollback_closed else tx_path,
             "artifact_path": str(artifact_path),
             "delete_artifact_on_success": bool(delete_artifact),
             "config_paths": [registration.get("path", "")] if registration.get("path") else [],
-            "transaction_repo_root": str(transaction_execution_root(transaction)),
+            "transaction_repo_root": str(repo_root.resolve()) if rollback_closed else str(execution_root),
             "transaction_primary_repo_root": str(repo_root.resolve()),
             "transaction_isolation": str((transaction.get("isolation") or {}).get("effective") or "direct"),
         }
         if rollback_result is not None:
             metadata["rollback_returncode"] = rollback_result.returncode
             metadata["rolled_back_during_apply"] = True
+            metadata["closed_transaction_path"] = tx_path if rollback_closed else ""
+            metadata["transaction_closed"] = rollback_closed
     result = OperationResult(
         "apply-snapshot" if snapshot else "apply-overlay",
         argv,

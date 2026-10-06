@@ -262,6 +262,44 @@ exit {exit_code}
     assert f"failed during {phase} with exit {exit_code}" in result.output
 
 
+
+def test_failed_preflight_in_isolated_worktree_does_not_publish_deleted_transaction_root(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess = __import__("subprocess")
+
+    def git(*args: str) -> None:
+        proc = subprocess.run(["git", *args], cwd=repo, text=True, capture_output=True, check=False)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "Test User")
+    (repo / "payload.txt").write_text("old-payload", encoding="utf-8")
+    git("add", "payload.txt")
+    git("commit", "-qm", "baseline")
+
+    archive = _overlay(
+        tmp_path / "isolated-preflight-failure.zip",
+        payload={"payload.txt": b"new-payload"},
+        script=b"#!/bin/sh\nexit 9\n",
+        phase="before_extract",
+    )
+    with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(tmp_path / "xdg")}, clear=False):
+        result = apply_overlay(repo, str(archive))
+
+    assert result.returncode == 9
+    assert result.metadata.get("transaction_isolation") == "worktree"
+    assert result.metadata.get("rolled_back_during_apply") is True
+    assert result.metadata.get("rollback_returncode") == 0
+    assert result.metadata.get("transaction_closed") is True
+    assert result.metadata.get("transaction_path") == ""
+    closed = Path(str(result.metadata.get("closed_transaction_path") or ""))
+    assert closed.name == "transaction.json"
+    assert not closed.exists()
+    assert Path(str(result.metadata.get("transaction_repo_root"))).resolve() == repo.resolve()
+    assert (repo / "payload.txt").read_text(encoding="utf-8") == "old-payload"
+
 def test_preflight_write_paths_enter_preview_transaction_and_reservation(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

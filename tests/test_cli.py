@@ -18,7 +18,7 @@ from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.apply_notifications import build_apply_notification
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import _apply_artifact_validation_defaults, _apply_runner_cli_options, _artifact_commit_paths, _attempt_auto_repair, _load_or_create_validation_session, _maybe_commit_after_apply, _maybe_copy, _record_apply_history, _run_sequential_overlays, _validate_apply_args, _validation_apply_context, _validation_expectation_result, _validation_specs_for_args, build_parser, main, split_runner_passthrough_args
+from devtool.cli import _apply_artifact_validation_defaults, _apply_runner_cli_options, _apply_transaction_path, _artifact_commit_paths, _attempt_auto_repair, _load_or_create_validation_session, _maybe_commit_after_apply, _maybe_copy, _record_apply_history, _run_sequential_overlays, _validate_apply_args, _validation_apply_context, _validation_expectation_result, _validation_specs_for_args, build_parser, main, split_runner_passthrough_args
 from devtool.config import ProjectConfig, load_project_config
 from devtool.log_commands import choose_active_log, parse_log_filename
 from devtool.logstore import write_log
@@ -48,6 +48,29 @@ def _sample_ai_prompt_options(output_format: str = "markdown") -> AiPromptOption
 
 
 class CliTests(unittest.TestCase):
+
+    def test_apply_transaction_path_ignores_closed_or_missing_journals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            live = Path(tmp) / "transaction.json"
+            live.write_text("{}", encoding="utf-8")
+            closed = OperationResult(
+                "apply-overlay", ["apply-overlay"], 1, 0.0, "failed", [],
+                metadata={
+                    "transaction_path": str(live),
+                    "rolled_back_during_apply": True,
+                    "rollback_returncode": 0,
+                },
+            )
+            self.assertEqual(_apply_transaction_path([closed]), "")
+
+            live_result = OperationResult(
+                "apply-overlay", ["apply-overlay"], 0, 0.0, "ok", [],
+                metadata={"transaction_path": str(live)},
+            )
+            self.assertEqual(_apply_transaction_path([live_result]), str(live))
+
+            live.unlink()
+            self.assertEqual(_apply_transaction_path([live_result]), "")
 
     def test_artifact_inventory_is_forwarded_to_validation_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3260,3 +3283,89 @@ class BundleEntryValidationTaskApplyTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn([":app:assembleDebug"], captured)
             self.assertNotIn([":app:compileDebugKotlin", ":app:testDebugUnitTest", ":app:lintDebug"], captured)
+
+    def test_successful_apply_rebinds_post_finalize_bookkeeping_to_primary_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "repo"
+            root.mkdir()
+            worktree = base / "transaction" / "worktree"
+            worktree.mkdir(parents=True)
+            transaction_path = worktree.parent / "transaction.json"
+            transaction_path.write_text("{}", encoding="utf-8")
+            artifact = base / "artifact.zip"
+            artifact.write_bytes(b"fixture")
+
+            primary_config = ProjectConfig(repo_root=root, kind="python", runner_options={})
+            transaction_config = ProjectConfig(repo_root=worktree, kind="python", runner_options={})
+            observed: dict[str, Path] = {}
+
+            def fake_complete(path, **kwargs):
+                self.assertEqual(Path(path), transaction_path)
+                transaction_path.unlink()
+                worktree.rmdir()
+                return [], ""
+
+            def fake_reload_primary(repo, *args, **kwargs):
+                observed["reload_root"] = Path(repo).resolve()
+                return ProjectConfig(repo_root=Path(repo).resolve(), kind="python", runner_options={})
+
+            def fake_cleanup(results, **kwargs):
+                observed["cleanup_root"] = Path(kwargs["repo_root"]).resolve()
+                self.assertTrue(observed["cleanup_root"].is_dir())
+                return None
+
+            def fake_history(config, args, results):
+                observed["history_root"] = config.repo_root.resolve()
+
+            def fake_emit_summary(results, config, **kwargs):
+                observed["summary_root"] = config.repo_root.resolve()
+                return (
+                    {"warnings": 0, "errors": 0, "failed": 0, "skipped": 0},
+                    "ok",
+                    json.dumps({"warnings": 0, "errors": 0, "failed": 0, "skipped": 0}),
+                    json.dumps({"results": []}),
+                )
+
+            apply_result = OperationResult(
+                "apply-overlay",
+                ["apply-overlay", str(artifact)],
+                0,
+                0.1,
+                "applied",
+                [],
+                metadata={
+                    "transaction_path": str(transaction_path),
+                    "transaction_repo_root": str(worktree),
+                    "transaction_primary_repo_root": str(root),
+                },
+            )
+
+            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(base / "xdg")}, clear=False), \
+                patch("devtool.cli._load_command_config", return_value=primary_config), \
+                patch("devtool.cli._apply_artifact_manifest_defaults"), \
+                patch("devtool.cli.find_active_transaction", return_value=None), \
+                patch("devtool.cli.read_artifact_manifest", return_value={"validation": {"required": False}}), \
+                patch("devtool.cli._run_apply", return_value=([apply_result], "apply raw")), \
+                patch("devtool.cli._reload_config_after_artifact_apply", return_value=transaction_config), \
+                patch("devtool.cli.load_project_config", side_effect=fake_reload_primary), \
+                patch("devtool.cli._maybe_commit_after_apply", side_effect=lambda config, args, results, raw_output, **kwargs: (results, raw_output)), \
+                patch("devtool.cli._verify_applied_artifact_effects", return_value=OperationResult("apply-verification", ["verify"], 0, 0.0, "ok", [])), \
+                patch("devtool.cli._complete_apply_transaction", side_effect=fake_complete), \
+                patch("devtool.cli._delete_original_artifact_after_apply", side_effect=fake_cleanup), \
+                patch("devtool.cli._record_apply_history", side_effect=fake_history), \
+                patch("devtool.cli._finish_live_progress"), \
+                patch("devtool.cli.notify_apply_finished"), \
+                patch("devtool.cli._write_performance_report"), \
+                patch("devtool.cli._append_run_log_summary"), \
+                patch("devtool.cli._maybe_copy"), \
+                patch("devtool.cli._emit_summary", side_effect=fake_emit_summary), \
+                patch("devtool.cli.render_summary"):
+                rc = main(["--repo", str(root), "--yes", "--no-clipboard", "apply-overlay", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            for key in ("reload_root", "cleanup_root", "history_root", "summary_root"):
+                self.assertEqual(observed[key], root.resolve(), key)
+            self.assertNotIn("DEVTOOL_TRANSACTION_REPO_ROOT", os.environ)
+            self.assertNotIn("DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT", os.environ)
+            self.assertNotIn("DEVTOOL_VALIDATION_STATE_REPO_ROOT", os.environ)
