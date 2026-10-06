@@ -39,6 +39,24 @@ _CHILD_ENV = "DEVTOOL_TEXTUAL_APPLY_CHILD"
 _DISABLE_ENV = "DEVTOOL_TEXTUAL_APPLY_HOST"
 
 
+def _effective_apply_command(args: Any) -> str:
+    """Resolve parser aliases early enough for presentation routing.
+
+    Nested CLI forms such as ``devtool apply overlay ...`` are parsed first as
+    ``command="apply"`` with ``normalized_command="apply-overlay"``.  The
+    canonical CLI normalizes that later, but presentation-host selection happens
+    before the canonical normalization boundary.  Resolve only the command name
+    here so nested and flat spellings choose the same apply host without mutating
+    execution arguments or validation intent.
+    """
+
+    command = str(getattr(args, "command", "") or "").strip()
+    normalized = str(getattr(args, "normalized_command", "") or "").strip()
+    if command == "apply" and normalized in _APPLY_COMMANDS:
+        return normalized
+    return command
+
+
 @dataclass(frozen=True, slots=True)
 class ApplyTextualHostDecision:
     enabled: bool
@@ -76,7 +94,7 @@ def select_apply_textual_host(
     """
 
     environment = env if env is not None else os.environ
-    command = str(getattr(args, "command", "") or "").strip()
+    command = _effective_apply_command(args)
     if command not in _APPLY_COMMANDS:
         return ApplyTextualHostDecision(False, "not an artifact apply command")
     if str(environment.get(_CHILD_ENV, "")).strip().lower() in _TRUE:
@@ -138,7 +156,7 @@ def artifact_review_snapshot(args: Any) -> dict[str, Any]:
     review: dict[str, Any] = {
         "artifact": Path(path_text).name if path_text and " " not in path_text else path_text,
         "path": path_text,
-        "command": str(getattr(args, "command", "") or "apply-overlay"),
+        "command": _effective_apply_command(args) or "apply-overlay",
         "target": str(getattr(args, "target", "") or ""),
         "changes": "qualification pending",
         "validation": "qualification pending",

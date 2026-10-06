@@ -27,6 +27,7 @@ class NotTTY:
 def args(**overrides):
     values = dict(
         command="apply-overlay",
+        normalized_command="",
         quiet=False,
         verbose=False,
         trace=False,
@@ -48,6 +49,12 @@ def test_apply_host_selects_only_human_interactive_artifact_apply() -> None:
     )
     assert chosen.enabled is True
 
+    nested = select_apply_textual_host(
+        args(command="apply", normalized_command="apply-overlay"),
+        env={}, stdin=TTY(), stdout=TTY(), textual_probe=lambda: True,
+    )
+    assert nested.enabled is True
+
     assert select_apply_textual_host(
         args(command="invoke"), env={}, stdin=TTY(), stdout=TTY(), textual_probe=lambda: True
     ).enabled is False
@@ -66,6 +73,22 @@ def test_apply_host_selects_only_human_interactive_artifact_apply() -> None:
     assert select_apply_textual_host(
         args(), env={"DEVTOOL_EXECUTION_PRESENTATION": "plain"}, stdin=TTY(), stdout=TTY(), textual_probe=lambda: True
     ).enabled is False
+
+
+
+def test_nested_apply_overlay_parser_routes_to_textual_host() -> None:
+    from devtool.cli import build_parser
+
+    parsed = build_parser().parse_args([
+        "--yes", "--copy", "-r", "/repo", "--target", "devtool",
+        "apply", "overlay", "demo.zip",
+    ])
+    assert parsed.command == "apply"
+    assert parsed.normalized_command == "apply-overlay"
+    chosen = select_apply_textual_host(
+        parsed, env={}, stdin=TTY(), stdout=TTY(), textual_probe=lambda: True
+    )
+    assert chosen.enabled is True
 
 
 def test_confirmed_parent_forces_yes_only_in_managed_child() -> None:
