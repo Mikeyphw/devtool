@@ -4558,6 +4558,73 @@ def _machine_safe_execution_presentation(args: argparse.Namespace) -> bool:
     )
 
 
+def _effective_apply_command(args: argparse.Namespace) -> str:
+    command = str(getattr(args, "command", "") or "").strip()
+    normalized = str(getattr(args, "normalized_command", "") or "").strip()
+    if command == "apply" and normalized in APPLY_COMMANDS:
+        return normalized
+    return command
+
+
+def _apply_terminal_stream_allowed(args: argparse.Namespace) -> bool:
+    """Return whether a human apply may emit live fallback progress to stderr.
+
+    Textual is preferred, but presentation failure must never make a long apply
+    completely silent. Structured/machine output remains untouched because these
+    progress lines are a human fallback only.
+    """
+
+    return bool(
+        _effective_apply_command(args) in APPLY_COMMANDS
+        and not _machine_safe_execution_presentation(args)
+        and not bool(getattr(args, "quiet", False))
+    )
+
+
+def _emit_apply_terminal_status(args: argparse.Namespace, message: str, *, force: bool = False) -> None:
+    if not force and not bool(getattr(args, "_devtool_apply_terminal_stream", False)):
+        return
+    create_console(stderr=True).print(f"[dim]Devtool apply · {message}[/dim]")
+
+
+def _terminal_apply_progress_callback(args: argparse.Namespace):
+    """Return a throttled runner callback for the non-Textual apply fallback."""
+
+    state = getattr(args, "_devtool_apply_terminal_progress_state", None)
+    if not isinstance(state, dict):
+        state = {"key": None, "at": 0.0}
+        args._devtool_apply_terminal_progress_state = state
+
+    def _callback(snapshot: dict[str, object]) -> None:
+        if not bool(getattr(args, "_devtool_apply_terminal_stream", False)):
+            return
+        detail = str(snapshot.get("detail") or snapshot.get("phase") or snapshot.get("task") or "").strip()
+        raw_percent = snapshot.get("percent")
+        try:
+            percent = float(raw_percent) if raw_percent is not None else None
+        except (TypeError, ValueError):
+            percent = None
+        bucket = int(percent // 5) if percent is not None else None
+        key = (detail, bucket)
+        now = time.monotonic()
+        if key == state.get("key") and now - float(state.get("at") or 0.0) < 4.0:
+            return
+        if not detail and percent is None and now - float(state.get("at") or 0.0) < 4.0:
+            return
+        bits: list[str] = []
+        if percent is not None:
+            bits.append(f"{percent:.0f}%")
+        if detail:
+            bits.append(detail)
+        if not bits:
+            bits.append("working")
+        _emit_apply_terminal_status(args, " · ".join(bits))
+        state["key"] = key
+        state["at"] = now
+
+    return _callback
+
+
 def _run_specs_for_args(
     config: ProjectConfig,
     specs: list[CommandSpec],
@@ -4572,6 +4639,8 @@ def _run_specs_for_args(
     progress_callback=None,
 ) -> tuple[list[OperationResult], str]:
     prepared_specs = _prepare_specs_for_execution(config, specs, args)
+    if progress_callback is None and bool(getattr(args, "_devtool_apply_terminal_stream", False)):
+        progress_callback = _terminal_apply_progress_callback(args)
     if _machine_safe_execution_presentation(args):
         for prepared_spec in prepared_specs:
             prepared_spec.metadata["execution_presentation"] = "plain"
@@ -10490,6 +10559,15 @@ def _artifact_paths_for_cleanup(artifact_path: Path) -> list[Path]:
     return artifact_cleanup_paths(artifact_path)
 
 
+def _artifact_cleanup_timeout_seconds() -> float:
+    raw = str(os.environ.get("DEVTOOL_ARTIFACT_CLEANUP_TIMEOUT_SECONDS") or "30").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 30.0
+    return max(5.0, min(value, 300.0))
+
+
 def _delete_original_artifact_after_apply(
     results: list[OperationResult],
     *,
@@ -10551,15 +10629,51 @@ def _delete_original_artifact_after_apply(
         "--",
         *artifact_paths,
     ]
-    proc = subprocess.run(
-        command,
-        cwd=str(root),
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    timeout_seconds = _artifact_cleanup_timeout_seconds()
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(root),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # Cleanup is post-success housekeeping and must never hold the entire
+        # apply indefinitely.  If the worker already removed every source before
+        # timing out while persisting secondary evidence, preserve success;
+        # otherwise fail closed with a classified, bounded cleanup result.
+        remaining = [
+            path for raw in artifact_paths
+            for path in [Path(raw).expanduser().resolve(strict=False)]
+            if path.exists() or path.is_symlink()
+        ]
+        duration = datetime.now(timezone.utc).timestamp() - start_ts
+        removed_all = not remaining
+        detail = f"Artifact cleanup worker exceeded the {timeout_seconds:.0f}s deadline and was terminated."
+        if removed_all:
+            detail += " Source artifact(s) are already absent; cleanup deletion completed but receipt finalization timed out."
+        else:
+            detail += " Remaining artifact(s): " + ", ".join(str(item) for item in remaining)
+        return OperationResult(
+            "artifact-cleanup",
+            ["cleanup-life", *artifact_paths],
+            0 if removed_all else 1,
+            duration,
+            detail,
+            [],
+            failure_kind="" if removed_all else "artifact_cleanup_timeout",
+            metadata={
+                "cleanup_authority": "LIFE",
+                "cleanup_process": "fresh-worker",
+                "cleanup_timeout_seconds": timeout_seconds,
+                "cleanup_worker_timed_out": True,
+                "cleanup_source_removed": removed_all,
+            },
+        )
     payload: dict[str, object] | None = None
     try:
         loaded = json.loads(proc.stdout or "{}")
@@ -13029,13 +13143,25 @@ def _main_impl(argv: list[str] | None = None) -> int:
     # thread. Interactive artifact apply therefore runs the canonical Devtool
     # invocation as a managed child while the parent/main process owns Textual.
     # Machine, redirected, CI and explicit plain modes bypass this host.
+    apply_host_error = ""
     try:
         from .textual_apply_host import run_apply_textual_host, select_apply_textual_host
         apply_host = select_apply_textual_host(args, universal_json=universal_json)
-    except Exception:
+    except Exception as exc:
         apply_host = None
+        apply_host_error = f"Textual host selection failed: {type(exc).__name__}: {exc}"
     if apply_host is not None and apply_host.enabled:
-        return run_apply_textual_host(raw_argv, args)
+        try:
+            return run_apply_textual_host(raw_argv, args)
+        except Exception as exc:
+            # Presentation is not execution authority. A broken Textual host must
+            # degrade to a visible terminal apply instead of aborting or becoming
+            # silent. KeyboardInterrupt/SystemExit intentionally still propagate.
+            apply_host_error = f"Textual host failed: {type(exc).__name__}: {exc}"
+    if _apply_terminal_stream_allowed(args):
+        args._devtool_apply_terminal_stream = True
+        reason = apply_host_error or (apply_host.reason if apply_host is not None else "Textual host unavailable")
+        _emit_apply_terminal_status(args, f"terminal fallback active ({reason})", force=True)
 
     # PRES-R03: ordinary interactive execution uses the same legal main-thread
     # ownership shape as H02. The managed child retains all execution/RUN truth;
@@ -15977,6 +16103,7 @@ def _main_after_parse(
             _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command, ui_config=config.ui_config)
 
     if args.command in APPLY_COMMANDS:
+        _emit_apply_terminal_status(args, "preparing artifact lifecycle")
         if bool(getattr(args, "static_validate", False)):
             args.validate_only = False
         if bool(getattr(args, "defer_validate", False)):
@@ -16028,8 +16155,11 @@ def _main_after_parse(
                 )
             else:
                 primary_config = config
+                _emit_apply_terminal_status(args, f"applying {Path(str(args.artifact)).name or str(args.artifact)}")
                 results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path, tasker_progress=tasker_progress)
                 transaction_path = _apply_transaction_path(results)
+                if results:
+                    _emit_apply_terminal_status(args, "artifact apply " + ("passed" if results[-1].returncode == 0 else "failed"))
                 applied_manifest = dict(getattr(args, "_devtool_artifact_manifest", {}) or read_artifact_manifest(args.artifact))
                 if results and results[-1].returncode == 0 and not getattr(args, "validate_only", False):
                     config = _reload_config_after_artifact_apply(args, config, applied_manifest)
@@ -16041,6 +16171,7 @@ def _main_after_parse(
                     artifact_validation_result: OperationResult | None = None
                     if not (skip_restore and skip_build and skip_test):
                         validation_specs = _validation_specs_for_args(config, args, parser)
+                        _emit_apply_terminal_status(args, f"validation started ({len(validation_specs)} operation{'s' if len(validation_specs) != 1 else ''})")
                         more_results, more_raw = _run_specs_for_args(
                             config,
                             validation_specs,
@@ -16071,6 +16202,7 @@ def _main_after_parse(
                     if validation_raw:
                         raw_output += "\n\n" + validation_raw
                     if not _exclusive_validation_task_values(args) and not any(result.returncode != 0 for result in results):
+                        _emit_apply_terminal_status(args, "artifact validator started")
                         artifact_path = resolve_artifact_path(args.artifact)
                         manifest = applied_manifest
                         script_result, script_raw = _artifact_script_result(
@@ -16176,6 +16308,7 @@ def _main_after_parse(
                             results.append(retain_result)
                             raw_output += "\n\n" + retain_raw
                     else:
+                        _emit_apply_terminal_status(args, "finalizing transaction")
                         finalize_results, finalize_raw = _complete_apply_transaction(
                             transaction_path,
                             tasker_progress=tasker_progress,
@@ -16193,6 +16326,7 @@ def _main_after_parse(
                     and not getattr(args, "keep_artifact", False)
                     and (not any(result.returncode != 0 for result in results) or delete_on_failure)
                 ):
+                    _emit_apply_terminal_status(args, "cleaning consumed source artifact (bounded cleanup)")
                     cleanup_result = _delete_original_artifact_after_apply(
                         results,
                         artifact=getattr(args, "artifact", ""),
@@ -16204,6 +16338,7 @@ def _main_after_parse(
                         cleanup_result = preserve_primary_lifecycle_failure(results, cleanup_result)
                         results.append(cleanup_result)
                         raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
+                        _emit_apply_terminal_status(args, "source artifact cleanup " + ("passed" if cleanup_result.returncode == 0 else "failed"))
                 if args.command in {"apply-overlay", "ao"}:
                     artifact_text = str(getattr(args, "artifact", "") or "")
                     try:

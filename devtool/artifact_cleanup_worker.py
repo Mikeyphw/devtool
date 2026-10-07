@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Sequence
 
 from .artifacts import artifact_cleanup_paths
+from .repository_identity import build_repository_identity
 from .cleanup_lifecycle import (
+    CleanupActionResult,
+    CleanupReceipt,
     CleanupScope,
     GeneratedOutputDescriptor,
     apply_cleanup_plan,
@@ -18,6 +22,113 @@ from .cleanup_lifecycle import (
 
 def _canonical(path: str | Path) -> Path:
     return Path(path).expanduser().resolve(strict=False)
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _digest(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+
+
+def _cleanup_external_apply_sources(
+    root: Path,
+    existing: Sequence[Path],
+    descriptors: Sequence[GeneratedOutputDescriptor],
+    *,
+    reason: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Delete explicitly-consumed external source artifacts without a global rebuild.
+
+    These paths are outside the repository and are already authorized by the
+    current apply command's delete-on-success policy.  Rebuilding every RUN,
+    execution-history, provider and validation ownership projection merely to
+    unlink `/sdcard/Download/...zip` is both unrelated and unbounded. Repository
+    internal paths still use the full LIFE ownership/revalidation path below.
+    """
+
+    repo_id = build_repository_identity(root).fingerprint
+    descriptor_by_path = {str(_canonical(item.path)): item for item in descriptors}
+    plan_id = "cleanup-plan:" + _digest({
+        "repository_id": repo_id,
+        "policy": "life-apply-source-external-bounded-v1",
+        "paths": [str(item) for item in existing],
+        "reason": reason,
+    })[:32]
+    rows: list[CleanupActionResult] = []
+    reclaimed = 0
+    failed = False
+    for path in existing:
+        descriptor = descriptor_by_path.get(str(path))
+        resource_id = descriptor.resource_id if descriptor is not None else f"apply-source:{_digest(str(path))[:24]}"
+        action_id = "cleanup:" + _digest({"plan": plan_id, "path": str(path), "resource": resource_id})[:32]
+        if _path_is_within(path, root):
+            rows.append(CleanupActionResult(action_id, resource_id, str(path), "protected", reason="repository-internal source requires full LIFE authority"))
+            failed = True
+            continue
+        if path.exists() and path.is_dir() and not path.is_symlink():
+            rows.append(CleanupActionResult(action_id, resource_id, str(path), "failed", reason="apply source cleanup only authorizes files/symlinks"))
+            failed = True
+            continue
+        try:
+            size = int(path.lstat().st_size) if (path.exists() or path.is_symlink()) else 0
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            rows.append(CleanupActionResult(action_id, resource_id, str(path), "failed", reason=str(exc)))
+            failed = True
+            continue
+        if path.exists() or path.is_symlink():
+            rows.append(CleanupActionResult(action_id, resource_id, str(path), "partial", reason="unlink postcondition failed"))
+            failed = True
+            continue
+        reclaimed += size
+        rows.append(CleanupActionResult(action_id, resource_id, str(path), "applied", reclaimed_bytes=size, postcondition="absent"))
+
+    status = "failed" if failed else "applied"
+    receipt_id = "cleanup-receipt:" + _digest({
+        "plan": plan_id,
+        "status": status,
+        "results": [item.as_dict() for item in rows],
+    })[:32]
+    receipt = CleanupReceipt(
+        receipt_id=receipt_id,
+        plan_id=plan_id,
+        repository_id=repo_id,
+        scope=CleanupScope.PROJECT,
+        destination="local",
+        status=status,
+        results=tuple(rows),
+        reclaimed_bytes=reclaimed,
+    )
+    receipt_path = persist_cleanup_receipt(root, receipt, run_id=run_id)
+    removed = [item.path for item in rows if item.status == "applied"]
+    problems = [f"{item.path}: {item.reason or item.status}" for item in rows if item.status != "applied"]
+    metadata = {
+        "cleanup_receipt_id": receipt.receipt_id,
+        "cleanup_receipt_path": str(receipt_path),
+        "cleanup_status": receipt.status,
+        "cleanup_worker": "fresh-process",
+        "cleanup_mode": "bounded-external-apply-source",
+    }
+    if failed:
+        return {
+            "returncode": 1,
+            "output": f"Bounded LIFE cleanup failed to delete original artifact(s) {reason}.\n" + "\n".join(problems),
+            "failure_kind": "artifact_cleanup_failure",
+            "metadata": metadata,
+        }
+    return {
+        "returncode": 0,
+        "output": f"Deleted original artifact(s) {reason} through bounded LIFE apply-source cleanup.\n" + "\n".join(f"removed: {item}" for item in removed),
+        "failure_kind": "",
+        "metadata": metadata,
+    }
 
 
 def cleanup_apply_source_artifacts(
@@ -65,6 +176,11 @@ def cleanup_apply_source_artifacts(
         )
         for candidate in existing
     ]
+    if existing and all(not _path_is_within(candidate, root) for candidate in existing):
+        return _cleanup_external_apply_sources(
+            root, existing, descriptors, reason=reason, run_id=run_id
+        )
+
     ownership = build_cleanup_ownership_view(
         root,
         descriptors,
