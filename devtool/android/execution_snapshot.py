@@ -635,14 +635,35 @@ def persist_android_execution_snapshot(repo_root: Path, run_id: str, snapshot: A
 
 
 def consume_destination_android_environment(payload: Mapping[str, Any], *, destination_id: str) -> DestinationAndroidEnvironment:
-    raw = payload.get("android_environment") if isinstance(payload.get("android_environment"), Mapping) else payload
+    """Accept destination-produced evidence only when its claimed owner matches.
+
+    A controller-supplied ``destination_id`` cannot itself attest the returned
+    environment: the producer must identify the destination in its payload.
+    The SSH/provider transport still owns authentication of that assertion.
+    """
+    expected = str(destination_id or "").strip()
+    if not expected:
+        raise ValueError("Destination Android environment requires a destination identity")
+    nested = isinstance(payload.get("android_environment"), Mapping)
+    raw = payload.get("android_environment") if nested else payload
     env = dict(raw) if isinstance(raw, Mapping) else {}
+    outer_owner = str(payload.get("destination_id") or "").strip() if nested else ""
+    inner_owner = str(env.get("destination_id") or "").strip()
+    if not (outer_owner or inner_owner) or any(
+        candidate != expected for candidate in (outer_owner, inner_owner) if candidate
+    ):
+        raise ValueError("Destination Android environment identity does not match requested destination")
     environment_id = str(env.get("environment_id") or "").strip()
     components = env.get("component_identities")
-    if not environment_id or not isinstance(components, Mapping) or not components:
+    if (
+        not environment_id or not isinstance(components, Mapping) or not components
+        or any(not isinstance(k, str) or not k.strip() or not isinstance(v, str) or not v.strip()
+               for k, v in components.items())
+    ):
         raise ValueError("Destination Android environment payload is missing canonical environment/component identity")
-    returned = _stable({"destination_id": destination_id, "environment_id": environment_id, "components": dict(components)})
-    return DestinationAndroidEnvironment(destination_id, environment_id, {str(k): str(v) for k, v in components.items()}, env, returned)
+    canonical_components = {k: v for k, v in components.items()}
+    returned = _stable({"destination_id": expected, "environment_id": environment_id, "components": canonical_components})
+    return DestinationAndroidEnvironment(expected, environment_id, canonical_components, env, returned)
 
 
 def acquire_adbd_mutation_lease(

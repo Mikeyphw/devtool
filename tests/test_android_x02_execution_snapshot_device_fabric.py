@@ -241,7 +241,7 @@ def test_execution_snapshot_is_private_run_evidence_with_exact_lineage(tmp_path:
 def test_destination_environment_consumes_returned_snapshot_without_controller_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANDROID_SDK_ROOT", "/controller/should-not-be-used")
     result = consume_destination_android_environment(
-        {"android_environment": {"environment_id": "remote-env", "component_identities": {"android.platform": "p"}, "sdk": {"root": "/remote/sdk"}}},
+        {"destination_id": "ssh:tablet", "android_environment": {"environment_id": "remote-env", "component_identities": {"android.platform": "p"}, "sdk": {"root": "/remote/sdk"}}},
         destination_id="ssh:tablet",
     )
     assert result.environment_id == "remote-env" and result.environment["sdk"]["root"] == "/remote/sdk"
