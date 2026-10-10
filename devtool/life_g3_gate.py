@@ -216,6 +216,14 @@ def _run_fresh_lifecycle_chain() -> dict[str, Any]:
 
 
 def run_gate() -> dict[str, Any]:
+    from .g3_evidence_preflight import assess_evidence
+    preflight = assess_evidence(ROOT, {
+        'life-source': 'LIFE_G3_SOURCE_DISPOSITIONS.json',
+        'life-feature': 'LIFE_G3_FEATURE_DISPOSITIONS.json',
+        'life-promise': 'LIFE_G3_PROMISE_DISPOSITIONS.json',
+    }, {'life': 'LIFE_G3_FINAL_ATTESTATION.json'})
+    _require(preflight['status'] == 'consistent',
+             f"LIFE-G3 historical evidence preflight blocked ({preflight['issue_count']} issues)")
     before = _git_status()
     source_path = ROOT / "LIFE_G3_SOURCE_DISPOSITIONS.json"
     feature_path = ROOT / "LIFE_G3_FEATURE_DISPOSITIONS.json"

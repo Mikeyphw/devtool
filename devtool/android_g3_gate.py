@@ -68,6 +68,11 @@ def _git_status() -> str:
 def _hash(path: Path) -> str: return sha256(path.read_bytes()).hexdigest()
 
 def run_gate() -> dict[str,Any]:
+    from .g3_evidence_preflight import assess_evidence
+    preflight = assess_evidence(ROOT, {'android-source': 'ANDROID_G3_SOURCE_DISPOSITIONS.json'},
+                                {'android': 'ANDROID_G3_FINAL_ATTESTATION.json'})
+    _require(preflight['status'] == 'consistent',
+             f"ANDROID-G3 historical evidence preflight blocked ({preflight['issue_count']} issues)")
     before=_git_status()
     disp_path=ROOT/'ANDROID_G3_SOURCE_DISPOSITIONS.json'
     att_path=ROOT/'ANDROID_G3_FINAL_ATTESTATION.json'
