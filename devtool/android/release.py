@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 import os
+import re
 from pathlib import Path
 import time
 from typing import Any, Callable, Mapping, Sequence
@@ -280,8 +281,15 @@ class AndroidReleaseOrchestrator:
             if not path.is_file():
                 continue
             actual_sha = cls._sha256(path)
-            expected_sha = str(item.get("sha256") or item.get("current_sha256") or "").strip().lower()
-            if expected_sha and expected_sha != actual_sha:
+            # A verifier must never manufacture missing producer evidence by
+            # hashing an unbound filesystem candidate and promoting it to a
+            # claimed build artifact. Distinct producer/current fields also
+            # cannot contradict each other without failing release selection.
+            declared = [str(item[key]).strip().lower() for key in
+                        ("sha256", "current_sha256", "producer_sha256")
+                        if key in item and item[key] is not None]
+            if (not declared or any(not re.fullmatch(r"[0-9a-f]{64}", digest) for digest in declared)
+                or len(set(declared)) != 1 or declared[0] != actual_sha):
                 continue
             item["sha256"] = actual_sha
             item["current_sha256"] = actual_sha
