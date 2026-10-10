@@ -578,6 +578,59 @@ def _path_is_within(path: Path, root: Path) -> bool:
     return True
 
 
+def _project_cleanup_path_authorized(
+    ownership: CleanupOwnershipView,
+    descriptor: GeneratedOutputDescriptor,
+    path: Path,
+    root: Path,
+) -> bool:
+    """Require durable producer authority for a local project path outside Git.
+
+    Ordinary project outputs must remain inside the repository. PRoot staging
+    is an intentional exception: its provider registers the exact descriptor
+    under the repository-owned durable provider registry and explicitly releases
+    the matching run/session before LIFE is permitted to unlink it.
+    Merely asserting managed=True (even with a forged PRoot owner field) is not
+    deletion authority. The artifact-apply worker has its separate explicit
+    consumed-source authorization rather than using this generic API.
+    """
+    if path == _canonical_path(root):
+        return False
+    if _path_is_within(path, root):
+        return True
+    provenance = dict(descriptor.provenance)
+    if not (
+        descriptor.scope == CleanupScope.PROJECT
+        and descriptor.destination == "local"
+        and descriptor.owner == "DIST"
+        and descriptor.provider == "proot-distro"
+        and descriptor.category == "provider-staging"
+        and descriptor.lifecycle == "transient"
+        and descriptor.managed and not descriptor.published
+        and provenance.get("authority") == "RUN/LIFE"
+        and provenance.get("normal_ingress") == "proot-distro"
+        and provenance.get("provider") == "proot-distro"
+        and provenance.get("run_id") and provenance.get("session")
+        and descriptor.producer_id == provenance.get("run_id")
+    ):
+        return False
+    try:
+        # Re-read the actual durable registry, not caller-provided references.
+        from .provider_resource_registry import provider_resource_projection
+        registered, references = provider_resource_projection(root, strict=True)
+    except (OSError, ValueError, TypeError):
+        return False
+    if not any(row.as_dict() == descriptor.as_dict() for row in registered):
+        return False
+    return any(
+        ref.resource_id == descriptor.resource_id
+        and ref.source == "provider-resource-registry"
+        and ref.state == "released"
+        and not ref.protective
+        for ref in references
+    )
+
+
 def _is_apply_source_artifact_descriptor(descriptor: GeneratedOutputDescriptor) -> bool:
     return (
         descriptor.owner == "artifact-apply-source"
@@ -630,7 +683,17 @@ def compile_cleanup_plan(
         reason = ""
         selected = True
         global_blocker = _cleanup_global_blocker_for_candidate(ownership, descriptor, root)
-        if global_blocker:
+        if scope == CleanupScope.PROJECT and destination == "local" and not _project_cleanup_path_authorized(
+            ownership, descriptor, path, root
+        ):
+            # Project cleanup authority is restricted to generated resources
+            # within this repository. A caller-supplied "managed" descriptor
+            # is not an authorization to delete arbitrary filesystem paths.
+            # The dedicated artifact-apply source worker independently owns its
+            # explicit delete-on-success external-source policy.
+            selected = False
+            reason = "project cleanup cannot delete repository root or out-of-repository paths"
+        elif global_blocker:
             selected = False
             reason = global_blocker
         elif safety in {CleanupSafetyClass.DURABLE_EVIDENCE, CleanupSafetyClass.RECOVERY_CRITICAL, CleanupSafetyClass.PROTECTED_UNKNOWN}:
@@ -925,6 +988,29 @@ def apply_cleanup_plan(
         if not original.selected or not fresh.selected:
             reason = fresh.protection_reason or original.protection_reason or "resource is protected"
             results.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "protected", reason=reason))
+            any_partial = True
+            continue
+        if (
+            original.candidate_id != fresh.candidate_id
+            or original.path != fresh.path
+            or original.scope != fresh.scope
+            or original.destination != fresh.destination
+        ):
+            # Never execute a modified/stale candidate merely because its
+            # resource_id still appears in the current ownership projection.
+            results.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "protected", reason="cleanup candidate identity changed during revalidation"))
+            any_partial = True
+            continue
+        if plan.destination == "local" and plan.scope == CleanupScope.PROJECT and not any(
+            row.resource_id == original.resource_id
+            and _project_cleanup_path_authorized(
+                live_ownership, row, _canonical_path(original.path), Path(plan.repository_root)
+            )
+            for row in live_ownership.descriptors
+        ):
+            # Recheck actual path resolution at the point of destructive use.
+            # This is defense-in-depth against stale or forged cleanup plans.
+            results.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "protected", reason="project cleanup target left repository boundary"))
             any_partial = True
             continue
 
