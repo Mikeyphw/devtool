@@ -79,6 +79,61 @@ def _result_failed(result: OperationResult) -> bool:
     return str(metadata.get("status") or "").strip().lower() in {"failed", "error", "fatal"}
 
 
+def _gradle_receipt_binding_error(spec: CommandSpec, result: OperationResult) -> str:
+    """Reject incomplete or unrelated canonical Gradle result evidence.
+
+    This is digest/identity consistency, not an assertion that an external
+    executor or remote provider has cryptographically authenticated a receipt.
+    """
+    from ..gradle_planning import _hash_payload
+
+    spec_meta = spec.metadata if isinstance(spec.metadata, Mapping) else {}
+    result_meta = result.metadata if isinstance(result.metadata, Mapping) else {}
+    plan = spec_meta.get("gradle_execution_plan")
+    receipt = result_meta.get("gradle_execution_receipt")
+    if not isinstance(plan, Mapping) and receipt is None:
+        return ""  # non-Gradle command: do not manufacture a Gradle requirement
+    if not isinstance(plan, Mapping):
+        return "unplanned Gradle execution receipt"
+    if not isinstance(receipt, Mapping):
+        return "planned Gradle command has no execution receipt"
+    plan_digest = str(plan.get("plan_digest") or "").strip()
+    receipt_digest = str(receipt.get("plan_digest") or "").strip()
+    if not plan_digest or receipt_digest != plan_digest:
+        return "Gradle execution receipt plan digest differs from planned command"
+    if result.name != spec.name:
+        return "Gradle result identity differs from planned command"
+    if receipt.get("success") is not True or receipt.get("process_executed") is not True or result.returncode != 0:
+        return "Gradle receipt does not attest successful execution"
+    for field, plan_value in (
+        ("context_digest", (plan.get("context") or {}).get("context_digest")),
+        ("policy_digest", (plan.get("policy") or {}).get("policy_digest")),
+        ("selection_identity", (plan.get("request") or {}).get("selection_identity")),
+    ):
+        if plan_value and str(receipt.get(field) or "") != str(plan_value):
+            return f"Gradle receipt {field} is not bound to planned metadata"
+    claimed_id = str(receipt.get("receipt_id") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", claimed_id):
+        return "Gradle receipt has no canonical content identity"
+    # The canonical producer rounds duration to microseconds in its receipt
+    # identity while its public serialization retains the unrounded float.
+    canonical = {key: value for key, value in receipt.items() if key != "receipt_id"}
+    if "duration_seconds" in canonical:
+        try:
+            duration = float(canonical["duration_seconds"])
+            if not __import__("math").isfinite(duration):
+                return "Gradle receipt duration is malformed"
+            canonical["duration_seconds"] = round(duration, 6)
+        except (TypeError, ValueError, OverflowError):
+            return "Gradle receipt duration is malformed"
+    if claimed_id != _hash_payload(canonical):
+        return "Gradle receipt content digest mismatch"
+    metadata_id = str(result_meta.get("gradle_receipt_id") or "")
+    if metadata_id and metadata_id != claimed_id:
+        return "Gradle result metadata references a different receipt ID"
+    return ""
+
+
 def _strict_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -417,17 +472,23 @@ class AndroidReleaseOrchestrator:
             if raw:
                 raw_chunks.append(raw)
             failed = [item for item in phase_results if _result_failed(item)]
+            receipt_errors = [
+                message for spec, result in zip(specs, phase_results)
+                if (message := _gradle_receipt_binding_error(spec, result))
+            ]
             # A phase is not successful merely because its executor returned no
             # explicit failure. Every planned command must yield one operation
             # result; incomplete/duplicate result streams fail closed before
             # release evidence or qualification consumers see a passed gate.
             incomplete_results = len(phase_results) != len(specs)
-            status = "failed" if failed or incomplete_results else "passed"
+            status = "failed" if failed or incomplete_results or receipt_errors else "passed"
             if incomplete_results:
                 detail = (
                     f"Android release phase {phase_name} returned {len(phase_results)} "
                     f"operation results for {len(specs)} planned commands"
                 )
+            elif receipt_errors:
+                detail = "Gradle receipt lineage incomplete: " + "; ".join(receipt_errors)
             elif failed and failed[0].output.strip():
                 detail = failed[0].output.strip().splitlines()[-1]
             elif failed and _has_error_issue(failed[0]):
@@ -447,7 +508,7 @@ class AndroidReleaseOrchestrator:
                         required=True,
                         detail="Android package phase produced no valid artifact for the selected release variant",
                     )
-            if (failed or incomplete_results) and not continue_on_error:
+            if (failed or incomplete_results or receipt_errors) and not continue_on_error:
                 break
 
         def required_failure_present() -> bool:
