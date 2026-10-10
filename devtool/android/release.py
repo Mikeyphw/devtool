@@ -409,8 +409,18 @@ class AndroidReleaseOrchestrator:
             if raw:
                 raw_chunks.append(raw)
             failed = [item for item in phase_results if _result_failed(item)]
-            status = "failed" if failed else "passed"
-            if failed and failed[0].output.strip():
+            # A phase is not successful merely because its executor returned no
+            # explicit failure. Every planned command must yield one operation
+            # result; incomplete/duplicate result streams fail closed before
+            # release evidence or qualification consumers see a passed gate.
+            incomplete_results = len(phase_results) != len(specs)
+            status = "failed" if failed or incomplete_results else "passed"
+            if incomplete_results:
+                detail = (
+                    f"Android release phase {phase_name} returned {len(phase_results)} "
+                    f"operation results for {len(specs)} planned commands"
+                )
+            elif failed and failed[0].output.strip():
                 detail = failed[0].output.strip().splitlines()[-1]
             elif failed and _has_error_issue(failed[0]):
                 detail = next((issue.message for issue in failed[0].issues if str(issue.severity).lower() in {"error", "fatal"}), "error diagnostic reported")
@@ -429,7 +439,7 @@ class AndroidReleaseOrchestrator:
                         required=True,
                         detail="Android package phase produced no valid artifact for the selected release variant",
                     )
-            if failed and not continue_on_error:
+            if (failed or incomplete_results) and not continue_on_error:
                 break
 
         def required_failure_present() -> bool:

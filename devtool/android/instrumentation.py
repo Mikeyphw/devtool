@@ -574,6 +574,25 @@ def _execution_classification(output: str, returncode: int) -> tuple[dict[str, i
         return counts, failed_ids, "runner-error", "Instrumentation runner exited unsuccessfully"
     if counts["failed"] > 0:
         return counts, failed_ids, "test-failure", ""
+    # An absent failure status does not mean that the instrumented suite
+    # completed. Status-code 1 is a testcase start; every completion must
+    # correspond to exactly one start and the announced suite size.
+    codes = [int(value) for value in re.findall(
+        r"INSTRUMENTATION_STATUS_CODE:\s*(-?\d+)", output or ""
+    )]
+    started = sum(code == 1 for code in codes)
+    announced = [int(value) for value in re.findall(
+        r"INSTRUMENTATION_STATUS:\s*numtests=(\d+)", output or ""
+    )]
+    if (
+        started != counts["executed"]
+        or counts["executed"] != counts["total"]
+        or (announced and len(set(announced)) != 1)
+    ):
+        return (
+            counts, failed_ids, "incomplete-results",
+            "Android instrumentation testcase starts, completions and announced totals disagree",
+        )
     return counts, failed_ids, "", ""
 
 
