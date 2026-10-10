@@ -148,9 +148,25 @@ def status_from_exo(records: Sequence[Mapping[str, Any]], *, surface: Presentati
                 detail=dict(record.get("detail", {})),
             )
         )
-    failed = any(event.status in {"failed", "error"} for event in events)
-    running = any(event.status in {"running", "pending"} for event in events)
-    status = "failed" if failed else "running" if running else "passed" if events else "empty"
+    # Preserve EXO terminal and nonterminal semantics: absence of a failure
+    # event must never be interpreted as proof of success.
+    states = {str(event.status or "unknown").strip().lower() for event in events}
+    if not events:
+        status = "empty"
+    elif states & {"failed", "error"}:
+        status = "failed"
+    elif states & {"blocked", "cancelled", "canceled", "aborted"}:
+        status = "blocked" if "blocked" in states else "cancelled"
+    elif states & {"running", "pending", "rerun", "planned", "queued"}:
+        status = "running"
+    elif states & {"unknown", "interrupted"} or not states.issubset({"passed", "succeeded", "reused", "skipped", "not-applicable"}):
+        status = "unknown"
+    elif states <= {"skipped", "not-applicable"}:
+        status = "skipped"
+    elif "skipped" in states:
+        status = "unknown"
+    else:
+        status = "passed"
     summary = f"{len(events)} canonical event(s) projected from EXO/RUN records"
     cursor = None if not truncated else refs[-1].ref if refs else "start"
     return PresentationProjection(surface, "Execution status", summary, status, tuple(events), tuple(refs), truncated, cursor)
