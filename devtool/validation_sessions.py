@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import subprocess
 import uuid
@@ -636,22 +637,66 @@ def _phase_from_dict(payload: dict[str, Any]) -> PhaseRecord:
     return PhaseRecord(**values)
 
 
+_DURABLE_SECRET_NAME = re.compile(
+    r"(?:^|_)(?:TOKEN|PASSWORD|PASSWD|SECRET|CREDENTIALS?|API_?KEY|PRIVATE_?KEY|AUTHORIZATION)(?:_|$)",
+    re.IGNORECASE,
+)
+_DURABLE_SECRET_FLAG = re.compile(
+    r"^--?(?:.*[-_])?(?:token|password|passwd|secret|credential|api[-_]key|private[-_]key)(?:=|$)",
+    re.IGNORECASE,
+)
+
+
+def _durable_secret_reference(argument: str) -> bool:
+    """Only reference descriptors, never inline secret bytes, may be persisted."""
+    return argument.startswith(("@env:", "@file:", "@fd:", "@vault:"))
+
+
 def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
-    """Serialize an executable validation command into durable session state.
+    """Write resumable plan descriptors without persisting live credentials.
 
-    Android signing passwords are execution-boundary secrets and must never be
-    durable even if a third-party caller accidentally placed them in spec.env.
+    A sensitive environment variable's name may survive in an ``@env:``
+    reference. Its *value* must never enter the durable command plan. Inline
+    credentials that cannot be replayed without storing their bytes fail closed.
     """
-
     from .android.signing import strip_signing_secrets
-    safe_env = strip_signing_secrets(spec.env)
+
+    env = {str(k): str(v) for k, v in spec.env.items()}
+    safe_env = {
+        key: value for key, value in strip_signing_secrets(env).items()
+        if not _DURABLE_SECRET_NAME.search(key)
+    }
+    argv = [str(arg) for arg in spec.argv]
+    secret_values = {
+        value for key, value in {**os.environ, **env}.items()
+        if _DURABLE_SECRET_NAME.search(str(key)) and len(str(value)) >= 4
+    }
+    for i, argument in enumerate(argv):
+        if _durable_secret_reference(argument):
+            continue
+        if any(value in argument for value in secret_values):
+            raise ValidationSessionError("Validation plan contains an inline credential; use an opaque reference.")
+        flag = _DURABLE_SECRET_FLAG.match(argument)
+        if flag:
+            if "=" in argument:
+                value = argument.split("=", 1)[1]
+                if value and not _durable_secret_reference(value):
+                    raise ValidationSessionError("Validation plan contains an inline credential option.")
+            elif i + 1 < len(argv) and not _durable_secret_reference(argv[i + 1]):
+                raise ValidationSessionError("Validation plan contains an inline credential argument.")
+    if any(value in candidate for candidate in safe_env.values() for value in secret_values):
+        raise ValidationSessionError("Validation plan environment aliases a credential value.")
+    metadata = _json_safe(dict(spec.metadata))
+    serialized_meta = json.dumps(metadata, sort_keys=True, default=str)
+    if any(value in serialized_meta for value in secret_values):
+        raise ValidationSessionError("Validation plan metadata contains a credential value.")
     return {
         "name": str(spec.name),
-        "argv": [str(item) for item in spec.argv],
-        "env": {str(key): str(value) for key, value in safe_env.items()},
+        "argv": argv,
+        "env": safe_env,
         "cwd": None if spec.cwd is None else str(spec.cwd),
         "destructive": bool(spec.destructive),
-        "metadata": _json_safe(dict(spec.metadata)),
+        "metadata": metadata,
     }
 
 
