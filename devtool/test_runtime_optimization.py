@@ -98,10 +98,50 @@ class ShardOutcome:
     shard_id:str; check_ids:tuple[str,...]; passed:int=0; failed:int=0; skipped:int=0; profile_path:str=""; junit_path:str=""; log_path:str=""
 
 def aggregate_shards(expected_check_ids:Sequence[str], outcomes:Iterable[ShardOutcome])->dict[str,Any]:
-    vals=tuple(outcomes); seen=[c for o in vals for c in o.check_ids]; expected=tuple(sorted(dict.fromkeys(expected_check_ids)))
-    duplicate=sorted({c for c in seen if seen.count(c)>1}); missing=sorted(set(expected)-set(seen)); unexpected=sorted(set(seen)-set(expected))
-    complete=not (duplicate or missing or unexpected) and len(seen)==len(expected)
-    return {"complete":complete,"missing":missing,"duplicate":duplicate,"unexpected":unexpected,"passed":sum(o.passed for o in vals),"failed":sum(o.failed for o in vals),"skipped":sum(o.skipped for o in vals),"attachments":[{"shard_id":o.shard_id,"junit":o.junit_path,"log":o.log_path,"profile":o.profile_path} for o in vals]}
+    """A complete selection requires both membership and terminal case counts."""
+    vals=tuple(outcomes)
+    seen=[c for o in vals for c in o.check_ids]
+    expected=tuple(sorted(dict.fromkeys(expected_check_ids)))
+    duplicate=sorted({c for c in seen if seen.count(c)>1})
+    missing=sorted(set(expected)-set(seen))
+    unexpected=sorted(set(seen)-set(expected))
+    shard_ids=[o.shard_id for o in vals]
+    invalid_shards=sorted({shard_id for shard_id in shard_ids if not shard_id or shard_ids.count(shard_id)>1})
+    negative_counts=any(
+        isinstance(value,bool) or not isinstance(value,int) or value<0
+        for o in vals for value in (o.passed,o.failed,o.skipped)
+    )
+    count_mismatch=any(o.passed+o.failed+o.skipped!=len(o.check_ids) for o in vals)
+    complete=(
+        bool(expected) and len(expected)==len(expected_check_ids)
+        and not (duplicate or missing or unexpected or invalid_shards or negative_counts or count_mismatch)
+        and len(seen)==len(expected)
+    )
+    return {
+        "complete":complete,
+        "missing":missing,"duplicate":duplicate,"unexpected":unexpected,
+        "invalid_shards":invalid_shards,
+        "count_mismatch":bool(count_mismatch or negative_counts),
+        "expected_check_count":len(expected),"observed_check_count":len(seen),
+        "passed":sum(o.passed for o in vals),
+        "failed":sum(o.failed for o in vals),
+        "skipped":sum(o.skipped for o in vals),
+        "attachments":[{"shard_id":o.shard_id,"junit":o.junit_path,"log":o.log_path,"profile":o.profile_path} for o in vals],
+    }
 
 def run_attachment_manifest(run_id:str, selection_id:str, aggregate:Mapping[str,Any])->dict[str,Any]:
-    return {"schema_version":3,"run_id":run_id,"selection_id":selection_id,"complete":bool(aggregate.get("complete")),"attachments":list(aggregate.get("attachments") or ()),"summary":{k:int(aggregate.get(k,0)) for k in ("passed","failed","skipped")}}
+    attachments=list(aggregate.get("attachments") or ())
+    counts={k:int(aggregate.get(k,0)) for k in ("passed","failed","skipped")}
+    expected=aggregate.get("expected_check_count")
+    observed=aggregate.get("observed_check_count")
+    safe_complete=(
+        aggregate.get("complete") is True
+        and isinstance(expected,int) and not isinstance(expected,bool) and expected>0
+        and isinstance(observed,int) and observed==expected
+        and sum(counts.values())==expected
+        and all(v>=0 for v in counts.values())
+        and len({str(a.get("shard_id", "")) for a in attachments if isinstance(a,dict)})==len(attachments)
+        and all(isinstance(a,dict) and str(a.get("shard_id", "")) for a in attachments)
+        and not any(aggregate.get(key) for key in ("missing","duplicate","unexpected","invalid_shards","count_mismatch"))
+    )
+    return {"schema_version":3,"run_id":run_id,"selection_id":selection_id,"complete":safe_complete,"attachments":attachments,"summary":counts}
