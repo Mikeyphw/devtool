@@ -584,6 +584,23 @@ def _execution_classification(output: str, returncode: int) -> tuple[dict[str, i
     announced = [int(value) for value in re.findall(
         r"INSTRUMENTATION_STATUS:\s*numtests=(\d+)", output or ""
     )]
+    # `am instrument -w` emits a final INSTRUMENTATION_CODE only after the
+    # instrumentation runner terminates. A shell returncode of zero alone is
+    # not a reliable suite-completion witness (e.g. truncated device output).
+    terminal_markers = list(re.finditer(
+        r"(?m)^\s*INSTRUMENTATION_CODE:\s*(-?\d+)\s*$", output or ""
+    ))
+    status_events = list(re.finditer(
+        r"(?m)^\s*INSTRUMENTATION_STATUS_CODE:\s*(-?\d+)\s*$", output or ""
+    ))
+    if (len(terminal_markers) != 1
+        or int(terminal_markers[0].group(1)) not in {-1, 0}
+        or (status_events and terminal_markers[0].start() < status_events[-1].end())):
+        return (counts, failed_ids, "incomplete-results",
+                "Android instrumentation lacks a unique successful terminal INSTRUMENTATION_CODE")
+    if any(code not in {1, 0, -1, -2, -3, -4} for code in codes):
+        return (counts, failed_ids, "runner-error",
+                "Android instrumentation emitted an unknown testcase status code")
     if (
         started != counts["executed"]
         or counts["executed"] != counts["total"]

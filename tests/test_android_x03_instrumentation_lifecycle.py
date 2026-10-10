@@ -114,7 +114,7 @@ INSTRUMENTATION_RESULT: shortMsg=Process crashed.
 
 def test_orchestrator_emits_plan_receipt_and_destination_revalidated_cleanup(tmp_path: Path) -> None:
     _apk_pair(tmp_path)
-    ops = Ops("INSTRUMENTATION_STATUS: numtests=1\nINSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: 0\n")
+    ops = Ops("INSTRUMENTATION_STATUS: numtests=1\nINSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: 0\nINSTRUMENTATION_CODE: -1\n")
     result = _orchestrator(tmp_path, ops).run(InstrumentationRequest(tmp_path, policy="required", runner="demo.test/Runner", skip_build=True))
     assert result.status == "passed"
     assert result.intent_id and result.plan_id and result.receipt_id
@@ -148,7 +148,7 @@ INSTRUMENTATION_STATUS_CODE: -2
 
 def test_cleanup_failure_becomes_primary_only_after_successful_execution(tmp_path: Path) -> None:
     _apk_pair(tmp_path)
-    ops = Ops("INSTRUMENTATION_STATUS: numtests=1\nINSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: 0\n", cleanup_ok=False)
+    ops = Ops("INSTRUMENTATION_STATUS: numtests=1\nINSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: 0\nINSTRUMENTATION_CODE: -1\n", cleanup_ok=False)
     result = _orchestrator(tmp_path, ops).run(InstrumentationRequest(tmp_path, policy="required", runner="demo.test/Runner", skip_build=True))
     assert result.status == "failed"
     assert result.failure_kind == "cleanup"

@@ -94,7 +94,7 @@ def test_project_runner_passes_real_target_into_canonical_instrumentation_subpro
 
 def test_destination_and_single_device_lease_flow_through_plan_receipt_and_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _apks(tmp_path)
-    output = "INSTRUMENTATION_STATUS: numtests=1\nINSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: 0\n"
+    output = "INSTRUMENTATION_STATUS: numtests=1\nINSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: 0\nINSTRUMENTATION_CODE: -1\n"
     ops = _Ops(output)
     config = ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="android", runner="android", selected_target="phone")
     orchestrator = AndroidInstrumentationOrchestrator(ops, config=config)  # type: ignore[arg-type]
