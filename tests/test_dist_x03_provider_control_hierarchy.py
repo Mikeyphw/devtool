@@ -224,8 +224,16 @@ def test_ssh_metadata_and_detached_reconnect_use_canonical_run_journal(monkeypat
 
     def fake_read(config, *, run_id="", session="", node_id=""):
         assert run_id == "child-run" and session == "session-1"
+        binding = ProviderSessionBinding.bind(
+            link, session_id="session-1", profile="tablet",
+            destination=cfg.destination,
+            provider_kind="ssh", provider_evidence_digest="provider-evidence",
+            attestation_digest=link.attestation_digest,
+        )
         return {
             "journal": state["journal"],
+            "child_run_id": link.child_run_id, "delegation_id": link.delegation_id,
+            "session": "session-1", "provider_session_binding_id": binding.binding_id,
             "metadata": {"execution_provider": "ssh", "dist_attestation_digest": link.attestation_digest},
             "provider_observation_only": True,
             "semantic_authority": "RUN-V3",

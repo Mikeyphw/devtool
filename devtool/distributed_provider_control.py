@@ -821,11 +821,11 @@ def ssh_provider_event_channel(
     if not isinstance(observation, Mapping):
         raise ProviderSessionBindingError("SSH provider journal observation is malformed")
     observed_child = str(observation.get("child_run_id") or observation.get("run_id") or "").strip()
-    if observed_child and observed_child != link.child_run_id:
-        raise ProviderSessionBindingError("SSH provider journal child run does not match delegation")
+    if observed_child != link.child_run_id:
+        raise ProviderSessionBindingError("SSH provider journal child run identity is missing or does not match delegation")
     observed_delegation = str(observation.get("delegation_id") or "").strip()
-    if observed_delegation and observed_delegation != link.delegation_id:
-        raise ProviderSessionBindingError("SSH provider journal delegation does not match planned delegation")
+    if observed_delegation != link.delegation_id:
+        raise ProviderSessionBindingError("SSH provider journal delegation identity is missing or does not match planned delegation")
     observed_session = str(observation.get("session") or session or "").strip()
     if not observed_session:
         raise ProviderSessionBindingError("SSH provider journal did not identify its worker session")
@@ -839,8 +839,8 @@ def ssh_provider_event_channel(
         attestation_digest=link.attestation_digest,
     )
     observed_binding = str(observation.get("provider_session_binding_id") or "").strip()
-    if observed_binding and observed_binding != binding.binding_id:
-        raise ProviderSessionBindingError("SSH provider session binding does not match remote RUN evidence")
+    if observed_binding != binding.binding_id:
+        raise ProviderSessionBindingError("SSH provider session binding is missing or does not match remote RUN evidence")
 
     initial_journal = str(observation.get("journal") or "")
     remote_capabilities = _ssh_peer_capabilities_from_journal(initial_journal)
@@ -883,9 +883,12 @@ def dispatch_ssh_provider_control(
     observation = read_remote_run_journal(config, run_id=link.child_run_id)
     if not isinstance(observation, Mapping):
         raise ProviderSessionBindingError("SSH provider control observation is malformed")
+    observed_child = str(observation.get("child_run_id") or observation.get("run_id") or "").strip()
+    if observed_child != link.child_run_id:
+        raise ProviderSessionBindingError("SSH provider control child run is missing or does not match remote RUN evidence")
     observed_delegation = str(observation.get("delegation_id") or "").strip()
-    if observed_delegation and observed_delegation != link.delegation_id:
-        raise ProviderSessionBindingError("SSH provider control delegation does not match remote RUN evidence")
+    if observed_delegation != link.delegation_id:
+        raise ProviderSessionBindingError("SSH provider control delegation is missing or does not match remote RUN evidence")
     session = str(observation.get("session") or "").strip()
     if not session:
         raise ProviderSessionBindingError("SSH provider control could not resolve a remote worker session")
@@ -899,8 +902,8 @@ def dispatch_ssh_provider_control(
         attestation_digest=link.attestation_digest,
     )
     observed_binding = str(observation.get("provider_session_binding_id") or "").strip()
-    if observed_binding and observed_binding != binding.binding_id:
-        raise ProviderSessionBindingError("SSH provider control binding does not match remote RUN evidence")
+    if observed_binding != binding.binding_id:
+        raise ProviderSessionBindingError("SSH provider control binding is missing or does not match remote RUN evidence")
     request = DelegatedControlRequest.cancel(
         delegation_id=link.delegation_id,
         child_run_id=link.child_run_id,
