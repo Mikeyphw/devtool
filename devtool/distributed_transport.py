@@ -950,12 +950,20 @@ class AsyncJournalForwarder:
             except Exception as exc:
                 self._mark_error(exc)
                 raise
-            acknowledged = int(
-                ack.acknowledged_sequence if isinstance(ack, DeliveryAck) else ack
-            )
-            if acknowledged != int(frame.sequence):
+            # A bare integer cannot attest to which delegation, child or
+            # event was received. Only a complete, matching acknowledgement
+            # is authorization to advance the durable delivery cursor.
+            if not isinstance(ack, DeliveryAck):
+                raise DistributedTransportError("transport response lacks a bound delivery acknowledgement")
+            acknowledged = int(ack.acknowledged_sequence)
+            if (
+                acknowledged != int(frame.sequence)
+                or ack.delegation_id != frame.delegation_id
+                or ack.child_run_id != frame.child_run_id
+                or ack.event_id != frame.event_id
+            ):
                 raise DistributedTransportError(
-                    f"transport acknowledged sequence {acknowledged}, expected {frame.sequence}"
+                    "transport acknowledgement does not match the delivered event identity"
                 )
             if frame.raw_stream_reference is not None:
                 self._raw_stream_references += 1
