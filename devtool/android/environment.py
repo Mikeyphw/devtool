@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 from typing import Any, Mapping, Sequence
@@ -55,6 +56,16 @@ def _path_identity(path: Path | None) -> dict[str, Any]:
     return {"path": str(path), "exists": path.exists(), "realpath": str(resolved)}
 
 
+_SENSITIVE_ENVIRONMENT_NAME = re.compile(
+    r"(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE_KEY|API_KEY|ACCESS_KEY|AUTH|CREDENTIALS?|KEY)(?:_|$)",
+    flags=re.IGNORECASE,
+)
+
+
+def _sensitive_environment_name(name: str) -> bool:
+    return bool(_SENSITIVE_ENVIRONMENT_NAME.search(name))
+
+
 @dataclass(frozen=True, slots=True)
 class EnvironmentView:
     """Explicit environment snapshot consumed by Android resolution.
@@ -82,7 +93,15 @@ class EnvironmentView:
         base.update({str(k): str(v) for k, v in config.env.items()})
         normalized = {str(k): str(v) for k, v in base.items()}
         source = "ambient-snapshot+config" if env is None else "explicit+config"
-        identity = _stable({"source": source, "values": sorted(normalized.items())})
+        # Secret material belongs to the execution envelope, never to a
+        # durable environment/request/qualification identity. Preserve the key
+        # names (capability presence) while excluding values of credentials.
+        # Hashing the raw secret would still leak rotation through stable IDs.
+        identity_values = [
+            (key, "<secret-value-excluded>" if _sensitive_environment_name(key) else value)
+            for key, value in sorted(normalized.items())
+        ]
+        identity = _stable({"source": source, "values": identity_values})
         return cls(normalized, source, identity)
 
     def get(self, key: str, default: str = "") -> str:
