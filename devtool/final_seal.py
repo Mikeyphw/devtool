@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 import fnmatch
+import hashlib
 import ast
 import json
 import tomllib
@@ -274,6 +275,13 @@ def _final_remediation_coverage_errors(repo_root: Path, configured_targets: set[
         errors.append("deduped_findings_total")
     if int(payload.get("assigned_findings_closed_by_overlays_1_to_14") or 0) != 308:
         errors.append("assigned_findings_closed_by_overlays_1_to_14")
+    # The historical remediation map is an authority contract, not simply an
+    # integer count. Pin the audited (ID, owner-overlay, title) binding so a
+    # forged unique ID or reassignment cannot manufacture 308/308 coverage.
+    # Amend this digest only through a reviewed roadmap/source requalification.
+    canonical_assignment_sha256 = "8857e51e91cc91b31d733c48d081ef661b31360bbc8e590e490c305769b05704"
+    if schema_version != 2:
+        errors.append("canonical_schema_version")
     if schema_version >= 2:
         assignments = payload.get("finding_assignments")
         if not isinstance(assignments, list) or len(assignments) != 308:
@@ -285,11 +293,24 @@ def _final_remediation_coverage_errors(repo_root: Path, configured_targets: set[
                 errors.append("finding_assignments_unique_ids")
             if any(overlay < 1 or overlay > 14 for overlay in overlays) or len(overlays) != 308:
                 errors.append("finding_assignments_overlay_range")
+            canonical_rows = sorted([
+                (str(item.get("id") or "").strip(), int(item.get("overlay") or 0),
+                 str(item.get("overlay_title") or ""))
+                for item in assignments if isinstance(item, dict)
+            ])
+            fingerprint = hashlib.sha256(json.dumps(
+                canonical_rows, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")).hexdigest()
+            if fingerprint != canonical_assignment_sha256:
+                errors.append("finding_assignments_authority_digest")
             overlay_counts = payload.get("overlay_counts")
             if isinstance(overlay_counts, dict):
                 try:
                     if sum(int(value) for value in overlay_counts.values()) != 308:
                         errors.append("overlay_counts_total")
+                    expected_counts = {str(index): sum(overlay == index for overlay in overlays) for index in range(1, 15)}
+                    if {str(key): int(value) for key, value in overlay_counts.items()} != expected_counts:
+                        errors.append("overlay_counts_assignment_mismatch")
                 except (TypeError, ValueError):
                     errors.append("overlay_counts_invalid")
             else:
