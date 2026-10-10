@@ -79,7 +79,8 @@ def test_instrumentation_valid_completed_stream_preserves_positive_verdict():
     counts, _ids, kind, reason = _execution_classification(
         "INSTRUMENTATION_STATUS: numtests=2\n"
         "INSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: 0\n"
-        "INSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: -3\n", 0,
+        "INSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: -3\n"
+        "INSTRUMENTATION_CODE: -1\n", 0,
     )
     assert kind == "" and reason == ""
     assert counts["executed"] == 2 and counts["skipped"] == 1
