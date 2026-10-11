@@ -493,12 +493,32 @@ def matrix_evidence(plan: AdvancedInstrumentationPlan, child_receipts: Sequence[
     expected = {child.child_id for child in plan.children}
     missing = sorted(expected - set(by_child))
     unexpected = sorted(set(by_child) - expected)
+    duplicate = len(by_child) != len(child_receipts)
+    receipt_ids: list[str] = []
+    malformed: list[str] = []
+    for child in plan.children:
+        row = by_child.get(child.child_id)
+        if row is None:
+            continue
+        receipt_id = str(row.get("receipt_id") or "").strip()
+        receipt_ids.append(receipt_id)
+        if (row.get("ok") is not True
+            or not receipt_id
+            or not str(row.get("final_child_run_id") or "").strip()
+            or row.get("device_lease_id") != child.device_lease_id
+            or row.get("serial") != child.serial
+            or row.get("profile_id") != child.profile_id):
+            malformed.append(child.child_id)
+    duplicate_receipts = len(receipt_ids) != len(set(receipt_ids))
     return {
         "schema_version": ANDROID_X04_SCHEMA_VERSION,
         "plan_id": plan.plan_id,
-        "complete": not missing and not unexpected,
+        "complete": not missing and not unexpected and not duplicate and not malformed and not duplicate_receipts,
         "missing_children": missing,
         "unexpected_children": unexpected,
+        "malformed_children": malformed,
+        "duplicate_children": duplicate,
+        "duplicate_receipts": duplicate_receipts,
         "children": [
             {
                 "child_id": child.child_id,

@@ -116,7 +116,11 @@ def test_matrix_evidence_fails_closed_when_child_receipt_is_missing():
     evidence = matrix_evidence(plan, ({"child_id": plan.children[0].child_id, "status": "passed"},))
     assert evidence["complete"] is False
     assert evidence["missing_children"] == [plan.children[1].child_id]
-    full = matrix_evidence(plan, tuple({"child_id": child.child_id, "status": "passed"} for child in plan.children))
+    full = matrix_evidence(plan, tuple({
+        "child_id": child.child_id, "ok": True, "receipt_id": f"receipt-{i}",
+        "final_child_run_id": f"run-{i}", "device_lease_id": child.device_lease_id,
+        "serial": child.serial, "profile_id": child.profile_id,
+    } for i, child in enumerate(plan.children)))
     assert full["complete"] is True
 
 
