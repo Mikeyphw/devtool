@@ -8,6 +8,27 @@ devtool \- generated canonical command reference
 This manual is generated from the canonical CORE registry and canonical CLI schema.
 .SH COMMANDS
 .TP
+.B actions
+Read\\-only GitHub Actions provider
+.TP
+.B actions baseline
+Read\\-only GitHub Actions provider
+.TP
+.B actions plan
+Validate workflow ref and inputs without dispatching
+.TP
+.B actions run
+Dispatch workflow only with explicit \\-\\-yes; return run ID if available
+.TP
+.B actions status
+Read\\-only GitHub Actions provider
+.TP
+.B actions workflow
+Read\\-only GitHub Actions provider
+.TP
+.B actions workflows
+Read\\-only GitHub Actions provider
+.TP
 .B affected
 Canonical Devtool command.
 Aliases: aff
@@ -698,7 +719,24 @@ Canonical Devtool command.
 .B repo\\-pack create
 Canonical Devtool command.
 .TP
+.B repo\\-pack list
+Canonical Devtool command.
+Aliases: repo\\-pack ls
+.TP
+.B repo\\-pack pin
+Canonical Devtool command.
+.TP
 .B repo\\-pack plan
+Canonical Devtool command.
+.TP
+.B repo\\-pack prune
+Canonical Devtool command.
+.TP
+.B repo\\-pack status
+Canonical Devtool command.
+Aliases: repo\\-pack show
+.TP
+.B repo\\-pack unpin
 Canonical Devtool command.
 .TP
 .B restore
@@ -950,39 +988,7 @@ Canonical Devtool command.
 .TP
 .B wrapper verify
 Canonical Devtool command.
-.TP
-.B repo\\-pack list
-Canonical Devtool command.
-Aliases: repo\\-pack ls
-.TP
-.B repo\\-pack status
-Canonical Devtool command.
-Aliases: repo\\-pack show
-.TP
-.B repo\\-pack pin
-Canonical Devtool command.
-.TP
-.B repo\\-pack unpin
-Canonical Devtool command.
-.TP
-.B repo\\-pack prune
-Canonical Devtool command.
-.TP
-.B actions
-Read\\-only GitHub Actions provider
-.TP
-.B actions baseline
-Read\\-only GitHub Actions provider
-.TP
-.B actions status
-Read\\-only GitHub Actions provider
-.TP
-.B actions workflow
-Read\\-only GitHub Actions provider
-.TP
-.B actions workflows
-Read\\-only GitHub Actions provider
 .SH GENERATED CONTRACT
-Registry digest: 8e14828f0b93986ac6bae9f7ee791a72e5d22a7baca3e56c7b3d865365cd855f
+Registry digest: 6e6b4a55b95df3710c9af24451e2bacc603164bffc1c9c9010f2d9e284b204af
 .SH SEE ALSO
 devtool(1)

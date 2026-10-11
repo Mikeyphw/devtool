@@ -1,4 +1,4 @@
-"""ACTIONS-00/01 command adapter. No remote dispatch or mutable state."""
+"""ACTIONS-00/01/02 command adapter; mutation gated by explicit --yes."""
 from __future__ import annotations
 import json
 from pathlib import Path

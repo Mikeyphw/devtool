@@ -2,6 +2,524 @@
   "commands": [
     {
       "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only GitHub Actions provider"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.baseline",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.baseline.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.baseline.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.baseline.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.baseline.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "baseline"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only GitHub Actions provider"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.plan",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.plan.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.plan.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "input",
+          "help": "Workflow input KEY=VALUE (repeatable)",
+          "hidden": false,
+          "id": "cli.option.actions.plan.input",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--input"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "inputs_json",
+          "help": "Path to JSON object of workflow inputs",
+          "hidden": false,
+          "id": "cli.option.actions.plan.inputs_json",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--inputs-json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.plan.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ref",
+          "help": "GitHub branch or tag to dispatch (required)",
+          "hidden": false,
+          "id": "cli.option.actions.plan.ref",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--ref"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.plan.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "plan"
+      ],
+      "stability": "experimental",
+      "summary": "Validate workflow ref and inputs without dispatching"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.run",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.run.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.run.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "input",
+          "help": "Workflow input KEY=VALUE (repeatable)",
+          "hidden": false,
+          "id": "cli.option.actions.run.input",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--input"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "inputs_json",
+          "help": "Path to JSON object of workflow inputs",
+          "hidden": false,
+          "id": "cli.option.actions.run.inputs_json",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--inputs-json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.run.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ref",
+          "help": "GitHub branch or tag to dispatch (required)",
+          "hidden": false,
+          "id": "cli.option.actions.run.ref",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--ref"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Explicitly authorize remote workflow dispatch",
+          "hidden": false,
+          "id": "cli.option.actions.run.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.run.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "run"
+      ],
+      "stability": "experimental",
+      "summary": "Dispatch workflow only with explicit --yes; return run ID if available"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.status",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.status.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.status.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.status.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.status.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "status"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only GitHub Actions provider"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.workflow",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.workflow.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.workflow.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.workflow.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.workflow.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "workflow"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only GitHub Actions provider"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.workflows",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.workflows.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.workflows.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.workflows.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.workflows.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "workflows"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only GitHub Actions provider"
+    },
+    {
+      "adoption_source": "core-registry",
       "aliases": [
         [
           "aff"
@@ -18764,6 +19282,101 @@
     },
     {
       "adoption_source": "core-registry",
+      "aliases": [
+        [
+          "repo-pack",
+          "ls"
+        ]
+      ],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.list",
+      "options": [
+        {
+          "choices": [],
+          "dest": "all",
+          "help": "include tombstoned packs",
+          "hidden": false,
+          "id": "cli.option.repo_pack_list.all.98dcaa21",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--all"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_list.json.5b8e28d5",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.repo_pack_list.help.40beff6e",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "list"
+      ],
+      "stability": "stable",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.pin",
+      "options": [
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_pin.json.b4651b89",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.repo_pack_pin.help.37cd6739",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "pin"
+      ],
+      "stability": "stable",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
       "aliases": [],
       "domain": "repo-pack",
       "id": "cli.command.repo_pack.plan",
@@ -18892,6 +19505,152 @@
       "path": [
         "repo-pack",
         "plan"
+      ],
+      "stability": "stable",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.prune",
+      "options": [
+        {
+          "choices": [],
+          "dest": "dry_run",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_prune.dry_run.b8c7badf",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--dry-run"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_prune.json.9ccbcb66",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "older_than_days",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_prune.older_than_days.8d170122",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--older-than-days"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.repo_pack_prune.help.657fc6e2",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "prune"
+      ],
+      "stability": "stable",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [
+        [
+          "repo-pack",
+          "show"
+        ]
+      ],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.status",
+      "options": [
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_status.json.30772bfc",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.repo_pack_status.help.451d3b68",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "status"
+      ],
+      "stability": "stable",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "repo-pack",
+      "id": "cli.command.repo_pack.unpin",
+      "options": [
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.repo_pack_unpin.json.ae61ffa3",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.repo_pack_unpin.help.794c856f",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "repo-pack",
+        "unpin"
       ],
       "stability": "stable",
       "summary": ""
@@ -29358,553 +30117,16 @@
       ],
       "stability": "stable",
       "summary": ""
-    },
-    {
-      "adoption_source": "core-registry",
-      "aliases": [
-        [
-          "repo-pack",
-          "ls"
-        ]
-      ],
-      "domain": "repo-pack",
-      "id": "cli.command.repo_pack.list",
-      "options": [
-        {
-          "choices": [],
-          "dest": "all",
-          "help": "include tombstoned packs",
-          "hidden": false,
-          "id": "cli.option.repo_pack_list.all.98dcaa21",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--all"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "",
-          "hidden": false,
-          "id": "cli.option.repo_pack_list.json.5b8e28d5",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.repo_pack_list.help.40beff6e",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        }
-      ],
-      "path": [
-        "repo-pack",
-        "list"
-      ],
-      "stability": "stable",
-      "summary": ""
-    },
-    {
-      "adoption_source": "core-registry",
-      "aliases": [
-        [
-          "repo-pack",
-          "show"
-        ]
-      ],
-      "domain": "repo-pack",
-      "id": "cli.command.repo_pack.status",
-      "options": [
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "",
-          "hidden": false,
-          "id": "cli.option.repo_pack_status.json.30772bfc",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.repo_pack_status.help.451d3b68",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        }
-      ],
-      "path": [
-        "repo-pack",
-        "status"
-      ],
-      "stability": "stable",
-      "summary": ""
-    },
-    {
-      "adoption_source": "core-registry",
-      "aliases": [],
-      "domain": "repo-pack",
-      "id": "cli.command.repo_pack.pin",
-      "options": [
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "",
-          "hidden": false,
-          "id": "cli.option.repo_pack_pin.json.b4651b89",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.repo_pack_pin.help.37cd6739",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        }
-      ],
-      "path": [
-        "repo-pack",
-        "pin"
-      ],
-      "stability": "stable",
-      "summary": ""
-    },
-    {
-      "adoption_source": "core-registry",
-      "aliases": [],
-      "domain": "repo-pack",
-      "id": "cli.command.repo_pack.unpin",
-      "options": [
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "",
-          "hidden": false,
-          "id": "cli.option.repo_pack_unpin.json.ae61ffa3",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.repo_pack_unpin.help.794c856f",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        }
-      ],
-      "path": [
-        "repo-pack",
-        "unpin"
-      ],
-      "stability": "stable",
-      "summary": ""
-    },
-    {
-      "adoption_source": "core-registry",
-      "aliases": [],
-      "domain": "repo-pack",
-      "id": "cli.command.repo_pack.prune",
-      "options": [
-        {
-          "choices": [],
-          "dest": "older_than_days",
-          "help": "",
-          "hidden": false,
-          "id": "cli.option.repo_pack_prune.older_than_days.8d170122",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--older-than-days"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "dry_run",
-          "help": "",
-          "hidden": false,
-          "id": "cli.option.repo_pack_prune.dry_run.b8c7badf",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--dry-run"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "",
-          "hidden": false,
-          "id": "cli.option.repo_pack_prune.json.9ccbcb66",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.repo_pack_prune.help.657fc6e2",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        }
-      ],
-      "path": [
-        "repo-pack",
-        "prune"
-      ],
-      "stability": "stable",
-      "summary": ""
-    },
-    {
-      "adoption_source": "core-registry",
-      "aliases": [],
-      "domain": "actions",
-      "id": "cli.command.actions",
-      "options": [
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.actions.help",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        }
-      ],
-      "path": [
-        "actions"
-      ],
-      "stability": "experimental",
-      "summary": "Read-only GitHub Actions provider"
-    },
-    {
-      "adoption_source": "core-registry",
-      "aliases": [],
-      "domain": "actions",
-      "id": "cli.command.actions.baseline",
-      "options": [
-        {
-          "choices": [
-            "auto",
-            "env",
-            "gh",
-            "none"
-          ],
-          "dest": "auth",
-          "help": "Credentials source: auto, env, gh, or none",
-          "hidden": false,
-          "id": "cli.option.actions.baseline.auth",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--auth"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "github_repo",
-          "help": "Explicit GitHub owner/repository slug",
-          "hidden": false,
-          "id": "cli.option.actions.baseline.github_repo",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--github-repo"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.actions.baseline.help",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "Emit Actions response as JSON",
-          "hidden": false,
-          "id": "cli.option.actions.baseline.json",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        }
-      ],
-      "path": [
-        "actions",
-        "baseline"
-      ],
-      "stability": "experimental",
-      "summary": "Read-only GitHub Actions provider"
-    },
-    {
-      "adoption_source": "core-registry",
-      "aliases": [],
-      "domain": "actions",
-      "id": "cli.command.actions.status",
-      "options": [
-        {
-          "choices": [
-            "auto",
-            "env",
-            "gh",
-            "none"
-          ],
-          "dest": "auth",
-          "help": "Credentials source: auto, env, gh, or none",
-          "hidden": false,
-          "id": "cli.option.actions.status.auth",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--auth"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "github_repo",
-          "help": "Explicit GitHub owner/repository slug",
-          "hidden": false,
-          "id": "cli.option.actions.status.github_repo",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--github-repo"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.actions.status.help",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "Emit Actions response as JSON",
-          "hidden": false,
-          "id": "cli.option.actions.status.json",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        }
-      ],
-      "path": [
-        "actions",
-        "status"
-      ],
-      "stability": "experimental",
-      "summary": "Read-only GitHub Actions provider"
-    },
-    {
-      "adoption_source": "core-registry",
-      "aliases": [],
-      "domain": "actions",
-      "id": "cli.command.actions.workflow",
-      "options": [
-        {
-          "choices": [
-            "auto",
-            "env",
-            "gh",
-            "none"
-          ],
-          "dest": "auth",
-          "help": "Credentials source: auto, env, gh, or none",
-          "hidden": false,
-          "id": "cli.option.actions.workflow.auth",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--auth"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "github_repo",
-          "help": "Explicit GitHub owner/repository slug",
-          "hidden": false,
-          "id": "cli.option.actions.workflow.github_repo",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--github-repo"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.actions.workflow.help",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "Emit Actions response as JSON",
-          "hidden": false,
-          "id": "cli.option.actions.workflow.json",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        }
-      ],
-      "path": [
-        "actions",
-        "workflow"
-      ],
-      "stability": "experimental",
-      "summary": "Read-only GitHub Actions provider"
-    },
-    {
-      "adoption_source": "core-registry",
-      "aliases": [],
-      "domain": "actions",
-      "id": "cli.command.actions.workflows",
-      "options": [
-        {
-          "choices": [
-            "auto",
-            "env",
-            "gh",
-            "none"
-          ],
-          "dest": "auth",
-          "help": "Credentials source: auto, env, gh, or none",
-          "hidden": false,
-          "id": "cli.option.actions.workflows.auth",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--auth"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "github_repo",
-          "help": "Explicit GitHub owner/repository slug",
-          "hidden": false,
-          "id": "cli.option.actions.workflows.github_repo",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--github-repo"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.actions.workflows.help",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "Emit Actions response as JSON",
-          "hidden": false,
-          "id": "cli.option.actions.workflows.json",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        }
-      ],
-      "path": [
-        "actions",
-        "workflows"
-      ],
-      "stability": "experimental",
-      "summary": "Read-only GitHub Actions provider"
     }
   ],
-  "digest": "52df37d54ff6bee7e69d6ac893e289012b326f45b1f4c4618bbbbb5ba11ab245",
+  "digest": "c5d6629c50ac9edc1dbff72ce0ec4045278eef232629de0848b2c8947777b7ee",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
       "actions",
       "actions baseline",
+      "actions plan",
+      "actions run",
       "actions status",
       "actions workflow",
       "actions workflows",
@@ -30328,11 +30550,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 416,
-    "registry_command_count": 291
+    "parser_command_count": 418,
+    "registry_command_count": 293
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "8e14828f0b93986ac6bae9f7ee791a72e5d22a7baca3e56c7b3d865365cd855f",
+  "registry_digest": "6e6b4a55b95df3710c9af24451e2bacc603164bffc1c9c9010f2d9e284b204af",
   "registry_schema_version": 1,
   "schema_version": 1
 }

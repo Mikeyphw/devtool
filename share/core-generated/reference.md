@@ -1,11 +1,18 @@
 # Devtool generated CORE reference
 
-Registry digest: `8e14828f0b93986ac6bae9f7ee791a72e5d22a7baca3e56c7b3d865365cd855f`
+Registry digest: `6e6b4a55b95df3710c9af24451e2bacc603164bffc1c9c9010f2d9e284b204af`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
 ## Commands
 
+- `actions` — Read-only GitHub Actions provider
+- `actions baseline` — Read-only GitHub Actions provider
+- `actions plan` — Validate workflow ref and inputs without dispatching
+- `actions run` — Dispatch workflow only with explicit --yes; return run ID if available
+- `actions status` — Read-only GitHub Actions provider
+- `actions workflow` — Read-only GitHub Actions provider
+- `actions workflows` — Read-only GitHub Actions provider
 - `affected`
 - `ai-prompt`
 - `android`
@@ -214,7 +221,12 @@ This file is generated from the CORE command/config registry and the canonical C
 - `release-notes`
 - `repo-pack`
 - `repo-pack create`
+- `repo-pack list`
+- `repo-pack pin`
 - `repo-pack plan`
+- `repo-pack prune`
+- `repo-pack status`
+- `repo-pack unpin`
 - `restore`
 - `resume-validation`
 - `rollback`
@@ -287,16 +299,6 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
-- `repo-pack list`
-- `repo-pack status`
-- `repo-pack pin`
-- `repo-pack unpin`
-- `repo-pack prune`
-- `actions` — Read-only GitHub Actions provider
-- `actions baseline` — Read-only GitHub Actions provider
-- `actions status` — Read-only GitHub Actions provider
-- `actions workflow` — Read-only GitHub Actions provider
-- `actions workflows` — Read-only GitHub Actions provider
 
 ## Configuration documents
 

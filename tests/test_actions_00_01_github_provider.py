@@ -40,11 +40,11 @@ class FakeOpener:
 
 def test_baseline_is_read_only_and_phase_bounded():
     baseline = actions_baseline()
-    assert baseline["phase"] == "ACTIONS-00+01"
+    assert baseline["phase"] == "ACTIONS-00+01+02"
     assert not baseline["remote_execution"]
-    assert baseline["mutation_operations"] == []
+    assert baseline["mutation_operations"] == ["run (explicit --yes only)"]
     assert baseline["token_persistence"] is False
-    assert "dispatch" not in baseline["operations"]
+    assert "run" in baseline["operations"]
 
 
 @pytest.mark.parametrize("remote,expected", [
@@ -180,6 +180,6 @@ def test_canonical_cli_commands_and_no_dispatch(capsys):
     assert args.command=="actions" and args.actions_command=="workflow"
     assert args.workflow_id=="ci.yaml" and args.github_repo=="o/r"
     with pytest.raises(SystemExit):
-        parser.parse_args(["actions","run","ci.yaml"])
+        parser.parse_args(["actions","run","ci.yaml"])  # --ref is required
     assert main(["actions","baseline"]) == 0
     assert '"remote_execution": false' in capsys.readouterr().out.lower()

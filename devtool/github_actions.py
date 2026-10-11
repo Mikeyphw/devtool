@@ -1,7 +1,5 @@
-"""ACTIONS-01: read-only, fail-closed GitHub Actions discovery.
-
-No workflow dispatch, token storage, remote execution, artifact promotion or
-state mutation is authorized by this provider.  ACTIONS-02+ own those features.
+"""ACTIONS-01/02: bounded GitHub API discovery and explicitly authorized dispatch.
+Remote lifecycle, artifact promotion and execution qualification remain later phases.
 """
 from __future__ import annotations
 
@@ -27,6 +25,10 @@ _MAX_BODY_BYTES = 4 * 1024 * 1024
 
 class GitHubActionsError(RuntimeError):
     """Actionable errors with no token or response-body disclosure."""
+
+
+class GitHubDispatchOutcomeUnknown(GitHubActionsError):
+    """A dispatch POST might have succeeded; callers must not auto-retry."""
 
 
 def _slug(value: str) -> str:
@@ -241,17 +243,67 @@ class GitHubActionsClient:
             raise GitHubActionsError("Unexpected GitHub workflow response shape")
         return self._workflow_fields(data)
 
+    def dispatch(self, slug: str, workflow_id: str, ref: str, inputs: dict[str, str]) -> dict[str, Any]:
+        """POST once; 200 correlates by GitHub's returned run ID, 204 stays unlinked."""
+        slug = _slug(slug)
+        if not self._token:
+            raise GitHubActionsError("Authenticated GitHub token required for dispatch")
+        if not _WORKFLOW.fullmatch(workflow_id):
+            raise GitHubActionsError("Invalid workflow identifier")
+        if len(inputs) > 25:
+            raise GitHubActionsError("Too many workflow_dispatch inputs")
+        url = f"{API_ORIGIN}/repos/{slug}/actions/workflows/{quote(workflow_id,safe='')}/dispatches"
+        encoded = json.dumps({"ref":ref,"inputs":inputs,"return_run_details":True},separators=(",",":")).encode("utf-8")
+        if len(encoded) > _MAX_BODY_BYTES:
+            raise GitHubActionsError("GitHub dispatch payload exceeds size limit")
+        headers = {"Accept":"application/vnd.github+json", "X-GitHub-Api-Version":API_VERSION,
+                   "User-Agent":"devtool-actions-dispatch/1", "Content-Type":"application/json",
+                   "Authorization":f"Bearer {self._token}"}
+        req=Request(url,data=encoded,headers=headers,method="POST")
+        try:
+            with self._opener.open(req,timeout=self.timeout) as response:
+                status=int(response.status)
+                data=response.read(_MAX_BODY_BYTES+1)
+        except HTTPError as exc:
+            status=int(exc.code)
+            if status==401: reason="GitHub authentication failed"
+            elif status==403: reason="GitHub Actions write permission denied or rate limited"
+            elif status==404: reason="Workflow or selected ref not found or inaccessible"
+            elif status==422: reason="GitHub rejected workflow ref or input validation"
+            else: raise GitHubDispatchOutcomeUnknown(f"GitHub dispatch HTTP {status}; outcome uncertain") from None
+            raise GitHubActionsError(reason) from None
+        except (URLError,TimeoutError,OSError):
+            raise GitHubDispatchOutcomeUnknown("GitHub dispatch transport failure (outcome uncertain)") from None
+        if len(data)>_MAX_BODY_BYTES:
+            raise GitHubDispatchOutcomeUnknown("GitHub dispatch response exceeded size limit")
+        if status==204:
+            return {"state":"accepted-uncorrelated", "run_id":None,"run_url":None}
+        if status!=200:
+            raise GitHubDispatchOutcomeUnknown(f"Unexpected GitHub dispatch HTTP {status}")
+        try: obj=json.loads(data)
+        except (UnicodeDecodeError,ValueError):
+            raise GitHubDispatchOutcomeUnknown("GitHub dispatch returned invalid response") from None
+        if not isinstance(obj,dict) or not isinstance(obj.get("workflow_run_id"),int) or obj["workflow_run_id"]<=0:
+            raise GitHubDispatchOutcomeUnknown("GitHub dispatch did not return a valid workflow run ID")
+        runid=obj["workflow_run_id"]
+        expected=f"{API_ORIGIN}/repos/{slug}/actions/runs/{runid}"
+        run_url=obj.get("run_url")
+        html=obj.get("html_url")
+        if run_url!=expected or html!=f"https://github.com/{slug}/actions/runs/{runid}":
+            raise GitHubDispatchOutcomeUnknown("GitHub dispatch run identity or origin mismatch")
+        return {"state":"accepted-correlated", "run_id":runid,"run_url":html}
+
 
 def actions_baseline() -> dict[str, Any]:
     return {
         "schema": 1,
-        "phase": "ACTIONS-00+01",
+        "phase": "ACTIONS-00+01+02",
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow"],
-        "mutation_operations": [],
-        "execution_integration": "not implemented (ACTIONS-02 onwards)",
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run"],
+        "mutation_operations": ["run (explicit --yes only)"],
+        "execution_integration": "dispatch only; tracking not implemented (ACTIONS-03)",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
         "remote_execution": False,
         "token_persistence": False,
@@ -285,4 +337,11 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
     if action == "workflow":
         return {"repository": slug, "authentication": authentication,
                 "workflow": client.workflow(slug, str(args.workflow_id)), "read_only": True}
-    raise GitHubActionsError("Unknown read-only GitHub Actions operation")
+    if action in ("plan", "run"):
+        from .actions_dispatch import _input_values, dispatch_workflow
+        if action == "run" and not bool(getattr(args,"yes",False)):
+            raise GitHubActionsError("Explicit --yes required to dispatch a workflow")
+        values = _input_values(list(getattr(args,"input",[]) or []),str(getattr(args,"inputs_json","") or ""))
+        payload = dispatch_workflow(client,slug,str(args.workflow_id),str(args.ref),values,execute=action=="run")
+        return {"authentication": authentication, **payload}
+    raise GitHubActionsError("Unknown GitHub Actions operation")

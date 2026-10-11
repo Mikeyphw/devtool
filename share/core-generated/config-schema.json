@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "digest": "479b044e1a355a14a0b51b0b85f7f5064d90cd483ba4cead22f8d677cd054b3a",
+  "digest": "08918283abd5baa7f7f7982db350b4fb47d6ec8011813afd17eb7c7b1bac2687",
   "documents": {
     "global": {
       "allow_unknown_top_level": [
@@ -322,18 +322,6 @@
   "kind": "devtool.config-schema",
   "option_config_links": [
     {
-      "config_field_id": "cfg.cli.environment.execution_environment",
-      "option_id": "cli.option.execution_environment"
-    },
-    {
-      "config_field_id": "cfg.cli.output.stdout_payload",
-      "option_id": "cli.option.stdout_payload"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target"
-    },
-    {
       "config_field_id": "cfg.project.config_file",
       "option_id": "cli.option.config"
     },
@@ -342,8 +330,20 @@
       "option_id": "cli.option.copy"
     },
     {
+      "config_field_id": "cfg.cli.environment.execution_environment",
+      "option_id": "cli.option.execution_environment"
+    },
+    {
       "config_field_id": "cfg.project.repo_root",
       "option_id": "cli.option.repo"
+    },
+    {
+      "config_field_id": "cfg.cli.output.stdout_payload",
+      "option_id": "cli.option.stdout_payload"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target"
     },
     {
       "config_field_id": "cfg.workspace.target",
@@ -478,7 +478,7 @@
       "option_id": "cli.option.target.330e55a5.27766db2"
     }
   ],
-  "registry_digest": "8e14828f0b93986ac6bae9f7ee791a72e5d22a7baca3e56c7b3d865365cd855f",
+  "registry_digest": "6e6b4a55b95df3710c9af24451e2bacc603164bffc1c9c9010f2d9e284b204af",
   "registry_schema_version": 1,
   "reserved_namespaces": [
     "devtool",
