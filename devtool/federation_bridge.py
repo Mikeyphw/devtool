@@ -199,6 +199,22 @@ def execute_planned_federated_wrapper_child(
         raise
 
 
+def _federated_job_result_code(specs: Sequence[Any], results: Sequence[Any]) -> int:
+    """Fail closed unless every planned job command has one terminal matching result."""
+    if not specs or len(results) != len(specs):
+        return 1
+    for spec, result in zip(specs, results):
+        if (getattr(result, "name", None) != getattr(spec, "name", None)
+            or getattr(result, "argv", None) != getattr(spec, "argv", None)
+            or getattr(result, "skipped", False)
+            or getattr(result, "failure_kind", "")
+            or getattr(result, "returncode", None) is None
+            or isinstance(getattr(result, "returncode", None), bool)
+            or not isinstance(getattr(result, "returncode", None), int)):
+            return 1
+    return next((result.returncode for result in results if result.returncode != 0), 0)
+
+
 def execute_planned_federated_job_child(
     child: ProjectConfig,
     specs: Sequence[Any],
@@ -240,7 +256,7 @@ def execute_planned_federated_job_child(
             event_run_id=child_run_id,
             publish_workflow_plan=False,
         )
-        rc = next((int(result.returncode) for result in results if int(result.returncode or 0) != 0), 0)
+        rc = _federated_job_result_code(specs, results)
         status = "succeeded" if rc == 0 else ("cancelled" if rc == 130 else "failed")
         publish(GraphSealed(
             run_id=child_run_id,
