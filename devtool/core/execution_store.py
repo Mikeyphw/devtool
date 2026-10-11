@@ -194,7 +194,22 @@ class ExecutionReducer:
                 )
             if normalized_lineage:
                 normalized_lineage["child_run_id"] = run.run_id
-                run.run_lineage = normalized_lineage
+                if run.run_lineage:
+                    for field_name in ("parent_run_id", "parent_node_id", "repository",
+                                       "target", "child_contract", "contract_ref"):
+                        previous = str(run.run_lineage.get(field_name) or "").strip()
+                        incoming = str(normalized_lineage.get(field_name) or "").strip()
+                        if previous and incoming and previous != incoming:
+                            raise ExecutionTransitionError(
+                                f"run {run.run_id!r} cannot change authoritative federation {field_name}: "
+                                f"{previous!r} -> {incoming!r}"
+                            )
+                    merged_lineage = dict(run.run_lineage)
+                    merged_lineage.update({key: value for key, value in normalized_lineage.items()
+                                           if value not in (None, "")})
+                    run.run_lineage = merged_lineage
+                else:
+                    run.run_lineage = normalized_lineage
         for key in ("wrapper_schema", "wrapper_command"):
             value = metadata.get(key)
             if value not in (None, ""):
