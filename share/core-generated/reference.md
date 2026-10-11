@@ -1,12 +1,18 @@
 # Devtool generated CORE reference
 
-Registry digest: `57166acf76fb6d103ab850bd4a03abb048325079b5b703fadadb802296e80ca0`
+Registry digest: `14390cdd2f2cb1934376cd30271847734aeea2ab3f1960a773f2b791225eec2b`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
 ## Commands
 
 - `actions` — Read-only GitHub Actions provider
+- `actions android` — Android builds on GitHub Actions and verified APK/AAB acquisition
+- `actions android collect` — Fetch or verify and inspect an APK/AAB, registering output as unqualified
+- `actions android discover` — Discover statically declared Android app modules
+- `actions android plan` — Validate source parity and Android workflow inputs without dispatch
+- `actions android run` — Dispatch an Android build only with explicit --yes
+- `actions android verify` — Verify a downloaded Android archive and inspect its package
 - `actions artifacts` — List artifacts associated with a specific GitHub workflow run
 - `actions baseline` — Read-only GitHub Actions provider
 - `actions cancel` — Request cancellation of a remote workflow run (explicit confirmation)

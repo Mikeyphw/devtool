@@ -436,16 +436,16 @@ class GitHubActionsClient:
 def actions_baseline() -> dict[str, Any]:
     return {
         "schema": 1,
-        "phase": "ACTIONS-00+01+02+03+04",
+        "phase": "ACTIONS-00+01+02+03+04+05",
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify"],
-        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify"],
+        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)"],
         "execution_integration": "bounded foreground run observation and restart-safe dispatch receipts; no background daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
         "remote_execution": False,
-        "artifact_downloads": "sha256-verified ZIP, no extraction, no release qualification",
+        "artifact_downloads": "sha256-verified ZIP and inspected Android output, no release qualification",
         "token_persistence": False,
     }
 
@@ -464,6 +464,29 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
         slug = resolve_repository(explicit, local_root)
     token, authentication = resolve_token(str(getattr(args, "auth", "auto") or "auto"))
     client = GitHubActionsClient(token)
+    if action == "android":
+        from .actions_android import android_discover, android_plan, android_collect
+        sub = str(getattr(args,"android_command","") or "")
+        if sub == "discover":
+            return android_discover(local_root,str(getattr(args,"project_dir","") or ""))
+        if sub in ("plan", "run"):
+            execute = sub == "run"
+            if execute and not bool(getattr(args,"yes",False)):
+                raise GitHubActionsError("Explicit --yes is required for Android workflow dispatch")
+            return android_plan(client,slug,local_root,module=str(args.module),variant=str(args.variant),
+                                fmt=str(args.format),ref=str(args.ref),workflow=str(args.workflow),
+                                expected_package=str(getattr(args,"expected_package","") or ""),execute=execute,
+                                project_dir=str(getattr(args,"project_dir","") or ""))
+        if sub in ("collect", "verify"):
+            from .actions_runs import run_id
+            from .actions_artifacts import _artifact_id
+            return android_collect(client,slug,local_root,run_id=run_id(args.run_id),
+                                   artifact_id=_artifact_id(args.artifact_id),fmt=str(args.format),
+                                   variant=str(args.variant),expected_package=str(args.expected_package or ""),
+                                   expected_cert=str(args.expected_cert_sha256 or ""),
+                                   member=str(args.member or ""), download=bool(getattr(args,"download",False)),
+                                   materialize=sub=="collect")
+        raise GitHubActionsError("Unsupported Android Actions subcommand")
     if action == "status":
         repo = client.repository(slug)
         viewer = None

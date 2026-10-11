@@ -30,6 +30,774 @@
       "adoption_source": "core-registry",
       "aliases": [],
       "domain": "actions",
+      "id": "cli.command.actions.android",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android"
+      ],
+      "stability": "experimental",
+      "summary": "Android builds on GitHub Actions and verified APK/AAB acquisition"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.collect",
+      "options": [
+        {
+          "choices": [],
+          "dest": "artifact_id",
+          "help": "Exact GitHub Actions artifact ID",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.artifact_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--artifact-id"
+          ]
+        },
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "download",
+          "help": "Download the archive first, instead of verifying an existing archive",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.download",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--download"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_cert_sha256",
+          "help": "Expected SHA-256 signing certificate (mandatory for release)",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.expected_cert_sha256",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-cert-sha256"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_package",
+          "help": "Expected package/application ID",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.expected_package",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-package"
+          ]
+        },
+        {
+          "choices": [
+            "apk",
+            "aab"
+          ],
+          "dest": "format",
+          "help": "Android output format",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.format",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--format"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "member",
+          "help": "Exact APK/AAB member in ZIP if multiple",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.member",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--member"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Exact GitHub Actions run ID",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.run_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [
+            "debug",
+            "release"
+          ],
+          "dest": "variant",
+          "help": "Build variant",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.variant",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--variant"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "collect"
+      ],
+      "stability": "experimental",
+      "summary": "Fetch or verify and inspect an APK/AAB, registering output as unqualified"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.discover",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.android.discover.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.android.discover.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.discover.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.android.discover.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "project_dir",
+          "help": "Gradle project directory; auto-discovered if omitted",
+          "hidden": false,
+          "id": "cli.option.actions.android.discover.project_dir",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--project-dir"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "discover"
+      ],
+      "stability": "experimental",
+      "summary": "Discover statically declared Android app modules"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.plan",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_package",
+          "help": "Expected package/application ID, if dynamic Gradle sources",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.expected_package",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-package"
+          ]
+        },
+        {
+          "choices": [
+            "apk",
+            "aab"
+          ],
+          "dest": "format",
+          "help": "Android output format",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.format",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--format"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "module",
+          "help": "Gradle application module, e.g. app",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.module",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--module"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "project_dir",
+          "help": "Gradle project directory; auto-discovered if omitted",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.project_dir",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--project-dir"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ref",
+          "help": "Exact GitHub branch/tag to dispatch",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.ref",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--ref"
+          ]
+        },
+        {
+          "choices": [
+            "debug",
+            "release"
+          ],
+          "dest": "variant",
+          "help": "Android build variant",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.variant",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--variant"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "workflow",
+          "help": "Selected Android workflow YAML filename",
+          "hidden": false,
+          "id": "cli.option.actions.android.plan.workflow",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--workflow"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "plan"
+      ],
+      "stability": "experimental",
+      "summary": "Validate source parity and Android workflow inputs without dispatch"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.run",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_package",
+          "help": "Expected package/application ID, if dynamic Gradle sources",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.expected_package",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-package"
+          ]
+        },
+        {
+          "choices": [
+            "apk",
+            "aab"
+          ],
+          "dest": "format",
+          "help": "Android output format",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.format",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--format"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "module",
+          "help": "Gradle application module, e.g. app",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.module",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--module"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "project_dir",
+          "help": "Gradle project directory; auto-discovered if omitted",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.project_dir",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--project-dir"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ref",
+          "help": "Exact GitHub branch/tag to dispatch",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.ref",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--ref"
+          ]
+        },
+        {
+          "choices": [
+            "debug",
+            "release"
+          ],
+          "dest": "variant",
+          "help": "Android build variant",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.variant",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--variant"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "workflow",
+          "help": "Selected Android workflow YAML filename",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.workflow",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--workflow"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Explicitly authorize remote workflow dispatch",
+          "hidden": false,
+          "id": "cli.option.actions.android.run.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "run"
+      ],
+      "stability": "experimental",
+      "summary": "Dispatch an Android build only with explicit --yes"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.verify",
+      "options": [
+        {
+          "choices": [],
+          "dest": "artifact_id",
+          "help": "Exact GitHub Actions artifact ID",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.artifact_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--artifact-id"
+          ]
+        },
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_cert_sha256",
+          "help": "Expected SHA-256 signing certificate (mandatory for release)",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.expected_cert_sha256",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-cert-sha256"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_package",
+          "help": "Expected package/application ID",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.expected_package",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-package"
+          ]
+        },
+        {
+          "choices": [
+            "apk",
+            "aab"
+          ],
+          "dest": "format",
+          "help": "Android output format",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.format",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--format"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "member",
+          "help": "Exact APK/AAB member in ZIP if multiple",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.member",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--member"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Exact GitHub Actions run ID",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.run_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [
+            "debug",
+            "release"
+          ],
+          "dest": "variant",
+          "help": "Build variant",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.variant",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--variant"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "verify"
+      ],
+      "stability": "experimental",
+      "summary": "Verify a downloaded Android archive and inspect its package"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
       "id": "cli.command.actions.artifacts",
       "options": [
         {
@@ -31271,11 +32039,17 @@
       "summary": ""
     }
   ],
-  "digest": "c3046d6e0d0af5eeebca7ec310b93c4125c681161cb003d274f28c32683d7c41",
+  "digest": "01e6c19b0e29d55c224988ad7d946926bfe44a1959fff34b0d8aa7cf190c4152",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
       "actions",
+      "actions android",
+      "actions android collect",
+      "actions android discover",
+      "actions android plan",
+      "actions android run",
+      "actions android verify",
       "actions artifacts",
       "actions baseline",
       "actions cancel",
@@ -31714,11 +32488,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 430,
-    "registry_command_count": 305
+    "parser_command_count": 436,
+    "registry_command_count": 311
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "57166acf76fb6d103ab850bd4a03abb048325079b5b703fadadb802296e80ca0",
+  "registry_digest": "14390cdd2f2cb1934376cd30271847734aeea2ab3f1960a773f2b791225eec2b",
   "registry_schema_version": 1,
   "schema_version": 1
 }

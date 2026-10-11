@@ -11,6 +11,24 @@ This manual is generated from the canonical CORE registry and canonical CLI sche
 .B actions
 Read\\-only GitHub Actions provider
 .TP
+.B actions android
+Android builds on GitHub Actions and verified APK/AAB acquisition
+.TP
+.B actions android collect
+Fetch or verify and inspect an APK/AAB, registering output as unqualified
+.TP
+.B actions android discover
+Discover statically declared Android app modules
+.TP
+.B actions android plan
+Validate source parity and Android workflow inputs without dispatch
+.TP
+.B actions android run
+Dispatch an Android build only with explicit \\-\\-yes
+.TP
+.B actions android verify
+Verify a downloaded Android archive and inspect its package
+.TP
 .B actions artifacts
 List artifacts associated with a specific GitHub workflow run
 .TP
@@ -1025,6 +1043,6 @@ Canonical Devtool command.
 .B wrapper verify
 Canonical Devtool command.
 .SH GENERATED CONTRACT
-Registry digest: 57166acf76fb6d103ab850bd4a03abb048325079b5b703fadadb802296e80ca0
+Registry digest: 14390cdd2f2cb1934376cd30271847734aeea2ab3f1960a773f2b791225eec2b
 .SH SEE ALSO
 devtool(1)
