@@ -91,6 +91,7 @@ def test_build_context_is_byte_deterministic_and_self_describing() -> None:
         assert names == [
             "Dockerfile",
             "build-apk",
+            "devtool-events-full.init.gradle",
             "devtool-events.init.gradle",
             "image-manifest.json",
             "termux_toolchains.py",

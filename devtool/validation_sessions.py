@@ -652,6 +652,34 @@ def _durable_secret_reference(argument: str) -> bool:
     return argument.startswith(("@env:", "@file:", "@fd:", "@vault:"))
 
 
+
+def _secret_in_value(value: str, secret: str, *, from_spec: bool) -> bool:
+    """Avoid short, unrelated host secrets colliding with ordinary plan text.
+
+    Values passed directly in a spec remain strict substring matches. Ambient
+    secret names from unrelated applications are compared as tokens for short
+    values; long ambient secret values still use substring detection.
+    """
+    if from_spec or len(secret) >= 12:
+        return secret in value
+    return re.search(r"(?<![A-Za-z0-9])" + re.escape(secret) + r"(?![A-Za-z0-9])", value) is not None
+
+
+def _metadata_exposes_credential(value: Any, secrets: list[tuple[str, bool]]) -> bool:
+    if isinstance(value, dict):
+        return any(
+            _metadata_exposes_credential(key, secrets)
+            or _metadata_exposes_credential(item, secrets)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_metadata_exposes_credential(item, secrets) for item in value)
+    if value is None or isinstance(value, bool):
+        return False
+    rendered = str(value)
+    return any(_secret_in_value(rendered, secret, from_spec=from_spec) for secret, from_spec in secrets)
+
+
 def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
     """Write resumable plan descriptors without persisting live credentials.
 
@@ -667,14 +695,18 @@ def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
         if not _DURABLE_SECRET_NAME.search(key)
     }
     argv = [str(arg) for arg in spec.argv]
-    secret_values = {
-        value for key, value in {**os.environ, **env}.items()
-        if _DURABLE_SECRET_NAME.search(str(key)) and len(str(value)) >= 4
-    }
+    secret_values = [
+        (value, True) for key, value in env.items()
+        if _DURABLE_SECRET_NAME.search(key) and len(value) >= 4
+    ]
+    secret_values.extend(
+        (str(value), False) for key, value in os.environ.items()
+        if key not in env and _DURABLE_SECRET_NAME.search(str(key)) and len(str(value)) >= 4
+    )
     for i, argument in enumerate(argv):
         if _durable_secret_reference(argument):
             continue
-        if any(value in argument for value in secret_values):
+        if any(_secret_in_value(argument, secret, from_spec=direct) for secret, direct in secret_values):
             raise ValidationSessionError("Validation plan contains an inline credential; use an opaque reference.")
         flag = _DURABLE_SECRET_FLAG.match(argument)
         if flag:
@@ -684,11 +716,10 @@ def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
                     raise ValidationSessionError("Validation plan contains an inline credential option.")
             elif i + 1 < len(argv) and not _durable_secret_reference(argv[i + 1]):
                 raise ValidationSessionError("Validation plan contains an inline credential argument.")
-    if any(value in candidate for candidate in safe_env.values() for value in secret_values):
+    if any(_secret_in_value(candidate, secret, from_spec=direct) for candidate in safe_env.values() for secret, direct in secret_values):
         raise ValidationSessionError("Validation plan environment aliases a credential value.")
     metadata = _json_safe(dict(spec.metadata))
-    serialized_meta = json.dumps(metadata, sort_keys=True, default=str)
-    if any(value in serialized_meta for value in secret_values):
+    if _metadata_exposes_credential(metadata, secret_values):
         raise ValidationSessionError("Validation plan metadata contains a credential value.")
     return {
         "name": str(spec.name),

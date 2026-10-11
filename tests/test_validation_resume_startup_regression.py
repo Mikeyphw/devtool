@@ -91,7 +91,10 @@ class DurableResumePlanTests(unittest.TestCase):
             self.assertIsNotNone(resumed.next_pending())
             self.assertEqual(resumed.next_pending().index, 5)
             self.assertEqual([spec.argv for spec in resumed_specs], [spec.argv for spec in first_specs])
-            self.assertEqual([spec.env for spec in resumed_specs], [spec.env for spec in first_specs])
+            # R04 forbids durable credential values. Resume retains commands
+            # and order, but must not restore the PLAN_TOKEN secret from disk.
+            self.assertEqual([spec.env for spec in resumed_specs], [{} for _ in first_specs])
+            assert all('PLAN_TOKEN' not in spec.env for spec in resumed_specs)
             self.assertEqual([spec.cwd for spec in resumed_specs], [spec.cwd for spec in first_specs])
 
             durable = load_active_session(root, required=True)
@@ -292,7 +295,7 @@ class GradleStartupProgressTests(unittest.TestCase):
         self.assertEqual(tracker.detail, "Starting Gradle process")
         self.assertEqual(tracker._synthetic_detail_for_elapsed(0.5), "Starting Gradle process")
 
-    def test_gradle_tracker_enters_before_child_popen(self) -> None:
+    def test_gradle_tracker_is_constructed_before_child_popen(self) -> None:
         order: list[str] = []
         real_popen = subprocess.Popen
 
@@ -300,6 +303,7 @@ class GradleStartupProgressTests(unittest.TestCase):
             def __init__(self, *args, **kwargs):
                 self.enabled = True
                 self.update_callback = None
+                order.append("tracker-created")
 
             def __enter__(self):
                 order.append("tracker-enter")
@@ -307,6 +311,9 @@ class GradleStartupProgressTests(unittest.TestCase):
 
             def __exit__(self, exc_type, exc, tb):
                 order.append("tracker-exit")
+
+            def snapshot(self):
+                return {"detail": "Preparing Gradle", "percent": 0}
 
             def mark_process_started(self):
                 order.append("process-started")
@@ -335,8 +342,11 @@ class GradleStartupProgressTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("> Task :app:compileDebugKotlin", output)
-        self.assertLess(order.index("tracker-enter"), order.index("popen"))
+        # Gradle's semantic tracker is constructed before the child starts;
+        # its presentation context opens once the process and adapter exist.
+        self.assertLess(order.index("tracker-created"), order.index("popen"))
         self.assertLess(order.index("popen"), order.index("process-started"))
+        self.assertLess(order.index("process-started"), order.index("tracker-enter"))
         self.assertIn("tracker-exit", order)
 
 
