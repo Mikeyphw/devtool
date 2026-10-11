@@ -1,0 +1,77 @@
+# Devtool Live HUD: dispatchable CI build using the pinned Java 21 and Gradle launcher.
+# Do not treat debug artifacts as release-qualified or inject release-signing keys.
+# Release APK/AAB trust requires your own restricted signing policy and a pinned certificate.
+name: Devtool Android Build
+on:
+  workflow_dispatch:
+    inputs:
+      project_dir:
+        description: 'Gradle project root relative to repository, or dot for repository root'
+        required: true
+        type: string
+      module:
+        description: 'Gradle Android app module (colon-separated, no leading colon)'
+        required: true
+        type: string
+      variant:
+        description: 'Build variant'
+        required: true
+        type: choice
+        options: [debug, release]
+      format:
+        description: 'Android package format'
+        required: true
+        type: choice
+        options: [apk, aab]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Validate requested Gradle task
+        shell: bash
+        env:
+          DT_PROJECT: ${{ inputs.project_dir }}
+          DT_MODULE: ${{ inputs.module }}
+          DT_VARIANT: ${{ inputs.variant }}
+          DT_FORMAT: ${{ inputs.format }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DT_MODULE" =~ ^[A-Za-z][A-Za-z0-9_-]*(:[A-Za-z][A-Za-z0-9_-]*){0,7}$ ]]; then exit 2; fi
+          case "$DT_VARIANT:$DT_FORMAT" in
+            debug:apk|release:apk|debug:aab|release:aab) ;;
+            *) exit 2 ;;
+          esac
+          if [[ "$DT_PROJECT" != "." && ! "$DT_PROJECT" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ ]]; then exit 2; fi
+          if [[ "$DT_PROJECT" == *".."* ]]; then exit 2; fi
+          echo "TASK_PROJECT=$DT_PROJECT" >> "$GITHUB_ENV"
+          echo "TASK_MODULE=$DT_MODULE" >> "$GITHUB_ENV"
+          if [[ "$DT_FORMAT" == "apk" ]]; then task=assemble; else task=bundle; fi
+          if [[ "$DT_VARIANT" == "debug" ]]; then task+="Debug"; else task+="Release"; fi
+          echo "TASK_NAME=$task" >> "$GITHUB_ENV"
+      - name: Build Android output
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$TASK_PROJECT"
+          test -f ./gradlew && test ! -L ./gradlew
+          chmod +x ./gradlew
+          ./gradlew --no-daemon ":${TASK_MODULE}:${TASK_NAME}"
+      - name: Upload Android outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: devtool-android-${{ inputs.variant }}-${{ inputs.format }}
+          path: |
+            **/build/outputs/apk/**/*.apk
+            **/build/outputs/bundle/**/*.aab
+          if-no-files-found: error
+          retention-days: 7

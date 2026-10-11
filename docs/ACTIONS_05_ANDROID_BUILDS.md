@@ -37,3 +37,29 @@ is later established by GitHub's remote run commit. This is not a source lock.
 No actual Android build, live authenticated dispatch, or native Android tool
 result has been claimed from this test environment. Read-only operations
 are safe without `--yes`; remote mutation is explicitly gated.
+
+## ACTIONS-05.1 — Devtool Live HUD compatibility
+
+Devtool's own Android application is checked in at `android/devtool-live-hud`
+with module `app`, Gradle 9.7.1, and Java **21**. Its `gradlew` is a
+SHA-256-verified distribution bootstrap rather than the usual
+`gradle/wrapper/gradle-wrapper.properties` wrapper. Planning accepts this
+recognizable checksum-pinned launcher without executing it locally.
+Missing checksum/verification markers fail closed.
+
+For the Devtool repository, the dispatchable workflow
+`.github/workflows/devtool-android-build.yml` is **already checked in** by
+this compatibility patch. Push the committed overlay result to GitHub before
+planning or dispatching remote builds. `--github-repo` is still optional:
+
+```
+devtool -r "$HOME/Code/devtool" actions android discover --project-dir android/devtool-live-hud --json
+devtool -r "$HOME/Code/devtool" actions android plan --project-dir android/devtool-live-hud --module app --variant debug --format apk --ref main --json
+devtool -r "$HOME/Code/devtool" actions android run --project-dir android/devtool-live-hud --module app --variant debug --format apk --ref main --yes --json
+```
+
+The existing `release-qualification.yml` Android jobs also now select Java
+21 to match Live HUD's declared toolchain. A debug build still requires a
+real GitHub run, an uploaded APK, and ACTIONS-04/05 download and package
+verification. This patch does not configure a release signing key or assert
+that an APK has been produced.

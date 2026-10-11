@@ -131,6 +131,44 @@ def android_discover(root: Path, project_dir: str = "") -> dict[str, Any]:
             "note": "Static Gradle inspection only; dynamic Gradle variants/IDs need runtime verification"}
 
 
+def _gradle_bootstrap(project: Path) -> dict[str, str]:
+    """Inspect a checked-in Gradle launcher; do not execute it during planning.
+
+    Accept an ordinary Gradle wrapper or a tightly bounded, checksum-pinned
+    Devtool-style Gradle bootstrap. This is source inspection, not a sandbox:
+    GitHub Actions will execute the selected commit's own launcher.
+    """
+    launcher = project / "gradlew"
+    if not launcher.is_file() or launcher.is_symlink():
+        raise GitHubActionsError("Android project has no regular checked-in gradlew launcher")
+    properties = project / "gradle/wrapper/gradle-wrapper.properties"
+    if properties.is_file() and not properties.is_symlink():
+        return {"mode": "gradle-wrapper", "version": "", "checksum": ""}
+    if launcher.stat().st_size > 64 * 1024:
+        raise GitHubActionsError("Nonstandard Gradle launcher exceeds inspection limit")
+    try:
+        source = launcher.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise GitHubActionsError("Cannot inspect Gradle bootstrap launcher") from None
+    # Deliberately require a pinned distribution checksum and a verification
+    # call on the download path. A generic curl | sh launcher is not accepted.
+    version = re.search(r"(?m)^VERSION=([0-9]+(?:\.[0-9]+){1,2})\s*$", source)
+    digest = re.search(r"(?m)^SHA256=([0-9a-fA-F]{64})\s*$", source)
+    markers = (
+        'https://services.gradle.org/distributions/gradle-$VERSION-bin.zip',
+        'verify_zip', 'sha256sum', 'bin/gradle', 'exec '
+    )
+    if (not version or not digest or
+        not all(x in source for x in markers) or
+        not re.search(r"(?m)^\s*verify_zip\s*$", source) or
+        not re.search(r'(?m)^\s*if \[ \"\$actual\" != \"\$SHA256\" \]; then', source)):
+        raise GitHubActionsError(
+            "Android Gradle launcher has no standard wrapper or recognized checksum-pinned bootstrap"
+        )
+    return {"mode": "checksum-bootstrap", "version": version.group(1),
+            "checksum": digest.group(1).lower()}
+
+
 def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: str,
                  variant: str, fmt: str, ref: str, workflow: str = _WORKFLOW,
                  execute: bool = False, expected_package: str = "", project_dir: str = "") -> dict[str, Any]:
@@ -143,8 +181,7 @@ def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: 
     modules = _gradle_modules(project)
     if module not in modules:
         raise GitHubActionsError("Requested Android application module is not statically discoverable")
-    if not (project / "gradlew").is_file() or not (project / "gradle/wrapper/gradle-wrapper.properties").is_file():
-        raise GitHubActionsError("Android project must have a checked-in Gradle wrapper")
+    gradle_bootstrap = _gradle_bootstrap(project)
     if not ref:
         raise GitHubActionsError("Android CI requires an explicit --ref branch or tag")
     local_sha = _git(root, "rev-parse", "HEAD").lower()
@@ -158,7 +195,7 @@ def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: 
         raise GitHubActionsError("Local HEAD differs from GitHub selected ref; push the commit or select the correct ref")
     package = expected_package or modules[module]["application_id"]
     result = {"phase":"ACTIONS-05", "repository":slug, "module":module,
-              "variant":variant, "format":fmt,"project_dir":project_relative,"expected_package":package,
+              "variant":variant, "format":fmt,"project_dir":project_relative,"gradle_bootstrap":gradle_bootstrap,"expected_package":package,
               "expected_package_source": "explicit" if expected_package else ("static-gradle" if package else "unresolved"),
               "local_head_sha": local_sha, "workflow":workflow,"ref":ref,
               "workflow_plan":remote_plan, "dispatched":False, "qualified_release":False}
