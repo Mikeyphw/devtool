@@ -2239,6 +2239,32 @@ def run_federated_group(
     )
 
 
+def _direct_child_terminal_truth(snapshot: Any, rc: int) -> tuple[str, int]:
+    """Do not permit an EXO projection to turn a failed child into success.
+
+    The real process exit code and persisted child status are independent
+    observations: a nonzero process code always fails, and an explicit
+    non-success terminal snapshot also fails (or cancels).
+    """
+    if rc == 130:
+        return ExecutionStatus.CANCELLED.value, 130
+    if snapshot is None:
+        return (ExecutionStatus.SUCCEEDED.value if rc == 0 else ExecutionStatus.FAILED.value), rc
+    status = str(getattr(snapshot, 'status', '') or '').strip()
+    if status == ExecutionStatus.CANCELLED.value:
+        return ExecutionStatus.CANCELLED.value, 130
+    if rc != 0:
+        return ExecutionStatus.FAILED.value, rc
+    if status != ExecutionStatus.SUCCEEDED.value:
+        # An incomplete, blocked, unknown, or failed child is not success,
+        # even when the wrapper process returned zero.
+        return ExecutionStatus.FAILED.value, 1
+    exit_code = getattr(snapshot, 'exit_code', None)
+    if type(exit_code) is not int or exit_code != 0:
+        return ExecutionStatus.FAILED.value, 1
+    return ExecutionStatus.SUCCEEDED.value, 0
+
+
 def run_federated_direct_child(
     parent: ProjectConfig,
     repository: str,
@@ -2405,14 +2431,7 @@ def run_federated_direct_child(
             execution_snapshot=snapshot,
             resume_checkpoint=resume_checkpoint,
         ).as_dict()
-        status = (
-            str(getattr(snapshot, "status", "") or "")
-            if snapshot is not None
-            else (ExecutionStatus.SUCCEEDED.value if rc == 0 else ExecutionStatus.CANCELLED.value if rc == 130 else ExecutionStatus.FAILED.value)
-        )
-        if rc == 130 or status == ExecutionStatus.CANCELLED.value:
-            status = ExecutionStatus.CANCELLED.value
-            rc = 130
+        status, rc = _direct_child_terminal_truth(snapshot, rc)
         git_lineage = _finalize_child_git_lineage(
             resolution, planned_git_lineage, terminal_status=status, publish=publish
         )
