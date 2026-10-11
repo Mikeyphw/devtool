@@ -213,8 +213,8 @@ def capability_interface_identity(parent: "ProjectConfig", plan: FederatedPlanGr
     })
 
 
-def _artifact_identity(child: "FederatedChildRun") -> str:
-    refs = child.operational_ownership.get("references", []) if isinstance(child.operational_ownership, Mapping) else []
+def _artifact_identity_from_ownership(ownership: Any) -> str:
+    refs = ownership.get("references", []) if isinstance(ownership, Mapping) else []
     artifacts: list[dict[str, Any]] = []
     for row in refs if isinstance(refs, list) else []:
         if not isinstance(row, Mapping):
@@ -233,6 +233,10 @@ def _artifact_identity(child: "FederatedChildRun") -> str:
             "artifact_paths": list(metadata.get("artifact_paths") or []),
         })
     return _digest(artifacts)
+
+
+def _artifact_identity(child: "FederatedChildRun") -> str:
+    return _artifact_identity_from_ownership(child.operational_ownership)
 
 
 def child_result_identity(child: "FederatedChildRun") -> str:
@@ -276,6 +280,8 @@ def _checkpoint_success_evidence_valid(child: Mapping[str, Any]) -> bool:
     repository_identity = child.get("repository_identity") or {}
     git_lineage = child.get("git_lineage") or {}
     if not isinstance(repository_identity, Mapping) or not isinstance(git_lineage, Mapping):
+        return False
+    if str(child.get("artifact_identity") or "") != _artifact_identity_from_ownership(child.get("operational_ownership")):
         return False
     result_payload = {
         "repository": child.get("repository"), "target": child.get("target"),
@@ -376,6 +382,12 @@ def _workflow_for(parent: "ProjectConfig", plan: FederatedPlanGraph) -> tuple["P
 def checkpoint_report(parent: "ProjectConfig", report: "FederatedRunReport", *, resumed_from: str = "", mode: str = "run") -> dict[str, Any]:
     scoped, workflow = _workflow_for(parent, report.plan)
     by_step = {child.step_id: child for child in report.children}
+    known_steps = {step.step_id for step in workflow.steps}
+    child_ids = [str(child.run_id or "") for child in report.children]
+    if (len(by_step) != len(report.children) or
+        any(not child.step_id or child.step_id not in known_steps for child in report.children) or
+        any(not run_id for run_id in child_ids) or len(set(child_ids)) != len(child_ids)):
+        raise FederationResumeError("Federation checkpoint has duplicate, unknown, or missing child identity")
     result_ids: dict[str, str] = {}
     artifact_ids: dict[str, str] = {}
     rows: list[dict[str, Any]] = []
