@@ -99,21 +99,40 @@ def _branch(root: Path) -> str:
 
 
 def _status(root: Path) -> str:
-    raw = _git(root, "status", "--porcelain=v2", "--untracked-files=all", check=False).stdout
-    # Devtool's private RUN/registry receipts are lifecycle evidence about pack
-    # publication, not source members of the repository being packed.  Including
-    # them in the source fingerprint makes a second publication of the same plan
-    # falsely look like source drift solely because the first publication wrote
-    # its own authority records.
+    # Parse Git porcelain v2 in -z mode: paths are unquoted and cannot be
+    # split incorrectly on spaces.  A rename/copy record has a second NUL-
+    # terminated pathname. Private receipt files are NOT pack source members.
+    result = _git(root, "status", "--porcelain=v2", "-z", "--untracked-files=all",
+                  text=False)
     rows = []
-    for line in raw.splitlines():
-        # Porcelain v2 stores paths after a space for ordinary rows and after a
-        # tab for rename rows.  The simple split keeps this filter independent of
-        # status kind while preserving the original stable status text.
-        path_tail = line.rsplit(" ", 1)[-1].split("	")[-1]
-        if _is_devtool_private_path(path_tail):
+    fields = result.stdout.split(b"\0")
+    index = 0
+    while index < len(fields):
+        record = fields[index]
+        index += 1
+        if not record:
             continue
-        rows.append(line)
+        kind = record[:2]
+        if kind in {b"1 ", b"2 ", b"u "}:
+            # Fixed porcelain-v2 prefix followed by the exact filename.
+            split_count = 8 if kind == b"1 " else (9 if kind == b"2 " else 10)
+            parts = record.split(b" ", split_count)
+            path_bytes = parts[-1] if len(parts) == split_count + 1 else b""
+        elif kind in {b"? ", b"! "}:
+            path_bytes = record[2:]
+        else:
+            path_bytes = b""
+        old_path = b""
+        if kind == b"2 ":
+            # Consume the extra path even if the new path is private.
+            old_path = fields[index] if index < len(fields) else b""
+            index += 1
+        path = path_bytes.decode("utf-8", "surrogateescape")
+        old = old_path.decode("utf-8", "surrogateescape")
+        if _is_devtool_private_path(path) and (not old or _is_devtool_private_path(old)):
+            continue
+        rows.append(record.decode("utf-8", "surrogateescape") +
+                    (("\t" + old) if old else ""))
     return "\n".join(rows) + ("\n" if rows else "")
 
 
