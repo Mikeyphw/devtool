@@ -254,13 +254,47 @@ def child_result_identity(child: "FederatedChildRun") -> str:
     })
 
 
+def _checkpoint_success_evidence_valid(child: Mapping[str, Any]) -> bool:
+    """Recompute producer identities; a claimed success is not sufficient for reuse.
+
+    Digests detect stale/accidentally modified checkpoint fields. They are not
+    signatures or authentication against a writer who can recompute hashes.
+    """
+    if child.get("status") != TERMINAL_SUCCESS or type(child.get("exit_code")) is not int or child["exit_code"] != 0:
+        return False
+    if not str(child.get("step_id") or "").strip() or not str(child.get("run_id") or "").strip():
+        return False
+    evidence_payload = {
+        "child_run_id": child["run_id"],
+        "git_lineage": child.get("git_lineage") or {},
+        "operational_ownership": child.get("operational_ownership") or {},
+        "run_lineage": child.get("run_lineage") or {},
+        "artifact_inputs": child.get("artifact_inputs") or {},
+    }
+    if str(child.get("evidence_digest") or "") != _digest(evidence_payload):
+        return False
+    repository_identity = child.get("repository_identity") or {}
+    git_lineage = child.get("git_lineage") or {}
+    if not isinstance(repository_identity, Mapping) or not isinstance(git_lineage, Mapping):
+        return False
+    result_payload = {
+        "repository": child.get("repository"), "target": child.get("target"),
+        "workflow": child.get("workflow"), "child_contract": child.get("child_contract"),
+        "contract_ref": child.get("contract_ref"), "status": child["status"],
+        "exit_code": child["exit_code"],
+        "repository_fingerprint": str(repository_identity.get("fingerprint") or ""),
+        "result_commit": str(git_lineage.get("result_commit") or ""),
+        "result_ref": str(git_lineage.get("result_ref") or ""),
+        "artifact_identity": str(child.get("artifact_identity") or ""),
+        "consumed_artifact_inputs": artifact_edges_identity(child.get("artifact_inputs") or {}),
+    }
+    return bool(child.get("artifact_identity")) and str(child.get("result_identity") or "") == _digest(result_payload)
+
+
 def _evidence_available(parent_run_id: str, child: Mapping[str, Any]) -> bool:
-    if str(child.get("status") or "") != TERMINAL_SUCCESS:
+    if not _checkpoint_success_evidence_valid(child):
         return False
     run_id = str(child.get("run_id") or "")
-    evidence_digest = str(child.get("evidence_digest") or "")
-    if not run_id or not evidence_digest:
-        return False
     git_lineage = child.get("git_lineage") if isinstance(child.get("git_lineage"), Mapping) else {}
     if git_lineage:
         path = lineage_evidence_path(parent_run_id, run_id)
@@ -450,7 +484,13 @@ def build_resume_plan(parent: "ProjectConfig", checkpoint: Mapping[str, Any], *,
     if not expected_plan_identity or expected_plan_identity != current_plan_identity:
         raise FederationResumeError("Federation parent plan identity changed; create a new plan/run instead of reusing the checkpoint")
 
-    prior_rows = {str(row.get("step_id") or ""): dict(row) for row in checkpoint.get("children", []) or [] if isinstance(row, Mapping)}
+    child_rows = checkpoint.get("children", []) or []
+    if not isinstance(child_rows, list) or any(not isinstance(row, Mapping) for row in child_rows):
+        raise FederationResumeError("Federation checkpoint has invalid child rows")
+    step_ids = [str(row.get("step_id") or "") for row in child_rows]
+    if not all(step_ids) or len(set(step_ids)) != len(step_ids):
+        raise FederationResumeError("Federation checkpoint has missing or duplicate child step identity")
+    prior_rows = {str(row["step_id"]): dict(row) for row in child_rows}
     prior_result_ids = {key: str(value.get("result_identity") or "") for key, value in prior_rows.items()}
     current_result_ids: dict[str, str] = {}
     current_artifact_ids: dict[str, str] = {}
@@ -520,6 +560,8 @@ def build_resume_plan(parent: "ProjectConfig", checkpoint: Mapping[str, Any], *,
 
 
 def child_from_checkpoint(row: Mapping[str, Any]):
+    if not _checkpoint_success_evidence_valid(row):
+        raise FederationResumeError("Cannot reuse an unverified or non-success child checkpoint")
     from .federation_execution import FederatedChildRun
     return FederatedChildRun(
         step_id=str(row.get("step_id") or ""), repository=str(row.get("repository") or ""),
