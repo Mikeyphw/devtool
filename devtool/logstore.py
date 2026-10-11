@@ -113,7 +113,7 @@ def _mirror_log_to_phone(path: Path) -> None:
             return
         mirrored = mirror_root / path.name
         _durable_copy(path, mirrored)
-        _rotate_log_root(mirror_root, protected=mirrored)
+        _schedule_retention(mirror_root, protected=mirrored)
     except OSError:
         # Mirroring is secondary persistence. The authoritative XDG log remains
         # available and callers should not lose a completed command because
@@ -281,8 +281,27 @@ def _rotate_log_root(root: Path, *, protected: Path | None = None) -> None:
         return
 
 
+def _schedule_retention(root: Path, *, protected: Path | None = None) -> None:
+    """Keep log durability synchronous, but dispatch costly LIFE retention on Termux.
+
+    A persistent request and a single-worker lock make this recoverable and
+    coalesced; on dispatch failure, preserve the historical synchronous path.
+    LIFE remains the *only* authority for deleting log files.
+    """
+    try:
+        from .log_retention_worker import schedule_retention
+    except ImportError:
+        # Windows and other hosts without POSIX flock retain the original
+        # synchronous cleanup behavior and protection authority.
+        schedule_retention = None
+
+    if schedule_retention is not None and schedule_retention(root, protected=protected):
+        return
+    _rotate_log_root(root, protected=protected)
+
+
 def _rotate_logs(*, protected: Path | None = None) -> None:
-    _rotate_log_root(logs_dir(), protected=protected)
+    _schedule_retention(logs_dir(), protected=protected)
 
 
 # Credential redaction is deliberately scanner-based rather than relying on
