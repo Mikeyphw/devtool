@@ -1,5 +1,5 @@
-"""ACTIONS-01/02: bounded GitHub API discovery and explicitly authorized dispatch.
-Remote lifecycle, artifact promotion and execution qualification remain later phases.
+"""ACTIONS-01/02/03: bounded GitHub API discovery, dispatch and remote lifecycle.
+Artifact promotion and execution qualification remain later phases.
 """
 from __future__ import annotations
 
@@ -182,7 +182,12 @@ class GitHubActionsClient:
 
     def repository(self, slug: str) -> dict[str, Any]:
         slug = _slug(slug)
-        obj = self._get(f"/repos/{slug}")
+        try:
+            obj = self._get(f"/repos/{slug}")
+        except GitHubActionsError as exc:
+            if "not found or not accessible" in str(exc):
+                raise GitHubActionsError(f"Repository {slug} not found or inaccessible; verify Git origin, --github-repo and token access") from None
+            raise
         canonical = obj.get("full_name")
         if not isinstance(canonical, str) or canonical.lower() != slug.lower():
             raise GitHubActionsError("GitHub repository identity mismatch")
@@ -238,7 +243,12 @@ class GitHubActionsClient:
         slug = _slug(slug)
         if not _WORKFLOW.fullmatch(identifier) or identifier in (".", ".."):
             raise GitHubActionsError("Workflow must be a numeric ID or a .yml/.yaml filename")
-        data = self._get(f"/repos/{slug}/actions/workflows/{quote(identifier, safe='')}")
+        try:
+            data = self._get(f"/repos/{slug}/actions/workflows/{quote(identifier, safe='')}")
+        except GitHubActionsError as exc:
+            if "not found or not accessible" in str(exc):
+                raise GitHubActionsError(f"Workflow {identifier} is missing or inaccessible in repository {slug}") from None
+            raise
         if not isinstance(data.get("id"), int):
             raise GitHubActionsError("Unexpected GitHub workflow response shape")
         return self._workflow_fields(data)
@@ -294,16 +304,103 @@ class GitHubActionsClient:
         return {"state":"accepted-correlated", "run_id":runid,"run_url":html}
 
 
+    # ACTIONS-03: fixed-scope remote status and explicitly authorized mutations.
+    def get_run(self, slug: str, identity: int) -> dict[str, Any]:
+        slug = _slug(slug)
+        if type(identity) is not int or identity <= 0:
+            raise GitHubActionsError("Invalid workflow run ID")
+        return self._get(f"/repos/{slug}/actions/runs/{identity}")
+
+    def _paged(self, slug: str, path: str, key: str, *, max_results: int = 100) -> list[dict[str, Any]]:
+        slug = _slug(slug)
+        if not path.startswith(f"/repos/{slug}/actions/"):
+            raise GitHubActionsError("GitHub list endpoint escaped repository scope")
+        limit = min(max_results, _MAX_PAGES * 100)
+        page = 1
+        results: list[dict[str, Any]] = []
+        while len(results) < limit:
+            count = min(100, limit-len(results))
+            data = self._get(f"{path}?per_page={count}&page={page}")
+            items = data.get(key)
+            if not isinstance(items, list) or any(not isinstance(x,dict) for x in items):
+                raise GitHubActionsError("Invalid GitHub paginated response")
+            results.extend(items)
+            if len(items) < count:
+                break
+            page += 1
+        return results
+
+    def runs(self, slug: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        if not 1 <= limit <= 100:
+            raise GitHubActionsError("Runs limit must be between 1 and 100")
+        slug = _slug(slug)
+        return self._paged(slug,f"/repos/{slug}/actions/runs","workflow_runs",max_results=limit)
+
+    def run_jobs(self, slug: str, identity: int) -> list[dict[str, Any]]:
+        slug = _slug(slug)
+        if type(identity) is not int or identity <= 0:
+            raise GitHubActionsError("Invalid workflow run ID")
+        return self._paged(slug,f"/repos/{slug}/actions/runs/{identity}/jobs","jobs",max_results=200)
+
+    def run_mutation(self, slug: str, identity: int, action: str) -> dict[str, Any]:
+        slug = _slug(slug)
+        if type(identity) is not int or identity <= 0 or action not in ("cancel","rerun","rerun-failed-jobs"):
+            raise GitHubActionsError("Invalid GitHub run mutation")
+        if not self._token:
+            raise GitHubActionsError("GitHub Actions write token required")
+        url=f"{API_ORIGIN}/repos/{slug}/actions/runs/{identity}/{action}"
+        req=Request(url,data=b"",method="POST",headers={
+            "Accept":"application/vnd.github+json", "X-GitHub-Api-Version":API_VERSION,
+            "Authorization":f"Bearer {self._token}","User-Agent":"devtool-actions-control/1"})
+        try:
+            with self._opener.open(req,timeout=self.timeout) as response:
+                status=int(response.status)
+        except HTTPError as exc:
+            if exc.code == 404:raise GitHubActionsError("Run is missing or inaccessible in selected repository") from None
+            if exc.code in (401,403):raise GitHubActionsError("GitHub Actions write permission denied") from None
+            if exc.code == 409:raise GitHubActionsError("GitHub rejected run control in its current state") from None
+            raise GitHubActionsError(f"GitHub rejected run control (HTTP {exc.code}); verify state") from None
+        except (URLError,OSError,TimeoutError):
+            raise GitHubDispatchOutcomeUnknown("GitHub run control transport failed; outcome uncertain, do not retry blindly") from None
+        if status not in (201,202,204):
+            raise GitHubDispatchOutcomeUnknown(f"GitHub run control returned unexpected HTTP {status}; outcome uncertain")
+        return {"state":"request-accepted", "run_id":identity,"action":action,
+                "execution_complete":False,"outcome":"pending-remote-confirmation"}
+
+    def run_log_location(self, slug: str, identity: int) -> str:
+        slug = _slug(slug)
+        if type(identity) is not int or identity <= 0:
+            raise GitHubActionsError("Invalid workflow run ID")
+        req=Request(f"{API_ORIGIN}/repos/{slug}/actions/runs/{identity}/logs",
+                    headers={"Accept":"application/vnd.github+json",
+                             "X-GitHub-Api-Version":API_VERSION,
+                             "User-Agent":"devtool-actions-logs/1",
+                             **({"Authorization":f"Bearer {self._token}"} if self._token else {})},method="GET")
+        try:
+            with self._opener.open(req,timeout=self.timeout) as response:
+                raise GitHubActionsError(f"GitHub log URL response unexpectedly returned {response.status}")
+        except HTTPError as exc:
+            if exc.code == 302:
+                url=exc.headers.get("Location", "")
+                if isinstance(url,str) and url.startswith("https://"):
+                    return url
+                raise GitHubActionsError("GitHub log archive redirect URL is invalid") from None
+            if exc.code==404: raise GitHubActionsError("Run logs not found or inaccessible") from None
+            raise GitHubActionsError(f"GitHub log archive request failed (HTTP {exc.code})") from None
+        except (URLError,OSError,TimeoutError):
+            raise GitHubActionsError("GitHub log archive request timed out") from None
+
+
 def actions_baseline() -> dict[str, Any]:
     return {
         "schema": 1,
-        "phase": "ACTIONS-00+01+02",
+        "phase": "ACTIONS-00+01+02+03",
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run"],
-        "mutation_operations": ["run (explicit --yes only)"],
-        "execution_integration": "dispatch only; tracking not implemented (ACTIONS-03)",
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun"],
+        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)"],
+        "execution_integration": "bounded foreground run observation and restart-safe dispatch receipts; no background daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
         "remote_execution": False,
         "token_persistence": False,
@@ -314,7 +411,14 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
     action = str(getattr(args, "actions_command", "") or "")
     if action == "baseline":
         return actions_baseline()
-    slug = resolve_repository(str(getattr(args, "github_repo", "") or ""), local_root)
+    request_id = str(getattr(args, "request_id", "") or "")
+    explicit = str(getattr(args, "github_repo", "") or "")
+    if request_id and action in ("view", "jobs", "watch", "resume", "logs", "cancel", "rerun"):
+        from .actions_runs import _safe_receipt
+        _, bound = _safe_receipt(request_id)
+        slug = _slug(explicit) if explicit else _slug(bound["repository"])
+    else:
+        slug = resolve_repository(explicit, local_root)
     token, authentication = resolve_token(str(getattr(args, "auth", "auto") or "auto"))
     client = GitHubActionsClient(token)
     if action == "status":
@@ -337,6 +441,46 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
     if action == "workflow":
         return {"repository": slug, "authentication": authentication,
                 "workflow": client.workflow(slug, str(args.workflow_id)), "read_only": True}
+    if action == "diagnose":
+        checks=[]
+        try:
+            selected=client.repository(slug)
+            checks.append({"name":"repository", "state":"accessible", "id":selected["id"]})
+        except GitHubActionsError as exc:
+            checks.append({"name":"repository", "state":"not-accessible", "reason":str(exc)})
+            return {"phase":"ACTIONS-03","repository":slug,"authentication":authentication,
+                    "ok":False,"checks":checks,"advice":"Verify Git origin or --github-repo, authentication, and repository visibility"}
+        try:
+            work=client.workflows(slug)
+            checks.append({"name":"actions-workflows", "state":"accessible", "count":len(work)})
+        except GitHubActionsError as exc:
+            checks.append({"name":"actions-workflows", "state":"not-accessible", "reason":str(exc)})
+        return {"phase":"ACTIONS-03", "repository":slug,"authentication":authentication,
+                "ok":all(c["state"]=="accessible" for c in checks), "checks":checks}
+    if action in ("runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun"):
+        from .actions_runs import (select_run, snapshot, watch, _normalize_run, remote_logs, control_run)
+        if action == "resume" and not str(getattr(args,"request_id","") or ""):
+            raise GitHubActionsError("actions resume requires a prior --request-id (no guessed remote run)")
+        if action == "runs":
+            n=int(getattr(args,"limit",20))
+            return {"phase":"ACTIONS-03", "repository":slug,"runs":[_normalize_run(x,slug) for x in client.runs(slug,limit=n)]}
+        # A request ID is independently bound to its origin; don't infer skybind's Git origin.
+        selected, identity, location, receipt=select_run(
+            str(getattr(args,"github_repo","") or ""),getattr(args,"run_id",None),
+            str(getattr(args,"request_id","") or ""),lambda:slug)
+        if action in ("view", "resume", "jobs"):
+            return snapshot(client,selected,identity,location,receipt,with_jobs=action=="jobs")
+        if action == "watch":
+            return watch(client,selected,identity,location,receipt,
+                         max_checks=int(getattr(args,"max_checks",10)),
+                         interval=float(getattr(args,"interval",3)))
+        if action == "logs":
+            return {"phase":"ACTIONS-03","logs":remote_logs(client,selected,identity)}
+        if not bool(getattr(args,"yes",False)):
+            raise GitHubActionsError("Explicit --yes required for remote run control")
+        method="cancel" if action=="cancel" else ("rerun-failed-jobs" if bool(getattr(args,"failed_only",False)) else "rerun")
+        return {"phase":"ACTIONS-03", "repository":selected,
+                "control":control_run(client,selected,identity,method)}
     if action in ("plan", "run"):
         from .actions_dispatch import _input_values, dispatch_workflow
         if action == "run" and not bool(getattr(args,"yes",False)):

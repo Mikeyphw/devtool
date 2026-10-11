@@ -40,9 +40,9 @@ class FakeOpener:
 
 def test_baseline_is_read_only_and_phase_bounded():
     baseline = actions_baseline()
-    assert baseline["phase"] == "ACTIONS-00+01+02"
+    assert baseline["phase"] == "ACTIONS-00+01+02+03"
     assert not baseline["remote_execution"]
-    assert baseline["mutation_operations"] == ["run (explicit --yes only)"]
+    assert "run (explicit --yes only)" in baseline["mutation_operations"]
     assert baseline["token_persistence"] is False
     assert "run" in baseline["operations"]
 

@@ -30117,17 +30117,878 @@
       ],
       "stability": "stable",
       "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.cancel",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.cancel.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.cancel.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.cancel.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "request_id",
+          "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+          "hidden": false,
+          "id": "cli.option.actions.cancel.request_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--request-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Exact remote GitHub workflow run ID",
+          "hidden": false,
+          "id": "cli.option.actions.cancel.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Confirm remote run cancellation",
+          "hidden": false,
+          "id": "cli.option.actions.cancel.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.cancel.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "cancel"
+      ],
+      "stability": "experimental",
+      "summary": "Request cancellation of a remote workflow run (explicit confirmation)"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.diagnose",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.diagnose.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.diagnose.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.diagnose.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.diagnose.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "diagnose"
+      ],
+      "stability": "experimental",
+      "summary": "Diagnose GitHub repository identity, access and workflow discovery without mutation"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.jobs",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.jobs.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.jobs.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.jobs.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "request_id",
+          "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+          "hidden": false,
+          "id": "cli.option.actions.jobs.request_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--request-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Exact remote GitHub workflow run ID",
+          "hidden": false,
+          "id": "cli.option.actions.jobs.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.jobs.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "jobs"
+      ],
+      "stability": "experimental",
+      "summary": "Inspect run and job/step states"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.logs",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.logs.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.logs.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.logs.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "request_id",
+          "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+          "hidden": false,
+          "id": "cli.option.actions.logs.request_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--request-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Exact remote GitHub workflow run ID",
+          "hidden": false,
+          "id": "cli.option.actions.logs.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.logs.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "logs"
+      ],
+      "stability": "experimental",
+      "summary": "Download remote workflow run logs as a bounded unextracted ZIP to private state"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.rerun",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.rerun.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "failed_only",
+          "help": "Rerun failed jobs only",
+          "hidden": false,
+          "id": "cli.option.actions.rerun.failed_only",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--failed-only"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.rerun.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.rerun.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "request_id",
+          "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+          "hidden": false,
+          "id": "cli.option.actions.rerun.request_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--request-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Exact remote GitHub workflow run ID",
+          "hidden": false,
+          "id": "cli.option.actions.rerun.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Confirm remote run retry",
+          "hidden": false,
+          "id": "cli.option.actions.rerun.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.rerun.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "rerun"
+      ],
+      "stability": "experimental",
+      "summary": "Request a new remote workflow attempt (explicit confirmation)"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.resume",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.resume.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.resume.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.resume.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "request_id",
+          "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+          "hidden": false,
+          "id": "cli.option.actions.resume.request_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--request-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Exact remote GitHub workflow run ID",
+          "hidden": false,
+          "id": "cli.option.actions.resume.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.resume.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "resume"
+      ],
+      "stability": "experimental",
+      "summary": "Resume a recorded dispatch by its exact request ID"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.runs",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.runs.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.runs.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.runs.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "limit",
+          "help": "Maximum workflow runs (1..100)",
+          "hidden": false,
+          "id": "cli.option.actions.runs.limit",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--limit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.runs.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "runs"
+      ],
+      "stability": "experimental",
+      "summary": "List recent remote workflow runs from selected GitHub repository"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.view",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.view.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.view.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.view.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "request_id",
+          "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+          "hidden": false,
+          "id": "cli.option.actions.view.request_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--request-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Exact remote GitHub workflow run ID",
+          "hidden": false,
+          "id": "cli.option.actions.view.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.view.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "view"
+      ],
+      "stability": "experimental",
+      "summary": "Inspect one remote workflow run"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.watch",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.watch.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.watch.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "interval",
+          "help": "Seconds between status reads (1..300)",
+          "hidden": false,
+          "id": "cli.option.actions.watch.interval",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--interval"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.watch.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_checks",
+          "help": "Maximum status reads (1..120)",
+          "hidden": false,
+          "id": "cli.option.actions.watch.max_checks",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-checks"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "request_id",
+          "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+          "hidden": false,
+          "id": "cli.option.actions.watch.request_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--request-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Exact remote GitHub workflow run ID",
+          "hidden": false,
+          "id": "cli.option.actions.watch.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.watch.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "watch"
+      ],
+      "stability": "experimental",
+      "summary": "Poll a remote run in the foreground with finite limits (no daemon)"
     }
   ],
-  "digest": "c5d6629c50ac9edc1dbff72ce0ec4045278eef232629de0848b2c8947777b7ee",
+  "digest": "5f7076450be500065058a266cc794391a8af32bafa74e5283c9afd4396db6e99",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
       "actions",
       "actions baseline",
+      "actions cancel",
+      "actions diagnose",
+      "actions jobs",
+      "actions logs",
       "actions plan",
+      "actions rerun",
+      "actions resume",
       "actions run",
+      "actions runs",
       "actions status",
+      "actions view",
+      "actions watch",
       "actions workflow",
       "actions workflows",
       "aff",
@@ -30550,11 +31411,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 418,
-    "registry_command_count": 293
+    "parser_command_count": 427,
+    "registry_command_count": 302
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "6e6b4a55b95df3710c9af24451e2bacc603164bffc1c9c9010f2d9e284b204af",
+  "registry_digest": "19352b0480683f62dce215ca2a0625f5a705827508532cceb5a2b12d6ce353a0",
   "registry_schema_version": 1,
   "schema_version": 1
 }

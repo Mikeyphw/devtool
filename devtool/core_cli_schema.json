@@ -5185,6 +5185,150 @@
       },
       "options": [],
       "stable_id": "cli.command.wrapper.verify"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "cancel"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Request cancellation of a remote workflow run (explicit confirmation)",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.cancel"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "diagnose"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Diagnose GitHub repository identity, access and workflow discovery without mutation",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.diagnose"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "jobs"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Inspect run and job/step states",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.jobs"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "logs"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Download remote workflow run logs as a bounded unextracted ZIP to private state",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.logs"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "rerun"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Request a new remote workflow attempt (explicit confirmation)",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.rerun"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "resume"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Resume a recorded dispatch by its exact request ID",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.resume"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "runs"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "List recent remote workflow runs from selected GitHub repository",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.runs"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "view"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Inspect one remote workflow run",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.view"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "watch"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Poll a remote run in the foreground with finite limits (no daemon)",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.watch"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -50303,6 +50447,1245 @@
       "scope": "wrapper verify",
       "sensitive": false,
       "stable_id": "cli.option.ipc-server.help.aea0e981",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "cancel"
+        ],
+        "required": false
+      },
+      "scope": "actions cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.cancel.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "cancel"
+        ],
+        "required": false
+      },
+      "scope": "actions cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.cancel.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "cancel"
+        ],
+        "required": false
+      },
+      "scope": "actions cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.cancel.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--request-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "request_id",
+        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "cancel"
+        ],
+        "required": false
+      },
+      "scope": "actions cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.cancel.request_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact remote GitHub workflow run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "cancel"
+        ],
+        "required": false
+      },
+      "scope": "actions cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.cancel.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Confirm remote run cancellation",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "cancel"
+        ],
+        "required": false
+      },
+      "scope": "actions cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.cancel.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "cancel"
+        ],
+        "required": false
+      },
+      "scope": "actions cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.cancel.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "diagnose"
+        ],
+        "required": false
+      },
+      "scope": "actions diagnose",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.diagnose.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "diagnose"
+        ],
+        "required": false
+      },
+      "scope": "actions diagnose",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.diagnose.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "diagnose"
+        ],
+        "required": false
+      },
+      "scope": "actions diagnose",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.diagnose.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "diagnose"
+        ],
+        "required": false
+      },
+      "scope": "actions diagnose",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.diagnose.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "jobs"
+        ],
+        "required": false
+      },
+      "scope": "actions jobs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.jobs.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "jobs"
+        ],
+        "required": false
+      },
+      "scope": "actions jobs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.jobs.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "jobs"
+        ],
+        "required": false
+      },
+      "scope": "actions jobs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.jobs.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--request-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "request_id",
+        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "jobs"
+        ],
+        "required": false
+      },
+      "scope": "actions jobs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.jobs.request_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact remote GitHub workflow run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "jobs"
+        ],
+        "required": false
+      },
+      "scope": "actions jobs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.jobs.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "jobs"
+        ],
+        "required": false
+      },
+      "scope": "actions jobs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.jobs.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "logs"
+        ],
+        "required": false
+      },
+      "scope": "actions logs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.logs.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "logs"
+        ],
+        "required": false
+      },
+      "scope": "actions logs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.logs.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "logs"
+        ],
+        "required": false
+      },
+      "scope": "actions logs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.logs.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--request-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "request_id",
+        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "logs"
+        ],
+        "required": false
+      },
+      "scope": "actions logs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.logs.request_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact remote GitHub workflow run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "logs"
+        ],
+        "required": false
+      },
+      "scope": "actions logs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.logs.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "logs"
+        ],
+        "required": false
+      },
+      "scope": "actions logs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.logs.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "rerun"
+        ],
+        "required": false
+      },
+      "scope": "actions rerun",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.rerun.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--failed-only",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "failed_only",
+        "help": "Rerun failed jobs only",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "rerun"
+        ],
+        "required": false
+      },
+      "scope": "actions rerun",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.rerun.failed_only",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "rerun"
+        ],
+        "required": false
+      },
+      "scope": "actions rerun",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.rerun.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "rerun"
+        ],
+        "required": false
+      },
+      "scope": "actions rerun",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.rerun.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--request-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "request_id",
+        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "rerun"
+        ],
+        "required": false
+      },
+      "scope": "actions rerun",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.rerun.request_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact remote GitHub workflow run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "rerun"
+        ],
+        "required": false
+      },
+      "scope": "actions rerun",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.rerun.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Confirm remote run retry",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "rerun"
+        ],
+        "required": false
+      },
+      "scope": "actions rerun",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.rerun.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "rerun"
+        ],
+        "required": false
+      },
+      "scope": "actions rerun",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.rerun.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.resume.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.resume.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.resume.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--request-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "request_id",
+        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.resume.request_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact remote GitHub workflow run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.resume.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.resume.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "runs"
+        ],
+        "required": false
+      },
+      "scope": "actions runs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.runs.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "runs"
+        ],
+        "required": false
+      },
+      "scope": "actions runs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.runs.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "runs"
+        ],
+        "required": false
+      },
+      "scope": "actions runs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.runs.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--limit",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "limit",
+        "help": "Maximum workflow runs (1..100)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "runs"
+        ],
+        "required": false
+      },
+      "scope": "actions runs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.runs.limit",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "runs"
+        ],
+        "required": false
+      },
+      "scope": "actions runs",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.runs.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "view"
+        ],
+        "required": false
+      },
+      "scope": "actions view",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.view.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "view"
+        ],
+        "required": false
+      },
+      "scope": "actions view",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.view.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "view"
+        ],
+        "required": false
+      },
+      "scope": "actions view",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.view.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--request-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "request_id",
+        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "view"
+        ],
+        "required": false
+      },
+      "scope": "actions view",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.view.request_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact remote GitHub workflow run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "view"
+        ],
+        "required": false
+      },
+      "scope": "actions view",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.view.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "view"
+        ],
+        "required": false
+      },
+      "scope": "actions view",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.view.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "watch"
+        ],
+        "required": false
+      },
+      "scope": "actions watch",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.watch.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "watch"
+        ],
+        "required": false
+      },
+      "scope": "actions watch",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.watch.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--interval",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "interval",
+        "help": "Seconds between status reads (1..300)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "watch"
+        ],
+        "required": false
+      },
+      "scope": "actions watch",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.watch.interval",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "watch"
+        ],
+        "required": false
+      },
+      "scope": "actions watch",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.watch.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--max-checks",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "max_checks",
+        "help": "Maximum status reads (1..120)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "watch"
+        ],
+        "required": false
+      },
+      "scope": "actions watch",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.watch.max_checks",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--request-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "request_id",
+        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "watch"
+        ],
+        "required": false
+      },
+      "scope": "actions watch",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.watch.request_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact remote GitHub workflow run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "watch"
+        ],
+        "required": false
+      },
+      "scope": "actions watch",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.watch.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "watch"
+        ],
+        "required": false
+      },
+      "scope": "actions watch",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.watch.help",
       "value_kind": "_HelpAction"
     }
   ],
@@ -97047,7 +98430,7 @@
         },
         {
           "aliases": [],
-          "help": "GitHub Actions provider: inspect, plan and explicitly dispatch",
+          "help": "GitHub Actions API: inspect, dispatch, monitor and explicitly control runs",
           "help_present": true,
           "name": "actions",
           "parser": {
@@ -97668,6 +99051,1030 @@
                         ],
                         "required": false,
                         "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Request cancellation of a remote workflow run (explicit confirmation)",
+                  "help_present": true,
+                  "name": "cancel",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "run_id",
+                        "group": null,
+                        "help": "Exact remote GitHub workflow run ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--run-id"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "request_id",
+                        "group": null,
+                        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--request-id"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "yes",
+                        "group": null,
+                        "help": "Confirm remote run cancellation",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--yes"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Diagnose GitHub repository identity, access and workflow discovery without mutation",
+                  "help_present": true,
+                  "name": "diagnose",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Inspect run and job/step states",
+                  "help_present": true,
+                  "name": "jobs",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "run_id",
+                        "group": null,
+                        "help": "Exact remote GitHub workflow run ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--run-id"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "request_id",
+                        "group": null,
+                        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--request-id"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Download remote workflow run logs as a bounded unextracted ZIP to private state",
+                  "help_present": true,
+                  "name": "logs",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "run_id",
+                        "group": null,
+                        "help": "Exact remote GitHub workflow run ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--run-id"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "request_id",
+                        "group": null,
+                        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--request-id"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Request a new remote workflow attempt (explicit confirmation)",
+                  "help_present": true,
+                  "name": "rerun",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "run_id",
+                        "group": null,
+                        "help": "Exact remote GitHub workflow run ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--run-id"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "request_id",
+                        "group": null,
+                        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--request-id"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "failed_only",
+                        "group": null,
+                        "help": "Rerun failed jobs only",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--failed-only"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "yes",
+                        "group": null,
+                        "help": "Confirm remote run retry",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--yes"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Resume a recorded dispatch by its exact request ID",
+                  "help_present": true,
+                  "name": "resume",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "run_id",
+                        "group": null,
+                        "help": "Exact remote GitHub workflow run ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--run-id"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "request_id",
+                        "group": null,
+                        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--request-id"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "List recent remote workflow runs from selected GitHub repository",
+                  "help_present": true,
+                  "name": "runs",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": 20,
+                        "dest": "limit",
+                        "group": null,
+                        "help": "Maximum workflow runs (1..100)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--limit"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Inspect one remote workflow run",
+                  "help_present": true,
+                  "name": "view",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "run_id",
+                        "group": null,
+                        "help": "Exact remote GitHub workflow run ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--run-id"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "request_id",
+                        "group": null,
+                        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--request-id"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Poll a remote run in the foreground with finite limits (no daemon)",
+                  "help_present": true,
+                  "name": "watch",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "run_id",
+                        "group": null,
+                        "help": "Exact remote GitHub workflow run ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--run-id"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "request_id",
+                        "group": null,
+                        "help": "Local ACTIONS-02 dispatch request ID (pinned to one repository and run)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--request-id"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": 10,
+                        "dest": "max_checks",
+                        "group": null,
+                        "help": "Maximum status reads (1..120)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--max-checks"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": 3,
+                        "dest": "interval",
+                        "group": null,
+                        "help": "Seconds between status reads (1..300)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--interval"
+                        ],
+                        "required": false,
+                        "type": "float"
                       }
                     ],
                     "add_help": true,

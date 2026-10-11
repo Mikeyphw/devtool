@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `6e6b4a55b95df3710c9af24451e2bacc603164bffc1c9c9010f2d9e284b204af`
+Registry digest: `19352b0480683f62dce215ca2a0625f5a705827508532cceb5a2b12d6ce353a0`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -299,6 +299,15 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
+- `actions cancel` — Request cancellation of a remote workflow run (explicit confirmation)
+- `actions diagnose` — Diagnose GitHub repository identity, access and workflow discovery without mutation
+- `actions jobs` — Inspect run and job/step states
+- `actions logs` — Download remote workflow run logs as a bounded unextracted ZIP to private state
+- `actions rerun` — Request a new remote workflow attempt (explicit confirmation)
+- `actions resume` — Resume a recorded dispatch by its exact request ID
+- `actions runs` — List recent remote workflow runs from selected GitHub repository
+- `actions view` — Inspect one remote workflow run
+- `actions watch` — Poll a remote run in the foreground with finite limits (no daemon)
 
 ## Configuration documents
 
