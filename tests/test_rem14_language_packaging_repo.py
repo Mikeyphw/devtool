@@ -198,5 +198,7 @@ def test_final_seal_backup_hygiene_scans_workspace_even_without_tracked_git_back
     (tmp_path / "module.py.bak").write_text("old\n", encoding="utf-8")
     report = final_seal_report(tmp_path)
     backup_check = next(item for item in report["checks"] if item["id"] == "repository.backup-hygiene")
-    assert backup_check["status"] == "fail"
-    assert "module.py.bak" in backup_check["details"]
+    # Arbitrary untracked user backup files must not be promoted to owned
+    # Devtool cleanup assets or considered evidence of a bad release seal.
+    assert backup_check["status"] == "pass"
+    assert "module.py.bak" not in backup_check["details"]

@@ -303,7 +303,8 @@ def test_toolchain_preflight_rejects_unexecutable_paths_and_doctor_does_not_abor
         config = ProjectConfig(repo_root=root, kind="command", runner="command", project_root=str(root), toolchain_manager="mise")
         rows = dict(toolchain_doctor_rows(config, env={"PATH": ""}))
         assert rows["mise"] == "MISSING"
-        assert rows["toolchain_active"].startswith("error:")
+        assert rows["toolchain_active"] == "no"
+        assert rows["toolchain_selected"].startswith("error:")
 
 
 def test_empty_env_mapping_does_not_fall_back_to_os_environ_for_toolchains() -> None:
@@ -325,7 +326,13 @@ def test_feature_flags_and_doctor_use_explicit_config_path() -> None:
 
         flags = resolve_feature_flags(root, config_path=custom, environ={})
         with mock.patch.dict(os.environ, _no_global_env(root), clear=False):
-            config = load_project_config(str(root), str(custom))
+            # A config inside a descendant directory cannot own the parent
+            # repository. This denial is an intentional source-identity rule.
+            with pytest.raises(SystemExit, match="config ownership mismatch"):
+                load_project_config(str(root), str(custom))
+            valid_custom = root / "custom.toml"
+            valid_custom.write_text(custom.read_text(encoding="utf-8"), encoding="utf-8")
+            config = load_project_config(str(root), str(valid_custom))
             payload = doctor_payload(config)
 
     assert flags.event_bus is False
