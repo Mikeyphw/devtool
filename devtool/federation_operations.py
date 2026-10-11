@@ -110,6 +110,8 @@ def capture_federated_resume_checkpoint(
 
 
 def validate_federated_resume_checkpoint(parent: "ProjectConfig", checkpoint: Mapping[str, Any]) -> FederatedRepositoryResolution:
+    if type(checkpoint.get("schema_version")) is not int or checkpoint["schema_version"] != 1:
+        raise FederationOperationalBoundaryError("Federation resume checkpoint has unsupported schema")
     repository = str(checkpoint.get("repository") or "").strip()
     if not repository:
         raise FederationOperationalBoundaryError("Federation resume checkpoint is missing repository")
