@@ -332,6 +332,73 @@
       "aliases": [],
       "canonical_path": [
         "actions",
+        "release"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Independent-policy release provenance qualification",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.release"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "release",
+        "readiness"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Check protected ref, signing secret names and private policy",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.release.readiness"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "release",
+        "setup"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Minimum allowed release versionCode",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.release.setup"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "release",
+        "verify"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Read-only package release qualification with signed GitHub provenance",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.release.verify"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
         "rerun"
       ],
       "metadata": {
@@ -391,39 +458,6 @@
       },
       "options": [],
       "stable_id": "cli.command.actions.runs"
-    },
-    {
-      "aliases": [],
-      "canonical_path": [
-        "actions",
-        "release"
-      ],
-      "metadata": {
-        "authority": "canonical-schema",
-        "domain": "actions",
-        "stability": "experimental",
-        "summary": "Independent-policy release provenance qualification",
-        "wrapper_native": false
-      },
-      "options": [],
-      "stable_id": "cli.command.actions.release"
-    },
-    {
-      "aliases": [],
-      "canonical_path": [
-        "actions",
-        "release",
-        "verify"
-      ],
-      "metadata": {
-        "authority": "canonical-schema",
-        "domain": "actions",
-        "stability": "experimental",
-        "summary": "Read-only package release qualification with signed GitHub provenance",
-        "wrapper_native": false
-      },
-      "options": [],
-      "stable_id": "cli.command.actions.release.verify"
     },
     {
       "aliases": [],
@@ -1167,30 +1201,6 @@
     {
       "aliases": [
         [
-          "apply-overlays"
-        ],
-        [
-          "aos"
-        ]
-      ],
-      "canonical_path": [
-        "apply",
-        "overlays"
-      ],
-      "metadata": {
-        "authority": "canonical-schema",
-        "compatibility_aliases": true,
-        "domain": "artifact",
-        "stability": "stable",
-        "summary": "",
-        "wrapper_native": false
-      },
-      "options": [],
-      "stable_id": "cli.command.apply.bundle"
-    },
-    {
-      "aliases": [
-        [
           "apply-overlay"
         ],
         [
@@ -1214,6 +1224,30 @@
         "cli.option.yes"
       ],
       "stable_id": "cli.command.apply.overlay"
+    },
+    {
+      "aliases": [
+        [
+          "apply-overlays"
+        ],
+        [
+          "aos"
+        ]
+      ],
+      "canonical_path": [
+        "apply",
+        "overlays"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "compatibility_aliases": true,
+        "domain": "artifact",
+        "stability": "stable",
+        "summary": "",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.apply.bundle"
     },
     {
       "aliases": [
@@ -8250,212 +8284,6 @@
       "value_kind": "_StoreAction"
     },
     {
-      "aliases": [
-        "--help"
-      ],
-      "canonical": "-h",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "help",
-        "help": "show this help message and exit",
-        "hidden": false,
-        "nargs": 0,
-        "path": [
-          "actions",
-          "release"
-        ],
-        "required": false
-      },
-      "scope": "actions release",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.release.help",
-      "value_kind": "_HelpAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--artifact-id",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "artifact_id",
-        "help": "Exact GitHub Actions artifact ID",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "release",
-          "verify"
-        ],
-        "required": true
-      },
-      "scope": "actions release verify",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.release.verify.artifact_id",
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--auth",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [
-          "auto",
-          "env",
-          "gh",
-          "none"
-        ],
-        "dest": "auth",
-        "help": "Credentials source: auto, env, gh, or none",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "release",
-          "verify"
-        ],
-        "required": false
-      },
-      "scope": "actions release verify",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.release.verify.auth",
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--github-repo",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "github_repo",
-        "help": "Explicit GitHub owner/repository slug",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "release",
-          "verify"
-        ],
-        "required": false
-      },
-      "scope": "actions release verify",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.release.verify.github_repo",
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--json",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "json",
-        "help": "Emit Actions response as JSON",
-        "hidden": false,
-        "nargs": 0,
-        "path": [
-          "actions",
-          "release",
-          "verify"
-        ],
-        "required": false
-      },
-      "scope": "actions release verify",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.release.verify.json",
-      "value_kind": "_StoreTrueAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--member",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "member",
-        "help": "Exact APK/AAB member in ZIP if multiple",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "release",
-          "verify"
-        ],
-        "required": false
-      },
-      "scope": "actions release verify",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.release.verify.member",
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--policy",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "policy",
-        "help": "Absolute path to private owner-controlled release policy JSON (0600)",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "release",
-          "verify"
-        ],
-        "required": true
-      },
-      "scope": "actions release verify",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.release.verify.policy",
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--run-id",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "run_id",
-        "help": "Exact GitHub Actions run ID",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "release",
-          "verify"
-        ],
-        "required": true
-      },
-      "scope": "actions release verify",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.release.verify.run_id",
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [
-        "--help"
-      ],
-      "canonical": "-h",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "help",
-        "help": "show this help message and exit",
-        "hidden": false,
-        "nargs": 0,
-        "path": [
-          "actions",
-          "release",
-          "verify"
-        ],
-        "required": false
-      },
-      "scope": "actions release verify",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.release.verify.help",
-      "value_kind": "_HelpAction"
-    },
-    {
       "aliases": [],
       "canonical": "--auth",
       "config_field_id": null,
@@ -8607,6 +8435,722 @@
       "scope": "actions plan",
       "sensitive": false,
       "stable_id": "cli.option.actions.plan.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release"
+        ],
+        "required": false
+      },
+      "scope": "actions release",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "readiness"
+        ],
+        "required": false
+      },
+      "scope": "actions release readiness",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.readiness.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "readiness"
+        ],
+        "required": false
+      },
+      "scope": "actions release readiness",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.readiness.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "readiness"
+        ],
+        "required": false
+      },
+      "scope": "actions release readiness",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.readiness.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "readiness"
+        ],
+        "required": false
+      },
+      "scope": "actions release readiness",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.readiness.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--policy",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "policy",
+        "help": "Private external release policy path (default ~/.config/devtool/release-policy.json)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "readiness"
+        ],
+        "required": false
+      },
+      "scope": "actions release readiness",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.readiness.policy",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ref",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ref",
+        "help": "Exact protected release branch",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "readiness"
+        ],
+        "required": false
+      },
+      "scope": "actions release readiness",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.readiness.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-identity",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_identity",
+        "help": "Registered Devtool LIFE signing identity ID (auto-select if unique)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "readiness"
+        ],
+        "required": false
+      },
+      "scope": "actions release readiness",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.readiness.signing_identity",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_target",
+        "help": "Android Devtool target with release signing profile (default android_hud)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "readiness"
+        ],
+        "required": false
+      },
+      "scope": "actions release readiness",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.readiness.signing_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--application-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "application_id",
+        "help": "Package ID (default statically inferred)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.application_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--format",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "format",
+        "help": "Release package format: apk or aab",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.format",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--minimum-version-code",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "minimum_version_code",
+        "help": "Minimum allowed release versionCode",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.minimum_version_code",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--module",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "module",
+        "help": "Android Gradle application module",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.module",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--policy",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "policy",
+        "help": "Private external release policy path (default ~/.config/devtool/release-policy.json)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.policy",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--project-dir",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "project_dir",
+        "help": "Gradle project relative to repository",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.project_dir",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ref",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ref",
+        "help": "Exact protected release branch",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--rotate-secrets",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "rotate_secrets",
+        "help": "Explicitly replace an existing complete or partial GitHub secret set using the Devtool signer (requires --yes)",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.rotate_secrets",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-identity",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_identity",
+        "help": "Registered Devtool LIFE signing identity ID (auto-select if unique)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.signing_identity",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_target",
+        "help": "Android Devtool target carrying the signing profile (default android_hud)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.signing_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly authorize provisioning",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--artifact-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "artifact_id",
+        "help": "Exact GitHub Actions artifact ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "verify"
+        ],
+        "required": true
+      },
+      "scope": "actions release verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.verify.artifact_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.verify.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.verify.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.verify.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.verify.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--member",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "member",
+        "help": "Exact APK/AAB member in ZIP if multiple",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.verify.member",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--policy",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "policy",
+        "help": "Absolute path to private owner-controlled release policy JSON (0600)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "verify"
+        ],
+        "required": true
+      },
+      "scope": "actions release verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.verify.policy",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact GitHub Actions run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "verify"
+        ],
+        "required": true
+      },
+      "scope": "actions release verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.verify.run_id",
       "value_kind": "_StoreAction"
     },
     {
@@ -104648,6 +105192,413 @@
                                   "--policy"
                                 ],
                                 "required": true,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "setup",
+                          "aliases": [],
+                          "help": "Guided preview or --yes release provisioning",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "main",
+                                "dest": "ref",
+                                "group": null,
+                                "help": "Exact protected release branch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--ref"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "policy",
+                                "group": null,
+                                "help": "Private external release policy path (default ~/.config/devtool/release-policy.json)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--policy"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android/devtool-live-hud",
+                                "dest": "project_dir",
+                                "group": null,
+                                "help": "Gradle project relative to repository",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--project-dir"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "app",
+                                "dest": "module",
+                                "group": null,
+                                "help": "Android Gradle application module",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--module"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "application_id",
+                                "group": null,
+                                "help": "Package ID (default statically inferred)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--application-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "apk",
+                                "dest": "format",
+                                "group": null,
+                                "help": "Release package format: apk or aab",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--format"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": 1,
+                                "dest": "minimum_version_code",
+                                "group": null,
+                                "help": "Minimum allowed release versionCode",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--minimum-version-code"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Explicitly authorize provisioning",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "signing_identity",
+                                "group": null,
+                                "help": "Existing Devtool signing identity",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-identity"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android_hud",
+                                "dest": "signing_target",
+                                "group": null,
+                                "help": "Target with release signing profile",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-target"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "rotate_secrets",
+                                "group": null,
+                                "help": "Explicitly replace existing GitHub signing secrets from the Devtool signer",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--rotate-secrets"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "readiness",
+                          "aliases": [],
+                          "help": "Check protected ref, signing secret names and private policy",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "main",
+                                "dest": "ref",
+                                "group": null,
+                                "help": "Exact protected release branch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--ref"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "policy",
+                                "group": null,
+                                "help": "Private external release policy path (default ~/.config/devtool/release-policy.json)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--policy"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "signing_identity",
+                                "group": null,
+                                "help": null,
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-identity"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android_hud",
+                                "dest": "signing_target",
+                                "group": null,
+                                "help": null,
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-target"
+                                ],
+                                "required": false,
                                 "type": null
                               }
                             ],

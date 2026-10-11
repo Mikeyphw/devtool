@@ -59,3 +59,28 @@ def pipeline_text(payload: Mapping[str, Any]) -> str:
     elif view['resume_enabled']:
         parts.append('Resume requires explicit --yes; pending remote work is not success.')
     return '\n'.join(parts)
+
+
+def release_setup_text(report: dict) -> str:
+    """ACTIONS-09 human-readable setup preflight; no secret values."""
+    gates = report.get('gates') or {}
+    lines = ['Release setup ' + ('(applied)' if report.get('mode') == 'apply' else '(read-only preview)'),
+             'Repository: ' + str(report.get('repository', '')),
+             'Source: ' + str(report.get('source_sha', '')),
+             'Protected branch: ' + str(report.get('ref', '')),
+             'Policy: ' + str(report.get('policy_file', ''))]
+    names = {'source_match': 'Source commit matches', 'workflow_active': 'Workflow active',
+             'branch_protected': 'Branch protected', 'signing_secrets_present': 'Signing secret names present',
+             'policy_current': 'Private policy matches source',
+             'signing_identity_configured': 'Devtool release signing identity ready'}
+    for name, label in names.items():
+        if name in gates:
+            lines.append(('  [OK] ' if gates[name] else '  [MISSING] ') + label)
+    if report.get('ready'):
+        lines.append('Setup ready; this does NOT qualify a release.')
+    else:
+        for item in report.get('next_actions', ()):
+            lines.append('  Next: ' + str(item))
+    if report.get('note'):
+        lines.append(str(report['note']))
+    return '\n'.join(lines)

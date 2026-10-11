@@ -68,6 +68,18 @@ Read local durable pipeline states (no GitHub operations)
 .B actions plan
 Validate workflow ref and inputs without dispatching
 .TP
+.B actions release
+Independent\\-policy release provenance qualification
+.TP
+.B actions release readiness
+Check protected ref, signing secret names and private policy
+.TP
+.B actions release setup
+Minimum allowed release versionCode
+.TP
+.B actions release verify
+Read\\-only package release qualification with signed GitHub provenance
+.TP
 .B actions rerun
 Request a new remote workflow attempt (explicit confirmation)
 .TP
@@ -79,12 +91,6 @@ Dispatch workflow only with explicit \\-\\-yes; return run ID if available
 .TP
 .B actions runs
 List recent remote workflow runs from selected GitHub repository
-.TP
-.B actions release
-Independent\\-policy release provenance qualification
-.TP
-.B actions release verify
-Read\\-only package release qualification with signed GitHub provenance
 .TP
 .B actions status
 Read\\-only GitHub Actions provider
@@ -224,13 +230,13 @@ Aliases: termux\\-hud\\-bridge
 .B apply
 Canonical Devtool command.
 .TP
-.B apply overlays
-Canonical Devtool command.
-Aliases: apply\\-overlays, aos
-.TP
 .B apply overlay
 Canonical Devtool command.
 Aliases: apply\\-overlay, ao
+.TP
+.B apply overlays
+Canonical Devtool command.
+Aliases: apply\\-overlays, aos
 .TP
 .B apply snapshot
 Canonical Devtool command.
@@ -1064,6 +1070,6 @@ Canonical Devtool command.
 .B wrapper verify
 Canonical Devtool command.
 .SH GENERATED CONTRACT
-Registry digest: 477f603347be4f4589e4fa4a1cc53870be917d7fe3358f3be4ebbdf77acc3f40
+Registry digest: fc25573357c786d21aaf8a4e855aef7e66d5a2a91f0cc9068a1197a8ce3a5aa0
 .SH SEE ALSO
 devtool(1)

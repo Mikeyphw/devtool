@@ -40,6 +40,9 @@ The policy must be stored **outside the checked-out source repository**, owned
 by the current OS user, as a regular non-symlink file with mode 0600. Treat it
 as a reviewed, trusted authority, not a value proposed by a pull request or
 by CI. ACTIONS-08 intentionally cannot create or approve this policy for you.
+ACTIONS-09 adds an explicit maintainer-authorized setup command which derives this
+policy from the observed remote SHA and your independently owned keystore. See
+`docs/ACTIONS_09_GOVERNANCE.md`. Setup is not production release approval.
 
 Copy `docs/templates/devtool-release-policy.example.json` to a file such as
 `$HOME/.config/devtool/release-policy.json`, adjust the repository, full

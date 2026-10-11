@@ -440,7 +440,7 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness"],
         "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)"],
         "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
@@ -482,6 +482,25 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
         if sub == "resume":
             return pipeline_resume(client, slug, local_root, str(args.pipeline_id))
         raise GitHubActionsError("Unsupported Actions pipeline command")
+    if action == "release" and str(getattr(args, 'release_command', '') or '') in ('setup', 'readiness'):
+        from .actions_setup import release_setup, release_readiness
+        branch = str(getattr(args, 'ref', 'main') or 'main')
+        policy = str(getattr(args, 'policy', '') or '')
+        if str(args.release_command) == 'readiness':
+            return release_readiness(client, slug, local_root, ref=branch,
+                policy_file=policy or str(Path.home()/'.config/devtool/release-policy.json'),
+                signing_identity=str(getattr(args, 'signing_identity', '') or ''),
+                target=str(getattr(args, 'signing_target', 'android_hud') or 'android_hud'))
+        return release_setup(client, slug, local_root, ref=branch, policy_file=policy,
+            signing_identity=str(getattr(args, 'signing_identity', '') or ''),
+            target=str(getattr(args, 'signing_target', 'android_hud') or 'android_hud'),
+            project_dir=str(getattr(args, 'project_dir', 'android/devtool-live-hud')),
+            module=str(getattr(args, 'module', 'app')),
+            application_id=str(getattr(args, 'application_id', '') or ''),
+            fmt=str(getattr(args, 'format', 'apk')),
+            minimum_version_code=int(getattr(args, 'minimum_version_code', 1)),
+            execute=bool(getattr(args, 'yes', False)),
+            rotate_secrets=bool(getattr(args, 'rotate_secrets', False)))
     if action == "release":
         from .actions_release import release_verify
         from .actions_runs import run_id

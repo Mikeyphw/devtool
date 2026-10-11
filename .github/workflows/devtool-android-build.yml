@@ -68,10 +68,41 @@ jobs:
           if [[ "$DT_FORMAT" == "apk" ]]; then task=assemble; else task=bundle; fi
           if [[ "$DT_VARIANT" == "debug" ]]; then task+="Debug"; else task+="Release"; fi
           echo "TASK_NAME=$task" >> "$GITHUB_ENV"
-      - name: Build Android output
+      - name: Build Android debug output
+        if: ${{ inputs.variant == 'debug' }}
         shell: bash
         run: |
           set -euo pipefail
+          cd "$TASK_PROJECT"
+          test -f ./gradlew && test ! -L ./gradlew
+          chmod +x ./gradlew
+          ./gradlew --no-daemon ":${TASK_MODULE}:${TASK_NAME}"
+      - name: Build Android signed release output
+        if: ${{ inputs.variant == 'release' }}
+        shell: bash
+        env:
+          DT_KEYSTORE_B64: ${{ secrets.DEVTOOL_RELEASE_KEYSTORE_B64 }}
+          DT_STORE_PASSWORD: ${{ secrets.DEVTOOL_RELEASE_STORE_PASSWORD }}
+          DT_KEY_ALIAS: ${{ secrets.DEVTOOL_RELEASE_KEY_ALIAS }}
+          DT_KEY_PASSWORD: ${{ secrets.DEVTOOL_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_PROTECTED:-false}" != "true" ]]; then
+            echo 'Release source ref must be protected' >&2; exit 2
+          fi
+          if [[ -z "$DT_KEYSTORE_B64" || -z "$DT_STORE_PASSWORD" || -z "$DT_KEY_ALIAS" || -z "$DT_KEY_PASSWORD" ]]; then
+            echo 'Release signing secrets missing before Gradle; refusing build' >&2; exit 2
+          fi
+          store="$RUNNER_TEMP/devtool-gradle-release-keystore.p12"
+          trap 'rm -f "$store"' EXIT
+          (umask 077; printf '%s' "$DT_KEYSTORE_B64" | base64 --decode > "$store")
+          test -s "$store"
+          # Use the app's existing release signing contract. Never include
+          # credential values in argv, Gradle properties, logs or persistent files.
+          export DEVTOOL_RELEASE_STORE_FILE="$store"
+          export DEVTOOL_RELEASE_STORE_PASSWORD="$DT_STORE_PASSWORD"
+          export DEVTOOL_RELEASE_KEY_ALIAS="$DT_KEY_ALIAS"
+          export DEVTOOL_RELEASE_KEY_PASSWORD="$DT_KEY_PASSWORD"
           cd "$TASK_PROJECT"
           test -f ./gradlew && test ! -L ./gradlew
           chmod +x ./gradlew

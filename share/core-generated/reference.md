@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `477f603347be4f4589e4fa4a1cc53870be917d7fe3358f3be4ebbdf77acc3f40`
+Registry digest: `fc25573357c786d21aaf8a4e855aef7e66d5a2a91f0cc9068a1197a8ce3a5aa0`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -26,12 +26,14 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions pipeline run` — Create durable pipeline journal and execute ready nodes
 - `actions pipeline status` — Read local durable pipeline states (no GitHub operations)
 - `actions plan` — Validate workflow ref and inputs without dispatching
+- `actions release` — Independent-policy release provenance qualification
+- `actions release readiness` — Check protected ref, signing secret names and private policy
+- `actions release setup` — Minimum allowed release versionCode
+- `actions release verify` — Read-only package release qualification with signed GitHub provenance
 - `actions rerun` — Request a new remote workflow attempt (explicit confirmation)
 - `actions resume` — Resume a recorded dispatch by its exact request ID
 - `actions run` — Dispatch workflow only with explicit --yes; return run ID if available
 - `actions runs` — List recent remote workflow runs from selected GitHub repository
-- `actions release` — Independent-policy release provenance qualification
-- `actions release verify` — Read-only package release qualification with signed GitHub provenance
 - `actions status` — Read-only GitHub Actions provider
 - `actions verify` — Verify a previously downloaded registered GitHub artifact
 - `actions view` — Inspect one remote workflow run
@@ -77,8 +79,8 @@ This file is generated from the CORE command/config registry and the canonical C
 - `android uninstall`
 - `android-hud-bridge`
 - `apply`
-- `apply overlays`
 - `apply overlay`
+- `apply overlays`
 - `apply snapshot`
 - `artifact`
 - `artifact inspect`
