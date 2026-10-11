@@ -1,16 +1,28 @@
 # Devtool generated CORE reference
 
-Registry digest: `19352b0480683f62dce215ca2a0625f5a705827508532cceb5a2b12d6ce353a0`
+Registry digest: `57166acf76fb6d103ab850bd4a03abb048325079b5b703fadadb802296e80ca0`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
 ## Commands
 
 - `actions` — Read-only GitHub Actions provider
+- `actions artifacts` — List artifacts associated with a specific GitHub workflow run
 - `actions baseline` — Read-only GitHub Actions provider
+- `actions cancel` — Request cancellation of a remote workflow run (explicit confirmation)
+- `actions diagnose` — Diagnose GitHub repository identity, access and workflow discovery without mutation
+- `actions download` — Download, SHA-256 verify and register an unextracted Actions ZIP
+- `actions jobs` — Inspect run and job/step states
+- `actions logs` — Download remote workflow run logs as a bounded unextracted ZIP to private state
 - `actions plan` — Validate workflow ref and inputs without dispatching
+- `actions rerun` — Request a new remote workflow attempt (explicit confirmation)
+- `actions resume` — Resume a recorded dispatch by its exact request ID
 - `actions run` — Dispatch workflow only with explicit --yes; return run ID if available
+- `actions runs` — List recent remote workflow runs from selected GitHub repository
 - `actions status` — Read-only GitHub Actions provider
+- `actions verify` — Verify a previously downloaded registered GitHub artifact
+- `actions view` — Inspect one remote workflow run
+- `actions watch` — Poll a remote run in the foreground with finite limits (no daemon)
 - `actions workflow` — Read-only GitHub Actions provider
 - `actions workflows` — Read-only GitHub Actions provider
 - `affected`
@@ -52,8 +64,8 @@ This file is generated from the CORE command/config registry and the canonical C
 - `android uninstall`
 - `android-hud-bridge`
 - `apply`
-- `apply overlay`
 - `apply overlays`
+- `apply overlay`
 - `apply snapshot`
 - `artifact`
 - `artifact inspect`
@@ -299,15 +311,6 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
-- `actions cancel` — Request cancellation of a remote workflow run (explicit confirmation)
-- `actions diagnose` — Diagnose GitHub repository identity, access and workflow discovery without mutation
-- `actions jobs` — Inspect run and job/step states
-- `actions logs` — Download remote workflow run logs as a bounded unextracted ZIP to private state
-- `actions rerun` — Request a new remote workflow attempt (explicit confirmation)
-- `actions resume` — Resume a recorded dispatch by its exact request ID
-- `actions runs` — List recent remote workflow runs from selected GitHub repository
-- `actions view` — Inspect one remote workflow run
-- `actions watch` — Poll a remote run in the foreground with finite limits (no daemon)
 
 ## Configuration documents
 

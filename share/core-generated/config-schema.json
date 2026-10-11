@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "digest": "ccf0866a16d4eb5ecd56bc7af063d914f4a26328bc90c05e54124a88e6bc1a87",
+  "digest": "a3b61c6175c067e3eae31c60872db1409093a4bad1ffea10f5c3cbe4f31b25e2",
   "documents": {
     "global": {
       "allow_unknown_top_level": [
@@ -338,44 +338,8 @@
       "option_id": "cli.option.repo"
     },
     {
-      "config_field_id": "cfg.cli.output.stdout_payload",
-      "option_id": "cli.option.stdout_payload"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.d768f66e"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.8de40fc6"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.801c2a1b"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.330e55a5"
-    },
-    {
-      "config_field_id": "cfg.cli.output.stdout_payload",
-      "option_id": "cli.option.stdout_payload.08f6d7fb.08f6d7fb"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.e386e6f0"
-    },
-    {
       "config_field_id": "cfg.project.repo_root",
       "option_id": "cli.option.repo.4a0b0890"
-    },
-    {
-      "config_field_id": "cfg.project.repo_root",
-      "option_id": "cli.option.repo.4a0b0890.a78e8ffd"
     },
     {
       "config_field_id": "cfg.project.repo_root",
@@ -386,80 +350,20 @@
       "option_id": "cli.option.repo.4a0b0890.4a0b0890"
     },
     {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.e41a2abc"
+      "config_field_id": "cfg.project.repo_root",
+      "option_id": "cli.option.repo.4a0b0890.a78e8ffd"
+    },
+    {
+      "config_field_id": "cfg.cli.output.stdout_payload",
+      "option_id": "cli.option.stdout_payload"
+    },
+    {
+      "config_field_id": "cfg.cli.output.stdout_payload",
+      "option_id": "cli.option.stdout_payload.08f6d7fb.08f6d7fb"
     },
     {
       "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.3e041f35"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.e1830bd5"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.a60a83e8"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.d00bc328"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.b23e4e52"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.f05f57ac"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.8e80eadd"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.d66910a7"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.1e73dce1"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.c7e46b65"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.bb1bac7c"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.97e4d1e5"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.466eb0f5"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.c4c8b4f5"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.a5925ad9"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.5157db6f"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.3824d31f"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.ce9409ea"
+      "option_id": "cli.option.target"
     },
     {
       "config_field_id": "cfg.workspace.target",
@@ -467,18 +371,114 @@
     },
     {
       "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.d2e4d438"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.f1fa4184"
+      "option_id": "cli.option.target.330e55a5.1e73dce1"
     },
     {
       "config_field_id": "cfg.workspace.target",
       "option_id": "cli.option.target.330e55a5.27766db2"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.330e55a5"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.3824d31f"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.3e041f35"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.466eb0f5"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.5157db6f"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.801c2a1b"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.8de40fc6"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.8e80eadd"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.97e4d1e5"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.a5925ad9"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.a60a83e8"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.b23e4e52"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.bb1bac7c"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.c4c8b4f5"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.c7e46b65"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.ce9409ea"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.d00bc328"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.d2e4d438"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.d66910a7"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.d768f66e"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.e1830bd5"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.e386e6f0"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.e41a2abc"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.f05f57ac"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.f1fa4184"
     }
   ],
-  "registry_digest": "19352b0480683f62dce215ca2a0625f5a705827508532cceb5a2b12d6ce353a0",
+  "registry_digest": "57166acf76fb6d103ab850bd4a03abb048325079b5b703fadadb802296e80ca0",
   "registry_schema_version": 1,
   "reserved_namespaces": [
     "devtool",

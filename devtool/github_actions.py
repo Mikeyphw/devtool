@@ -342,6 +342,48 @@ class GitHubActionsClient:
             raise GitHubActionsError("Invalid workflow run ID")
         return self._paged(slug,f"/repos/{slug}/actions/runs/{identity}/jobs","jobs",max_results=200)
 
+    # ACTIONS-04: artifact metadata remains scoped to the exact workflow run.
+    def run_artifacts(self, slug: str, identity: int) -> list[dict[str, Any]]:
+        slug = _slug(slug)
+        if type(identity) is not int or identity <= 0:
+            raise GitHubActionsError("Invalid workflow run ID")
+        return self._paged(slug, f"/repos/{slug}/actions/runs/{identity}/artifacts",
+                           "artifacts", max_results=1000)
+
+    def get_artifact(self, slug: str, identity: int) -> dict[str, Any]:
+        slug = _slug(slug)
+        if type(identity) is not int or identity <= 0:
+            raise GitHubActionsError("Invalid artifact ID")
+        return self._get(f"/repos/{slug}/actions/artifacts/{identity}")
+
+    def artifact_download_location(self, slug: str, identity: int) -> str:
+        """Read a redirect without following it with the GitHub Bearer token."""
+        slug = _slug(slug)
+        if type(identity) is not int or identity <= 0:
+            raise GitHubActionsError("Invalid artifact ID")
+        req = Request(f"{API_ORIGIN}/repos/{slug}/actions/artifacts/{identity}/zip",
+                      method="GET", headers={
+                          "Accept": "application/vnd.github+json",
+                          "X-GitHub-Api-Version": API_VERSION,
+                          "User-Agent": "devtool-actions-artifacts/1",
+                          **({"Authorization": f"Bearer {self._token}"} if self._token else {})})
+        try:
+            with self._opener.open(req, timeout=self.timeout) as response:
+                raise GitHubActionsError(f"GitHub artifact redirect unexpected HTTP {response.status}")
+        except HTTPError as exc:
+            if int(exc.code) == 302:
+                location = exc.headers.get("Location", "")
+                if not isinstance(location, str) or not location:
+                    raise GitHubActionsError("GitHub artifact download location is missing") from None
+                return location
+            if int(exc.code) == 410:
+                raise GitHubActionsError("GitHub artifact has expired") from None
+            if int(exc.code) == 404:
+                raise GitHubActionsError("GitHub artifact missing or inaccessible") from None
+            raise GitHubActionsError(f"GitHub artifact redirect HTTP {exc.code}") from None
+        except (URLError, OSError, TimeoutError):
+            raise GitHubActionsError("GitHub artifact redirect request failed") from None
+
     def run_mutation(self, slug: str, identity: int, action: str) -> dict[str, Any]:
         slug = _slug(slug)
         if type(identity) is not int or identity <= 0 or action not in ("cancel","rerun","rerun-failed-jobs"):
@@ -394,15 +436,16 @@ class GitHubActionsClient:
 def actions_baseline() -> dict[str, Any]:
     return {
         "schema": 1,
-        "phase": "ACTIONS-00+01+02+03",
+        "phase": "ACTIONS-00+01+02+03+04",
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify"],
         "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)"],
         "execution_integration": "bounded foreground run observation and restart-safe dispatch receipts; no background daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
         "remote_execution": False,
+        "artifact_downloads": "sha256-verified ZIP, no extraction, no release qualification",
         "token_persistence": False,
     }
 
@@ -413,7 +456,7 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
         return actions_baseline()
     request_id = str(getattr(args, "request_id", "") or "")
     explicit = str(getattr(args, "github_repo", "") or "")
-    if request_id and action in ("view", "jobs", "watch", "resume", "logs", "cancel", "rerun"):
+    if request_id and action in ("view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify"):
         from .actions_runs import _safe_receipt
         _, bound = _safe_receipt(request_id)
         slug = _slug(explicit) if explicit else _slug(bound["repository"])
@@ -457,7 +500,7 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
             checks.append({"name":"actions-workflows", "state":"not-accessible", "reason":str(exc)})
         return {"phase":"ACTIONS-03", "repository":slug,"authentication":authentication,
                 "ok":all(c["state"]=="accessible" for c in checks), "checks":checks}
-    if action in ("runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun"):
+    if action in ("runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify"):
         from .actions_runs import (select_run, snapshot, watch, _normalize_run, remote_logs, control_run)
         if action == "resume" and not str(getattr(args,"request_id","") or ""):
             raise GitHubActionsError("actions resume requires a prior --request-id (no guessed remote run)")
@@ -468,7 +511,18 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
         selected, identity, location, receipt=select_run(
             str(getattr(args,"github_repo","") or ""),getattr(args,"run_id",None),
             str(getattr(args,"request_id","") or ""),lambda:slug)
+        if action in ("artifacts", "download", "verify"):
+            from .actions_artifacts import artifact_list, download_artifact, verify_download
+            if action == "artifacts":
+                return artifact_list(client, selected, identity)
+            artifact_id = getattr(args, "artifact_id", None)
+            if artifact_id is None:
+                raise GitHubActionsError("Use --artifact-id ID for artifact download or verification")
+            if action == "download":
+                return download_artifact(client, selected, identity, artifact_id, local_root)
+            return verify_download(client, selected, identity, artifact_id, local_root)
         if action in ("view", "resume", "jobs"):
+
             return snapshot(client,selected,identity,location,receipt,with_jobs=action=="jobs")
         if action == "watch":
             return watch(client,selected,identity,location,receipt,
