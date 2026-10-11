@@ -21,15 +21,23 @@ def cancellation_recovery_evidence(report: Any) -> dict[str, Any]:
 
     for child in children:
         status = str(getattr(child, "status", "") or "")
-        exit_code = int(getattr(child, "exit_code", 0) or 0)
+        observed_exit = getattr(child, "exit_code", None)
+        # Never turn a missing, boolean, or malformed exit observation into 0.
+        exit_code = observed_exit if type(observed_exit) is int else None
         step_id = str(getattr(child, "step_id", "") or "")
         run_id = str(getattr(child, "run_id", "") or "")
         git_lineage = dict(getattr(child, "git_lineage", {}) or {})
         operational = dict(getattr(child, "operational_ownership", {}) or {})
-        if status == ExecutionStatus.SUCCEEDED.value and exit_code == 0:
+        if status == ExecutionStatus.SUCCEEDED.value and exit_code == 0 and step_id and run_id:
             reusable.append(step_id)
         else:
-            reason = "cancelled-before-scheduling" if exit_code == 130 and not run_id else status or "not-succeeded"
+            reason = (
+                "invalid-or-missing-exit-code" if exit_code is None
+                else "missing-child-identity" if not step_id or not run_id
+                else "cancelled-before-scheduling" if exit_code == 130 and not run_id
+                else "nonzero-success-exit" if status == ExecutionStatus.SUCCEEDED.value and exit_code != 0
+                else status or "not-succeeded"
+            )
             invalidated.append({"step_id": step_id, "status": status, "exit_code": exit_code, "reason": reason})
         if status == ExecutionStatus.CANCELLED.value or exit_code == 130:
             if run_id:
