@@ -76,8 +76,9 @@ def _match_record(child: Any, spec: FederatedArtifactInput) -> dict[str, Any]:
 
 
 def _verify_record(child: Any, spec: FederatedArtifactInput, record: Mapping[str, Any]) -> tuple[Path, dict[str, Any]]:
-    if str(getattr(child, "status", "") or "") != "succeeded" or int(getattr(child, "exit_code", 1) or 0) != 0:
-        raise FederationArtifactError(f"Artifact producer step {spec.producer_step!r} did not succeed")
+    exit_code = getattr(child, "exit_code", None)
+    if str(getattr(child, "status", "") or "") != "succeeded" or type(exit_code) is not int or exit_code != 0:
+        raise FederationArtifactError(f"Artifact producer step {spec.producer_step!r} has no successful terminal result")
     registry_id = str(record.get("id") or "").strip()
     digest = str(record.get("sha256") or "").strip().lower()
     artifact_type = str(record.get("type") or "").strip()
