@@ -32,9 +32,25 @@ def remote():
     return {'id':RID,'repository':{'full_name':SLUG},'status':'completed','conclusion':'success',
             'head_sha':SHA,'run_attempt':2,'workflow_id':99}
 def archive():
-    b=io.BytesIO()
-    with zipfile.ZipFile(b,'w') as z:z.writestr('build/app-debug.apk',b'APK SAMPLE')
-    return b.getvalue()
+    # The same fixture is generated separately for download and verification.
+    # ZipFile.writestr(str, ...) otherwise adds wall-clock timestamps, changing
+    # SHA-256 if the calls straddle a ZIP two-second timestamp boundary.
+    blob = io.BytesIO()
+    entry = zipfile.ZipInfo('build/app-debug.apk', date_time=(2020, 1, 1, 0, 0, 0))
+    with zipfile.ZipFile(blob, 'w') as archive:
+        archive.writestr(entry, b'APK SAMPLE')
+    return blob.getvalue()
+
+
+def test_artifact_fixture_is_stable_across_time(monkeypatch):
+    # Simulate the original source of flakiness without sleeping for a boundary.
+    import time
+    monkeypatch.setattr(time, 'time', lambda: 1_700_000_000)
+    first = archive()
+    monkeypatch.setattr(time, 'time', lambda: 1_700_000_061)
+    second = archive()
+    assert first == second
+    assert hashlib.sha256(first).hexdigest() == hashlib.sha256(second).hexdigest()
 def artifact(data=None):
     b=archive() if data is None else data
     return {'id':AID,'name':'android-debug','workflow_run':{'id':RID,'head_sha':SHA},

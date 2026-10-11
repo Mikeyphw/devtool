@@ -507,6 +507,17 @@ final class RootLogIndexer {
         } catch (Exception ignored) { return Integer.toHexString(value.hashCode()) + "000000000000000000000000"; }
     }
 
+    // Shared log/repository label helper. This is unrelated to removed phone-log mirroring.
+    private static String basename(String path) {
+        String value = clean(path).replace('\\', '/');
+        if (value.isEmpty()) return "";
+        while (value.endsWith("/") && value.length() > 1) {
+            value = value.substring(0, value.length() - 1);
+        }
+        int separator = value.lastIndexOf('/');
+        return value.substring(separator + 1);
+    }
+
     private static String safeId(String value) { return clean(value).replaceAll("[^A-Za-z0-9._-]", "_"); }
     private static String afterColon(String value) { int index = value.indexOf(':'); return index < 0 ? "" : value.substring(index + 1).trim(); }
     private static String stripCarriageReturn(String value) { return value.endsWith("\r") ? value.substring(0, value.length() - 1) : value; }
