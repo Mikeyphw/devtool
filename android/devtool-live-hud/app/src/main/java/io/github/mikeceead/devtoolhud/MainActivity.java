@@ -588,7 +588,7 @@ public final class MainActivity extends Activity {
         RootLogIndexer.refreshIfStale(this, 60_000L);
         content.addView(ui.sectionTitle("Log sources"));
         LinearLayout sourceControls = ui.surface();
-        sourceControls.addView(ui.text("Root indexing reads authoritative Devtool logs from Termux, chroots, HUD bridges and the phone mirror. Files are tailed incrementally; source logs are never modified.",
+        sourceControls.addView(ui.text("Root indexing reads authoritative Devtool logs from Termux, chroots and HUD bridges. Files are tailed incrementally; source logs are never modified.",
                 UiTypography.Role.BODY_SMALL, ui.palette.muted));
         if (!logIndexError.isEmpty()) sourceControls.addView(ui.text(logIndexError, UiTypography.Role.LABEL, ui.palette.red));
         sourceControls.addView(ui.button(RootLogIndexer.busy() ? "Indexing…" : "Refresh root logs", ui.palette.cyan, v -> {

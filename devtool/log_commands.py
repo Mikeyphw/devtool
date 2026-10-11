@@ -89,17 +89,6 @@ def _candidate_state_roots() -> list[Path]:
     return roots
 
 
-def _phone_log_mirror_dir() -> Path | None:
-    """Return the phone log mirror without violating explicit XDG isolation."""
-    configured = os.environ.get("DEVTOOL_PHONE_LOG_MIRROR_DIR")
-    if configured is not None:
-        text = configured.strip()
-        return Path(text).expanduser() if text else None
-    if os.environ.get("DEVTOOL_XDG_DIR", "").strip():
-        return None
-    return Path("/sdcard/.logs/devtool")
-
-
 def _path_text(path: Path) -> str:
     # Purely lexical: resolving an Android shared-storage path can itself block.
     return os.path.abspath(os.fspath(path.expanduser()))
@@ -171,10 +160,6 @@ def _all_log_paths() -> list[Path]:
     collect(fast_dirs)
     if not paths:
         collect(root / "logs" for root in slow_roots)
-    if not paths:
-        phone_mirror = _phone_log_mirror_dir()
-        if phone_mirror is not None:
-            collect([phone_mirror])
     return sorted(paths, key=lambda item: (_safe_mtime(item), str(item)))
 
 
@@ -438,11 +423,6 @@ def _accessible_log_path(path: Path | None, fallbacks: Iterable[Path]) -> Path |
             candidate = root / "logs" / basename
             if candidate.exists():
                 return candidate
-        mirror_root = _phone_log_mirror_dir()
-        if mirror_root is not None:
-            mirror = mirror_root / basename
-            if mirror.exists():
-                return mirror
     return None
 
 

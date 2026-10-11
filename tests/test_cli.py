@@ -356,7 +356,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(data_dir(), root / "data" / "devtool")
                 self.assertEqual(cache_dir(), root / "cache" / "devtool")
 
-    def test_phone_log_mirror_is_best_effort_copy_only(self) -> None:
+    def test_phone_mirror_configuration_is_retired(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             mirror = root / "sdcard-logs"
@@ -367,17 +367,14 @@ class CliTests(unittest.TestCase):
                     "DEVTOOL_PHONE_LOG_MIRROR_DIR": str(mirror),
                     "HOME": "/data/data/com.termux/files/home",
                     "PREFIX": "/data/data/com.termux/files/usr",
+                    "DEVTOOL_LOG_RETENTION_MODE": "sync",
                 },
                 clear=False,
             ):
                 path = write_log("phone log")
-                mirrored = mirror / path.name
-                mirrored_exists = mirrored.is_file()
-                mirrored_text = mirrored.read_text(encoding="utf-8") if mirrored_exists else ""
-
-        self.assertTrue(str(path).startswith(str(root / "xdg" / "logs")))
-        self.assertTrue(mirrored_exists)
-        self.assertEqual(mirrored_text, "phone log")
+                self.assertTrue(path.is_file())
+                self.assertEqual(path.read_text(encoding="utf-8"), "phone log")
+                self.assertFalse(mirror.exists())
 
     def test_parser_rejects_commit_even_on_failure_flag(self) -> None:
         parser = build_parser()

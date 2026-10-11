@@ -247,7 +247,6 @@ def isolate_devtool_runtime_env(
         "DEVTOOL_TASKER_DIR",
         "DEVTOOL_CLIPBOARD_SOCKET",
         "DEVTOOL_CLIPBOARD_FIFO",
-        "DEVTOOL_PHONE_LOG_MIRROR_DIR",
         "DEVTOOL_GLOBAL_CONFIG",
         "DEVTOOL_LOG_DIR",
         "DEVTOOL_EXECUTION_HISTORY_DIR",
@@ -285,7 +284,7 @@ def isolate_devtool_runtime_env(
     # runners.  The real validation process may itself run under Termux with
     # XDG_STATE_HOME and TZ inherited from a Python runner.  Without isolated XDG
     # roots those nested test invocations can create user-visible logs in
-    # ~/.local/state/devtool/logs or the phone mirror, often stamped in UTC.
+    # ~/.local/state/devtool/logs, often stamped in UTC.
     # Keep all test-created default logs inside pytest's tmp tree and reset the
     # runtime override before/after each test so one test cannot leak its chosen
     # log root into the next.

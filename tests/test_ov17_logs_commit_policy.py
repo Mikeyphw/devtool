@@ -39,36 +39,36 @@ def test_apply_log_identifier_uses_overlay_name() -> None:
     assert _log_identifier_for_args(args) == "devtool_ov17_logging_v1.zip"
 
 
-def test_log_listing_uses_phone_mirror_only_as_fallback(monkeypatch, tmp_path: Path) -> None:
+def test_log_listing_does_not_consult_obsolete_phone_mirror(monkeypatch, tmp_path: Path) -> None:
     state = tmp_path / "state"
     primary = state / "logs" / "20260907-100000-000001-primary.log"
     primary.parent.mkdir(parents=True)
     primary.write_text("primary", encoding="utf-8")
-    mirror = tmp_path / "mirror"
+    mirror = tmp_path / "old-phone-mirror"
     mirror.mkdir()
     (mirror / "20260907-110000-000001-mirror.log").write_text("mirror", encoding="utf-8")
     monkeypatch.setattr(logstore, "state_dir", lambda: state)
     logstore.set_log_dir_override(None)
     monkeypatch.setattr(log_commands, "_candidate_state_roots", lambda: [state])
-    monkeypatch.setattr(log_commands, "_phone_log_mirror_dir", lambda: mirror)
+    monkeypatch.setenv("DEVTOOL_PHONE_LOG_MIRROR_DIR", str(mirror))
     assert log_commands._all_log_paths() == [primary]
     primary.unlink()
-    assert log_commands._all_log_paths() == [mirror / "20260907-110000-000001-mirror.log"]
+    assert log_commands._all_log_paths() == []
 
 
-def test_phone_mirror_uses_same_retention_policy(monkeypatch, tmp_path: Path) -> None:
+def test_log_writes_never_create_phone_mirror(monkeypatch, tmp_path: Path) -> None:
     state = tmp_path / "state"
-    mirror = tmp_path / "mirror"
+    mirror = tmp_path / "unused-phone-mirror"
     monkeypatch.setattr(logstore, "state_dir", lambda: state)
     logstore.set_log_dir_override(None)
-    monkeypatch.setenv("DEVTOOL_LOG_MAX_FILES", "2")
-    monkeypatch.setenv("DEVTOOL_LOG_MAX_TOTAL_MB", "100")
     monkeypatch.setenv("DEVTOOL_PHONE_LOG_MIRROR_DIR", str(mirror))
     monkeypatch.setenv("PREFIX", "/data/data/com.termux/files/usr")
+    monkeypatch.setenv("DEVTOOL_LOG_RETENTION_MODE", "sync")
     for index in range(4):
         path = state / "logs" / f"20260907-10000{index}-000001.log"
         logstore.write_log(str(index), path)
-    assert len(list(mirror.glob("*.log"))) <= 2
+    assert len(list((state / "logs").glob("*.log"))) >= 1
+    assert not mirror.exists()
 
 
 def test_fzf_keeps_stderr_attached(monkeypatch) -> None:

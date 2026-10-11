@@ -12,11 +12,8 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -68,7 +65,6 @@ final class RootLogIndexer {
         private final Context context;
         private final DevtoolDatabase database;
         private final RootCommandBroker broker;
-        private final Set<String> mirroredFingerprints = new HashSet<>();
 
         Session(Context context) {
             this.context = context;
@@ -80,19 +76,16 @@ final class RootLogIndexer {
             if (!broker.available()) throw new IllegalStateException("Root access is unavailable");
             List<Source> sources = new ArrayList<>();
             sources.add(new Source("termux-xdg", "Termux Devtool", "devtool", RepositoryLocation.termux("~/"),
-                    new String[]{"~/.local/state/devtool", "~/.local/state/devtool-android-hud"}, false));
+                    new String[]{"~/.local/state/devtool", "~/.local/state/devtool-android-hud"}));
             sources.add(new Source("termux-tasker", "Termux Tasker bridge", "hud", RepositoryLocation.termux("~/"),
-                    new String[]{"/sdcard/Tasker/devtool"}, false));
+                    new String[]{"/sdcard/Tasker/devtool"}));
             for (String name : broker.discoverChrootNames()) {
                 sources.add(new Source("chroot-" + safeId(name), name + " Devtool", "chroot",
                         RepositoryLocation.chroot(name, "root", "/"),
-                        new String[]{"/home", "/root/.local/state/devtool", "/root/.local/state/devtool-android-hud"}, false));
+                        new String[]{"/home", "/root/.local/state/devtool", "/root/.local/state/devtool-android-hud"}));
             }
             sources.add(new Source("root-bridge", "Android root bridge", "bridge", RepositoryLocation.root("/"),
-                    new String[]{"/data/adb/devtool", "/data/local/tmp/devtool", "/data/data/io.github.mikeceead.devtoolhud/files"}, false));
-            // Mirror is deliberately last. Files already indexed from the authoritative Termux source are skipped.
-            sources.add(new Source("phone-mirror", "Phone log mirror", "mirror", RepositoryLocation.root("/"),
-                    new String[]{"/sdcard/.logs/devtool"}, true));
+                    new String[]{"/data/adb/devtool", "/data/local/tmp/devtool", "/data/data/io.github.mikeceead.devtoolhud/files"}));
             for (Source source : sources) scanSource(source);
         }
 
@@ -106,9 +99,6 @@ final class RootLogIndexer {
             int seen = 0;
             for (FileStat file : parseFileStats(result.bytes)) {
                 if (++seen > MAX_FILES_PER_SOURCE) break;
-                String fingerprint = file.basename() + "\u001f" + file.size + "\u001f" + file.modifiedAt;
-                if (source.mirror && mirroredFingerprints.contains(fingerprint)) continue;
-                if (file.path.endsWith(".log")) mirroredFingerprints.add(fingerprint);
                 scanFile(source, file);
             }
         }
@@ -393,7 +383,6 @@ final class RootLogIndexer {
                 .append("-path '*/.local/state/devtool/events.jsonl' -o ")
                 .append("-path '*/.local/state/devtool-android-hud/events.jsonl' -o ")
                 .append("-path '*/Tasker/devtool/events.jsonl' -o ")
-                .append("-path '*/.logs/devtool/*.log' -o ")
                 .append("-path '/data/adb/devtool/*.log' -o ")
                 .append("-path '/data/local/tmp/devtool/*.log' -o ")
                 .append("-path '/data/data/io.github.mikeceead.devtoolhud*/files/*.log' -o ")
@@ -520,7 +509,6 @@ final class RootLogIndexer {
 
     private static String safeId(String value) { return clean(value).replaceAll("[^A-Za-z0-9._-]", "_"); }
     private static String afterColon(String value) { int index = value.indexOf(':'); return index < 0 ? "" : value.substring(index + 1).trim(); }
-    private static String basename(String path) { String clean = clean(path); int slash = clean.lastIndexOf('/'); return slash < 0 ? clean : clean.substring(slash + 1); }
     private static String stripCarriageReturn(String value) { return value.endsWith("\r") ? value.substring(0, value.length() - 1) : value; }
     private static String first(String... values) { for (String value : values) if (!clean(value).isEmpty()) return clean(value); return ""; }
     private static String firstNonAuto(String... values) { for (String value : values) { String clean = clean(value); if (!clean.isEmpty() && !clean.equalsIgnoreCase("auto")) return clean; } return "auto"; }
@@ -533,9 +521,8 @@ final class RootLogIndexer {
         final String id, name, type;
         final RepositoryLocation location;
         final String[] roots;
-        final boolean mirror;
-        Source(String id, String name, String type, RepositoryLocation location, String[] roots, boolean mirror) {
-            this.id = id; this.name = name; this.type = type; this.location = location; this.roots = roots; this.mirror = mirror;
+        Source(String id, String name, String type, RepositoryLocation location, String[] roots) {
+            this.id = id; this.name = name; this.type = type; this.location = location; this.roots = roots;
         }
     }
 
@@ -544,6 +531,5 @@ final class RootLogIndexer {
         long size;
         long modifiedAt;
         String path = "";
-        String basename() { return RootLogIndexer.basename(path); }
     }
 }

@@ -32,9 +32,6 @@ The previous `SharedPreferences` run array is migrated once. Repository refreshe
 - the Termux Tasker/HUD event stream
 - supported `chrootctl` chroots
 - Android/root bridge log locations
-- `/sdcard/.logs/devtool` as a final mirror fallback
-
-The mirror source is processed last and matching authoritative files are deduplicated during a scan.
 
 Each file cursor stores source ID, path, inode, byte offset, size, modification time, parser type, and a partial trailing line. A refresh:
 

@@ -1,6 +1,6 @@
 """Recoverable, single-worker log rotation off the Termux foreground path.
 
-The foreground always writes/fsyncs and mirrors the authoritative log first.
+The foreground always writes/fsyncs the authoritative XDG log first.
 Only the existing logstore._rotate_log_root -> LIFE path can delete logs.
 """
 from __future__ import annotations

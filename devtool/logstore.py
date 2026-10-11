@@ -4,7 +4,6 @@ from datetime import datetime
 import os
 from pathlib import Path
 import re
-import shutil
 import time
 import uuid
 
@@ -56,17 +55,6 @@ def new_log_path(identifier: str | None = None) -> Path:
     return logs_dir() / f"{stamp}{'-' + suffix if suffix else ''}.log"
 
 
-def _is_phone_termux() -> bool:
-    prefix = os.environ.get("PREFIX", "")
-    home = os.environ.get("HOME", "")
-    return bool(
-        os.environ.get("TERMUX_VERSION")
-        or os.environ.get("TERMUX_APP_PID")
-        or prefix.startswith("/data/data/com.termux/")
-        or home.startswith("/data/data/com.termux/files/home")
-    )
-
-
 def _fsync_directory(path: Path) -> None:
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -78,47 +66,6 @@ def _fsync_directory(path: Path) -> None:
         pass
     finally:
         os.close(fd)
-
-
-def _durable_copy(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temp = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.tmp"
-    try:
-        with source.open("rb") as src, temp.open("wb") as dst:
-            shutil.copyfileobj(src, dst, length=1024 * 1024)
-            dst.flush()
-            os.fsync(dst.fileno())
-        with source.open("rb") as src:
-            try:
-                shutil.copystat(source, temp, follow_symlinks=True)
-            except OSError:
-                pass
-        os.replace(temp, destination)
-        _fsync_directory(destination.parent)
-    finally:
-        try:
-            temp.unlink()
-        except FileNotFoundError:
-            pass
-
-
-def _mirror_log_to_phone(path: Path) -> None:
-    if not _is_phone_termux() or path.suffix != ".log":
-        return
-    mirror_root = Path(os.environ.get("DEVTOOL_PHONE_LOG_MIRROR_DIR", "/sdcard/.logs/devtool")).expanduser()
-    try:
-        resolved = path.resolve(strict=False)
-        logs_root = logs_dir().resolve(strict=False)
-        if not (resolved == logs_root or logs_root in resolved.parents):
-            return
-        mirrored = mirror_root / path.name
-        _durable_copy(path, mirrored)
-        _schedule_retention(mirror_root, protected=mirrored)
-    except OSError:
-        # Mirroring is secondary persistence. The authoritative XDG log remains
-        # available and callers should not lose a completed command because
-        # shared storage is temporarily unavailable.
-        pass
 
 
 def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
@@ -677,14 +624,11 @@ def write_log(text: str, path: Path | str | None = None, *, append: bool = False
     _fsync_directory(target.parent)
     _bound_one_log(target)
     _rotate_logs(protected=target)
-    # Mirror only after the authoritative file has been durably written and
-    # bounded; even a header-only first write therefore has a durable mirror.
-    _mirror_log_to_phone(target)
     return target
 
 
 def finalize_log(path: Path | str) -> Path:
-    """Durably seal, bound, rotate and mirror a live-streamed log."""
+    """Durably seal and bound a live-streamed authoritative log."""
     target = Path(path)
     try:
         with target.open("ab") as handle:
@@ -695,7 +639,6 @@ def finalize_log(path: Path | str) -> Path:
         return target
     _bound_one_log(target)
     _rotate_logs(protected=target)
-    _mirror_log_to_phone(target)
     return target
 
 

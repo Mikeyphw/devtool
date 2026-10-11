@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 from devtool.cli import _doctor, build_parser, main
 from devtool.config import generate_template, minimal_global_config_template
 from devtool.models import ProjectConfig
-from devtool.log_commands import _all_log_paths, _candidate_state_roots, _phone_log_mirror_dir
+from devtool.log_commands import _all_log_paths, _candidate_state_roots
 from devtool.proot_distro_runner import ProotRunnerConfig
 from devtool.termux_chroot_runner import HOST_ONLY_COMMANDS
 from devtool.termux_diagnostics import (
@@ -376,36 +376,24 @@ class TermuxFinalDiagnosticsTests(unittest.TestCase):
         default_tasker.assert_not_called()
         read_active.assert_not_called()
 
-    def test_explicit_xdg_log_isolation_disables_implicit_phone_mirror(self) -> None:
+    def test_explicit_xdg_log_isolation_ignores_obsolete_phone_mirror(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             isolated = Path(tmp) / "isolated"
             log_dir = isolated / "logs"
             log_dir.mkdir(parents=True)
             expected = log_dir / "20260814-180000-000001.log"
             expected.write_text("isolated", encoding="utf-8")
+            mirror = Path(tmp) / "mirror"
+            mirror.mkdir()
+            (mirror / "20260814-180001-000002.log").write_text("old", encoding="utf-8")
             env = {
                 "DEVTOOL_XDG_DIR": str(isolated),
+                "DEVTOOL_PHONE_LOG_MIRROR_DIR": str(mirror),
                 "ANDROID_ROOT": "/system",
                 "ANDROID_DATA": "/data",
             }
             with patch.dict("os.environ", env, clear=True):
-                self.assertIsNone(_phone_log_mirror_dir())
                 self.assertEqual(_all_log_paths(), [expected])
-
-    def test_explicit_phone_mirror_can_opt_back_in_under_xdg_isolation(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            isolated = Path(tmp) / "isolated"
-            mirror = Path(tmp) / "phone-mirror"
-            mirror.mkdir(parents=True)
-            mirrored = mirror / "20260814-180001-000002.log"
-            mirrored.write_text("mirror", encoding="utf-8")
-            env = {
-                "DEVTOOL_XDG_DIR": str(isolated),
-                "DEVTOOL_PHONE_LOG_MIRROR_DIR": str(mirror),
-            }
-            with patch.dict("os.environ", env, clear=True):
-                self.assertEqual(_phone_log_mirror_dir(), mirror)
-                self.assertEqual(_all_log_paths(), [mirrored])
 
 class TermuxFinalCliContractTests(unittest.TestCase):
     def test_termux_command_is_host_only(self) -> None:

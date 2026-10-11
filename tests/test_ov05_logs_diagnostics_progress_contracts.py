@@ -51,7 +51,7 @@ def test_watch_interrupted_rerun_is_authoritative(monkeypatch, tmp_path: Path) -
     assert watch.watch_loop(tmp_path, lambda: next(runs), interval=0.2) == 130
 
 
-def test_log_rotation_and_live_finalize_mirror(monkeypatch, tmp_path: Path) -> None:
+def test_log_rotation_and_live_finalize_without_phone_mirror(monkeypatch, tmp_path: Path) -> None:
     state = tmp_path / "state"
     mirror = tmp_path / "mirror"
     monkeypatch.setattr(logstore, "state_dir", lambda: state)
@@ -60,6 +60,7 @@ def test_log_rotation_and_live_finalize_mirror(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setenv("DEVTOOL_LOG_MAX_TOTAL_MB", "1")
     monkeypatch.setenv("PREFIX", "/data/data/com.termux/files/usr")
     monkeypatch.setenv("DEVTOOL_PHONE_LOG_MIRROR_DIR", str(mirror))
+    monkeypatch.setenv("DEVTOOL_LOG_RETENTION_MODE", "sync")
     paths = []
     for index in range(3):
         path = state / "logs" / f"20260815-12000{index}-000000.log"
@@ -71,9 +72,10 @@ def test_log_rotation_and_live_finalize_mirror(monkeypatch, tmp_path: Path) -> N
         handle.write("\nfinal-output")
     logstore.finalize_log(newest)
     mirrored = mirror / newest.name
-    assert mirrored.is_file()
-    assert "final-output" in mirrored.read_text(encoding="utf-8")
-    assert mirrored.stat().st_size <= 11000
+    assert not mirrored.exists()
+    assert not mirror.exists()
+    assert "final-output" in newest.read_text(encoding="utf-8")
+    assert newest.stat().st_size <= 11000
 
 
 def test_latest_log_searches_all_configured_roots_deterministically(monkeypatch, tmp_path: Path) -> None:
@@ -87,7 +89,6 @@ def test_latest_log_searches_all_configured_roots_deterministically(monkeypatch,
     # intentionally considers the primary logs_dir plus configured roots.
     monkeypatch.setattr(log_commands, "logs_dir", lambda: first_root / "logs")
     monkeypatch.setattr(log_commands, "_candidate_state_roots", lambda: [first_root, second_root])
-    monkeypatch.setattr(log_commands, "_phone_log_mirror_dir", lambda: None)
     assert log_commands.resolve_log_path("latest") == new
 
 

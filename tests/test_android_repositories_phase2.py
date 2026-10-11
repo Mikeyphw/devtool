@@ -174,7 +174,8 @@ def test_root_log_indexer_is_incremental_bounded_and_zero_count_safe() -> None:
     assert "dd if=" in indexer and "skip=" in indexer and "count=" in indexer
     assert '"termux-xdg"' in indexer
     assert '"termux-tasker"' in indexer
-    assert '"phone-mirror"' in indexer
+    assert '"phone-mirror"' not in indexer
+    assert '/sdcard/.logs/devtool' not in indexer
     assert '"chroot-" + safeId(name)' in indexer
     assert 'clean.matches(".*\\\\b0\\\\s+(errors?|failed)\\\\b.*")' in indexer
     assert "upsertFileCursor" in database
