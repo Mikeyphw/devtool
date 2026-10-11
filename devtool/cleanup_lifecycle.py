@@ -1135,7 +1135,16 @@ def provider_cleanup_receipt_from_results(
             ))
             failed = True
             continue
-        returncode = int(getattr(result, "returncode", 1) or 0)
+        raw_returncode = getattr(result, "returncode", None)
+        try:
+            # None, bool and non-numeric provider results are not proof of exit 0.
+            if raw_returncode is None or isinstance(raw_returncode, bool):
+                raise ValueError("provider did not report an integer exit code")
+            if isinstance(raw_returncode, str) and not raw_returncode.strip().lstrip("-").isdigit():
+                raise ValueError("provider returned a non-integer exit code")
+            returncode = int(raw_returncode)
+        except (ValueError, TypeError, OverflowError):
+            returncode = 1
         skipped = bool(getattr(result, "skipped", False))
         status = "skipped" if skipped else "applied" if returncode == 0 else "failed"
         if status == "failed":
