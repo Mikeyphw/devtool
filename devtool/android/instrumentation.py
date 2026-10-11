@@ -564,13 +564,16 @@ def _execution_classification(output: str, returncode: int) -> tuple[dict[str, i
     not a failed test.  Preserve zero executed/failed tests while still failing
     the instrumentation action through ``returncode``/``failure_kind``.
     """
+    if type(returncode) is not int:
+        counts = _parse_counts(output)
+        return counts, _parse_failed_ids(output), "runner-error", "Instrumentation runner has no authoritative integer process exit code"
     if _instrumentation_process_crash(output):
         counts = _parse_counts(output)
         counts.update({"executed": 0, "passed": 0, "failed": 0, "skipped": 0})
         return counts, [], "setup-crash", "Instrumentation process crashed before test execution completed"
     counts = _parse_counts(output)
     failed_ids = _parse_failed_ids(output)
-    if int(returncode or 0) != 0 and counts["failed"] == 0:
+    if returncode != 0 and counts["failed"] == 0:
         return counts, failed_ids, "runner-error", "Instrumentation runner exited unsuccessfully"
     if counts["failed"] > 0:
         return counts, failed_ids, "test-failure", ""
