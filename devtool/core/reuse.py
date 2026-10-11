@@ -363,6 +363,21 @@ def _local_host_identity() -> str:
     })
 
 
+def is_git_mutation_spec(spec: Any) -> bool:
+    """True only for the exact Git mutations the RER fingerprint marks non-reusable.
+
+    Shared with the scheduler so historical candidate scanning is unnecessary
+    when an entire run_specs batch consists solely of these mutations.
+    """
+    argv = getattr(spec, "argv", ()) or ()
+    return (
+        str(getattr(spec, "name", "") or "") in {"git-add", "git-commit", "git-index-reconcile"}
+        and len(argv) >= 2
+        and Path(str(argv[0])).name in {"git", "git.exe"}
+        and str(argv[1]) in {"add", "commit", "reset"}
+    )
+
+
 def contribution_from_spec(spec: Any, *, repo_root: Path | None = None) -> RunnerReuseContribution:
     metadata = dict(getattr(spec, "metadata", {}) or {})
     cwd = Path(str(getattr(spec, "cwd", "") or (repo_root or Path.cwd()))).expanduser().resolve(strict=False)
@@ -373,12 +388,7 @@ def contribution_from_spec(spec: Any, *, repo_root: Path | None = None) -> Runne
     # repeat that work after every index mutation. Keep the canonical scheduler
     # boundary and a truthful non-reusable fingerprint, but do not perform an
     # expensive or misleading pre-mutation source scan for these nodes.
-    git_mutation = (
-        str(getattr(spec, "name", "") or "") in {"git-add", "git-commit", "git-index-reconcile"}
-        and len(getattr(spec, "argv", ()) or ()) >= 2
-        and Path(str(spec.argv[0])).name in {"git", "git.exe"}
-        and str(spec.argv[1]) in {"add", "commit", "reset"}
-    )
+    git_mutation = is_git_mutation_spec(spec)
     if git_mutation:
         manifest = InputManifest(
             (), InputProvenance.CONSERVATIVE_FALLBACK, str(cwd),

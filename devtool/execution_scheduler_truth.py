@@ -21,6 +21,7 @@ from .core.reuse import (
     annotate_spec_reuse,
     content_identity,
     fingerprint_for_spec,
+    is_git_mutation_spec,
     qualify_candidate,
 )
 from .logstore import state_dir
@@ -171,7 +172,14 @@ def decision_for_spec(
 
 
 def decisions_for_specs(config: ProjectConfig, specs: Sequence[CommandSpec]) -> dict[int, SchedulerReuseDecision]:
-    history = ReuseHistoryIndex.from_history_directory(execution_history_root())
+    # These exact Git commands are non-reusable and must always execute. Their
+    # fingerprints and canonical RUN decisions still pass through the scheduler,
+    # but there is no candidate that could justify skipping a mutation. Avoid
+    # decoding every retained EXO execution.json file for each Git transaction
+    # (staging/commit and reconciliation are separate run_specs batches).
+    # Mixed and normal reusable batches retain the full history qualification.
+    git_mutations_only = bool(specs) and all(is_git_mutation_spec(spec) for spec in specs)
+    history = ReuseHistoryIndex() if git_mutations_only else ReuseHistoryIndex.from_history_directory(execution_history_root())
     return {
         index: decision_for_spec(spec, spec_index=index, repo_root=config.repo_root, history=history)
         for index, spec in enumerate(specs, start=1)

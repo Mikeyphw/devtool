@@ -1651,6 +1651,10 @@ def _run_process_live(
         if verbose:
             tracker.enabled = False
 
+    git_trace_enabled = bool(structured_state is not None and structured_state.get("git_trace_enabled"))
+    trace_start = time.perf_counter() if git_trace_enabled else 0.0
+    if git_trace_enabled and structured_state is not None:
+        structured_state["git_trace"] = {}
     try:
         proc = subprocess.Popen(
             argv,
@@ -1705,6 +1709,9 @@ def _run_process_live(
             _close_live_log()
             return 127, str(exc)
 
+    trace_after_spawn = time.perf_counter() if git_trace_enabled else 0.0
+    if git_trace_enabled and structured_state is not None:
+        structured_state["git_trace"]["spawn_seconds"] = trace_after_spawn - trace_start
     if execution_adapter is not None:
         try:
             process_id = execution_adapter.process_started(pid=int(proc.pid), argv=argv, cwd=cwd)
@@ -1715,6 +1722,10 @@ def _run_process_live(
             # Execution telemetry must never make the child process itself fail.
             pass
 
+    if git_trace_enabled and structured_state is not None:
+        trace_after_event = time.perf_counter()
+        structured_state["git_trace"]["start_event_seconds"] = trace_after_event - trace_after_spawn
+        structured_state["git_trace"]["remaining_live_seconds"] = 0.0
     output_parts: list[str] = []
     go_test_stream = None
     if progress_parser == "go-test-json":
@@ -2059,6 +2070,8 @@ def _run_process_live(
         _finalize_structured_state()
         return 130, "".join(output_parts)
     finally:
+        if git_trace_enabled and structured_state is not None:
+            structured_state["git_trace"]["remaining_live_seconds"] = time.perf_counter() - trace_after_event
         if presentation is not None:
             presentation.stop()
         cancel_watch_stop.set()
@@ -2381,6 +2394,11 @@ def run_specs(
     workflow_node_status: dict[str, str] = dict(workflow_initial_statuses or {})
     workflow_fail_fast = bool(workflow_initial_fail_fast)
     workflow_cancelled = bool(workflow_initial_cancelled)
+    git_timing_enabled = str(os.environ.get("DEVTOOL_GIT_TIMING") or "").strip().lower() in {"1", "true", "yes"}
+    git_timing_batch = git_timing_enabled and bool(specs) and all(
+        str(spec.name or "") in {"git-add", "git-commit", "git-index-reconcile"} for spec in specs
+    )
+    git_scheduler_start = time.perf_counter()
     try:
         from .execution_scheduler_truth import decisions_for_specs
         exec_scheduler_decisions = decisions_for_specs(config, specs)
@@ -2390,6 +2408,10 @@ def run_specs(
         # to suppress real execution when history is unavailable or corrupt.
         exec_scheduler_decisions = {}
         exec_scheduler_error = f"{type(exc).__name__}: {exc}"
+
+    git_scheduler_elapsed = time.perf_counter() - git_scheduler_start
+    if git_timing_batch:
+        print(f"Devtool Git timing: scheduler={git_scheduler_elapsed:.3f}s batch={len(specs)}", flush=True)
 
     def _metadata_int(value: object, default: int) -> int:
         try:
@@ -2768,6 +2790,9 @@ def run_specs(
         output = ""
         process_output = ""
         structured_process_state: dict[str, object] = {}
+        git_trace_spec = git_timing_enabled and spec.name in {"git-add", "git-commit", "git-index-reconcile"}
+        if git_trace_spec:
+            structured_process_state["git_trace_enabled"] = True
         command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
         try:
             # AOPS03 secret boundary: signing password values are deliberately
@@ -2916,6 +2941,17 @@ def run_specs(
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
         process_output = output
         duration = time.perf_counter() - started
+        if git_trace_spec:
+            trace = structured_process_state.get("git_trace")
+            trace = trace if isinstance(trace, dict) else {}
+            trace_summary = (
+                f"Devtool Git timing: stage={spec.name} total={duration:.3f}s "
+                f"spawn={float(trace.get('spawn_seconds') or 0):.3f}s "
+                f"process-start-event={float(trace.get('start_event_seconds') or 0):.3f}s "
+                f"remaining-live={float(trace.get('remaining_live_seconds') or 0):.3f}s"
+            )
+            print(trace_summary, flush=True)
+            output = output + ("\n" if output and not output.endswith("\n") else "") + trace_summary + "\n"
         result_metadata = dict(spec.metadata)
         if result_metadata.get("ssh_return_manifest"):
             from .ssh_returns import load_return_state, publish_return_transfer_event
