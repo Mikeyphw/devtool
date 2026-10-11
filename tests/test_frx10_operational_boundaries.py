@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,7 +22,7 @@ from devtool.federation_operations import (
 )
 from devtool.hooks.engine import EmbeddedHookEngine
 from devtool.hooks.models import HookExecutionRequest
-from devtool.invocation_origin import invocation_metadata_for_args
+from devtool.invocation_origin import trusted_invocation_context, invocation_metadata_for_args
 from devtool.models import CommandSpec
 from devtool.repository_identity import build_repository_identity
 from devtool.transactions import create_apply_transaction, mark_transaction_completed, transaction_root
@@ -68,6 +69,27 @@ def _fed_env(child: Path, run_id: str = "fed-child-1") -> dict[str, str]:
     }
 
 
+@contextmanager
+def _trusted_child_federation(child: Path, run_id: str):
+    # The implementation refuses public DEVTOOL_FEDERATION_* routing hints as
+    # authoritative lineage. These historical FRX10 tests must exercise the
+    # private bridge context rather than implicitly spoofing it from a shell.
+    with mock.patch.dict(os.environ, _fed_env(child, run_id), clear=False):
+        with trusted_invocation_context(source="federation", command="child-execution"):
+            yield
+
+
+def test_untrusted_federation_environment_cannot_claim_operational_ownership(tmp_path: Path) -> None:
+    from devtool.federation_ownership import federation_operational_owner_from_environment
+    _, child = _parent(tmp_path)
+    with mock.patch.dict(os.environ, _fed_env(child, "untrusted-child"), clear=False):
+        assert federation_operational_owner_from_environment(child) == {}
+        with trusted_invocation_context(source="federation", command="child-execution"):
+            owner = federation_operational_owner_from_environment(child)
+            assert owner["child_run_id"] == "untrusted-child"
+            assert owner["owner_root"] == str(child.resolve())
+
+
 def test_artifact_transaction_validation_and_hook_state_are_child_owned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     parent, child = _parent(tmp_path)
     config = _load(parent)
@@ -79,7 +101,7 @@ def test_artifact_transaction_validation_and_hook_state_are_child_owned(tmp_path
     # the outer apply session or it can mistake the parent gate for child state.
     monkeypatch.delenv("DEVTOOL_VALIDATION_STATE_REPO_ROOT", raising=False)
 
-    with mock.patch.dict(os.environ, _fed_env(child, run_id), clear=False):
+    with _trusted_child_federation(child, run_id):
         artifact = child / "out.txt"
         artifact.write_text("artifact", encoding="utf-8")
         records = register_paths(child, [artifact], metadata={"producer": "test"})
@@ -172,7 +194,7 @@ def test_parent_validation_never_satisfies_child_operational_validation(tmp_path
     )
     assert Path(parent_session.repo_root) == parent.resolve()
 
-    with mock.patch.dict(os.environ, _fed_env(child, "child-validation"), clear=False):
+    with _trusted_child_federation(child, "child-validation"):
         child_config = _load(child)
         child_session = create_session(
             child_config,
@@ -249,7 +271,7 @@ def test_collector_rejects_mismatched_child_owner_metadata(tmp_path: Path, monke
     resolution = resolve_federated_repository(config, "child")
     monkeypatch.setenv("DEVTOOL_XDG_DIR", str(tmp_path / "xdg"))
     artifact = child / "bad.txt"; artifact.write_text("x", encoding="utf-8")
-    with mock.patch.dict(os.environ, _fed_env(child, "child-good"), clear=False):
+    with _trusted_child_federation(child, "child-good"):
         register_paths(child, [artifact])
     registry = load_registry(child)
     registry["items"][0]["metadata"]["federation_owner"]["child_run_id"] = "wrong"
