@@ -324,13 +324,15 @@ def build_android_environment_request(
     ndk, ndk_source = resolve_ndk_requirement(project, sentinel, ndk_override, prefer_installed=False)
     cmake, cmake_source = resolve_cmake_requirement(project, sentinel, cmake_override, prefer_installed=False)
     compile_sdk = project.compile_sdk
-    explicit_platform = str(android.get("platform") or android.get("android_platform") or "").strip()
-    if explicit_platform and explicit_platform != "auto":
+    explicit_raw = android.get("platform", android.get("android_platform", ""))
+    explicit_platform = str(explicit_raw if explicit_raw is not None else "").strip()
+    if explicit_platform and explicit_platform.lower() != "auto":
         normalized = explicit_platform.removeprefix("android-")
-        try:
-            compile_sdk = int(normalized)
-        except ValueError:
-            pass
+        # Explicit authority is not a hint. An invalid override must never
+        # silently borrow the valid Gradle compileSdk from the project.
+        if not re.fullmatch(r"[0-9]+", normalized) or int(normalized) <= 0:
+            raise ValueError(f"invalid explicit Android platform override: {explicit_platform!r}")
+        compile_sdk = int(normalized)
     platform_name = f"android-{compile_sdk}" if compile_sdk else ""
     context_id, plan_id, jdk_identity, jdk_home, launcher_identity = _gradle_refs(gradle_metadata)
     action_name = str(action or "build").strip().lower()
