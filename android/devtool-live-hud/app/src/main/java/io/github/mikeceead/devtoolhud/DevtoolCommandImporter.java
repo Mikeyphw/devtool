@@ -149,7 +149,26 @@ final class DevtoolCommandImporter {
         }
 
         String operation = tokens.get(index++);
-        if (!DevtoolCommandBuilder.isOperation(operation)) {
+        if (operation.equals("actions") && index + 1 < tokens.size()
+                && tokens.get(index).equals("pipeline")
+                && (tokens.get(index + 1).equals("plan") || tokens.get(index + 1).equals("run")
+                    || tokens.get(index + 1).equals("status") || tokens.get(index + 1).equals("resume"))) {
+            config.operation = "pipeline-" + tokens.get(index + 1);
+            index += 2;
+            while (index < tokens.size() && !isConnector(tokens.get(index))) {
+                String token = tokens.get(index++);
+                if (token.equals("--file")) {
+                    config.pipelineFile = requireValue(tokens, index++, token);
+                } else if (token.equals("--pipeline-id")) {
+                    config.pipelineId = requireValue(tokens, index++, token);
+                } else if (token.equals("--yes")) {
+                    config.assumeYes = true;
+                } else if (!token.equals("--json")) {
+                    notices.add("Unsupported pipeline argument not imported: " + token);
+                }
+            }
+            // Pipeline fields are validated again by DevtoolCommandBuilder.
+        } else if (!DevtoolCommandBuilder.isOperation(operation)) {
             config.operation = "custom";
             List<String> custom = new ArrayList<>();
             custom.add(renderToken(operation));
@@ -397,6 +416,10 @@ final class DevtoolCommandImporter {
     private static int findKnownOperation(List<String> tokens, int start) {
         for (int i = start; i < tokens.size(); i++) {
             if (isConnector(tokens.get(i))) return -1;
+            if (tokens.get(i).equals("actions") && i + 2 < tokens.size()
+                    && tokens.get(i + 1).equals("pipeline")
+                    && (tokens.get(i + 2).equals("plan") || tokens.get(i + 2).equals("run")
+                        || tokens.get(i + 2).equals("status") || tokens.get(i + 2).equals("resume"))) return i;
             if (DevtoolCommandBuilder.isOperation(tokens.get(i))) return i;
         }
         return -1;

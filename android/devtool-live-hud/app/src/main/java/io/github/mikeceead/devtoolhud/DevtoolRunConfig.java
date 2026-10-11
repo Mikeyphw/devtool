@@ -10,6 +10,8 @@ final class DevtoolRunConfig {
     String workdir = "";
     String target = "s3atelier_avalonia_S3Atelier_Modern";
     String artifact = "$HOME/Downloads/overlay.zip";
+    String pipelineFile = ".devtool/actions-pipeline.json";
+    String pipelineId = "";
     String commitMessage = "Apply overlay";
     String customArguments = "";
     String environmentAssignments = "";
@@ -76,6 +78,8 @@ final class DevtoolRunConfig {
         config.workdir = workdir;
         config.target = target;
         config.artifact = artifact;
+        config.pipelineFile = pipelineFile;
+        config.pipelineId = pipelineId;
         config.commitMessage = commitMessage;
         config.customArguments = customArguments;
         config.environmentAssignments = environmentAssignments;

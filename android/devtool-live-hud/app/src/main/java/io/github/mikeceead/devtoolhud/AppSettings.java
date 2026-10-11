@@ -19,6 +19,8 @@ final class AppSettings {
     private static final String KEY_RUN_WORKDIR = "run_workdir";
     private static final String KEY_TARGET = "target";
     private static final String KEY_ARTIFACT = "artifact";
+    private static final String KEY_PIPELINE_FILE = "pipeline_file";
+    private static final String KEY_PIPELINE_ID = "pipeline_id";
     private static final String KEY_COMMIT_MESSAGE = "commit_message";
     private static final String KEY_CUSTOM_ARGUMENTS = "custom_arguments";
     private static final String KEY_ENVIRONMENT = "environment_assignments";
@@ -180,6 +182,8 @@ final class AppSettings {
         config.workdir = p.getString(KEY_RUN_WORKDIR, config.workdir);
         config.target = p.getString(KEY_TARGET, config.target);
         config.artifact = p.getString(KEY_ARTIFACT, config.artifact);
+        config.pipelineFile = p.getString(KEY_PIPELINE_FILE, config.pipelineFile);
+        config.pipelineId = p.getString(KEY_PIPELINE_ID, config.pipelineId);
         config.commitMessage = p.getString(KEY_COMMIT_MESSAGE, config.commitMessage);
         config.customArguments = p.getString(KEY_CUSTOM_ARGUMENTS, config.customArguments);
         config.environmentAssignments = p.getString(KEY_ENVIRONMENT, config.environmentAssignments);
@@ -221,6 +225,8 @@ final class AppSettings {
             config.workdir = value.optString("workdir", config.workdir);
             config.target = value.optString("target", config.target);
             config.artifact = value.optString("artifact", config.artifact);
+            config.pipelineFile = value.optString("pipeline_file", config.pipelineFile);
+            config.pipelineId = value.optString("pipeline_id", config.pipelineId);
             config.commitMessage = value.optString("commit_message", config.commitMessage);
             config.customArguments = value.optString("custom_arguments", config.customArguments);
             config.environmentAssignments = value.optString("environment_assignments", config.environmentAssignments);
@@ -265,6 +271,8 @@ final class AppSettings {
             value.put("workdir", config.workdir);
             value.put("target", config.target);
             value.put("artifact", config.artifact);
+            value.put("pipeline_file", config.pipelineFile);
+            value.put("pipeline_id", config.pipelineId);
             value.put("commit_message", config.commitMessage);
             value.put("custom_arguments", config.customArguments);
             value.put("environment_assignments", config.environmentAssignments);
@@ -307,6 +315,8 @@ final class AppSettings {
                 .putString(KEY_RUN_WORKDIR, clean(config.workdir))
                 .putString(KEY_TARGET, clean(config.target))
                 .putString(KEY_ARTIFACT, clean(config.artifact))
+                .putString(KEY_PIPELINE_FILE, clean(config.pipelineFile))
+                .putString(KEY_PIPELINE_ID, clean(config.pipelineId))
                 .putString(KEY_COMMIT_MESSAGE, clean(config.commitMessage))
                 .putString(KEY_CUSTOM_ARGUMENTS, clean(config.customArguments))
                 .putString(KEY_ENVIRONMENT, clean(config.environmentAssignments))

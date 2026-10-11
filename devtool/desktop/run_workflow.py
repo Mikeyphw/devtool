@@ -30,6 +30,10 @@ OPERATIONS: tuple[RunWorkflowOperation, ...] = (
     RunWorkflowOperation("clean", "Clean", "Clean build/cache output for the selected target."),
     RunWorkflowOperation("status", "Status", "Print repository and Devtool status."),
     RunWorkflowOperation("doctor", "Doctor", "Run diagnostics for the selected repository."),
+    RunWorkflowOperation("pipeline-plan", "Pipeline · plan", "Read-only frozen-source graph preflight."),
+    RunWorkflowOperation("pipeline-run", "Pipeline · dispatch", "May send a GitHub workflow_dispatch POST; explicit --yes required."),
+    RunWorkflowOperation("pipeline-status", "Pipeline · status", "Read a durable pipeline journal without remote mutation."),
+    RunWorkflowOperation("pipeline-resume", "Pipeline · resume", "Advance waiting nodes; explicit --yes required, never auto-redispatch uncertain requests."),
     RunWorkflowOperation(
         "apply-overlay",
         "Apply overlay",
@@ -61,6 +65,8 @@ class RunWorkflowDraftPayload:
     execution_environment: str = "auto"
     operation: str = "validate"
     artifact: str = ""
+    pipeline_file: str = ".devtool/actions-pipeline.json"
+    pipeline_id: str = ""
     test_profile: str = ""
     selectors: str = ""
     test_ids: str = ""
@@ -177,6 +183,8 @@ def payload_from_mapping(data: Mapping[str, Any]) -> RunWorkflowDraftPayload:
         execution_environment=text("execution_environment", "auto"),
         operation=normalize_operation(text("operation", "validate")),
         artifact=text("artifact"),
+        pipeline_file=text("pipeline_file", ".devtool/actions-pipeline.json"),
+        pipeline_id=text("pipeline_id"),
         test_profile=text("test_profile"),
         selectors=text("selectors"),
         test_ids=text("test_ids"),
@@ -222,6 +230,8 @@ def draft_from_payload(payload: RunWorkflowDraftPayload, *, devtool: str = "devt
         project_type=payload.project_type,
         execution_environment=payload.execution_environment,
         artifact=payload.artifact,
+        pipeline_file=payload.pipeline_file,
+        pipeline_id=payload.pipeline_id,
         test_profile=payload.test_profile,
         selectors=split_extra_arguments(payload.selectors),
         test_ids=split_extra_arguments(payload.test_ids),
@@ -268,6 +278,14 @@ def review_payload(payload: RunWorkflowDraftPayload, *, devtool: str = "devtool"
         errors.append(f"Unknown Devtool operation: {payload.operation}")
     elif spec.requires_artifact and not payload.artifact.strip():
         errors.append(f"{spec.label} requires an overlay or bundle path.")
+    if payload.operation in ('pipeline-run', 'pipeline-resume') and not payload.yes:
+        errors.append('Pipeline mutation requires explicit --yes; enable Non-interactive --yes after reviewing the command.')
+    if payload.operation in ('pipeline-plan', 'pipeline-run') and not draft.pipeline_file.strip():
+        errors.append('Pipeline manifest path is required.')
+    if payload.operation in ('pipeline-status', 'pipeline-resume') and not draft.pipeline_id.strip():
+        errors.append('Exact 32-character pipeline ID is required.')
+    if payload.operation.startswith('pipeline-') and not argv:
+        errors.append('Invalid pipeline path/ID or missing explicit mutation authorization.')
     if payload.commit and not payload.commit_message.strip():
         warnings.append("Commit is enabled but the commit message is empty; --commit will be omitted.")
     if payload.hud_mode.strip().lower() == "none" and payload.auto_hud:

@@ -8,7 +8,8 @@ final class DevtoolCommandBuilder {
     static final String[] EXECUTION_ENVIRONMENTS = new String[]{"auto", "native-termux", "chroot", "desktop-linux", "android-device", "external-device"};
     static final String[] OPERATIONS = new String[]{
             "apply-overlay", "apply-overlays", "validate", "build", "test", "lint",
-            "restore", "run", "package", "clean", "inspect", "status", "doctor", "targets", "history", "commit", "custom"
+            "restore", "run", "package", "clean", "inspect", "status", "doctor", "targets", "history", "commit",
+            "pipeline-plan", "pipeline-run", "pipeline-status", "pipeline-resume", "custom"
     };
 
     private DevtoolCommandBuilder() {}
@@ -77,6 +78,29 @@ final class DevtoolCommandBuilder {
             return String.join(" ", parts);
         }
 
+        if (operation.startsWith("pipeline-")) {
+            String mode = operation.substring("pipeline-".length());
+            String file = clean(config.pipelineFile, "");
+            String id = clean(config.pipelineId, "");
+            if (mode.equals("plan") || mode.equals("run")) {
+                if (!file.matches("[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*") || file.contains("../") || file.contains("/./")) {
+                    throw new IllegalArgumentException("Pipeline file must be a safe repository-relative path");
+                }
+                parts.add("actions"); parts.add("pipeline"); parts.add(mode);
+                parts.add("--file"); parts.add(shellLiteral(file));
+            } else if (mode.equals("status") || mode.equals("resume")) {
+                if (!id.matches("[0-9a-f]{32}")) throw new IllegalArgumentException("A 32-character pipeline ID is required");
+                parts.add("actions"); parts.add("pipeline"); parts.add(mode);
+                parts.add("--pipeline-id"); parts.add(id);
+            } else {
+                throw new IllegalArgumentException("Unsupported pipeline action");
+            }
+            if (mode.equals("run") || mode.equals("resume")) {
+                if (!config.assumeYes) throw new IllegalArgumentException("Explicit --yes is required for pipeline mutation");
+                parts.add("--yes");
+            }
+            return String.join(" ", parts);
+        }
         parts.add(operation);
         if (operation.equals("apply-overlay") || operation.equals("apply-overlays")) {
             String artifact = clean(config.artifact, "");

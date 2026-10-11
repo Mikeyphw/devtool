@@ -73,6 +73,8 @@ public final class MainActivity extends Activity {
     private EditText runWorkdirInput;
     private EditText targetInput;
     private EditText artifactInput;
+    private EditText pipelineFileInput;
+    private EditText pipelineIdInput;
     private EditText commitInput;
     private EditText customInput;
     private EditText environmentInput;
@@ -502,6 +504,8 @@ public final class MainActivity extends Activity {
         operationInput = spinner(DevtoolCommandBuilder.OPERATIONS, saved.operation, "Operation");
         runOperationSection.addView(label("Operation")); runOperationSection.addView(operationInput);
         artifactInput = field(runOperationSection, "Overlay / bundle", saved.artifact, "$HOME/Downloads/example_overlay.zip", false);
+        pipelineFileInput = field(runOperationSection, "Pipeline manifest", saved.pipelineFile, ".devtool/actions-pipeline.json", false);
+        pipelineIdInput = field(runOperationSection, "Pipeline ID", saved.pipelineId, "32-character ID from pipeline run", false);
         validateToggle = toggle(runOperationSection, "Validate after apply", saved.validate);
         commitToggle = toggle(runOperationSection, "Commit after apply", saved.commit);
         commitInput = field(runOperationSection, "Commit message", saved.commitMessage, "Required for explicit commit", false);
@@ -1068,6 +1072,9 @@ public final class MainActivity extends Activity {
 
     private void updateOperationVisibility() {
         if(operationInput==null)return;String operation=String.valueOf(operationInput.getSelectedItem());boolean apply=operation.equals("apply-overlay")||operation.equals("apply-overlays");boolean commitOperation=operation.equals("commit");
+        boolean pipeline=operation.startsWith("pipeline-");
+        if(pipelineFileInput!=null)pipelineFileInput.setVisibility(pipeline&&(operation.endsWith("plan")||operation.endsWith("run"))?View.VISIBLE:View.GONE);
+        if(pipelineIdInput!=null)pipelineIdInput.setVisibility(pipeline&&(operation.endsWith("status")||operation.endsWith("resume"))?View.VISIBLE:View.GONE);
         if(artifactInput!=null)artifactInput.setVisibility(apply?View.VISIBLE:View.GONE);if(commitInput!=null)commitInput.setVisibility(apply||commitOperation?View.VISIBLE:View.GONE);if(customInput!=null)customInput.setVisibility(operation.equals("custom")?View.VISIBLE:View.GONE);if(validateToggle!=null)validateToggle.setVisibility(apply?View.VISIBLE:View.GONE);if(commitToggle!=null)commitToggle.setVisibility(apply?View.VISIBLE:View.GONE);
         boolean tests=operation.equals("test")||operation.equals("validate")||apply;if(!tests&&runStage==2)showRunStage(3);
     }
@@ -1658,8 +1665,8 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private boolean dangerousOperation(String operation) { return operation.equals("apply-overlay")||operation.equals("apply-overlays")||operation.equals("restore")||operation.equals("clean")||operation.equals("commit"); }
-    private String dangerousOperationMessage(String operation) { if(operation.startsWith("apply-"))return "This writes artifact files into the selected repository and may create a commit.";if(operation.equals("restore"))return "Restore may replace generated or working files.";if(operation.equals("clean"))return "Clean removes build outputs and generated caches.";return "This operation changes repository state."; }
+    private boolean dangerousOperation(String operation) { return operation.equals("pipeline-run")||operation.equals("pipeline-resume")||operation.equals("apply-overlay")||operation.equals("apply-overlays")||operation.equals("restore")||operation.equals("clean")||operation.equals("commit"); }
+    private String dangerousOperationMessage(String operation) { if(operation.equals("pipeline-run"))return "This may dispatch a remote GitHub Actions workflow. Dispatch acceptance is not build success.";if(operation.equals("pipeline-resume"))return "This may advance a remote workflow; uncertain dispatches are not automatically retried.";if(operation.startsWith("apply-"))return "This writes artifact files into the selected repository and may create a commit.";if(operation.equals("restore"))return "Restore may replace generated or working files.";if(operation.equals("clean"))return "Clean removes build outputs and generated caches.";return "This operation changes repository state."; }
     private void requestRunBuiltCommand(){try{DevtoolRunConfig config=readRunConfig();DevtoolCommandBuilder.build(config);if(!dangerousOperation(config.operation)){runBuiltCommand();return;}new AlertDialog.Builder(this).setTitle("Confirm "+config.operation).setMessage(dangerousOperationMessage(config.operation)+"\n\nRepository: "+config.repo).setNegativeButton("Cancel",null).setPositiveButton("Continue",(d,w)->runBuiltCommand()).show();}catch(IllegalArgumentException error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}}
 
     private void runBuiltCommand() {
@@ -1718,6 +1725,8 @@ public final class MainActivity extends Activity {
         config.workdir = runWorkdirInput.getText().toString();
         config.target = targetInput.getText().toString();
         config.artifact = artifactInput.getText().toString();
+        config.pipelineFile = pipelineFileInput.getText().toString();
+        config.pipelineId = pipelineIdInput.getText().toString();
         config.commitMessage = commitInput.getText().toString();
         config.customArguments = customInput.getText().toString();
         config.environmentAssignments = environmentInput.getText().toString();
@@ -1773,6 +1782,8 @@ public final class MainActivity extends Activity {
         runWorkdirInput.setText(config.workdir);
         targetInput.setText(config.target);
         artifactInput.setText(config.artifact);
+        pipelineFileInput.setText(config.pipelineFile);
+        pipelineIdInput.setText(config.pipelineId);
         commitInput.setText(config.commitMessage);
         customInput.setText(config.customArguments);
         environmentInput.setText(config.environmentAssignments);

@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 import shlex
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping
+
+
+def _pipeline_file_valid(value: str) -> bool:
+    return bool(re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*', value)) and all(x not in ('.','..') for x in value.split('/')) and len(value) <= 240
+
+
+def _pipeline_id_valid(value: str) -> bool:
+    return bool(re.fullmatch(r'[0-9a-f]{32}', value))
 
 
 def split_extra_arguments(value: str | Iterable[str] | None) -> list[str]:
@@ -68,6 +77,8 @@ class DevtoolCommandDraft:
     project_type: str = ""
     execution_environment: str = ""
     artifact: str = ""
+    pipeline_file: str = ".devtool/actions-pipeline.json"
+    pipeline_id: str = ""
     test_profile: str = ""
     selectors: list[str] = field(default_factory=list)
     test_ids: list[str] = field(default_factory=list)
@@ -106,6 +117,23 @@ class DevtoolCommandDraft:
 
     def operation_argv(self) -> list[str]:
         op = self.normalized_operation()
+        if op in {'pipeline-plan', 'pipeline-run', 'pipeline-status', 'pipeline-resume'}:
+            mode = op.split('-', 1)[1]
+            if mode in ('plan', 'run'):
+                path = self.pipeline_file.strip()
+                if not path or not _pipeline_file_valid(path):
+                    return []
+                argv = ['actions', 'pipeline', mode, '--file', path]
+            else:
+                identity = self.pipeline_id.strip()
+                if not _pipeline_id_valid(identity):
+                    return []
+                argv = ['actions', 'pipeline', mode, '--pipeline-id', identity]
+            if mode in ('run', 'resume'):
+                if not self.yes:
+                    return []
+                argv.append('--yes')
+            return argv
         if op in {"apply overlay", "apply-overlay", "ao"}:
             argv = ["apply-overlay", self.artifact]
             if self.validate:

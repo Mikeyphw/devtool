@@ -1962,6 +1962,8 @@ def _render_run_workflow(
     add_combo("target", "Target", target_values, str(draft.get("target") or ""))
     add_entry("repository", "Repository", str(draft.get("repository") or "."))
     add_entry("artifact", "Overlay / bundle", str(draft.get("artifact") or ""), placeholder="required for apply-overlay/apply-overlays")
+    add_entry("pipeline_file", "Pipeline JSON", str(draft.get("pipeline_file") or ".devtool/actions-pipeline.json"), placeholder="repository-relative committed manifest")
+    add_entry("pipeline_id", "Pipeline ID", str(draft.get("pipeline_id") or ""), placeholder="32 lowercase hex characters for status/resume")
     add_entry("test_tasks", "Native tasks", str(draft.get("test_tasks") or ""), placeholder=":app:testDebugUnitTest")
     add_entry("commit_message", "Commit message", str(draft.get("commit_message") or ""))
 
@@ -2134,6 +2136,8 @@ def _render_run_workflow(
             "execution_environment": entry_text("execution_environment"),
             "operation": combo_id("operation"),
             "artifact": entry_text("artifact"),
+            "pipeline_file": entry_text("pipeline_file"),
+            "pipeline_id": entry_text("pipeline_id"),
             "test_profile": entry_text("test_profile"),
             "selectors": entry_text("selectors"),
             "test_ids": entry_text("test_ids"),
@@ -2332,6 +2336,15 @@ def _render_run_workflow(
         _set_accessible_label(Gtk, button, accessible)
         button_row.append(button)
 
+    def on_pipeline_operation_changed(_widget: Any) -> None:
+        # A remote dispatch/resume requires fresh, visible user authorization.
+        # The ordinary Run composer historically defaults --yes to enabled;
+        # never inherit that default when switching into a GitHub mutation.
+        if combo_id("operation") in ("pipeline-run", "pipeline-resume"):
+            widgets["yes"].set_active(False)
+        update_preview()
+
+    widgets["operation"].connect("changed", on_pipeline_operation_changed)
     for widget in widgets.values():
         with _suppress_exception():
             widget.connect("changed", update_preview)
