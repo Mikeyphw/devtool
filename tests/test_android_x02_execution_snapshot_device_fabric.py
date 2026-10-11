@@ -382,7 +382,16 @@ def test_production_release_projects_artifact_pair_and_execution_snapshot_into_r
     config.variant = "release"
     apk = tmp_path / "app-release.apk"; apk.write_bytes(b"apk")
     digest = hashlib.sha256(apk.read_bytes()).hexdigest()
-    spec = CommandSpec("package", ["fake", "package"], metadata={})
+    from devtool.gradle_planning import GradleExecutionReceipt
+    gradle_plan = {
+        "plan_digest": "plan-release",
+        "context": {"context_digest": "ctx-release"},
+        "policy": {"policy_digest": "policy-release"},
+        "request": {"selection_identity": "selection-release", "expected_artifact_producers": [":app:assembleRelease"]},
+        "requested_roots": [":app:assembleRelease"],
+        "optimized_roots": [":app:assembleRelease"],
+    }
+    spec = CommandSpec("package", ["fake", "package"], metadata={"gradle_execution_plan": gradle_plan})
     options = AndroidReleaseOptions(
         variant="release", module="app", unit_tests=False, lint=False, device_tests="disabled",
         install_smoke=False, upgrade_smoke=False, cold_start_smoke=False, restart_smoke=False,
@@ -391,11 +400,13 @@ def test_production_release_projects_artifact_pair_and_execution_snapshot_into_r
     )
     orchestrator = AndroidReleaseOrchestrator(config, env={"PATH": os.environ.get("PATH", "")})
     monkeypatch.setattr(orchestrator, "plan", lambda **kwargs: (config, options, [("package", [spec])]))
-    receipt = {
-        "receipt_id": "gr-release", "plan_digest": "plan-release", "context_digest": "ctx-release",
-        "jdk_identity": "jdk", "launcher_identity": "launcher", "run_ref": "run-release",
-        "artifact_refs": [str(apk)], "producer_artifact_refs": {":app:assembleRelease": [str(apk)]},
-    }
+    receipt = GradleExecutionReceipt.from_plan_metadata(
+        gradle_plan, progress={"observed_tasks": [":app:assembleRelease"],
+                               "task_outcomes": {":app:assembleRelease": "SUCCESS"}},
+        success=True, process_executed=True, artifact_refs=[str(apk)],
+        producer_artifact_refs={":app:assembleRelease": [str(apk)]},
+        run_ref="run-release",
+    ).as_dict()
     def fake_run_specs(*args, **kwargs):
         return [OperationResult(
             "package", ["fake", "package"], 0, 0.01, "ok", [], metadata={

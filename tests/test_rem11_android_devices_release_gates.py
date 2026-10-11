@@ -348,7 +348,7 @@ def test_signing_booleans_legacy_policy_task_classifier_and_bad_command(tmp_path
         tmp_path,
         signing={
             "release": {
-                "mode": "devtool",
+                "mode": "project",
                 "require_for_release": "true",
                 "store_password_stdin": "false",
                 "key_password_stdin": "false",
@@ -361,6 +361,11 @@ def test_signing_booleans_legacy_policy_task_classifier_and_bad_command(tmp_path
     assert profile.store_password_stdin is False
     assert profile.key_password_stdin is False
     assert profile.allow_prompt is False
+    # Legacy booleans belong to project-owned signing; they cannot mint a
+    # canonical Devtool/LIFE identity without an identity registry entry.
+    cfg.runner_options["android"]["signing"]["release"]["mode"] = "devtool"
+    with pytest.raises(AndroidSigningError, match="registered LIFE identity_id"):
+        signing_profile(cfg)
     assert task_requires_release_signing("assembleRelease") is True
     assert task_requires_release_signing("bundleFreeRelease") is True
     assert task_requires_release_signing("releaseNotes") is False
