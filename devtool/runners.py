@@ -4884,28 +4884,40 @@ def _literal_git_pathspec(path: str) -> str:
     return f":(literal){path}"
 
 
-def _artifact_pathspec_was_staged(repo_root: Path, path: str, *, has_head: bool) -> tuple[bool, str]:
-    """Return whether the user's live index already staged this artifact path."""
-    literal = _literal_git_pathspec(path)
+def _artifact_staged_paths(
+    repo_root: Path, paths: list[str], *, has_head: bool
+) -> tuple[set[str], str]:
+    """Inspect the live index once, not once per artifact path.
+
+    NUL records and --no-renames preserve exact filenames (including newline,
+    whitespace, and literal pathspec metacharacters). A staged path beneath a
+    requested directory also protects that directory from post-commit reset.
+    Git's working index is read only; this preflight must fail closed.
+    """
+    if not paths:
+        return set(), ""
     if has_head:
-        argv = ["git", "diff", "--cached", "--quiet", "HEAD", "--", literal]
-        proc = subprocess.run(
-            argv, cwd=repo_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
-        )
-        if proc.returncode == 0:
-            return False, ""
-        if proc.returncode == 1:
-            return True, ""
+        argv = ["git", "diff", "--cached", "--no-renames", "--name-only", "-z", "HEAD", "--"]
     else:
-        argv = ["git", "ls-files", "--error-unmatch", "--", literal]
+        argv = ["git", "ls-files", "--cached", "-z", "--"]
+    try:
         proc = subprocess.run(
-            argv, cwd=repo_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+            argv, cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=False, timeout=30,
         )
-        if proc.returncode == 0:
-            return True, ""
-        if proc.returncode == 1:
-            return False, ""
-    return False, (proc.stdout or f"Git index preflight exited {proc.returncode}").strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return set(), f"Unable to inspect staged artifact paths: {exc}"
+    if proc.returncode != 0:
+        return set(), bytes(proc.stderr or proc.stdout or b"Git index preflight failed").decode("utf-8", "replace").strip()
+    staged = {
+        name.decode("utf-8", "surrogateescape")
+        for name in bytes(proc.stdout or b"").split(b"\0") if name
+    }
+    protected = {
+        requested for requested in paths
+        if requested in staged or any(item.startswith(requested.rstrip("/") + "/") for item in staged)
+    }
+    return protected, ""
 
 
 def git_commit(
@@ -4951,19 +4963,16 @@ def git_commit(
         has_head = head.returncode == 0
         protected_paths: set[str] = set()
         if not dry_run:
-            for artifact_path in pathspecs:
-                was_staged, preflight_error = _artifact_pathspec_was_staged(
-                    repo_root, artifact_path, has_head=has_head
+            protected_paths, preflight_error = _artifact_staged_paths(
+                repo_root, pathspecs, has_head=has_head
+            )
+            if preflight_error:
+                result = OperationResult(
+                    "git-index-preflight", ["git", "diff", "--cached", "--name-only", "-z"], 1, 0.0,
+                    preflight_error, parse_issues(repo_root, "git-index-preflight", preflight_error),
+                    failure_kind="command_failure",
                 )
-                if preflight_error:
-                    result = OperationResult(
-                        "git-index-preflight", ["git", "diff", "--cached", "--", artifact_path], 1, 0.0,
-                        preflight_error, parse_issues(repo_root, "git-index-preflight", preflight_error),
-                        failure_kind="command_failure",
-                    )
-                    return [result], preflight_error
-                if was_staged:
-                    protected_paths.add(artifact_path)
+                return [result], preflight_error
 
         init_argv = ["git", "read-tree", "HEAD"] if has_head else ["git", "read-tree", "--empty"]
         if not dry_run:
@@ -5068,17 +5077,14 @@ def git_commit_with_policy(
 
         protected_paths: set[str] = set()
         if pathspecs is not None and not dry_run:
-            for artifact_path in pathspecs:
-                was_staged, preflight_error = _artifact_pathspec_was_staged(repo_root, artifact_path, has_head=True)
-                if preflight_error:
-                    result = OperationResult(
-                        "git-index-preflight", ["git", "diff", "--cached", "--", artifact_path], 1, 0.0,
-                        preflight_error, parse_issues(repo_root, "git-index-preflight", preflight_error),
-                        failure_kind="command_failure",
-                    )
-                    return [result], preflight_error
-                if was_staged:
-                    protected_paths.add(artifact_path)
+            protected_paths, preflight_error = _artifact_staged_paths(repo_root, pathspecs, has_head=True)
+            if preflight_error:
+                result = OperationResult(
+                    "git-index-preflight", ["git", "diff", "--cached", "--name-only", "-z"], 1, 0.0,
+                    preflight_error, parse_issues(repo_root, "git-index-preflight", preflight_error),
+                    failure_kind="command_failure",
+                )
+                return [result], preflight_error
 
         if not dry_run:
             started = time.perf_counter()

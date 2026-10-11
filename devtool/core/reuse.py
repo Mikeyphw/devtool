@@ -367,21 +367,41 @@ def contribution_from_spec(spec: Any, *, repo_root: Path | None = None) -> Runne
     metadata = dict(getattr(spec, "metadata", {}) or {})
     cwd = Path(str(getattr(spec, "cwd", "") or (repo_root or Path.cwd()))).expanduser().resolve(strict=False)
     repository_root = (repo_root or cwd).expanduser().resolve(strict=False)
-    explicit = _paths(metadata.get("workflow_inputs", ()) or metadata.get("reuse_inputs", ()) or ())
-    inferred = _paths(metadata.get("runner_inputs", ()) or metadata.get("reuse_inferred_inputs", ()) or ())
-    if explicit:
-        values, provenance, complete, reason = explicit, InputProvenance.EXPLICIT, True, ""
-    elif inferred:
-        values, provenance, complete, reason = inferred, InputProvenance.RUNNER_INFERRED, True, ""
+    # Git index/commit/reconciliation commands are *mutations*, never reusable
+    # execution nodes. Fingerprinting the whole repository ahead of each such
+    # command can read/hash every untracked file and diff the entire tree, then
+    # repeat that work after every index mutation. Keep the canonical scheduler
+    # boundary and a truthful non-reusable fingerprint, but do not perform an
+    # expensive or misleading pre-mutation source scan for these nodes.
+    git_mutation = (
+        str(getattr(spec, "name", "") or "") in {"git-add", "git-commit", "git-index-reconcile"}
+        and len(getattr(spec, "argv", ()) or ()) >= 2
+        and Path(str(spec.argv[0])).name in {"git", "git.exe"}
+        and str(spec.argv[1]) in {"add", "commit", "reset"}
+    )
+    if git_mutation:
+        manifest = InputManifest(
+            (), InputProvenance.CONSERVATIVE_FALLBACK, str(cwd),
+            complete=False, reason="git-mutation-not-reusable; source-scan-not-applicable",
+        )
+        metadata["reuse_disabled"] = True
+        metadata["reuse_disabled_reason"] = "git-mutating-command"
     else:
-        # Unknown ownership is deliberately conservative: fingerprint the whole
-        # execution root rather than guessing a small scope.
-        values, provenance, complete, reason = (".",), InputProvenance.CONSERVATIVE_FALLBACK, True, "unknown-input-ownership; conservative-root-scope"
-    if provenance is InputProvenance.CONSERVATIVE_FALLBACK and values == (".",):
-        entries = (conservative_repository_identity(cwd),)
-    else:
-        entries = tuple(content_identity(cwd / value, base=cwd, repo_root=repository_root) for value in values)
-    manifest = InputManifest(entries, provenance, str(cwd), complete=complete, reason=reason)
+        explicit = _paths(metadata.get("workflow_inputs", ()) or metadata.get("reuse_inputs", ()) or ())
+        inferred = _paths(metadata.get("runner_inputs", ()) or metadata.get("reuse_inferred_inputs", ()) or ())
+        if explicit:
+            values, provenance, complete, reason = explicit, InputProvenance.EXPLICIT, True, ""
+        elif inferred:
+            values, provenance, complete, reason = inferred, InputProvenance.RUNNER_INFERRED, True, ""
+        else:
+            # Unknown ownership is deliberately conservative for *non-Git*
+            # commands, since they might be reusable after validation.
+            values, provenance, complete, reason = (".",), InputProvenance.CONSERVATIVE_FALLBACK, True, "unknown-input-ownership; conservative-root-scope"
+        if provenance is InputProvenance.CONSERVATIVE_FALLBACK and values == (".",):
+            entries = (conservative_repository_identity(cwd),)
+        else:
+            entries = tuple(content_identity(cwd / value, base=cwd, repo_root=repository_root) for value in values)
+        manifest = InputManifest(entries, provenance, str(cwd), complete=complete, reason=reason)
 
     domains = metadata.get("environment_domains")
     domains = dict(domains) if isinstance(domains, Mapping) else {}
