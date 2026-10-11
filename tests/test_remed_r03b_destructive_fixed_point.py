@@ -21,6 +21,7 @@ CLASSIFIED_FILES: dict[str, str] = {
     "devtool/ai_prompt.py": "Prompt export temp/legacy file cleanup; not provider/run evidence cleanup.",
     "devtool/artifact_pipeline.py": "Pipeline temp artifact staging cleanup under artifact transaction authority.",
     "devtool/artifact_registry.py": "Registry atomic temp file cleanup; registry rows/tombstones remain canonical authority.",
+    "devtool/artifact_cleanup_worker.py": "Explicit post-apply consumed source-artifact cleanup worker: external file/symlink unlink is restricted to the apply-source cleanup path and produces LIFE receipts; repository-internal sources use canonical LIFE ownership. This classification is inventory coverage only, not caller authorization or proof of arbitrary-path safety.",
     "devtool/artifact_trust.py": "Artifact trust temp file/cache cleanup, not destructive repository mutation.",
     "devtool/artifacts.py": "Artifact construction/finalization temp cleanup and legacy metadata retirement; artifact payload mutation remains plan-owned.",
     "devtool/bootstrap.py": "Bootstrap generated report/temp cleanup; not RUN/RER/provider evidence cleanup.",
@@ -94,3 +95,13 @@ def test_r03b_closed_high_risk_remote_cleanup_paths_have_no_raw_destructive_hits
     hits = _destructive_hits()
     offenders = {name: rows for name, rows in hits.items() if name in HIGH_RISK_CLOSED_FILES}
     assert offenders == {}
+
+
+def test_r03b_apply_source_worker_is_explicitly_classified_without_safety_waiver() -> None:
+    key = "devtool/artifact_cleanup_worker.py"
+    hits = _destructive_hits()
+    assert key in hits
+    assert any(".unlink(" in line for _, line in hits[key])
+    rationale = CLASSIFIED_FILES[key]
+    assert "external" in rationale and "LIFE" in rationale
+    assert "not caller authorization" in rationale
