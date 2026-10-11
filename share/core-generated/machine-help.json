@@ -1418,6 +1418,381 @@
       "adoption_source": "core-registry",
       "aliases": [],
       "domain": "actions",
+      "id": "cli.command.actions.pipeline",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "pipeline"
+      ],
+      "stability": "experimental",
+      "summary": "Cross-boundary local/remote DAG with frozen source and durable resume"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.pipeline.plan",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.plan.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "file",
+          "help": "Checked-in repository-relative pipeline JSON",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.plan.file",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--file"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.plan.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.plan.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.plan.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "pipeline",
+        "plan"
+      ],
+      "stability": "experimental",
+      "summary": "Validate local Git and remote GitHub DAG without mutations"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.pipeline.resume",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.resume.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.resume.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.resume.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.resume.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pipeline_id",
+          "help": "Previously persisted pipeline ID",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.resume.pipeline_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--pipeline-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Authorize pending pipeline work",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.resume.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "pipeline",
+        "resume"
+      ],
+      "stability": "experimental",
+      "summary": "Continue waiting pipeline nodes, never repeat uncertain dispatch"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.pipeline.run",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.run.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "file",
+          "help": "Checked-in repository-relative pipeline JSON",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.run.file",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--file"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.run.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.run.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.run.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Authorize sequential local and remote actions",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.run.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "pipeline",
+        "run"
+      ],
+      "stability": "experimental",
+      "summary": "Create durable pipeline journal and execute ready nodes"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.pipeline.status",
+      "options": [
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.status.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.status.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.status.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.status.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pipeline_id",
+          "help": "Previously persisted pipeline ID",
+          "hidden": false,
+          "id": "cli.option.actions.pipeline.status.pipeline_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--pipeline-id"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "pipeline",
+        "status"
+      ],
+      "stability": "experimental",
+      "summary": "Read local durable pipeline states (no GitHub operations)"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
       "id": "cli.command.actions.plan",
       "options": [
         {
@@ -32039,7 +32414,7 @@
       "summary": ""
     }
   ],
-  "digest": "01e6c19b0e29d55c224988ad7d946926bfe44a1959fff34b0d8aa7cf190c4152",
+  "digest": "69347979a67ec2405d288657f219e9e0917e0d36cce455a361a471263d9deab7",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -32057,6 +32432,11 @@
       "actions download",
       "actions jobs",
       "actions logs",
+      "actions pipeline",
+      "actions pipeline plan",
+      "actions pipeline resume",
+      "actions pipeline run",
+      "actions pipeline status",
       "actions plan",
       "actions rerun",
       "actions resume",
@@ -32488,11 +32868,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 436,
-    "registry_command_count": 311
+    "parser_command_count": 441,
+    "registry_command_count": 316
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "14390cdd2f2cb1934376cd30271847734aeea2ab3f1960a773f2b791225eec2b",
+  "registry_digest": "3036356180fb537643633c0c69a32388bdde531a41b277b97c982d965fd03196",
   "registry_schema_version": 1,
   "schema_version": 1
 }

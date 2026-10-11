@@ -232,6 +232,90 @@
       "aliases": [],
       "canonical_path": [
         "actions",
+        "pipeline"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Cross-boundary local/remote DAG with frozen source and durable resume",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.pipeline"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "pipeline",
+        "plan"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Validate local Git and remote GitHub DAG without mutations",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.pipeline.plan"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "pipeline",
+        "resume"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Continue waiting pipeline nodes, never repeat uncertain dispatch",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.pipeline.resume"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "pipeline",
+        "run"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Create durable pipeline journal and execute ready nodes",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.pipeline.run"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "pipeline",
+        "status"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Read local durable pipeline states (no GitHub operations)",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.pipeline.status"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
         "plan"
       ],
       "metadata": {
@@ -7595,6 +7679,541 @@
       "scope": "actions logs",
       "sensitive": false,
       "stable_id": "cli.option.actions.logs.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.plan.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--file",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "file",
+        "help": "Checked-in repository-relative pipeline JSON",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "plan"
+        ],
+        "required": true
+      },
+      "scope": "actions pipeline plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.plan.file",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.plan.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.plan.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.plan.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.resume.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.resume.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.resume.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.resume.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--pipeline-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "pipeline_id",
+        "help": "Previously persisted pipeline ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "resume"
+        ],
+        "required": true
+      },
+      "scope": "actions pipeline resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.resume.pipeline_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Authorize pending pipeline work",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline resume",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.resume.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.run.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--file",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "file",
+        "help": "Checked-in repository-relative pipeline JSON",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "run"
+        ],
+        "required": true
+      },
+      "scope": "actions pipeline run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.run.file",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.run.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.run.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.run.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Authorize sequential local and remote actions",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.run.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline status",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.status.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline status",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.status.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline status",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.status.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline status",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.status.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--pipeline-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "pipeline_id",
+        "help": "Previously persisted pipeline ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "status"
+        ],
+        "required": true
+      },
+      "scope": "actions pipeline status",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.status.pipeline_id",
       "value_kind": "_StoreAction"
     },
     {
@@ -103197,6 +103816,439 @@
                         }
                       ],
                       "dest": "android_command",
+                      "group": null,
+                      "help": null,
+                      "metavar": null,
+                      "required": true
+                    },
+                    "usage": null
+                  }
+                },
+                {
+                  "name": "pipeline",
+                  "aliases": [],
+                  "help": "Cross-boundary local/remote DAG with frozen source and durable resume",
+                  "help_present": true,
+                  "parser": {
+                    "actions": [],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": {
+                      "children": [
+                        {
+                          "name": "plan",
+                          "aliases": [],
+                          "help": "Validate local Git and remote GitHub DAG without mutations",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "file",
+                                "group": null,
+                                "help": "Checked-in repository-relative pipeline JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--file"
+                                ],
+                                "required": true,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "run",
+                          "aliases": [],
+                          "help": "Create durable pipeline journal and execute ready nodes",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "file",
+                                "group": null,
+                                "help": "Checked-in repository-relative pipeline JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--file"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Authorize sequential local and remote actions",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "status",
+                          "aliases": [],
+                          "help": "Read local durable pipeline states (no GitHub operations)",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "pipeline_id",
+                                "group": null,
+                                "help": "Previously persisted pipeline ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--pipeline-id"
+                                ],
+                                "required": true,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "resume",
+                          "aliases": [],
+                          "help": "Continue waiting pipeline nodes, never repeat uncertain dispatch",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "pipeline_id",
+                                "group": null,
+                                "help": "Previously persisted pipeline ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--pipeline-id"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Authorize pending pipeline work",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        }
+                      ],
+                      "dest": "pipeline_command",
                       "group": null,
                       "help": null,
                       "metavar": null,

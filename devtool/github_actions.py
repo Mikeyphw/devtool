@@ -440,9 +440,9 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify"],
-        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)"],
-        "execution_integration": "bounded foreground run observation and restart-safe dispatch receipts; no background daemon",
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume"],
+        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)"],
+        "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
         "remote_execution": False,
         "artifact_downloads": "sha256-verified ZIP and inspected Android output, no release qualification",
@@ -454,6 +454,10 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
     action = str(getattr(args, "actions_command", "") or "")
     if action == "baseline":
         return actions_baseline()
+    # Journal-only status never authenticates to GitHub or depends on remote availability.
+    if action == "pipeline" and str(getattr(args, "pipeline_command", "")) == "status":
+        from .actions_pipeline import pipeline_status
+        return pipeline_status(str(getattr(args, "pipeline_id", "") or ""))
     request_id = str(getattr(args, "request_id", "") or "")
     explicit = str(getattr(args, "github_repo", "") or "")
     if request_id and action in ("view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify"):
@@ -464,6 +468,20 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
         slug = resolve_repository(explicit, local_root)
     token, authentication = resolve_token(str(getattr(args, "auth", "auto") or "auto"))
     client = GitHubActionsClient(token)
+    if action == "pipeline":
+        from .actions_pipeline import pipeline_plan, pipeline_run, pipeline_status, pipeline_resume
+        sub = str(getattr(args, "pipeline_command", "") or "")
+        if sub == "status":
+            return pipeline_status(str(getattr(args, "pipeline_id", "") or ""))
+        if sub in ("run", "resume") and not bool(getattr(args, "yes", False)):
+            raise GitHubActionsError("Explicit --yes is required for pipeline mutation/resume")
+        if sub == "plan":
+            return pipeline_plan(client, slug, local_root, str(args.file))
+        if sub == "run":
+            return pipeline_run(client, slug, local_root, str(args.file))
+        if sub == "resume":
+            return pipeline_resume(client, slug, local_root, str(args.pipeline_id))
+        raise GitHubActionsError("Unsupported Actions pipeline command")
     if action == "android":
         from .actions_android import android_discover, android_plan, android_collect
         sub = str(getattr(args,"android_command","") or "")

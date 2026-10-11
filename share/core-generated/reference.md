@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `14390cdd2f2cb1934376cd30271847734aeea2ab3f1960a773f2b791225eec2b`
+Registry digest: `3036356180fb537643633c0c69a32388bdde531a41b277b97c982d965fd03196`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -20,6 +20,11 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions download` — Download, SHA-256 verify and register an unextracted Actions ZIP
 - `actions jobs` — Inspect run and job/step states
 - `actions logs` — Download remote workflow run logs as a bounded unextracted ZIP to private state
+- `actions pipeline` — Cross-boundary local/remote DAG with frozen source and durable resume
+- `actions pipeline plan` — Validate local Git and remote GitHub DAG without mutations
+- `actions pipeline resume` — Continue waiting pipeline nodes, never repeat uncertain dispatch
+- `actions pipeline run` — Create durable pipeline journal and execute ready nodes
+- `actions pipeline status` — Read local durable pipeline states (no GitHub operations)
 - `actions plan` — Validate workflow ref and inputs without dispatching
 - `actions rerun` — Request a new remote workflow attempt (explicit confirmation)
 - `actions resume` — Resume a recorded dispatch by its exact request ID

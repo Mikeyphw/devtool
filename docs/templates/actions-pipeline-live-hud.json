@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "name": "live-hud",
+  "nodes": [
+    {"id": "source", "kind": "local-git"},
+    {
+      "id": "android_build", "kind": "github-dispatch", "needs": ["source"],
+      "workflow": "devtool-android-build.yml", "ref": "main",
+      "inputs": {
+        "project_dir": "android/devtool-live-hud",
+        "module": "app", "variant": "debug", "format": "apk"
+      }
+    },
+    {"id": "remote_result", "kind": "github-result", "from": "android_build", "needs": ["android_build"]},
+    {
+      "id": "archive", "kind": "github-archive", "from": "android_build",
+      "artifact_name": "devtool-android-debug-apk",
+      "needs": ["android_build", "remote_result"]
+    }
+  ]
+}

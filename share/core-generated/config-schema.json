@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "digest": "553b1f1d150ec9215e038f38a1186dc17a59b959fdc68590e5a739adce887554",
+  "digest": "3710cec01d9f8476c697bb85cd6bcd57e11fed18b5b97e7eb1fb2c6f17378417",
   "documents": {
     "global": {
       "allow_unknown_top_level": [
@@ -478,7 +478,7 @@
       "option_id": "cli.option.target.330e55a5.f1fa4184"
     }
   ],
-  "registry_digest": "14390cdd2f2cb1934376cd30271847734aeea2ab3f1960a773f2b791225eec2b",
+  "registry_digest": "3036356180fb537643633c0c69a32388bdde531a41b277b97c982d965fd03196",
   "registry_schema_version": 1,
   "reserved_namespaces": [
     "devtool",

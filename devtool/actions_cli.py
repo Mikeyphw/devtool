@@ -17,4 +17,7 @@ def run_actions_command(args: Any) -> int:
         print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
     else:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
+    if (str(getattr(args, "actions_command", "")) == "pipeline"
+            and payload.get("state") == "blocked"):
+        return 1
     return 0
