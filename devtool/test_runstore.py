@@ -546,10 +546,31 @@ def _receipt_digest_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def valid_canonical_test_run_receipt(payload: dict[str, Any] | None) -> bool:
     if not isinstance(payload, dict):
         return False
+    if type(payload.get("schema_version")) is not int or payload["schema_version"] != 1:
+        return False
     if payload.get("authority") != "RUN-V3 TestRunReceipt":
         return False
-    digest = str(payload.get("sha256") or "").strip()
-    if not digest:
+    repository = payload.get("repository")
+    run_id = payload.get("run_id")
+    operations = payload.get("operations")
+    if (not isinstance(repository, str) or not repository.strip()
+        or not isinstance(run_id, str) or not run_id or run_id != _safe_run_id(run_id)
+        or not isinstance(operations, list) or not operations
+        or any(not isinstance(op, dict) for op in operations)):
+        return False
+    if payload.get("repo_key") != _repo_key(Path(repository)):
+        return False
+    if not isinstance(payload.get("selection_refs"), list) or not isinstance(payload.get("environment_refs"), list):
+        return False
+    receipt_id = payload.get("receipt_id")
+    if not isinstance(receipt_id, str) or not receipt_id.startswith("trr-"):
+        return False
+    expected_id = "trr-" + _sha256_json({k: v for k, v in payload.items()
+                                              if k not in {"receipt_id", "sha256"}})[:24]
+    if receipt_id != expected_id:
+        return False
+    digest = payload.get("sha256")
+    if not isinstance(digest, str) or len(digest) != 64:
         return False
     return digest == _sha256_json(_receipt_digest_payload(payload))
 
