@@ -126,9 +126,13 @@ def validate_federated_resume_checkpoint(parent: "ProjectConfig", checkpoint: Ma
         )
     expected_head = str(checkpoint.get("git_head") or "")
     current_head = _git_head(resolution.root)
-    if expected_head and current_head and expected_head != current_head:
+    # A revision becoming unavailable (or suddenly appearing) is identity drift,
+    # not permission to skip the revision predicate. Non-Git repositories remain
+    # valid when both the checkpoint and the current observation are unbound.
+    if (expected_head or current_head) and (not expected_head or not current_head or expected_head != current_head):
         raise FederationOperationalBoundaryError(
-            f"Federation resume repository {repository!r} revision changed: expected {expected_head}, got {current_head}"
+            f"Federation resume repository {repository!r} revision changed or is unavailable: "
+            f"expected {expected_head or '<missing>'}, got {current_head or '<missing>'}"
         )
     return resolution
 
