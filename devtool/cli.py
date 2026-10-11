@@ -13377,6 +13377,10 @@ def _main_after_parse(
         return auto_chroot_rc
     _print_chroot_indicator_once(args)
 
+    if args.command == "actions":
+        from .actions_cli import run_actions_command
+        return run_actions_command(args)
+
     if args.command == "gradle":
         return _handle_gradle_command(args)
 

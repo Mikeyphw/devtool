@@ -5074,6 +5074,85 @@
       },
       "options": [],
       "stable_id": "cli.command.repo_pack.prune"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Read-only GitHub Actions provider",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "baseline"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Read-only GitHub Actions provider",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.baseline"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "status"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Read-only GitHub Actions provider",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.status"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "workflow"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Read-only GitHub Actions provider",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.workflow"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "workflows"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Read-only GitHub Actions provider",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.workflows"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -49478,6 +49557,392 @@
       "sensitive": false,
       "stable_id": "cli.option.repo_pack_prune.help.657fc6e2",
       "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "baseline"
+        ],
+        "required": false
+      },
+      "scope": "actions baseline",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.baseline.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "baseline"
+        ],
+        "required": false
+      },
+      "scope": "actions baseline",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.baseline.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "baseline"
+        ],
+        "required": false
+      },
+      "scope": "actions baseline",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.baseline.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "baseline"
+        ],
+        "required": false
+      },
+      "scope": "actions baseline",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.baseline.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions"
+        ],
+        "required": false
+      },
+      "scope": "actions",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "actions status",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.status.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "actions status",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.status.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "actions status",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.status.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "actions status",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.status.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "workflow"
+        ],
+        "required": false
+      },
+      "scope": "actions workflow",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.workflow.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "workflow"
+        ],
+        "required": false
+      },
+      "scope": "actions workflow",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.workflow.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "workflow"
+        ],
+        "required": false
+      },
+      "scope": "actions workflow",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.workflow.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "workflow"
+        ],
+        "required": false
+      },
+      "scope": "actions workflow",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.workflow.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "workflows"
+        ],
+        "required": false
+      },
+      "scope": "actions workflows",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.workflows.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "workflows"
+        ],
+        "required": false
+      },
+      "scope": "actions workflows",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.workflows.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "workflows"
+        ],
+        "required": false
+      },
+      "scope": "actions workflows",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.workflows.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "workflows"
+        ],
+        "required": false
+      },
+      "scope": "actions workflows",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.workflows.json",
+      "value_kind": "_StoreTrueAction"
     }
   ],
   "parser": {
@@ -96216,6 +96681,352 @@
             "groups": [],
             "mutexes": [],
             "subparsers": null,
+            "usage": null
+          }
+        },
+        {
+          "aliases": [],
+          "help": "Read-only GitHub Actions provider (ACTIONS-00/01)",
+          "help_present": true,
+          "name": "actions",
+          "parser": {
+            "actions": [],
+            "add_help": true,
+            "allow_abbrev": true,
+            "defaults": {},
+            "description": null,
+            "epilog": null,
+            "formatter": "HelpFormatter",
+            "groups": [],
+            "mutexes": [],
+            "subparsers": {
+              "children": [
+                {
+                  "aliases": [],
+                  "help": "Print read-only ACTIONS-00/01 capability baseline",
+                  "help_present": true,
+                  "name": "baseline",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Read repository and authenticated viewer metadata",
+                  "help_present": true,
+                  "name": "status",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "List workflows without dispatching them",
+                  "help_present": true,
+                  "name": "workflows",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Inspect a workflow by numeric ID or YAML filename",
+                  "help_present": true,
+                  "name": "workflow",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "Credentials source: auto, env, gh, or none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "workflow_id",
+                        "group": null,
+                        "help": "Workflow ID or YAML filename",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [],
+                        "required": true,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                }
+              ],
+              "dest": "actions_command",
+              "group": null,
+              "help": null,
+              "metavar": null,
+              "required": true
+            },
             "usage": null
           }
         }

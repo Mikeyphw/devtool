@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `2eb4db785b71be086a97187c54bd6034bed09d96a6a4fe736808d13f92ed9098`
+Registry digest: `8e14828f0b93986ac6bae9f7ee791a72e5d22a7baca3e56c7b3d865365cd855f`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -292,6 +292,11 @@ This file is generated from the CORE command/config registry and the canonical C
 - `repo-pack pin`
 - `repo-pack unpin`
 - `repo-pack prune`
+- `actions` — Read-only GitHub Actions provider
+- `actions baseline` — Read-only GitHub Actions provider
+- `actions status` — Read-only GitHub Actions provider
+- `actions workflow` — Read-only GitHub Actions provider
+- `actions workflows` — Read-only GitHub Actions provider
 
 ## Configuration documents
 
