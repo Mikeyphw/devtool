@@ -132,15 +132,22 @@ def execute_federated_wrapper(
     publish: Callable[[Any], None] = publish_event,
     snapshot_lookup: Callable[[str], Any] | None = None,
 ) -> FederatedChildRun:
-    plan, _child, resolution = plan_federated_wrapper(parent, repository, wrapper_argv)
+    plan, child, resolution = plan_federated_wrapper(parent, repository, wrapper_argv)
     if resolution.mode != "execute":
         raise FederationBridgeError(
             f"Wrapper request resolved to {resolution.mode!r}; use federation exec --plan for help/version inspection"
         )
     redacted_argv = tuple(resolution.redacted_canonical_argv or resolution.canonical_argv)
 
-    def execute(_child_run_id: str, _lineage: dict[str, Any]) -> int:
-        return execute_wrapper_resolution(resolution, reenter=reenter)
+    def execute(child_run_id: str, lineage: dict[str, Any]) -> int:
+        # The planned wrapper child publishes the authoritative EXO RunStarted
+        # with the planned federation lineage before reentering the wrapper.
+        # A reentered command may publish its own RunStarted without lineage;
+        # it must not be the sole source of federation parent authority.
+        return execute_planned_federated_wrapper_child(
+            child, resolution, child_run_id=child_run_id,
+            lineage=lineage, reenter=reenter, publish=publish,
+        )
 
     return run_federated_direct_child(
         parent,
