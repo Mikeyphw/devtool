@@ -389,12 +389,16 @@ def _build_instrumentation_artifacts(config: ProjectConfig) -> list[dict[str, An
     gradle_receipts: list[dict[str, Any]] = []
     planned = AndroidGradleRunner().build_specs(config, "instrumentation")
     build_specs = [spec for spec in planned if spec.metadata.get("gradle_execution_plan")]
+    if not build_specs:
+        raise RuntimeError("Canonical instrumentation Gradle build supplied no executable plans")
     results, _ = run_specs(config, build_specs, verbose=False)
+    if len(results) != len(build_specs):
+        raise RuntimeError("Canonical instrumentation Gradle build produced incomplete results")
     for item in results:
         receipt = item.metadata.get("gradle_execution_receipt") if isinstance(item.metadata, dict) else None
         if isinstance(receipt, dict):
             gradle_receipts.append(dict(receipt))
-    failed = [result for result in results if int(result.returncode or 0) != 0]
+    failed = [result for result in results if result.returncode is None or int(result.returncode) != 0]
     if failed:
         first = failed[0]
         raise RuntimeError(
@@ -456,13 +460,33 @@ def _advanced_device_capacities(config: ProjectConfig, *, attempt_id: str):
 def _advanced_worker_result(output: str) -> dict[str, Any]:
     marker = "DEVTOOL_ANDROID_ADVANCED_RESULT "
     rows = [line[len(marker):] for line in str(output or "").splitlines() if line.startswith(marker)]
-    if not rows:
+    if len(rows) != 1:
+        # Multiple contradictory markers are ambiguous; fail closed.
         return {}
     try:
         value = json.loads(rows[-1])
     except json.JSONDecodeError:
         return {}
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _valid_advanced_worker_result(
+    worker: Mapping[str, Any], *, child_run_id: str, child_id: str, parent_plan_id: str,
+) -> bool:
+    """Fail closed unless one worker envelope binds the planned RUN child."""
+    if not isinstance(worker, Mapping):
+        return False
+    result = worker.get("result")
+    return (
+        worker.get("schema_version") == 1
+        and worker.get("kind") == "devtool.android-advanced-worker-result"
+        and worker.get("child_run_id") == child_run_id
+        and worker.get("child_id") == child_id
+        and worker.get("parent_plan_id") == parent_plan_id
+        and isinstance(result, Mapping)
+        and result.get("ok") is True
+        and bool(str(result.get("receipt_id") or "").strip())
+    )
 
 
 def _persist_advanced_matrix_evidence(
@@ -631,7 +655,13 @@ def android_advanced_instrumentation_payload(
                 op = results[-1] if results else None
                 worker = _advanced_worker_result(op.output if op is not None else "")
                 result_payload = dict(worker.get("result") or {}) if isinstance(worker.get("result"), Mapping) else {}
-                ok = bool(result_payload.get("ok")) and op is not None and int(op.returncode or 0) == 0
+                # Worker stdout is not a substitute for its authoritative RUN
+                # relation: bind the marker to this exact child and plan.
+                worker_bound = _valid_advanced_worker_result(
+                    worker, child_run_id=child_run_id, child_id=child.child_id,
+                    parent_plan_id=plan.plan_id,
+                )
+                ok = bool(worker_bound and op is not None and op.returncode == 0)
                 attempt = {
                     "attempt": attempt_index, "child_run_id": child_run_id, "ok": ok,
                     "returncode": int(op.returncode or 1) if op is not None else 1,
