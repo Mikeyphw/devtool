@@ -258,6 +258,7 @@ def _inspect_apk(package_file: Path) -> dict[str, Any]:
         raise GitHubActionsError("APK package metadata could not be verified")
     return {"package":match.group(1),"version_code":match.group(2),
             "version_name":match.group(3), "signer_sha256":_fingerprint(signer),
+            "debug_signing": bool(re.search(r"\bCN\s*=\s*Android Debug\b", signer, re.I)),
             "signature_verified":True, "manifest_verified":True}
 
 
@@ -274,8 +275,14 @@ def _inspect_aab(package_file: Path) -> dict[str, Any]:
         raise GitHubActionsError("AAB application ID is not verified")
     _run([_tool("jarsigner"), "-verify", "-strict", str(package_file)], purpose="AAB JAR signature verification")
     cert = _run([_tool("keytool"), "-printcert", "-jarfile", str(package_file)], purpose="AAB signing identity inspection")
-    return {"package":pkg,"version_code":None,"version_name":None,
-            "signer_sha256":_fingerprint(cert),"signature_verified":True,"manifest_verified":True}
+    code_text = _run([java, "-jar", jar, "dump", "manifest", "--bundle", str(package_file),
+                      "--xpath", "/manifest/@android:versionCode"], purpose="AAB versionCode inspection").strip()
+    if not code_text.isdecimal() or int(code_text) < 1:
+        raise GitHubActionsError("AAB versionCode is not verified")
+    return {"package":pkg,"version_code":code_text,"version_name":None,
+            "signer_sha256":_fingerprint(cert),
+            "debug_signing":bool(re.search(r"\bCN\s*=\s*Android Debug\b", cert, re.I)),
+            "signature_verified":True,"manifest_verified":True}
 
 
 def inspect_android_zip(archive: Path, *, fmt: str, variant: str, expected_package: str = "",

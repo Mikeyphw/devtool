@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `3036356180fb537643633c0c69a32388bdde531a41b277b97c982d965fd03196`
+Registry digest: `477f603347be4f4589e4fa4a1cc53870be917d7fe3358f3be4ebbdf77acc3f40`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -30,6 +30,8 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions resume` — Resume a recorded dispatch by its exact request ID
 - `actions run` — Dispatch workflow only with explicit --yes; return run ID if available
 - `actions runs` — List recent remote workflow runs from selected GitHub repository
+- `actions release` — Independent-policy release provenance qualification
+- `actions release verify` — Read-only package release qualification with signed GitHub provenance
 - `actions status` — Read-only GitHub Actions provider
 - `actions verify` — Verify a previously downloaded registered GitHub artifact
 - `actions view` — Inspect one remote workflow run

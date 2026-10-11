@@ -440,12 +440,12 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify"],
         "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)"],
         "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
         "remote_execution": False,
-        "artifact_downloads": "sha256-verified ZIP and inspected Android output, no release qualification",
+        "artifact_downloads": "sha256-verified ZIP, Android inspection, and ACTIONS-08 independent-policy attested release verification",
         "token_persistence": False,
     }
 
@@ -482,6 +482,15 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
         if sub == "resume":
             return pipeline_resume(client, slug, local_root, str(args.pipeline_id))
         raise GitHubActionsError("Unsupported Actions pipeline command")
+    if action == "release":
+        from .actions_release import release_verify
+        from .actions_runs import run_id
+        from .actions_artifacts import _artifact_id
+        if str(getattr(args, 'release_command', '') or '') != 'verify':
+            raise GitHubActionsError('Unsupported Actions release command')
+        return release_verify(client, slug, local_root, run_id=run_id(args.run_id),
+                              artifact_id=_artifact_id(args.artifact_id),
+                              policy_file=str(args.policy), member=str(args.member or ''))
     if action == "android":
         from .actions_android import android_discover, android_plan, android_collect
         sub = str(getattr(args,"android_command","") or "")

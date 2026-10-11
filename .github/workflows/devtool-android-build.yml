@@ -1,6 +1,5 @@
-# Devtool Live HUD: dispatchable CI build using the pinned Java 21 and Gradle launcher.
-# Do not treat debug artifacts as release-qualified or inject release-signing keys.
-# Release APK/AAB trust requires your own restricted signing policy and a pinned certificate.
+# Devtool ACTIONS-08: signed release and verifiable GitHub provenance.
+# Release secrets must be configured in protected GitHub settings and are never workflow inputs.
 name: Devtool Android Build
 on:
   workflow_dispatch:
@@ -25,6 +24,9 @@ on:
         options: [apk, aab]
 permissions:
   contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -35,7 +37,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      # Android SDK legacy 'tools' package is removed; request only supported packages.
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
@@ -56,8 +57,14 @@ jobs:
           esac
           if [[ "$DT_PROJECT" != "." && ! "$DT_PROJECT" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ ]]; then exit 2; fi
           if [[ "$DT_PROJECT" == *".."* ]]; then exit 2; fi
+          test -d "$DT_PROJECT" && test ! -L "$DT_PROJECT"
+          if [[ "$DT_VARIANT" == "release" && "${GITHUB_REF_PROTECTED:-false}" != "true" ]]; then
+            echo 'Release builds require a protected GitHub ref' >&2; exit 2
+          fi
           echo "TASK_PROJECT=$DT_PROJECT" >> "$GITHUB_ENV"
           echo "TASK_MODULE=$DT_MODULE" >> "$GITHUB_ENV"
+          echo "TASK_VARIANT=$DT_VARIANT" >> "$GITHUB_ENV"
+          echo "TASK_FORMAT=$DT_FORMAT" >> "$GITHUB_ENV"
           if [[ "$DT_FORMAT" == "apk" ]]; then task=assemble; else task=bundle; fi
           if [[ "$DT_VARIANT" == "debug" ]]; then task+="Debug"; else task+="Release"; fi
           echo "TASK_NAME=$task" >> "$GITHUB_ENV"
@@ -69,12 +76,62 @@ jobs:
           test -f ./gradlew && test ! -L ./gradlew
           chmod +x ./gradlew
           ./gradlew --no-daemon ":${TASK_MODULE}:${TASK_NAME}"
-      - name: Upload Android outputs
+      - name: Select output and sign release
+        id: package
+        shell: bash
+        env:
+          DT_KEYSTORE_B64: ${{ secrets.DEVTOOL_RELEASE_KEYSTORE_B64 }}
+          DT_STORE_PASSWORD: ${{ secrets.DEVTOOL_RELEASE_STORE_PASSWORD }}
+          DT_KEY_ALIAS: ${{ secrets.DEVTOOL_RELEASE_KEY_ALIAS }}
+          DT_KEY_PASSWORD: ${{ secrets.DEVTOOL_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mod="${TASK_MODULE//://}"
+          root="$TASK_PROJECT/$mod/build/outputs"
+          if [[ "$TASK_FORMAT" == "apk" ]]; then dir="$root/apk/$TASK_VARIANT"; else dir="$root/bundle/$TASK_VARIANT"; fi
+          test -d "$dir" && test ! -L "$dir"
+          mapfile -d '' packages < <(find "$dir" -maxdepth 1 -type f -name "*.$TASK_FORMAT" -print0)
+          if [[ "${#packages[@]}" -ne 1 || -L "${packages[0]}" ]]; then echo 'Expected one regular selected Android output' >&2; exit 2; fi
+          staging="$RUNNER_TEMP/devtool-android-output"
+          mkdir -p "$staging"
+          out="$staging/release.$TASK_FORMAT"
+          if [[ "$TASK_VARIANT" == "debug" ]]; then
+            out="$staging/debug.$TASK_FORMAT"
+            cp -- "${packages[0]}" "$out"
+          else
+            if [[ -z "$DT_KEYSTORE_B64" || -z "$DT_STORE_PASSWORD" || -z "$DT_KEY_ALIAS" || -z "$DT_KEY_PASSWORD" ]]; then
+              echo 'Release signing secrets missing; refusing unsigned release' >&2; exit 2
+            fi
+            store="$RUNNER_TEMP/devtool-release-keystore.p12"
+            trap 'rm -f "$store"' EXIT
+            (umask 077; printf '%s' "$DT_KEYSTORE_B64" | base64 --decode > "$store")
+            test -s "$store"
+            if [[ "$TASK_FORMAT" == "apk" ]]; then
+              tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+              test -n "$tools" && test -x "$tools/zipalign" && test -x "$tools/apksigner"
+              "$tools/zipalign" -f -p 4 "${packages[0]}" "$staging/aligned.apk"
+              "$tools/apksigner" sign --ks "$store" --ks-key-alias "$DT_KEY_ALIAS" \
+                --ks-pass env:DT_STORE_PASSWORD --key-pass env:DT_KEY_PASSWORD \
+                --out "$out" "$staging/aligned.apk"
+              "$tools/apksigner" verify --print-certs "$out"
+            else
+              jarsigner -keystore "$store" -storepass:env DT_STORE_PASSWORD \
+                -keypass:env DT_KEY_PASSWORD -signedjar "$out" "${packages[0]}" "$DT_KEY_ALIAS"
+              jarsigner -verify -strict "$out"
+            fi
+          fi
+          test -s "$out" && test ! -L "$out"
+          echo "package=$out" >> "$GITHUB_OUTPUT"
+          sha256sum "$out"
+      - name: Attest signed release provenance
+        if: ${{ inputs.variant == 'release' }}
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.package.outputs.package }}
+      - name: Upload exactly selected Android output
         uses: actions/upload-artifact@v4
         with:
           name: devtool-android-${{ inputs.variant }}-${{ inputs.format }}
-          path: |
-            **/build/outputs/apk/**/*.apk
-            **/build/outputs/bundle/**/*.aab
+          path: ${{ steps.package.outputs.package }}
           if-no-files-found: error
           retention-days: 7

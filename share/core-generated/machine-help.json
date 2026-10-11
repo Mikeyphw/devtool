@@ -2301,6 +2301,150 @@
       "adoption_source": "core-registry",
       "aliases": [],
       "domain": "actions",
+      "id": "cli.command.actions.release",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.release.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "release"
+      ],
+      "stability": "experimental",
+      "summary": "Independent-policy release provenance qualification"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.release.verify",
+      "options": [
+        {
+          "choices": [],
+          "dest": "artifact_id",
+          "help": "Exact GitHub Actions artifact ID",
+          "hidden": false,
+          "id": "cli.option.actions.release.verify.artifact_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--artifact-id"
+          ]
+        },
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "Credentials source: auto, env, gh, or none",
+          "hidden": false,
+          "id": "cli.option.actions.release.verify.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub owner/repository slug",
+          "hidden": false,
+          "id": "cli.option.actions.release.verify.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit Actions response as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.release.verify.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "member",
+          "help": "Exact APK/AAB member in ZIP if multiple",
+          "hidden": false,
+          "id": "cli.option.actions.release.verify.member",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--member"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "policy",
+          "help": "Absolute path to private owner-controlled release policy JSON (0600)",
+          "hidden": false,
+          "id": "cli.option.actions.release.verify.policy",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--policy"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Exact GitHub Actions run ID",
+          "hidden": false,
+          "id": "cli.option.actions.release.verify.run_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.release.verify.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "release",
+        "verify"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only package release qualification with signed GitHub provenance"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
       "id": "cli.command.actions.status",
       "options": [
         {
@@ -32414,7 +32558,7 @@
       "summary": ""
     }
   ],
-  "digest": "69347979a67ec2405d288657f219e9e0917e0d36cce455a361a471263d9deab7",
+  "digest": "5c9ba7c532bc1949fa7b5c39fd3897ed4e8fc954f5b6a37edc0b07800cc08a65",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -32438,6 +32582,8 @@
       "actions pipeline run",
       "actions pipeline status",
       "actions plan",
+      "actions release",
+      "actions release verify",
       "actions rerun",
       "actions resume",
       "actions run",
@@ -32868,11 +33014,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 441,
-    "registry_command_count": 316
+    "parser_command_count": 443,
+    "registry_command_count": 318
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "3036356180fb537643633c0c69a32388bdde531a41b277b97c982d965fd03196",
+  "registry_digest": "477f603347be4f4589e4fa4a1cc53870be917d7fe3358f3be4ebbdf77acc3f40",
   "registry_schema_version": 1,
   "schema_version": 1
 }

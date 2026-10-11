@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "repository": "REPLACE_OWNER/REPLACE_REPO",
+  "workflow": ".github/workflows/devtool-android-build.yml",
+  "ref": "refs/heads/main",
+  "source_sha": "REPLACE_WITH_40_CHARACTER_APPROVED_SOURCE_COMMIT_SHA",
+  "application_id": "org.example.REPLACE",
+  "signer_sha256": "REPLACE_WITH_64_CHARACTER_PRODUCTION_CERTIFICATE_SHA256",
+  "format": "apk",
+  "minimum_version_code": 1
+}
