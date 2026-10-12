@@ -440,7 +440,7 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify"],
         "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)"],
         "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
@@ -454,6 +454,24 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
     action = str(getattr(args, "actions_command", "") or "")
     if action == "baseline":
         return actions_baseline()
+    # Purely local signing lane: must not depend on gh auth, GitHub plans,
+    # branch rulesets, or ACTIONS-08 release qualification side effects.
+    if action == 'release' and str(getattr(args, 'release_command', '') or '') in ('local-build', 'local-verify'):
+        from .actions_local_release import local_build, local_verify
+        from .android.signing import AndroidSigningError
+        kw = dict(fmt=str(getattr(args, 'format', 'apk') or 'apk'),
+                  identity_id=str(getattr(args, 'signing_identity', '') or ''),
+                  target=str(getattr(args, 'signing_target', 'android_hud') or 'android_hud'),
+                  application_id=str(getattr(args, 'application_id', '') or ''),
+                  minimum_version_code=int(getattr(args, 'minimum_version_code', 1)),
+                  project_dir=str(getattr(args, 'project_dir', 'android/devtool-live-hud') or 'android/devtool-live-hud'),
+                  module=str(getattr(args, 'module', 'app') or 'app'))
+        try:
+            if str(args.release_command) == 'local-build':
+                return local_build(local_root, execute=bool(getattr(args, 'yes', False)), **kw)
+            return local_verify(local_root, artifact=str(getattr(args, 'artifact', '') or ''), **kw)
+        except AndroidSigningError:
+            raise GitHubActionsError('Local Android signing identity or artifact verification failed') from None
     # Journal-only status never authenticates to GitHub or depends on remote availability.
     if action == "pipeline" and str(getattr(args, "pipeline_command", "")) == "status":
         from .actions_pipeline import pipeline_status

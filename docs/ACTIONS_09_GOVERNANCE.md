@@ -100,3 +100,12 @@ store permissions, sign locally, deploy to devices, or replace mobile testing.
   attestation verification, plus supported GitHub artifact attestations.
 - V1 tests are offline and use mocks for GitHub calls; live provisioning and
   live signed release qualification must be performed by the maintainer.
+
+## Private GitHub Free fallback: local inspection only
+
+On GitHub Free, rulesets for private repositories may be unavailable (HTTP 403).
+Do **not** bypass `GITHUB_REF_PROTECTED`, export release keys to an unprotected
+workflow, or claim ACTIONS-08 qualification. See
+[`ACTIONS_FREE_PRIVATE_LOCAL_RELEASE.md`](ACTIONS_FREE_PRIVATE_LOCAL_RELEASE.md)
+for first-class `actions release local-build` and `local-verify` commands
+using the existing LIFE signer, with explicit `qualified_release: false`.

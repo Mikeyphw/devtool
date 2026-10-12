@@ -349,6 +349,40 @@
       "canonical_path": [
         "actions",
         "release",
+        "local-build"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Preview or execute local signed release build without Github qualification",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.release.local_build"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "release",
+        "local-verify"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Verify local package manifest and pinned LIFE signing certificate",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.release.local_verify"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "release",
         "readiness"
       ],
       "metadata": {
@@ -8458,6 +8492,456 @@
       "scope": "actions release",
       "sensitive": false,
       "stable_id": "cli.option.actions.release.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--application-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "application_id",
+        "help": "Expected application ID (auto-discovered if omitted)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-build"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-build",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_build.application_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--format",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "apk",
+          "aab"
+        ],
+        "dest": "format",
+        "help": "Local package format",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-build"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-build",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_build.format",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Print machine-readable JSON",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-build"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-build",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_build.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--minimum-version-code",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "minimum_version_code",
+        "help": "Minimum acceptable versionCode",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-build"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-build",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_build.minimum_version_code",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--module",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "module",
+        "help": "Gradle application module",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-build"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-build",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_build.module",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--project-dir",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "project_dir",
+        "help": "Gradle project within checked-out repository",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-build"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-build",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_build.project_dir",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-identity",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_identity",
+        "help": "Existing registered LIFE signing identity ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-build"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-build",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_build.signing_identity",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_target",
+        "help": "Devtool Android signing target",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-build"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-build",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_build.signing_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly authorize local Gradle execution",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-build"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-build",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_build.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "local-build"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-build",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_build.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--application-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "application_id",
+        "help": "Expected application ID (auto-discovered if omitted)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_verify.application_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--artifact",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "artifact",
+        "help": "Absolute path to APK/AAB to inspect",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-verify"
+        ],
+        "required": true
+      },
+      "scope": "actions release local-verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_verify.artifact",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--format",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "apk",
+          "aab"
+        ],
+        "dest": "format",
+        "help": "Local package format",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_verify.format",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Print machine-readable JSON",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_verify.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--minimum-version-code",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "minimum_version_code",
+        "help": "Minimum acceptable versionCode",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_verify.minimum_version_code",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--module",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "module",
+        "help": "Gradle application module",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_verify.module",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--project-dir",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "project_dir",
+        "help": "Gradle project within checked-out repository",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_verify.project_dir",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-identity",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_identity",
+        "help": "Existing registered LIFE signing identity ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_verify.signing_identity",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_target",
+        "help": "Devtool Android signing target",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_verify.signing_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "local-verify"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-verify",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_verify.help",
       "value_kind": "_HelpAction"
     },
     {
@@ -105599,6 +106083,358 @@
                                   "--signing-target"
                                 ],
                                 "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "local-build",
+                          "aliases": [],
+                          "help": "Preview or execute local signed release build without Github qualification",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android/devtool-live-hud",
+                                "dest": "project_dir",
+                                "group": null,
+                                "help": "Gradle project within checked-out repository",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--project-dir"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "app",
+                                "dest": "module",
+                                "group": null,
+                                "help": "Gradle application module",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--module"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "apk",
+                                  "aab"
+                                ],
+                                "const": null,
+                                "default": "apk",
+                                "dest": "format",
+                                "group": null,
+                                "help": "Local package format",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--format"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "signing_identity",
+                                "group": null,
+                                "help": "Existing registered LIFE signing identity ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-identity"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android_hud",
+                                "dest": "signing_target",
+                                "group": null,
+                                "help": "Devtool Android signing target",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-target"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "application_id",
+                                "group": null,
+                                "help": "Expected application ID (auto-discovered if omitted)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--application-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": 1,
+                                "dest": "minimum_version_code",
+                                "group": null,
+                                "help": "Minimum acceptable versionCode",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--minimum-version-code"
+                                ],
+                                "required": false,
+                                "type": "int"
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Print machine-readable JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Explicitly authorize local Gradle execution",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "local-verify",
+                          "aliases": [],
+                          "help": "Verify local package manifest and pinned LIFE signing certificate",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android/devtool-live-hud",
+                                "dest": "project_dir",
+                                "group": null,
+                                "help": "Gradle project within checked-out repository",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--project-dir"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "app",
+                                "dest": "module",
+                                "group": null,
+                                "help": "Gradle application module",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--module"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "apk",
+                                  "aab"
+                                ],
+                                "const": null,
+                                "default": "apk",
+                                "dest": "format",
+                                "group": null,
+                                "help": "Local package format",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--format"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "signing_identity",
+                                "group": null,
+                                "help": "Existing registered LIFE signing identity ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-identity"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android_hud",
+                                "dest": "signing_target",
+                                "group": null,
+                                "help": "Devtool Android signing target",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-target"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "application_id",
+                                "group": null,
+                                "help": "Expected application ID (auto-discovered if omitted)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--application-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": 1,
+                                "dest": "minimum_version_code",
+                                "group": null,
+                                "help": "Minimum acceptable versionCode",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--minimum-version-code"
+                                ],
+                                "required": false,
+                                "type": "int"
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Print machine-readable JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "artifact",
+                                "group": null,
+                                "help": "Absolute path to APK/AAB to inspect",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--artifact"
+                                ],
+                                "required": true,
                                 "type": null
                               }
                             ],
