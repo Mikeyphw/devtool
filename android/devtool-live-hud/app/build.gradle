@@ -11,6 +11,18 @@ def releaseKeyAlias = releaseValue('DEVTOOL_RELEASE_KEY_ALIAS')
 def releaseKeyPassword = releaseValue('DEVTOOL_RELEASE_KEY_PASSWORD')
 def releaseSigningReady = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword]
         .every { it != null && !it.trim().isEmpty() }
+// ACTIONS-10: this opt-in is honored only for one explicit task invocation.
+// Merely passing the property to assembleRelease or devtoolReleaseValidation
+// cannot bypass the ordinary protected/signed-release checks.
+def unsignedTask = ':app:devtoolAssembleUnsignedReleaseCandidate'
+def unsignedRequested = (providers.gradleProperty('devtool.unsignedReleaseCandidate').orNull == 'true')
+def unsignedCandidate = unsignedRequested && gradle.startParameter.taskNames == [unsignedTask]
+if (unsignedRequested && !unsignedCandidate) {
+    throw new GradleException('Unsigned release property is restricted to the dedicated candidate task')
+}
+if (unsignedCandidate && releaseSigningReady) {
+    throw new GradleException('Unsigned release candidate refuses configured release signing credentials')
+}
 def releaseSigningStamp = layout.buildDirectory.file('devtool/verification/release-signing.txt')
 def releaseApkVerificationReport = layout.buildDirectory.file('reports/devtool/release-apk-verification.txt')
 
@@ -111,7 +123,25 @@ tasks.register('verifyReleaseSigning') {
 }
 
 tasks.matching { it.name == 'preReleaseBuild' }.configureEach {
-    dependsOn tasks.named('verifyReleaseSigning')
+    if (!unsignedCandidate) dependsOn tasks.named('verifyReleaseSigning')
+}
+
+// Produces ONLY an unqualified, unsigned release-variant candidate.
+// Normal assembleRelease and full release validation continue to require signing.
+tasks.register('devtoolAssembleUnsignedReleaseCandidate') {
+    group = 'build'
+    description = 'Build an explicitly unsigned, unqualified release candidate for local signing.'
+    dependsOn 'assembleRelease'
+    doLast {
+        if (!unsignedCandidate || releaseSigningReady) {
+            throw new GradleException('Unsigned release candidate may run only through its opt-in task without credentials')
+        }
+        def folder = layout.buildDirectory.dir('outputs/apk/release').get().asFile
+        def outputs = folder.listFiles()?.findAll { it.isFile() && it.name.endsWith('.apk') } ?: []
+        if (outputs.size() != 1 || !outputs[0].name.endsWith('-unsigned.apk')) {
+            throw new GradleException('Expected exactly one unsigned release APK; refusing ambiguous/signed output')
+        }
+    }
 }
 
 tasks.matching { it.name == 'preBuild' }.configureEach {
@@ -160,3 +190,5 @@ dependencies {
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }
+
+// ACTIONS-10: retained V3 Gradle lane included in repair commit.

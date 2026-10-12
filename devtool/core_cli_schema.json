@@ -5663,6 +5663,91 @@
       },
       "options": [],
       "stable_id": "cli.command.wrapper.verify"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "unsigned-plan"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Preview source-bound, unsigned GitHub release candidate",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.unsigned_plan"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "unsigned-run"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Dispatch dedicated unsigned candidate workflow (requires --yes)",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.unsigned_run"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "unsigned-check"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Verify exact GitHub unsigned archive and APK (read-only)",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.unsigned_check"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "unsigned-import"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Download, validate and register unsigned GitHub APK",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.unsigned_import"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "unsigned-sign"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Locally align, LIFE-sign and verify imported candidate (requires --yes)",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.unsigned_sign"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -55367,6 +55452,789 @@
       "sensitive": false,
       "stable_id": "cli.option.yes",
       "value_kind": "bool"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_plan.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_plan.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_plan.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ref",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ref",
+        "help": "Exact branch or tag to dispatch; source must match local HEAD",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-plan"
+        ],
+        "required": true
+      },
+      "scope": "actions android unsigned-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_plan.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_plan.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_run.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_run.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_run.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ref",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ref",
+        "help": "Exact branch or tag to dispatch; source must match local HEAD",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-run"
+        ],
+        "required": true
+      },
+      "scope": "actions android unsigned-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_run.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly authorize remote workflow dispatch",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_run.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_run.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_check.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_check.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_check.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact GitHub Actions run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_check.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--artifact-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "artifact_id",
+        "help": "Exact GitHub artifact ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_check.artifact_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha",
+        "help": "Expected GitHub commit SHA (40 hex characters)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_check.expected_sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_check.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_import.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_import.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_import.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact GitHub Actions run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_import.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--artifact-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "artifact_id",
+        "help": "Exact GitHub artifact ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_import.artifact_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha",
+        "help": "Expected GitHub commit SHA (40 hex characters)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_import.expected_sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--download",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "download",
+        "help": "Download the archive first, instead of verifying an existing archive",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_import.download",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_import.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_sign.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_sign.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_sign.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--registry-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "registry_id",
+        "help": "Exact imported unsigned registry ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_sign.registry_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-identity",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_identity",
+        "help": "Canonical registered LIFE signing identity (optional)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_sign.signing_identity",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_target",
+        "help": "Devtool Android signing target",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_sign.signing_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly authorize remote workflow dispatch",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_sign.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_sign.help",
+      "value_kind": "_HelpAction"
     }
   ],
   "parser": {
@@ -105080,6 +105948,624 @@
                             "subparsers": null,
                             "usage": null
                           }
+                        },
+                        {
+                          "name": "unsigned-plan",
+                          "aliases": [],
+                          "help": "Preview source-bound, unsigned GitHub release candidate",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "ref",
+                                "group": null,
+                                "help": "Exact branch or tag to dispatch; source must match local HEAD",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--ref"
+                                ],
+                                "required": true,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "unsigned-run",
+                          "aliases": [],
+                          "help": "Dispatch dedicated unsigned candidate workflow (requires --yes)",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "ref",
+                                "group": null,
+                                "help": "Exact branch or tag to dispatch; source must match local HEAD",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--ref"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Explicitly authorize remote workflow dispatch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "unsigned-check",
+                          "aliases": [],
+                          "help": "Verify exact GitHub unsigned archive and APK (read-only)",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "run_id",
+                                "group": null,
+                                "help": "Exact GitHub Actions run ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--run-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "artifact_id",
+                                "group": null,
+                                "help": "Exact GitHub artifact ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--artifact-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_sha",
+                                "group": null,
+                                "help": "Expected GitHub commit SHA (40 hex characters)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-sha"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "unsigned-import",
+                          "aliases": [],
+                          "help": "Download, validate and register unsigned GitHub APK",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "run_id",
+                                "group": null,
+                                "help": "Exact GitHub Actions run ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--run-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "artifact_id",
+                                "group": null,
+                                "help": "Exact GitHub artifact ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--artifact-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_sha",
+                                "group": null,
+                                "help": "Expected GitHub commit SHA (40 hex characters)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-sha"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "download",
+                                "group": null,
+                                "help": "Download the archive first, instead of verifying an existing archive",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--download"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "name": "unsigned-sign",
+                          "aliases": [],
+                          "help": "Locally align, LIFE-sign and verify imported candidate (requires --yes)",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "registry_id",
+                                "group": null,
+                                "help": "Exact imported unsigned registry ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--registry-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "signing_identity",
+                                "group": null,
+                                "help": "Canonical registered LIFE signing identity (optional)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-identity"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android_hud",
+                                "dest": "signing_target",
+                                "group": null,
+                                "help": "Devtool Android signing target",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-target"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Explicitly authorize remote workflow dispatch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
                         }
                       ],
                       "dest": "android_command",
@@ -106476,3 +107962,4 @@
   "parser_authority": "canonical-schema-compiler-v1",
   "schema_version": 2
 }
+

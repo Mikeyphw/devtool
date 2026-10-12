@@ -1,0 +1,69 @@
+# ACTIONS-10: explicitly unsigned/unqualified CI candidate for later native LIFE signing.
+# This NEVER replaces the protected signed-release workflow.
+name: Devtool Android Unsigned Candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unsigned-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare exact Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Verify selected source and build unsigned candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -f android/devtool-live-hud/gradlew
+          test ! -L android/devtool-live-hud/gradlew
+          test -f android/devtool-live-hud/app/build.gradle
+          test ! -L android/devtool-live-hud/app/build.gradle
+          cd android/devtool-live-hud
+          chmod +x gradlew
+          # Do not expose/accept any release signing credentials in this job.
+          ./gradlew --no-daemon -Pdevtool.unsignedReleaseCandidate=true :app:devtoolAssembleUnsignedReleaseCandidate
+      - name: Independently inspect and stage one unsigned APK with bound manifest
+        shell: bash
+        env:
+          DT_EXPECTED_REPO: Mikeyphw/devtool
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$DT_EXPECTED_REPO"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          shopt -s nullglob
+          apks=(android/devtool-live-hud/app/build/outputs/apk/release/*.apk)
+          test "${#apks[@]}" -eq 1
+          test ! -L "${apks[0]}"
+          [[ "${apks[0]}" == *-unsigned.apk ]]
+          stage="$RUNNER_TEMP/devtool-unsigned-candidate"
+          mkdir -m 700 "$stage"
+          cp -- "${apks[0]}" "$stage/unsigned-release.apk"
+          export PATH="$ANDROID_HOME/build-tools/36.0.0:$PATH"
+          python3 tools/actions10_unsigned_manifest.py emit \
+            "$stage/unsigned-release.apk" "$stage/manifest.json"
+      - name: Upload unqualified candidate and nonsecret provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: devtool-android-unsigned-release
+          path: |
+            ${{ runner.temp }}/devtool-unsigned-candidate/unsigned-release.apk
+            ${{ runner.temp }}/devtool-unsigned-candidate/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+
+# ACTIONS-10: retained V3 workflow included in repair commit.

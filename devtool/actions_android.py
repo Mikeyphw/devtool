@@ -215,7 +215,7 @@ def _tool(name: str) -> str:
     if found:
         return found
     sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
-    if sdk and name in ("apksigner", "aapt", "aapt2"):
+    if sdk and name in ("apksigner", "aapt", "aapt2", "zipalign"):
         build_tools = Path(sdk) / "build-tools"
         if build_tools.is_dir():
             candidates = sorted(build_tools.glob(f"*/{name}"), reverse=True)
@@ -397,3 +397,5 @@ def android_collect(client: GitHubActionsClient, slug: str, root: Path, *, run_i
     if downloaded:
         payload["download"] = downloaded
     return payload
+
+# ACTIONS-10: retained V3 integration included in repair commit.
