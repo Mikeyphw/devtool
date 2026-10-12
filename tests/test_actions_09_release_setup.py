@@ -299,3 +299,69 @@ def test_release_readiness_uses_real_github_workflow_identifier(canonical_signer
                                  policy_file=str(tmp_path / 'nonexistent.json'))
     assert not rejected['gates']['workflow_active']
     assert not rejected['ready']
+
+
+def test_signer_failures_report_nonsecret_categories(canonical_signer, monkeypatch):
+    from devtool.actions_setup import _signing_inspection_failure
+    from devtool.github_actions import GitHubActionsError
+    root, _, _ = canonical_signer
+    profile = _signing_profile(root)
+    sentinel = 'SENSITIVE_PASSWORD_DO_NOT_PRINT'
+    cases = [
+        ('Could not inspect keystore (exit 1): java.io.IOException: keystore password was incorrect ' + sentinel,
+         'keystore-password-rejected'),
+        ("Signing alias 'wrong' was not found in /tmp/key.p12 " + sentinel, 'signing-alias-not-found'),
+        ('Configured signing certificate SHA-256 does not match the keystore identity ' + sentinel,
+         'certificate-fingerprint-mismatch'),
+        ('Signing tool execution failed: [Errno 2] No such file or directory ' + sentinel,
+         'keytool-unavailable-or-unexecutable'),
+        ('Could not inspect keystore: unknown provider exception ' + sentinel,
+         'keystore-inspection-failed'),
+    ]
+    assert _signing_inspection_failure(AndroidSigningError(cases[0][0])) == 'keystore-password-rejected'
+    for reason, category in cases:
+        def fail(self, profile, *, store_password=None):
+            raise AndroidSigningError(reason)
+        monkeypatch.setattr(AndroidSigningManager, 'inspect_profile', fail)
+        with pytest.raises(GitHubActionsError, match=category) as result:
+            _signer_material(root, profile)
+        assert sentinel not in str(result.value)
+        assert result.value.__cause__ is None
+    # Never downgrade wrong-password or missing-provider failures to a release.
+    monkeypatch.delenv('MY_EXISTING_DEVTOOL_STOREPASS')
+    with pytest.raises(GitHubActionsError, match='secret-resolution-failed') as result:
+        _signer_material(root, profile)
+    assert result.value.__cause__ is None
+
+
+def test_signer_expiry_still_denied_with_safe_diagnostics(canonical_signer, monkeypatch):
+    from devtool.github_actions import GitHubActionsError
+    root, _, _ = canonical_signer
+    profile = _signing_profile(root)
+    monkeypatch.setattr(AndroidSigningManager, 'inspect_profile',
+                        lambda self, profile, *, store_password=None:
+                        SimpleNamespace(sha256=SIGNER, expired=True))
+    with pytest.raises(GitHubActionsError, match='expired'):
+        _signer_material(root, profile)
+
+
+def test_keytool_inspection_error_is_classified_from_all_lines_without_leak(monkeypatch, tmp_path):
+    manager = AndroidSigningManager()
+    monkeypatch.setattr(manager, '_keytool', lambda: 'keytool')
+    profile = __import__('devtool.android.signing', fromlist=['SigningProfile']).SigningProfile(
+        keystore=str(tmp_path / 'key.p12'), alias='release', store_type='PKCS12')
+    secret = 'DONT_PRINT_KEYTOOL_SECRET'
+    captured = [
+        (1, 'keytool error: java.io.IOException: keystore password was incorrect ' + secret + '\n'
+            '  at java.base/something\n\t... 6 more', 'password was incorrect'),
+        (1, 'keytool error: java.io.IOException: Invalid keystore format ' + secret + '\n\t... 3 more',
+         'Invalid keystore format'),
+        (1, 'java.io.IOException: unknown failure ' + secret + '\n\t... 4 more',
+         'diagnostic withheld'),
+    ]
+    for rc, stderr, marker in captured:
+        monkeypatch.setattr(manager, '_run', lambda *a, **k: (rc, stderr))
+        with pytest.raises(AndroidSigningError, match=marker) as exc:
+            manager.list_aliases(profile, store_password='not-logged')
+        assert secret not in str(exc.value)
+

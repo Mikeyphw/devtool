@@ -937,7 +937,22 @@ class AndroidSigningManager:
         argv = [self._keytool(), "-list", "-v", "-keystore", str(Path(profile.keystore).expanduser()), "-storetype", profile.store_type, "-storepass:env", names["store"]]
         rc, output = self._run(argv, env=env)
         if rc != 0:
-            raise AndroidSigningError(f"Could not inspect keystore (exit {rc}): {output.splitlines()[-1] if output else 'no detail'}")
+            # Java's final stderr line can be a generic stack-trace tail
+            # (e.g. "... 6 more"), masking the actionable error higher up.
+            # Classify the *whole* output but emit only our fixed messages:
+            # keytool text is untrusted and must never echo secret material.
+            diagnostic = output.casefold()
+            if any(marker in diagnostic for marker in (
+                'keystore password was incorrect', 'password was incorrect',
+                'keystore was tampered with', 'password verification failed',
+                'keystore integrity check failed',
+            )):
+                raise AndroidSigningError('Keystore password was incorrect or integrity check failed')
+            if 'invalid keystore format' in diagnostic or 'unrecognized keystore format' in diagnostic:
+                raise AndroidSigningError('Invalid keystore format')
+            if 'permission denied' in diagnostic or 'access denied' in diagnostic:
+                raise AndroidSigningError('Keystore permission denied')
+            raise AndroidSigningError(f'Could not inspect keystore (exit {rc}; diagnostic withheld)')
         chunks = re.split(r"(?=Alias name:)", output, flags=re.I)
         identities = [self._identity_from_keytool(profile.keystore, chunk) for chunk in chunks if "Alias name:" in chunk]
         return identities

@@ -153,8 +153,36 @@ def _signing_profile(root: Path, *, identity_id: str = '', target: str = 'androi
         raise GitHubActionsError('Devtool Android signing configuration unavailable or invalid; check android signing inspect and the LIFE identity registry') from None
 
 
+def _signing_inspection_failure(exc: Exception) -> str:
+    """Classify Android keytool failures without surfacing untrusted tool output.
+
+    Tool exceptions may contain unstructured stderr from platform-specific
+    providers. Treat that text strictly as a selector for fixed, safe messages;
+    never copy it into machine output, logs, or exception causes.
+    """
+    reason = str(exc).casefold()
+    if 'keytool is unavailable' in reason or 'signing tool execution failed' in reason:
+        return 'keytool-unavailable-or-unexecutable'
+    if ('password was incorrect' in reason or 'password is incorrect' in reason
+            or 'keystore password was incorrect' in reason
+            or 'password verification failed' in reason
+            or 'keystore was tampered with' in reason
+            or 'integrity check failed' in reason):
+        return 'keystore-password-rejected'
+    if 'signing alias' in reason and 'was not found' in reason:
+        return 'signing-alias-not-found'
+    if 'certificate sha-256 does not match' in reason:
+        return 'certificate-fingerprint-mismatch'
+    if 'permission denied' in reason or 'access denied' in reason:
+        return 'keystore-unreadable'
+    if ('invalid keystore format' in reason or 'unrecognized keystore format' in reason
+            or 'unsupported keystore type' in reason):
+        return 'unsupported-keystore-format'
+    return 'keystore-inspection-failed'
+
+
 def _signer_material(root: Path, profile):
-    """Bridge canonical signing provider to the GitHub workflow only on --yes."""
+    """Resolve an authorized LIFE signer with fail-closed, nonsecret diagnostics."""
     from .android.signing import AndroidSigningManager, AndroidSigningError, signing_secret_environment
     if profile.mode != 'devtool' or not profile.identity_id:
         raise GitHubActionsError('A configured Devtool LIFE release signing identity is required')
@@ -163,10 +191,14 @@ def _signer_material(root: Path, profile):
     item = _keystore(profile.keystore, root)
     try:
         secrets = signing_secret_environment(profile, allow_prompt=False)
+    except AndroidSigningError:
+        raise GitHubActionsError('Devtool signing secret source unavailable or invalid (secret-resolution-failed)') from None
+    try:
         identity = AndroidSigningManager().inspect_profile(
             profile, store_password=secrets['DEVTOOL_ANDROID_SIGNING_STORE_PASSWORD'])
-    except AndroidSigningError:
-        raise GitHubActionsError('Devtool signing provider could not verify its configured release identity') from None
+    except AndroidSigningError as exc:
+        failure = _signing_inspection_failure(exc)
+        raise GitHubActionsError(f'Devtool signer verification failed ({failure}); the existing LIFE identity and keystore were not changed') from None
     if identity.expired is True or identity.sha256.lower() != profile.expected_cert_sha256.lower():
         raise GitHubActionsError('Devtool signer is expired or does not match the LIFE certificate fingerprint')
     return item, secrets, identity.sha256.lower()
