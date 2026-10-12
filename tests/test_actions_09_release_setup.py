@@ -21,8 +21,10 @@ class Client:
     protected=False
     def repository(self, slug):
         return {'full_name':slug,'default_branch':'main'}
-    def workflow(self, slug, path):
-        return {'path':path,'state':'active'}
+    def workflow(self, slug, identifier):
+        # Only a GitHub-supported identifier is allowed for API lookup.
+        assert identifier == 'devtool-android-build.yml'
+        return {'path':'.github/workflows/devtool-android-build.yml','state':'active'}
     def _get(self,path):
         if '/commits/' in path:return {'sha':SHA}
         if '/branches/' in path:return {'protected':self.protected}
@@ -255,3 +257,45 @@ def test_invalid_signing_certificate_blocks_remote_mutation(canonical_signer,mon
     monkeypatch.setattr(AndroidSigningManager,'inspect_profile',lambda self,profile,*,store_password=None:SimpleNamespace(sha256='0'*64,expired=False))
     with pytest.raises(GitHubActionsError,match='does not match'):
         release_setup(Client(),'Owner/repo',root,policy_file=str(tmp_path/'policy.json'),execute=True)
+
+
+def test_release_readiness_uses_real_github_workflow_identifier(canonical_signer, monkeypatch, tmp_path):
+    """Exercise GitHubActionsClient's real input validator and returned-path pinning."""
+    from devtool.github_actions import GitHubActionsClient
+    root, _, _ = canonical_signer
+    monkeypatch.setattr('devtool.actions_setup._secrets', lambda s: set())
+
+    class RealClient(GitHubActionsClient):
+        def __init__(self):
+            super().__init__(token='')
+            self.requested = []
+            self.reported_path = '.github/workflows/devtool-android-build.yml'
+
+        def repository(self, slug):
+            return {'full_name': slug, 'default_branch': 'main'}
+
+        def _get(self, path):
+            self.requested.append(path)
+            if path.endswith('/commits/main'):
+                return {'sha': SHA}
+            if path.endswith('/branches/main'):
+                return {'protected': True}
+            if path.endswith('/actions/workflows/devtool-android-build.yml'):
+                return {'id': 381518746, 'path': self.reported_path, 'state': 'active',
+                        'name': 'Devtool Android Build'}
+            raise AssertionError('Unexpected request: ' + path)
+
+    client = RealClient()
+    result = release_readiness(client, 'Owner/repo', root, ref='main',
+                               policy_file=str(tmp_path / 'nonexistent.json'))
+    assert result['gates']['workflow_active']
+    assert not result['ready'] and not result['qualified_release']
+    assert any(path.endswith('/actions/workflows/devtool-android-build.yml')
+               for path in client.requested)
+    assert not any('/actions/workflows/.github/' in path for path in client.requested)
+
+    client.reported_path = '.github/workflows/unexpected.yml'
+    rejected = release_readiness(client, 'Owner/repo', root, ref='main',
+                                 policy_file=str(tmp_path / 'nonexistent.json'))
+    assert not rejected['gates']['workflow_active']
+    assert not rejected['ready']

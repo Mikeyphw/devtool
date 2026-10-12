@@ -236,7 +236,9 @@ def release_readiness(client: GitHubActionsClient, slug: str, root: Path, *, ref
     sha = remote.get('sha', '')
     if not isinstance(sha, str) or not re.fullmatch('[a-f0-9]{40}', sha):
         raise GitHubActionsError('Cannot observe remote branch source commit')
-    workflow = client.workflow(slug, _WORKFLOW)
+    # GitHub accepts a workflow filename or numeric ID, not its repository path.
+    # The returned full path is still checked below as a separate identity gate.
+    workflow = client.workflow(slug, Path(_WORKFLOW).name)
     protected = _protected(client, slug, branch)
     installed_secrets = _secrets(slug)
     missing = [name for name in SECRETS if name not in installed_secrets]
