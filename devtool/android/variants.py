@@ -266,7 +266,21 @@ def activate_android_variant(config: ProjectConfig, variant: str) -> ProjectConf
     selection, so signing/instrumentation/tasks all see one execution profile.
     """
     from copy import deepcopy
-    activated = deepcopy(config)
+    from dataclasses import replace
+    from ..test_model import TestSpec
+
+    # TestSpec is an immutable inventory record containing MappingProxyType
+    # fields. Python's deepcopy() tries to pickle those proxies and fails when
+    # test inventory has been loaded (as it is in actual Devtool workspaces).
+    # Detach the registry container, preserve frozen TestSpec objects, and
+    # deepcopy any non-TestSpec legacy entries; all other config fields still
+    # receive the original deep-copy isolation guarantees.
+    inventory = {
+        key: value if isinstance(value, TestSpec) else deepcopy(value)
+        for key, value in config.tests.items()
+    }
+    activated = deepcopy(replace(config, tests={}))
+    activated.tests = inventory
     name = str(variant or "").strip() or "debug"
     activated.variant = name
     options = None

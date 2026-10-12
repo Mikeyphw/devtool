@@ -138,3 +138,43 @@ def test_interactive_signing_secret_does_not_survive_exception(monkeypatch):
             assert os.environ['DT_RELEASE_PRIVATE_PW']=='hidden'
             raise RuntimeError('sentinel')
     assert 'DT_RELEASE_PRIVATE_PW' not in os.environ
+
+
+def test_real_devtool_config_release_activation_accepts_immutable_test_inventory():
+    """Reproduces the real Termux mappingproxy failure, not a mocked launcher."""
+    from devtool.android.variants import activate_android_variant
+    from devtool.config import load_project_config
+
+    repo = Path(__file__).resolve().parents[1]
+    config = load_project_config(str(repo), None, target_name='android_hud')
+    assert config.tests and len(config.tests) > 10
+    release = activate_android_variant(config, 'release')
+    assert release.variant == 'release'
+    assert config.variant != 'release'
+    assert release.tests is not config.tests
+    assert release.tests.keys() == config.tests.keys()
+    assert all(release.tests[key] is config.tests[key] for key in config.tests)
+    release.runner_options['android'] = {'unrelated': {'mutable': 'only-clone'}}
+    assert release.runner_options != config.runner_options
+
+
+def test_variant_activation_deep_copies_mutable_options_and_legacy_test_entries():
+    from devtool.android.variants import activate_android_variant
+    from devtool.models import ProjectConfig, TargetConfig
+    from devtool.test_model import TestSpec
+
+    fixture = ProjectConfig(repo_root=Path('/tmp/repo'), kind='android', selected_target='app',
+        env={'BASE':'1'}, runner_options={'android':{'nested':{'before':['original']}}},
+        tests={'immutable':TestSpec(id='immutable', name='fixture', runner='pytest',
+                                     metadata={'declared': True}),
+               'legacy':{'nested':['original']}},
+        targets={'app': TargetConfig(name='app',variants={'release':{'env':{'RELEASE':'true'},
+                  'android':{'nested':{'after':['release']}}}})})
+    activated = activate_android_variant(fixture,'release')
+    assert activated.env == {'BASE':'1','RELEASE':'true'}
+    assert fixture.env == {'BASE':'1'}
+    assert activated.tests['immutable'] is fixture.tests['immutable']
+    activated.tests['legacy']['nested'].append('only-clone')
+    assert fixture.tests['legacy']['nested'] == ['original']
+    activated.runner_options['android']['nested']['before'].append('only-clone')
+    assert fixture.runner_options['android']['nested']['before'] == ['original']
