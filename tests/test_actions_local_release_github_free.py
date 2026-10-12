@@ -178,3 +178,56 @@ def test_variant_activation_deep_copies_mutable_options_and_legacy_test_entries(
     assert fixture.tests['legacy']['nested'] == ['original']
     activated.runner_options['android']['nested']['before'].append('only-clone')
     assert fixture.runner_options['android']['nested']['before'] == ['original']
+
+
+def test_gradle_failure_diagnostics_are_fixed_and_credential_safe():
+    from devtool.actions_local_release import _classify_gradle_failure
+    secret = b'PRIVATE_RELEASE_PASSWORD_DO_NOT_EXPOSE'
+    cases = [
+        (b'SDK location not found. Define location with ANDROID_HOME', 'android-sdk-path-missing'),
+        (b'Failed to find Platform SDK with path: platforms;android-36', 'android-platform-missing'),
+        (b'AAPT2 Daemon #0: Daemon startup failed', 'android-aapt2-execution-failed'),
+        (b'java.lang.UnsupportedClassVersionError: Unsupported class file major version 70', 'java-toolchain-incompatible'),
+        (b'Unable to load. keystore password was incorrect', 'gradle-signing-password-rejected'),
+        (b'java.net.UnknownHostException: services.gradle.org', 'gradle-network-unavailable'),
+        (b'Execution failed for task :app:assembleRelease', 'gradle-unclassified'),
+    ]
+    for raw, expected in cases:
+        result = _classify_gradle_failure(raw + b'\n' + secret, b'')
+        assert result == expected
+        assert secret.decode() not in result
+    assert _classify_gradle_failure(None, None) == 'gradle-unclassified'
+    assert _classify_gradle_failure('AAPT2 Daemon startup failed', '') == 'android-aapt2-execution-failed'
+
+
+def test_local_build_failure_exposes_only_safe_category(monkeypatch, tmp_path):
+    from devtool.models import ProjectConfig
+    from devtool.actions_local_release import local_build
+    root=tmp_path/'repo';root.mkdir()
+    project=root/'android/devtool-live-hud';project.mkdir(parents=True)
+    (project/'gradlew').write_text('#!/bin/sh\n')
+    store=tmp_path/'key.p12';store.write_bytes(b'private');store.chmod(0o600)
+    init=tmp_path/'sign.init.gradle';init.write_text('// no secrets')
+    monkeypatch.setenv('DT_RELEASE_PRIVATE_PW','secret-from-env-do-not-print')
+    monkeypatch.setattr('devtool.actions_local_release._tracked_state', lambda _: 'a'*40)
+    monkeypatch.setattr('devtool.actions_android._gradle_bootstrap', lambda _: {'mode':'fixture'})
+    monkeypatch.setattr('devtool.actions_android.android_discover', lambda *a: {'modules':[{'module':'app'}]})
+    monkeypatch.setattr('devtool.actions_local_release._application', lambda *a: 'org.example.release')
+    monkeypatch.setattr('devtool.actions_local_release._signing_profile', lambda *a,**k: profile(store))
+    monkeypatch.setattr('devtool.actions_local_release._signer_material',lambda *a:(store,{
+        'DEVTOOL_ANDROID_SIGNING_STORE_PASSWORD':'secret-from-env-do-not-print',
+        'DEVTOOL_ANDROID_SIGNING_KEY_PASSWORD':'secret-from-env-do-not-print'},CERT))
+    monkeypatch.setattr('devtool.android.signing.stage_gradle_signing_init_script',lambda *a,**k:init)
+    monkeypatch.setattr('devtool.config.load_project_config',lambda *a,**k:ProjectConfig(repo_root=root,kind='android'))
+    monkeypatch.setattr('devtool.android.variants.activate_android_variant',lambda cfg,v:cfg)
+    def failed(argv,**kwargs):
+        assert 'secret-from-env-do-not-print' not in repr(argv)
+        return SimpleNamespace(returncode=1,stdout=b'FAILED: SDK location not found. secret-from-env-do-not-print',
+                               stderr=b'secret-from-env-do-not-print')
+    monkeypatch.setattr('devtool.actions_local_release.subprocess.run',failed)
+    with pytest.raises(GitHubActionsError) as exc:
+        local_build(root,execute=True)
+    message=str(exc.value)
+    assert 'reason=android-sdk-path-missing' in message
+    assert 'secret-from-env-do-not-print' not in message
+    assert 'SDK location not found' not in message

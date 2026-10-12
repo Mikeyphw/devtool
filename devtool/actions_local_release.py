@@ -101,6 +101,73 @@ def local_verify(root: Path, *, artifact: str, fmt: str = 'apk',
 
 
 
+# Do not return snippets from Gradle. Android/Gradle plugins can print secret
+# environment values (even on otherwise ordinary build failures). Categorize
+# captured child output by *constant* diagnostic IDs only.
+_GRADLE_FAILURE_MARKERS: tuple[tuple[str, tuple[bytes, ...]], ...] = (
+    ('gradle-bootstrap-checksum', (b'checksum mismatch', b'gradle distribution checksum')),
+    ('java-toolchain-incompatible', (b'unsupported class file major version',
+                                     b'incompatible java version', b'requires java 21',
+                                     b'requires jdk 21', b'requires java 17')),
+    ('android-sdk-path-missing', (b'sdk location not found', b'android sdk location not found',
+                                  b'android_sdk_root or android_home is required',
+                                  b'failed to find sdk', b'android sdk root is missing')),
+    ('android-platform-missing', (b'failed to find platform sdk with path',
+                                  b'failed to find target with hash string',
+                                  b'platforms;android-36', b'android-36 was not found')),
+    ('android-build-tools-missing', (b'build tools revision 36.0.0 is corrupted',
+                                     b'failed to find build tools revision',
+                                     b'failed to install the following sdk components')),
+    ('android-aapt2-execution-failed', (b'aapt2 daemon startup failed',
+                                        b'aapt2 daemon', b'error while executing aapt2',
+                                        b'failed to start aapt2')),
+    ('android-architecture-executable', (b'exec format error', b'cannot execute binary file',
+                                         b'wrong elf class')),
+    ('gradle-signing-password-rejected', (b'keystore password was incorrect',
+                                          b'password was incorrect',
+                                          b'cannot recover key', b'keystore was tampered with')),
+    ('gradle-signing-material-missing', (b'keystore file not found',
+                                         b'release keystore does not exist',
+                                         b'release signing secrets are unavailable',
+                                         b'release signing is required. set devtool_release_')),
+    ('gradle-signing-keystore-invalid', (b'invalid keystore format',
+                                         b'failed to read key', b'key was not found')),
+    ('gradle-init-script-failed', (b'initialization script', b'could not compile initialization script',
+                                   b'failed to apply plugin in init script')),
+    ('gradle-network-unavailable', (b'unknownhostexception', b'connection timed out',
+                                    b'could not get resource', b'read timed out')),
+    ('gradle-dependency-resolution', (b'could not resolve all files',
+                                      b'could not resolve all dependencies',
+                                      b'plugin [id:', b'was not found in any of the following sources')),
+    ('android-r8-minification', (b'missing classes detected while running r8',
+                                 b'execution failed for task :app:minifyreleasewithr8',
+                                 b'error: r8:')),
+    ('gradle-out-of-memory', (b'java heap space', b'outofmemoryerror',
+                              b'gradle build daemon disappeared unexpectedly')),
+)
+
+
+def _classify_gradle_failure(stdout: bytes | str | None, stderr: bytes | str | None) -> str:
+    """Select a fixed, nonsecret failure ID without projecting Gradle text.
+
+    The output may include passwords or injected strings. Never include any
+    captured text in public results, exceptions, events or test assertions.
+    """
+    def bounded(value: bytes | str | None) -> bytes:
+        if isinstance(value, str):
+            value = value.encode('utf-8', errors='replace')
+        if not isinstance(value, bytes):
+            return b''
+        # Both early boot errors and the final task failure can be relevant.
+        return (value[:1024 * 1024] + b'\n' + value[-1024 * 1024:]).lower()
+
+    output = bounded(stdout) + b'\n' + bounded(stderr)
+    for category, markers in _GRADLE_FAILURE_MARKERS:
+        if any(marker in output for marker in markers):
+            return category
+    return 'gradle-unclassified'
+
+
 @contextmanager
 def _local_signing_password(profile):
     """Ask only at a human-approved local execution boundary; clean process env."""
@@ -197,7 +264,11 @@ def local_build(root: Path, *, execute: bool = False, fmt: str = 'apk',
             env.clear()
             secrets.clear()
         if proc.returncode:
-            raise GitHubActionsError(f'Local Gradle release build failed (exit {proc.returncode}); captured build output withheld to protect credentials')
+            category = _classify_gradle_failure(proc.stdout, proc.stderr)
+            raise GitHubActionsError(
+                f'Local Gradle release build failed (exit {proc.returncode}, reason={category}); '
+                'captured build output withheld to protect credentials'
+            ) from None
         if _tracked_state(root) != sha:
             raise GitHubActionsError('Source changed during local release build; refusing to endorse output')
         folder = project.joinpath(*module.split(':'), 'build', 'outputs', 'apk' if fmt == 'apk' else 'bundle', 'release')
