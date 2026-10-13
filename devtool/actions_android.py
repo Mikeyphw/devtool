@@ -234,16 +234,51 @@ def _run(args: list[str], *, purpose: str, timeout: int = 45) -> str:
     return proc.stdout + "\n" + proc.stderr
 
 
-def _fingerprint(text: str) -> str:
-    match = re.search(r"Signer #1 certificate SHA-256 digest:\s*([0-9a-fA-F]{64})", text, flags=re.I)
-    if match:
-        return match.group(1).lower()
-    match = re.search(r"SHA256:\s*([0-9a-fA-F:]{64,95})", text, flags=re.I)
-    if match:
-        value = match.group(1).replace(":", "").lower()
-        if _CERT.fullmatch(value):
-            return value
-    raise GitHubActionsError("Signing certificate SHA-256 fingerprint could not be verified")
+def _fingerprint(text: str, *, source: str = "apksigner") -> str:
+    """Parse a verified tool's public certificate SHA-256, never a guessed hash.
+
+    Android tools have used ``SHA-256``/``SHA256`` and sometimes emit colon-
+    delimited bytes.  Only certificate fields are authoritative.  Multiple
+    signers/digests and malformed fields remain fail-closed.  Never include the
+    untrusted tool output in errors (it could contain private diagnostics).
+    """
+    if source not in ("apksigner", "keytool"):
+        raise GitHubActionsError("Unrecognized certificate inspection source")
+    apksigner_field = re.compile(
+        r"^(?:Signer\s*#?\s*(\d+)\s+)?certificate\s+SHA[- ]?256"
+        r"(?:\s+(?:digest|fingerprint))?\s*:\s*(.*?)\s*$", re.I)
+    keytool_field = re.compile(r"^(?:SHA[- ]?256)\s*:\s*(.*?)\s*$", re.I)
+    seen_signers: set[str] = set()
+    if source == "apksigner":
+        for number in re.findall(r"(?im)^\s*Signer\s*#?\s*(\d+)\s+certificate\b", text):
+            seen_signers.add(number)
+        if any(number != "1" for number in seen_signers):
+            raise GitHubActionsError("Signing certificate fingerprint could not be verified (multiple-signers)")
+    digests: set[str] = set()
+    matched_field = False
+    for raw in text.splitlines():
+        m = (apksigner_field if source == "apksigner" else keytool_field).fullmatch(raw.strip())
+        if m is None:
+            continue
+        matched_field = True
+        value = m.group(2) if source == "apksigner" else m.group(1)
+        if source == "apksigner" and m.group(1) not in (None, "1"):
+            raise GitHubActionsError("Signing certificate fingerprint could not be verified (multiple-signers)")
+        # Accept precisely 32 hex byte pairs, either contiguous, colon- or
+        # space-separated.  Never accept a 64-character prefix of a bad value.
+        if re.fullmatch(r"[0-9a-fA-F]{64}", value):
+            digest = value.lower()
+        elif re.fullmatch(r"[0-9a-fA-F]{2}(?:(?::|\s+)[0-9a-fA-F]{2}){31}", value):
+            digest = re.sub(r"[:\s]", "", value).lower()
+        else:
+            raise GitHubActionsError("Signing certificate fingerprint could not be verified (malformed-sha256)")
+        digests.add(digest)
+    if len(digests) > 1:
+        raise GitHubActionsError("Signing certificate fingerprint could not be verified (conflicting-digests)")
+    if len(digests) == 1:
+        return next(iter(digests))
+    reason = "unrecognized-sha256-field" if matched_field else "missing-sha256-field"
+    raise GitHubActionsError(f"Signing certificate fingerprint could not be verified ({reason})")
 
 
 def _inspect_apk(package_file: Path) -> dict[str, Any]:
@@ -280,7 +315,7 @@ def _inspect_aab(package_file: Path) -> dict[str, Any]:
     if not code_text.isdecimal() or int(code_text) < 1:
         raise GitHubActionsError("AAB versionCode is not verified")
     return {"package":pkg,"version_code":code_text,"version_name":None,
-            "signer_sha256":_fingerprint(cert),
+            "signer_sha256":_fingerprint(cert, source="keytool"),
             "debug_signing":bool(re.search(r"\bCN\s*=\s*Android Debug\b", cert, re.I)),
             "signature_verified":True,"manifest_verified":True}
 
