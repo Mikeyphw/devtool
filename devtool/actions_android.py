@@ -244,15 +244,27 @@ def _fingerprint(text: str, *, source: str = "apksigner") -> str:
     """
     if source not in ("apksigner", "keytool"):
         raise GitHubActionsError("Unrecognized certificate inspection source")
+    # The Android Build Tools apksigner 0.9 in Termux emits, for example:
+    # "V3.0 Signer: certificate SHA-256 digest: ...".  Newer tools use
+    # "Signer #1 certificate SHA-256 digest: ...".  Capture only explicit
+    # certificate SHA-256 fields and never guess from an unrelated digest.
     apksigner_field = re.compile(
-        r"^(?:Signer\s*#?\s*(\d+)\s+)?certificate\s+SHA[- ]?256"
-        r"(?:\s+(?:digest|fingerprint))?\s*:\s*(.*?)\s*$", re.I)
+        r"^(?:(?:Signer\s*#?\s*(?P<ordinal>\d+)\s+)|"
+        r"(?:V[1-4](?:\.\d+)?\s+Signer(?:\s*#?\s*(?P<scheme_ordinal>\d+))?\s*:\s*))?"
+        r"certificate\s+SHA[- ]?256(?:\s+(?:digest|fingerprint))?\s*:\s*"
+        r"(?P<value>.*?)\s*$", re.I)
+    signer_heading = re.compile(
+        r"^(?:Signer\s*#?\s*(\d+)\s+certificate\b|"
+        r"V[1-4](?:\.\d+)?\s+Signer(?:\s*#?\s*(\d+))?\s*:\s*certificate\b)", re.I)
     keytool_field = re.compile(r"^(?:SHA[- ]?256)\s*:\s*(.*?)\s*$", re.I)
-    seen_signers: set[str] = set()
     if source == "apksigner":
-        for number in re.findall(r"(?im)^\s*Signer\s*#?\s*(\d+)\s+certificate\b", text):
-            seen_signers.add(number)
-        if any(number != "1" for number in seen_signers):
+        for raw in text.splitlines():
+            heading = signer_heading.match(raw.strip())
+            if heading and (heading.group(1) or heading.group(2)) not in (None, "1"):
+                raise GitHubActionsError("Signing certificate fingerprint could not be verified (multiple-signers)")
+        # Some versions emit an independent signer-count in verbose mode.
+        if any(int(number) != 1 for number in re.findall(
+                r"(?im)^\s*Number of signers\s*:\s*(\d+)\s*$", text)):
             raise GitHubActionsError("Signing certificate fingerprint could not be verified (multiple-signers)")
     digests: set[str] = set()
     matched_field = False
@@ -261,8 +273,10 @@ def _fingerprint(text: str, *, source: str = "apksigner") -> str:
         if m is None:
             continue
         matched_field = True
-        value = m.group(2) if source == "apksigner" else m.group(1)
-        if source == "apksigner" and m.group(1) not in (None, "1"):
+        value = m.group("value") if source == "apksigner" else m.group(1)
+        if source == "apksigner" and any(
+                group not in (None, "1") for group in
+                (m.group("ordinal"), m.group("scheme_ordinal"))):
             raise GitHubActionsError("Signing certificate fingerprint could not be verified (multiple-signers)")
         # Accept precisely 32 hex byte pairs, either contiguous, colon- or
         # space-separated.  Never accept a 64-character prefix of a bad value.
