@@ -1,5 +1,6 @@
 package io.github.mikeceead.devtoolhud;
 
+import org.json.JSONObject;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -18,6 +19,14 @@ public class ExecutionGraphStateTest {
             + "{\"node_id\":\"zip\",\"parent_id\":\"build\",\"label\":\"Create ZIP\",\"kind\":\"artifact\",\"status\":\"succeeded\",\"progress\":{\"percent\":100}}],"
             + "\"diagnostics\":[{\"diagnostic_id\":\"d1\",\"node_id\":\"compile\",\"process_id\":\"p1\",\"severity\":\"error\",\"code\":\"JAVAC\",\"message\":\"Compilation failed\",\"log_path\":\"/tmp/build.log\",\"evidence\":[\"/tmp/build.log\"]}]"
             + "}";
+
+    @Test public void localJvmUsesRealJsonParserNotMockableAndroidStubs() throws Exception {
+        // These APIs must return actual parsed values on JVM CI. With AGP's
+        // mockable android.jar alone, opt* methods silently return defaults.
+        JSONObject json = new JSONObject("{\"state\":\"blocked\",\"count\":3}");
+        assertEquals("blocked", json.getString("state"));
+        assertEquals(3, json.getInt("count"));
+    }
 
     @Test public void parsesCanonicalAccountingWithoutCompletingFailedWork() {
         ExecutionGraphState state = ExecutionGraphState.parse(FAILED_GRAPH);

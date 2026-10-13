@@ -217,6 +217,10 @@ tasks.register('devtoolReleaseValidation') {
 
 dependencies {
     testImplementation 'junit:junit:4.13.2'
+    // AGP's mockable android.jar provides stub org.json implementations in
+    // local JVM tests. ExecutionGraphState requires a working JSON parser.
+    // Test-only: do not package this library in debug/release APKs or AABs.
+    testImplementation 'org.json:json:20240303'
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }
