@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-_ALLOWED = frozenset({'pending','running','waiting','success','failure','blocked','uncertain'})
+_ALLOWED = frozenset({'pending','running','waiting','success','failure','blocked','uncertain','cancelled'})
 
 
 def project_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -31,13 +31,14 @@ def project_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
     blocked = any(n['state'] in ('blocked','failure','uncertain') for n in rows)
     waiting = any(n['state']=='waiting' for n in rows)
     # No auto-resume when a crash left an uncertain outgoing POST or a failed node.
-    resumable = bool(payload.get('pipeline_id')) and not success and not blocked and not any(n['state']=='running' for n in rows)
+    resumable = bool(payload.get('pipeline_id')) and not payload.get('cancel_requested') and not success and not blocked and not any(n['state']=='running' for n in rows)
     counts = {s: sum(n['state']==s for n in rows) for s in sorted(_ALLOWED)}
     return {'schema_version':1, 'phase':'ACTIONS-07', 'name':str(payload.get('name') or ''),
             'pipeline_id':str(payload.get('pipeline_id') or ''),
             'repository':str(payload.get('repository') or ''),
             'source_sha':str(payload.get('source_sha') or ''),
-            'state':'success' if success else 'blocked' if blocked else 'waiting' if waiting else 'incomplete',
+            'state':'success' if success else 'cancelled' if payload.get('cancel_requested') else 'blocked' if blocked else 'waiting' if waiting else 'incomplete',
+            'cancel_requested':bool(payload.get('cancel_requested', False)),
             'completed_successfully':success, 'qualified_release':False,
             'resume_enabled':resumable, 'dispatch_enabled':False,
             'nodes':rows, 'counts':counts, 'read_only':True}
@@ -54,7 +55,9 @@ def pipeline_text(payload: Mapping[str, Any]) -> str:
         if node['detail']:
             item += ' — ' + node['detail'].replace('\n',' ')[:200]
         parts.append(item)
-    if view['state']=='blocked':
+    if view['state']=='cancelled':
+        parts.append('Stop requested: no new nodes scheduled; existing remote jobs were not cancelled.')
+    elif view['state']=='blocked':
         parts.append('Blocked/uncertain: manual reconciliation required; no automatic redispatch.')
     elif view['resume_enabled']:
         parts.append('Resume requires explicit --yes; pending remote work is not success.')

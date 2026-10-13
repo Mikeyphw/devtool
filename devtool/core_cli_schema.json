@@ -5748,6 +5748,23 @@
       },
       "options": [],
       "stable_id": "cli.command.actions.android.unsigned_sign"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "pipeline",
+        "cancel"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Request safe, durable pipeline cancellation without cancelling remote jobs",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.pipeline.cancel"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -56236,6 +56253,96 @@
       "sensitive": false,
       "stable_id": "cli.option.global.job_ui",
       "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "cancel"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.cancel.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "cancel"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.cancel.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--pipeline-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "pipeline_id",
+        "help": "Previously persisted pipeline ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "pipeline",
+          "cancel"
+        ],
+        "required": true
+      },
+      "scope": "actions pipeline cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.cancel.pipeline_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Authorize pending pipeline work",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "pipeline",
+          "cancel"
+        ],
+        "required": false
+      },
+      "scope": "actions pipeline cancel",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.pipeline.cancel.yes",
+      "value_kind": "_StoreTrueAction"
     }
   ],
   "parser": {
@@ -106598,6 +106705,77 @@
                     "mutexes": [],
                     "subparsers": {
                       "children": [
+                        {
+                          "name": "cancel",
+                          "aliases": [],
+                          "help": "Request durable pipeline stop; does not cancel remote GitHub jobs",
+                          "help_present": true,
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "pipeline_id",
+                                "group": null,
+                                "help": "Previously persisted pipeline ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--pipeline-id"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Authorize pending pipeline work",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
                         {
                           "name": "plan",
                           "aliases": [],

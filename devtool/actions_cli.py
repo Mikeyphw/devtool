@@ -51,7 +51,8 @@ def run_actions_command(args: Any) -> int:
             and not payload.get('ready', False)):
         return 1
     if (str(getattr(args, "actions_command", "")) == "pipeline"
-            and payload.get("state") == "blocked"):
+            and payload.get("state") in ("blocked", "cancelled")
+            and str(getattr(args, "pipeline_command", "")) != "cancel"):
         return 1
     if command == 'watch' or (command == 'android' and subcommand == 'unsigned-run' and streaming):
         result = payload.get('monitor', payload)

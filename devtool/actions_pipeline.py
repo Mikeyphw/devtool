@@ -8,6 +8,7 @@ states distinguish accepted remote requests from observed successful completion.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import os
@@ -29,8 +30,9 @@ _REL = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _HEX = re.compile(r"[0-9a-f]{32}\Z")
 _KINDS = {'local-git', 'local-invoke', 'github-dispatch', 'github-result', 'github-archive'}
-_STATES = {'pending', 'running', 'waiting', 'success', 'failure', 'blocked', 'uncertain'}
+_STATES = {'pending', 'running', 'waiting', 'success', 'failure', 'blocked', 'uncertain', 'cancelled'}
 _MAX_NODES = 32
+_MAX_REMOTE_WORKERS = 4
 
 
 def _now() -> str:
@@ -178,7 +180,9 @@ def _public(obj: dict[str, Any]) -> dict[str, Any]:
             'repository':obj['repository'],'source_sha':obj['head_sha'],
             'manifest_sha256':obj['manifest_sha256'],'nodes':nodes,
             'completed_successfully':done,'qualified_release':False,
-            'state': 'success' if done else ('blocked' if any(x['state'] in ('failure','blocked','uncertain') for x in nodes) else 'incomplete')}
+            'cancel_requested':bool(obj.get('cancel_requested', False)),
+            'state': 'success' if done else ('cancelled' if obj.get('cancel_requested') else
+                     'blocked' if any(x['state'] in ('failure','blocked','uncertain','cancelled') for x in nodes) else 'incomplete')}
 
 
 def pipeline_plan(client: GitHubActionsClient, slug: str, root: Path, filename: str) -> dict[str, Any]:
@@ -196,7 +200,8 @@ def pipeline_plan(client: GitHubActionsClient, slug: str, root: Path, filename: 
     return {'phase':'ACTIONS-06','validated':True,'dispatched':False,'name':manifest['name'],
             'repository':slug,'source_sha':sha,'file':filename,'manifest_sha256':digest,
             'graph':[{'id':x['id'],'kind':x['kind'],'needs':x.get('needs',[])} for x in manifest['nodes']],
-            'remote_preflight':remote,'execution':'foreground-sequential-delegating-native-DAG',
+            'remote_preflight':remote,'execution':'foreground-bounded-parallel-remote-delegating-native-DAG',
+            'max_remote_workers':_MAX_REMOTE_WORKERS,
             'qualified_release':False}
 
 
@@ -276,34 +281,101 @@ def _execute_node(client: GitHubActionsClient, slug: str, root: Path, node: dict
     raise GitHubActionsError('Unsupported pipeline node')
 
 
+def _cancel_path(path: Path) -> Path:
+    return path.with_suffix('.cancel')
+
+
+def _cancel_requested(path: Path) -> bool:
+    marker = _cancel_path(path)
+    if marker.is_symlink():
+        raise GitHubActionsError('Pipeline cancellation marker is a symlink')
+    return marker.is_file()
+
+
+def _execute_isolated(client: GitHubActionsClient, slug: str, root: Path,
+                      node: dict[str, Any], record: dict[str, Any],
+                      journal: dict[str, Any], head: str) -> tuple[str, dict[str, Any]]:
+    # Worker never writes the shared journal. Main thread owns every durable transition.
+    private = dict(record)
+    try:
+        return _execute_node(client, slug, root, node, private, journal, head), private
+    except GitHubActionsError as exc:
+        private['detail'] = str(exc)
+        return ('uncertain' if node['kind'] == 'github-dispatch' else 'failure'), private
+    except Exception:
+        # Do not treat an unknown dispatch error as permission to repeat a POST.
+        private['detail'] = 'Unexpected node execution error; review retained evidence'
+        return ('uncertain' if node['kind'] in ('github-dispatch', 'local-invoke') else 'failure'), private
+
+
+def _recover_interrupted(path: Path, journal: dict[str, Any], manifest: dict[str, Any]) -> None:
+    """Only read-only observers can be safely reclassified after interruption."""
+    changed = False
+    for node in manifest['nodes']:
+        record = journal['nodes'][node['id']]
+        if record['state'] != 'running':
+            continue
+        if node['kind'] in ('github-result', 'local-git'):
+            record['state'] = 'waiting' if node['kind'] == 'github-result' else 'pending'
+            record['detail'] = 'Interrupted read-only observation; safe to inspect again'
+        else:
+            record['state'] = 'uncertain'
+            record['detail'] = 'Interrupted side effect; explicit reconciliation required (not replayed)'
+        record['updated_at'] = _now()
+        changed = True
+    if changed:
+        _durable_record(path, journal)
+
+
 def _drive(client: GitHubActionsClient, slug: str, root: Path, filename: str,
            manifest: dict[str, Any], path: Path, journal: dict[str, Any]) -> dict[str, Any]:
     head = journal['head_sha']
-    for node in manifest['nodes']:
-        record = journal['nodes'][node['id']]
-        if record['state'] == 'success':
-            continue
-        # Never retry uncertain or interrupted POSTs. External reconciliation required.
-        if record['state'] in ('running', 'uncertain', 'failure', 'blocked'):
-            return _public(journal)
-        if any(journal['nodes'][need]['state'] != 'success' for need in node.get('needs', [])):
-            return _public(journal)
-        record['state'] = 'running'
-        record['updated_at'] = _now()
-        _durable_record(path, journal)
-        try:
-            state = _execute_node(client, slug, root, node, record, journal, head)
-        except GitHubActionsError as exc:
-            # Failure after an outgoing dispatch may be ambiguous: NEVER auto-retry.
-            record['state'] = 'uncertain' if node['kind'] == 'github-dispatch' else 'failure'
-            record['detail'] = str(exc)
+    by_id = {node['id']:node for node in manifest['nodes']}
+    # A waiting node is observed once per invocation, not polled to exhaustion.
+    visited: set[str] = set()
+    while True:
+        if _cancel_requested(path):
+            journal['cancel_requested'] = True
+            for node in manifest['nodes']:
+                rec = journal['nodes'][node['id']]
+                if rec['state'] in ('pending', 'waiting'):
+                    rec.update(state='cancelled', detail='Pipeline cancellation requested; not scheduled', updated_at=_now())
             _durable_record(path, journal)
             return _public(journal)
-        record['state'] = state
-        record['updated_at'] = _now()
-        _durable_record(path, journal)
-        if state != 'success':
+        ready = [n for n in manifest['nodes']
+                 if n['id'] not in visited
+                 and journal['nodes'][n['id']]['state'] in ('pending','waiting')
+                 and all(journal['nodes'][dep]['state']=='success' for dep in n.get('needs', []))]
+        if not ready:
             break
+        # Bounded concurrency only for independent remote operations. Native local
+        # workflow mutations and archive registry writes remain serialized.
+        remote = [n for n in ready if n['kind'] in ('github-dispatch','github-result')]
+        batch = remote[:_MAX_REMOTE_WORKERS] if remote else [ready[0]]
+        # Durably mark ALL selected nodes running before any remote HTTP POST.
+        for node in batch:
+            rec = journal['nodes'][node['id']]
+            rec.update(state='running', updated_at=_now())
+            visited.add(node['id'])
+        _durable_record(path, journal)
+        outcomes: dict[str, tuple[str, dict[str, Any]]] = {}
+        if len(batch) == 1:
+            n = batch[0]
+            outcomes[n['id']] = _execute_isolated(client, slug, root, n, journal['nodes'][n['id']], journal, head)
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(batch), _MAX_REMOTE_WORKERS),
+                                    thread_name_prefix='devtool-actions-g2') as pool:
+                futures = {pool.submit(_execute_isolated, client, slug, root, n,
+                                       journal['nodes'][n['id']], journal, head):n['id'] for n in batch}
+                for future in as_completed(futures):
+                    outcomes[futures[future]] = future.result()
+        # Persist individual outcomes; a crash preserves any earlier run receipt.
+        for node in batch:
+            status, delta = outcomes[node['id']]
+            rec = journal['nodes'][node['id']]
+            rec.update(delta)
+            rec.update(state=status, updated_at=_now())
+            _durable_record(path, journal)
     return _public(journal)
 
 
@@ -339,7 +411,9 @@ def pipeline_run(client: GitHubActionsClient, slug: str, root: Path, filename: s
 
 
 def pipeline_status(identity: str, *, state_root: Path | None = None) -> dict[str, Any]:
-    _, journal = _read(identity, state_root=state_root)
+    path, journal = _read(identity, state_root=state_root)
+    if _cancel_requested(path):
+        journal['cancel_requested'] = True
     return _public(journal)
 
 
@@ -355,6 +429,37 @@ def pipeline_resume(client: GitHubActionsClient, slug: str, root: Path, identity
         raise GitHubActionsError('Pipeline journal graph has changed')
     lock = _lock(path)
     try:
+        _recover_interrupted(path, journal, manifest)
         return _drive(client, slug, root, journal['manifest_file'], manifest, path, journal)
     finally:
         lock.rmdir()
+
+
+def pipeline_cancel(identity: str, *, state_root: Path | None = None) -> dict[str, Any]:
+    """Request pipeline-level stop, without cancelling an unrelated GitHub run.
+
+    An active owner finishes the current bounded operation and then stops
+    scheduling. No remote cancel API is called and no local process is killed.
+    """
+    path, journal = _read(identity, state_root=state_root)
+    marker = _cancel_path(path)
+    if all(item['state'] == 'success' for item in journal['nodes'].values()):
+        out = _public(journal)
+        out['cancel_note'] = 'Pipeline already succeeded; no cancellation performed'
+        return out
+    if marker.is_symlink():
+        raise GitHubActionsError('Pipeline cancellation marker is a symlink')
+    if not marker.exists():
+        try:
+            fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        except FileExistsError:
+            fd = None
+        if fd is not None:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                stream.write(identity + '\n')
+                stream.flush()
+                os.fsync(stream.fileno())
+    journal['cancel_requested'] = True
+    out = _public(journal)
+    out['cancel_note'] = 'Stop scheduling requested; existing remote GitHub jobs were not cancelled'
+    return out

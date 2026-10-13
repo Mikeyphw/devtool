@@ -498,6 +498,11 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
     if action == "pipeline" and str(getattr(args, "pipeline_command", "")) == "status":
         from .actions_pipeline import pipeline_status
         return pipeline_status(str(getattr(args, "pipeline_id", "") or ""))
+    if action == "pipeline" and str(getattr(args, "pipeline_command", "")) == "cancel":
+        if not bool(getattr(args, 'yes', False)):
+            raise GitHubActionsError('Explicit --yes is required to stop a pipeline')
+        from .actions_pipeline import pipeline_cancel
+        return pipeline_cancel(str(getattr(args, 'pipeline_id', '') or ''))
     request_id = str(getattr(args, "request_id", "") or "")
     explicit = str(getattr(args, "github_repo", "") or "")
     if action == "resume" and request_id:
