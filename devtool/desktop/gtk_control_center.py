@@ -2340,7 +2340,7 @@ def _render_run_workflow(
         # A remote dispatch/resume requires fresh, visible user authorization.
         # The ordinary Run composer historically defaults --yes to enabled;
         # never inherit that default when switching into a GitHub mutation.
-        if combo_id("operation") in ("pipeline-run", "pipeline-resume"):
+        if combo_id("operation") in ("pipeline-run", "pipeline-resume", "pipeline-cancel"):
             widgets["yes"].set_active(False)
         update_preview()
 

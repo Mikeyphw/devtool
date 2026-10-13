@@ -117,7 +117,7 @@ class DevtoolCommandDraft:
 
     def operation_argv(self) -> list[str]:
         op = self.normalized_operation()
-        if op in {'pipeline-plan', 'pipeline-run', 'pipeline-status', 'pipeline-resume'}:
+        if op in {'pipeline-plan', 'pipeline-run', 'pipeline-status', 'pipeline-resume', 'pipeline-cancel'}:
             mode = op.split('-', 1)[1]
             if mode in ('plan', 'run'):
                 path = self.pipeline_file.strip()
@@ -129,7 +129,7 @@ class DevtoolCommandDraft:
                 if not _pipeline_id_valid(identity):
                     return []
                 argv = ['actions', 'pipeline', mode, '--pipeline-id', identity]
-            if mode in ('run', 'resume'):
+            if mode in ('run', 'resume', 'cancel'):
                 if not self.yes:
                     return []
                 argv.append('--yes')

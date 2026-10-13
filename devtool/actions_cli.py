@@ -41,6 +41,26 @@ def run_actions_command(args: Any) -> int:
           and sys.stdout.isatty()):
         from .actions_presentation import release_setup_text
         print(release_setup_text(payload))
+    elif (str(getattr(args, "actions_command", "")) == "pipeline"
+          and str(getattr(args, "pipeline_command", "")) == "status"
+          and sys.stdout.isatty() and sys.stdin.isatty() and "nodes" in payload):
+        # G3: only an explicit read-only status query becomes a Textual screen.
+        # Interactive output is never selected for JSON, pipes, CI or plain mode.
+        use_textual = (not os.environ.get('CI')
+                       and os.environ.get('DEVTOOL_EXECUTION_PRESENTATION', 'auto') != 'plain'
+                       and os.environ.get('DEVTOOL_JOB_UI', 'auto') != 'plain')
+        if use_textual:
+            try:
+                from .textual_execution_host import textual_available
+                use_textual = textual_available()
+            except (ImportError, ValueError):
+                use_textual = False
+        if use_textual:
+            from .actions_pipeline_textual import run_pipeline_app
+            run_pipeline_app(payload)
+        else:
+            from .actions_presentation import pipeline_text
+            print(pipeline_text(payload))
     elif str(getattr(args, "actions_command", "")) == "pipeline" and sys.stdout.isatty() and "nodes" in payload:
         from .actions_presentation import pipeline_text
         print(pipeline_text(payload))

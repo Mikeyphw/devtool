@@ -9,7 +9,7 @@ final class DevtoolCommandBuilder {
     static final String[] OPERATIONS = new String[]{
             "apply-overlay", "apply-overlays", "validate", "build", "test", "lint",
             "restore", "run", "package", "clean", "inspect", "status", "doctor", "targets", "history", "commit",
-            "pipeline-plan", "pipeline-run", "pipeline-status", "pipeline-resume", "custom"
+            "pipeline-plan", "pipeline-run", "pipeline-status", "pipeline-resume", "pipeline-cancel", "custom"
     };
 
     private DevtoolCommandBuilder() {}
@@ -88,14 +88,14 @@ final class DevtoolCommandBuilder {
                 }
                 parts.add("actions"); parts.add("pipeline"); parts.add(mode);
                 parts.add("--file"); parts.add(shellLiteral(file));
-            } else if (mode.equals("status") || mode.equals("resume")) {
+            } else if (mode.equals("status") || mode.equals("resume") || mode.equals("cancel")) {
                 if (!id.matches("[0-9a-f]{32}")) throw new IllegalArgumentException("A 32-character pipeline ID is required");
                 parts.add("actions"); parts.add("pipeline"); parts.add(mode);
                 parts.add("--pipeline-id"); parts.add(id);
             } else {
                 throw new IllegalArgumentException("Unsupported pipeline action");
             }
-            if (mode.equals("run") || mode.equals("resume")) {
+            if (mode.equals("run") || mode.equals("resume") || mode.equals("cancel")) {
                 if (!config.assumeYes) throw new IllegalArgumentException("Explicit --yes is required for pipeline mutation");
                 parts.add("--yes");
             }

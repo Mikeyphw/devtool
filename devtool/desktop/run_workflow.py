@@ -34,6 +34,7 @@ OPERATIONS: tuple[RunWorkflowOperation, ...] = (
     RunWorkflowOperation("pipeline-run", "Pipeline · dispatch", "May send a GitHub workflow_dispatch POST; explicit --yes required."),
     RunWorkflowOperation("pipeline-status", "Pipeline · status", "Read a durable pipeline journal without remote mutation."),
     RunWorkflowOperation("pipeline-resume", "Pipeline · resume", "Advance waiting nodes; explicit --yes required, never auto-redispatch uncertain requests."),
+    RunWorkflowOperation("pipeline-cancel", "Pipeline · stop scheduling", "Request a durable stop of future pipeline scheduling; does not cancel GitHub runs. Explicit --yes required."),
     RunWorkflowOperation(
         "apply-overlay",
         "Apply overlay",
@@ -278,11 +279,11 @@ def review_payload(payload: RunWorkflowDraftPayload, *, devtool: str = "devtool"
         errors.append(f"Unknown Devtool operation: {payload.operation}")
     elif spec.requires_artifact and not payload.artifact.strip():
         errors.append(f"{spec.label} requires an overlay or bundle path.")
-    if payload.operation in ('pipeline-run', 'pipeline-resume') and not payload.yes:
+    if payload.operation in ('pipeline-run', 'pipeline-resume', 'pipeline-cancel') and not payload.yes:
         errors.append('Pipeline mutation requires explicit --yes; enable Non-interactive --yes after reviewing the command.')
     if payload.operation in ('pipeline-plan', 'pipeline-run') and not draft.pipeline_file.strip():
         errors.append('Pipeline manifest path is required.')
-    if payload.operation in ('pipeline-status', 'pipeline-resume') and not draft.pipeline_id.strip():
+    if payload.operation in ('pipeline-status', 'pipeline-resume', 'pipeline-cancel') and not draft.pipeline_id.strip():
         errors.append('Exact 32-character pipeline ID is required.')
     if payload.operation.startswith('pipeline-') and not argv:
         errors.append('Invalid pipeline path/ID or missing explicit mutation authorization.')

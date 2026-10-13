@@ -152,7 +152,7 @@ final class DevtoolCommandImporter {
         if (operation.equals("actions") && index + 1 < tokens.size()
                 && tokens.get(index).equals("pipeline")
                 && (tokens.get(index + 1).equals("plan") || tokens.get(index + 1).equals("run")
-                    || tokens.get(index + 1).equals("status") || tokens.get(index + 1).equals("resume"))) {
+                    || tokens.get(index + 1).equals("status") || tokens.get(index + 1).equals("resume") || tokens.get(index + 1).equals("cancel"))) {
             config.operation = "pipeline-" + tokens.get(index + 1);
             index += 2;
             while (index < tokens.size() && !isConnector(tokens.get(index))) {
