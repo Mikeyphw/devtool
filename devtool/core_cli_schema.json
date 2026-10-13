@@ -5934,6 +5934,23 @@
       },
       "options": [],
       "stable_id": "cli.command.actions.ci"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "release",
+        "local-evidence"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "G6 read-only signed APK/AAB provenance and certificate re-verification",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.release.local_evidence"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -58049,6 +58066,165 @@
       "scope": "actions ci collect",
       "sensitive": false,
       "stable_id": "cli.option.actions.ci.collect.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--registry-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "registry_id",
+        "help": "Exact locally signed artifact registry ID (12 hex)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-evidence"
+        ],
+        "required": true
+      },
+      "scope": "actions release local-evidence",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_evidence.registry_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--format",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "apk",
+          "aab"
+        ],
+        "dest": "format",
+        "help": "Local package format",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-evidence"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-evidence",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_evidence.format",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-identity",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_identity",
+        "help": "Existing registered LIFE signing identity ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-evidence"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-evidence",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_evidence.signing_identity",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_target",
+        "help": "Devtool Android signing target",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-evidence"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-evidence",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_evidence.signing_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Print machine-readable JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "local-evidence"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-evidence",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_evidence.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha",
+        "help": "Optional exact 40-hex remote source SHA pin",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-evidence"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-evidence",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_evidence.expected_sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "local-evidence"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-evidence",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_evidence.help",
       "value_kind": "_HelpAction"
     }
   ],
@@ -110422,6 +110598,131 @@
                                   "--artifact"
                                 ],
                                 "required": true,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Verify offline signed→unsigned registry lineage and LIFE identity without release promotion",
+                          "help_present": true,
+                          "name": "local-evidence",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "registry_id",
+                                "group": null,
+                                "help": "Exact locally signed artifact registry ID (12 hex)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--registry-id"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "apk",
+                                  "aab"
+                                ],
+                                "const": null,
+                                "default": "apk",
+                                "dest": "format",
+                                "group": null,
+                                "help": "Local package format",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--format"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "signing_identity",
+                                "group": null,
+                                "help": "Existing registered LIFE signing identity ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-identity"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android_hud",
+                                "dest": "signing_target",
+                                "group": null,
+                                "help": "Devtool Android signing target",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-target"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Print machine-readable JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_sha",
+                                "group": null,
+                                "help": "Optional exact 40-hex remote source SHA pin",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-sha"
+                                ],
+                                "required": false,
                                 "type": null
                               }
                             ],
