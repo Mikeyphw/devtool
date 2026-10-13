@@ -96,10 +96,17 @@ def _unsigned_bundle(path: Path) -> dict:
                               capture_output=True, timeout=45, check=False)
     except (OSError, subprocess.TimeoutExpired):
         raise GitHubActionsError('jarsigner required to inspect unsigned AAB') from None
-    if proc.returncode == 0:
-        raise GitHubActionsError('Expected unsigned AAB but JAR verification passed')
-    # Negative jarsigner status alone cannot prove unsignedness; the structural
-    # signature-entry check above rejects damaged or incomplete JAR signatures.
+    # OpenJDK jarsigner -verify -strict returns *zero* for a wholly unsigned
+    # archive and prints "jar is unsigned."  Neither success nor failure of
+    # the process is a signature verdict.  Demand its explicit unsigned status
+    # alongside the ZIP signature-entry rejection above; never infer unsigned
+    # from a negative return code (which could signal a broken signature).
+    output = ((proc.stdout or b'') + b'\n' + (proc.stderr or b'')).decode(
+        'utf-8', 'replace').lower()
+    status_lines = [line.strip() for line in output.splitlines()]
+    if (proc.returncode != 0 or status_lines.count('jar is unsigned.') != 1 or
+            any(line.startswith('jar verified') for line in status_lines)):
+        raise GitHubActionsError('Expected unsigned AAB but JAR status was not demonstrably unsigned')
     jar = os.environ.get('DEVTOOL_BUNDLETOOL_JAR', '')
     if not jar or not Path(jar).is_file() or Path(jar).is_symlink():
         raise GitHubActionsError('Unsigned AAB inspection requires DEVTOOL_BUNDLETOOL_JAR')

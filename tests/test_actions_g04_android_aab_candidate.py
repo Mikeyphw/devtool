@@ -71,6 +71,8 @@ def test_g4_aab_requires_native_tools_and_bundletool(tmp_path,monkeypatch):
     bundle=aab(tmp_path/'unsigned.aab')
     monkeypatch.delenv('DEVTOOL_BUNDLETOOL_JAR',raising=False)
     monkeypatch.setattr('devtool.actions_aab._tool',lambda s:'/bin/false')
+    monkeypatch.setattr('devtool.actions_aab.subprocess.run',lambda *a,**k:SimpleNamespace(
+        returncode=0,stdout=b'\njar is unsigned.\n',stderr=b''))
     with pytest.raises(GitHubActionsError,match='BUNDLETOOL_JAR'):_unsigned_bundle(bundle)
 
 
@@ -171,7 +173,7 @@ def test_g4_bundletool_validates_package_and_version(tmp_path, monkeypatch):
         if cmd[-1]=='/manifest/@android:versionCode':return '31'
         return ''
     monkeypatch.setattr('devtool.actions_aab._run',run)
-    monkeypatch.setattr('devtool.actions_aab.subprocess.run',lambda *a,**k:SimpleNamespace(returncode=16))
+    monkeypatch.setattr('devtool.actions_aab.subprocess.run',lambda *a,**k:SimpleNamespace(returncode=0, stdout=b'jar is unsigned.\n', stderr=b''))
     result=_unsigned_bundle(bundle)
     assert result['package']==APP and result['version_code']==31
     assert result['signature_verified'] is False
@@ -183,7 +185,7 @@ def test_g4_bundletool_validates_package_and_version(tmp_path, monkeypatch):
 def test_g4_signed_aab_rejected_as_unsigned(tmp_path,monkeypatch):
     bundle=aab(tmp_path/'candidate.aab')
     monkeypatch.setattr('devtool.actions_aab._tool',lambda s:'/fake/'+s)
-    monkeypatch.setattr('devtool.actions_aab.subprocess.run',lambda *a,**k:SimpleNamespace(returncode=0))
+    monkeypatch.setattr('devtool.actions_aab.subprocess.run',lambda *a,**k:SimpleNamespace(returncode=0, stdout=b'jar verified.\n', stderr=b''))
     with pytest.raises(GitHubActionsError,match='Expected unsigned'):_unsigned_bundle(bundle)
 
 

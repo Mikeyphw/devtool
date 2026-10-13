@@ -22,6 +22,8 @@ def fixture(tmp_path):
     plan = json.loads((SOURCE / PLAN).read_text())
     paths = {PLAN, plan['original_ledger_path']}
     paths.update(c['path'] for wave in plan['waves'] for c in wave['source_contracts'])
+    paths.update({'docs/actions/ACTIONS_G04_JARSIGNER_UNSIGNED_VERDICT_HOTFIX.md',
+                  'tests/test_actions_g04_unsigned_jarsigner_truth.py'})
     for name in paths:
         dest = root / name
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -134,3 +136,23 @@ def test_exact_historical_gaps_not_promoted(tmp_path):
     assert hist['V105_pre_actions']['G3_historical_pin_mismatches']['bad_pins'] == 352
     assert hist['ACTIONS10']['qualified_release'] is False
     assert hist['G6']['status'] == 'user_reported_local_evidence_ok'
+
+
+def test_g4_live_unsigned_amendment_is_traced_and_original_matrix_unchanged(tmp_path):
+    root = fixture(tmp_path)
+    got = qualification_report(root, strict_source=True)
+    assert got['source_contract_consistent'] is True
+    assert got['qualified_release'] is False
+    amendments = got['verified_source_amendments']
+    assert len(amendments) == 2
+    assert {row['path'] for row in amendments} == {
+        'devtool/actions_aab.py', 'tests/test_actions_g04_android_aab_candidate.py'}
+    assert all(row['original_sha256'] != row['amended_sha256'] for row in amendments)
+    assert any(row.get('status') == 'SOURCE_PINS_AMENDED_VERIFIED' for row in got['source_contracts'])
+    for path in ('docs/actions/ACTIONS_G04_JARSIGNER_UNSIGNED_VERDICT_HOTFIX.md',
+                 'tests/test_actions_g04_unsigned_jarsigner_truth.py'):
+        temporary = fixture(tmp_path / path.rsplit('/', 1)[-1])
+        target = temporary / path
+        target.write_bytes(target.read_bytes() + b'\ntamper')
+        with pytest.raises(GitHubActionsError, match='source contract'):
+            qualification_report(temporary, strict_source=True)
