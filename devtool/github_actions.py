@@ -195,6 +195,9 @@ class GitHubActionsClient:
             "full_name": canonical, "id": obj.get("id"),
             "private": bool(obj.get("private")),
             "default_branch": obj.get("default_branch"),
+            "permissions": {k: v for k, v in (obj.get("permissions") or {}).items()
+                            if k in ("push", "pull", "admin", "maintain") and type(v) is bool}
+                           if isinstance(obj.get("permissions"), dict) else {},
             "html_url": f"https://github.com/{slug}",
         }
 
@@ -341,6 +344,14 @@ class GitHubActionsClient:
         if type(identity) is not int or identity <= 0:
             raise GitHubActionsError("Invalid workflow run ID")
         return self._paged(slug,f"/repos/{slug}/actions/runs/{identity}/jobs","jobs",max_results=200)
+
+    def run_attempt_jobs(self, slug: str, identity: int, attempt: int) -> list[dict[str, Any]]:
+        """Fetch jobs from one exact attempt, never mix a rerun with old jobs."""
+        slug = _slug(slug)
+        if type(identity) is not int or identity <= 0 or type(attempt) is not int or attempt <= 0:
+            raise GitHubActionsError("Invalid GitHub workflow run or attempt ID")
+        return self._paged(slug, f"/repos/{slug}/actions/runs/{identity}/attempts/{attempt}/jobs",
+                           "jobs", max_results=200)
 
     # ACTIONS-04: artifact metadata remains scoped to the exact workflow run.
     def run_artifacts(self, slug: str, identity: int) -> list[dict[str, Any]]:
@@ -489,6 +500,18 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
         return pipeline_status(str(getattr(args, "pipeline_id", "") or ""))
     request_id = str(getattr(args, "request_id", "") or "")
     explicit = str(getattr(args, "github_repo", "") or "")
+    if action == "resume" and request_id:
+        from .actions_runs import _read_dispatch_receipt
+        _, pending_receipt = _read_dispatch_receipt(request_id)
+        if pending_receipt.get("run_id") is None:
+            if getattr(args, "run_id", None):
+                raise GitHubActionsError("Uncorrelated dispatch cannot be bound with --run-id; inspect it using actions view --run-id")
+            if explicit and _slug(explicit).lower() != _slug(pending_receipt["repository"]).lower():
+                raise GitHubActionsError("Request receipt is bound to another repository")
+            token, authentication = resolve_token(str(getattr(args, "auth", "auto") or "auto"))
+            from .actions_dispatch import inspect_uncorrelated_dispatch
+            return {"authentication":authentication, **inspect_uncorrelated_dispatch(
+                GitHubActionsClient(token), request_id)}
     if request_id and action in ("view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify"):
         from .actions_runs import _safe_receipt
         _, bound = _safe_receipt(request_id)

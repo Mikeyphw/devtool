@@ -184,7 +184,13 @@ def dispatch_workflow(client: GitHubActionsClient, slug: str, workflow_id: str, 
     _validated_inputs(defs,inputs)
     summary={"repository":repo["full_name"],"repository_id":repo["id"],"workflow_id":workflow["id"],
              "workflow_path":path,"ref":ref,"pre_dispatch_sha":sha,"input_names":sorted(inputs),
-             "source_binding":"observed-before-dispatch; mutable refs are not locked"}
+             "source_binding":"observed-before-dispatch; mutable refs are not locked",
+             "permission_preflight": {
+                 "authenticated": bool(client._token),
+                 "repository_accessible": True,
+                 "repository_push_hint": repo.get("permissions", {}).get("push"),
+                 "actions_write_permission": "not-independently-verifiable",
+                 "authoritative_check": "GitHub dispatch POST (only with --yes)"}}
     if not execute:
         return {"phase":"ACTIONS-02","state":"validated-plan","dispatched":False,**summary}
     identity=uuid.uuid4().hex
@@ -211,3 +217,59 @@ def dispatch_workflow(client: GitHubActionsClient, slug: str, workflow_id: str, 
     return {"phase":"ACTIONS-02","dispatched":True,"request_id":identity,
             "state":result["state"],"run_id":result.get("run_id"),"run_url":result.get("run_url"),
             "execution_complete":False,**summary}
+
+
+def inspect_uncorrelated_dispatch(client: GitHubActionsClient, request_id: str, *,
+                                  state_root: Path | None = None) -> dict[str, Any]:
+    """Inspect bounded possible GitHub runs for HTTP 204; never associate one.
+
+    Run identity cannot be inferred from workflow, ref, SHA and time alone:
+    identical manual/concurrent dispatches can all satisfy those predicates.
+    An operator must inspect the selected remote run separately by --run-id.
+    """
+    from .actions_runs import _read_dispatch_receipt, _normalize_run
+    _, receipt = _read_dispatch_receipt(request_id, state_root)
+    if receipt.get("run_id") is not None:
+        raise GitHubActionsError("Dispatch is already correlated; use actions resume --request-id")
+    if receipt.get("state") not in ("accepted-uncorrelated", "dispatch-outcome-unknown"):
+        raise GitHubActionsError("Receipt does not represent an unresolved dispatch")
+    slug = _slug(receipt["repository"])
+    try:
+        created = datetime.fromisoformat(receipt["created_at"].replace("Z", "+00:00"))
+        if created.tzinfo is None:raise ValueError()
+    except (KeyError, TypeError, ValueError):
+        raise GitHubActionsError("Dispatch receipt has invalid creation time") from None
+    if not _SHA.fullmatch(str(receipt.get("pre_dispatch_sha", ""))):
+        raise GitHubActionsError("Dispatch receipt lacks pre-dispatch commit")
+    if type(receipt.get("workflow_id")) is not int or receipt["workflow_id"] <= 0:
+        raise GitHubActionsError("Dispatch receipt lacks workflow identity")
+    ref = _ref(str(receipt.get("ref", "")))
+    candidates = []
+    # Only the first 100 most recent runs. This is a bounded *hint*, not a proof.
+    for raw in client.runs(slug, limit=100):
+        try:
+            created_at = datetime.fromisoformat(str(raw.get("created_at") or "").replace("Z", "+00:00"))
+            if created_at.tzinfo is None:continue
+        except ValueError:
+            continue
+        age = (created_at - created).total_seconds()
+        if not (-60 <= age <= 1200):continue
+        if (raw.get("event") != "workflow_dispatch" or
+            raw.get("workflow_id") != receipt["workflow_id"] or
+            str(raw.get("head_branch") or "") != ref or
+            str(raw.get("head_sha") or "").lower() != receipt["pre_dispatch_sha"].lower()):
+            continue
+        try: run = _normalize_run(raw, slug)
+        except GitHubActionsError: continue
+        candidates.append({"run_id":run["id"], "run_attempt":run["run_attempt"],
+                           "head_sha":run["head_sha"], "created_at":run["created_at"],
+                           "html_url":run["html_url"], "conclusion":run["conclusion"]})
+    return {"phase":"ACTIONS-G1", "operation":"dispatch-candidate-inspection",
+            "request_id":request_id, "repository":slug,
+            "dispatch_state":receipt["state"], "run_id":None,
+            "candidate_count":len(candidates), "candidates":candidates,
+            "scan":"bounded-most-recent-100; not exhaustive",
+            "correlated":False, "automatically_reconciled":False,
+            "safe_to_redispatch":False, "source_attested":False,
+            "qualified_release":False,
+            "advice":"Candidates are not proof of which run arose from HTTP 204. Inspect an explicit --run-id; do not blindly re-dispatch."}

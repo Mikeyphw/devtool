@@ -36,7 +36,7 @@ def run_id(value: object) -> int:
     return int(raw)
 
 
-def _safe_receipt(request_id: str, root: Path | None = None) -> tuple[Path, dict[str, Any]]:
+def _read_dispatch_receipt(request_id: str, root: Path | None = None) -> tuple[Path, dict[str, Any]]:
     if not _REQUEST.fullmatch(request_id):
         raise GitHubActionsError("Dispatch request ID must be a 32-character hexadecimal identifier")
     folder = root if root is not None else _state_root()
@@ -49,10 +49,16 @@ def _safe_receipt(request_id: str, root: Path | None = None) -> tuple[Path, dict
         raise GitHubActionsError("Invalid local dispatch receipt") from None
     if (not isinstance(obj, dict) or obj.get("schema") != 1
         or obj.get("request_id") != request_id
-        or not isinstance(obj.get("repository"), str)
-        or obj.get("run_id") is None):
-        raise GitHubActionsError("Receipt has no correlated remote run ID; automatic guessing is prohibited")
+        or not isinstance(obj.get("repository"), str)):
+        raise GitHubActionsError("Invalid local dispatch receipt")
     _slug(obj["repository"])
+    return path, obj
+
+
+def _safe_receipt(request_id: str, root: Path | None = None) -> tuple[Path, dict[str, Any]]:
+    path, obj = _read_dispatch_receipt(request_id, root)
+    if obj.get("run_id") is None:
+        raise GitHubActionsError("Receipt has no correlated remote run ID; automatic guessing is prohibited")
     run_id(obj["run_id"])
     return path, obj
 
@@ -135,10 +141,27 @@ def snapshot(client: GitHubActionsClient, slug: str, identity: int, path: Path |
     remote = _normalize_run(client.get_run(slug, identity), slug, identity)
     payload = {"phase":"ACTIONS-03", "remote":remote, "journal":_record_observation(path, receipt, remote)}
     if with_jobs:
-        payload["jobs"] = [_normalize_job(x) for x in client.run_jobs(slug, identity)]
+        attempt = remote.get("run_attempt")
+        if type(attempt) is int and attempt > 0 and callable(getattr(client, "run_attempt_jobs", None)):
+            jobs = client.run_attempt_jobs(slug, identity, attempt)
+            payload["jobs_scope"] = "exact-run-attempt"
+        else:
+            jobs = client.run_jobs(slug, identity)
+            payload["jobs_scope"] = "latest-available-attempt-unconfirmed"
+        # A provider returning mixed attempts must not be represented as one current job tree.
+        if any(type(x.get("run_attempt")) is int and x["run_attempt"] != attempt
+               for x in jobs if isinstance(x, dict)):
+            raise GitHubActionsError("GitHub jobs contain a different workflow attempt")
+        payload["jobs"] = [_normalize_job(x) for x in jobs]
+        payload["jobs_truncated_possible"] = len(jobs) >= 200
     if receipt is not None:
         bound = receipt.get("pre_dispatch_sha")
-        payload["source_binding"] = "matching" if isinstance(bound, str) and bound == remote["head_sha"] else "not-confirmed"
+        match_sha = isinstance(bound, str) and bound.lower() == str(remote["head_sha"] or "").lower()
+        workflow_ok = (remote.get("workflow_id") is None or receipt.get("workflow_id") is None or
+                       remote["workflow_id"] == receipt["workflow_id"])
+        branch_ok = (remote.get("head_branch") is None or receipt.get("ref") is None or
+                     remote["head_branch"] == receipt["ref"])
+        payload["source_binding"] = "matching" if (match_sha and workflow_ok and branch_ok) else "not-confirmed"
         # A mutable ref can move between dispatch validation and run creation.
         if payload["source_binding"] != "matching":
             payload["warning"] = "Remote run commit differs from pre-dispatch observation; do not qualify release"

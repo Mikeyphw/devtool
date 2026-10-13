@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "milestone": "ACTIONS-G00-G01",
+  "snapshot_source": {
+    "head": "e72335640aab0db58ae96c3e319a6bcec1e2ac19",
+    "git_clean_at_snapshot": true,
+    "source_snapshot_filename": "devtool-20261013-015644-469436.tar.gz",
+    "original_roadmap_sha256": "87e1986775d3889133a44849ab1f0d82b635cf8bf2743c59058b5bfbeb9d7da6",
+    "workflow_sha256": {
+      ".github/workflows/devtool-android-build.yml": "5a638edaebdf48904f2467c4478a3ffde84a6b822e9efb044af527147467139e",
+      ".github/workflows/devtool-android-unsigned-release.yml": "72922af3e977c9ae6eefdb9a09838118b22544e1f0e19e3444efac3a6db1e2a1",
+      ".github/workflows/release-qualification.yml": "1dbbe8f7a3b98b2fb201ec721d37a748e8ef6926fff6bf99b5eab063310511e1"
+    }
+  },
+  "roadmap": {
+    "obligations": 88,
+    "ledger_path": "docs/actions/ACTIONS_BASELINE_OBLIGATIONS.json",
+    "counts": {
+      "SOURCE_TESTED": 21,
+      "PARTIAL": 32,
+      "LIVE_VERIFIED": 23,
+      "OPEN": 11,
+      "EXCLUDED": 1
+    },
+    "source_status": "historical-audit-frozen-not-retroactively-promoted"
+  },
+  "actual_prior_evidence": {
+    "remote_unsigned_run_id": 38340976284,
+    "remote_unsigned_artifact_id": 11786881190,
+    "remote_head_sha": "f3185b6aac56d1ac29b5fac93bdda88fc4480842",
+    "unsigned_registry_id": "6ff5620c855d",
+    "signed_registry_id": "26529ad5f699",
+    "signed_sha256": "291b8920f445dc530383e3916f86e11f95480cea6131d95ba9808ec717300f2a",
+    "local_signature_verified": true,
+    "source_attested": false,
+    "qualified_release": false,
+    "termux_native_debug_run_id": "e8851a5e2dd24df4b5e8b9562ab0681d"
+  },
+  "baseline_tests": {
+    "environment": "Linux Python 3.13; Textual absent",
+    "previous_actions": {
+      "passed": 283,
+      "skipped": 6,
+      "failed": 0
+    },
+    "android_device_gate": "not rerun by this offline overlay"
+  },
+  "g0_status": "baseline-evidence-frozen; Termux Textual and cross-provider live gates pending",
+  "g1_status": "source-tests-targeted; live token/rate-limit/HTTP204/artifact expiration/race gates pending",
+  "excluded_paid_github_private_protection": "excluded only from project completion; security gates remain fail closed",
+  "prohibitions": [
+    "Do not infer run identity from HTTP 204 candidate list",
+    "Do not auto-repeat uncertain POST",
+    "Do not leak GitHub token, keystore or redirect signatures",
+    "Do not set qualified_release or source_attested from a local signed APK"
+  ]
+}

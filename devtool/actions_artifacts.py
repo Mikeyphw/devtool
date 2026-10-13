@@ -62,6 +62,11 @@ def _metadata(raw: Any, slug: str, remote_run: dict[str, Any], *, exact_id: int 
     name = raw.get("name")
     if not isinstance(name, str) or not name or len(name) > 256:
         raise GitHubActionsError("GitHub artifact name is invalid")
+    # GitHub's artifact payload often omits workflow_run.run_attempt, so only
+    # compare the attempt when the API actually provided one. Never invent it.
+    parent_attempt = parent.get("run_attempt")
+    if parent_attempt is not None and parent_attempt != remote_run.get("run_attempt"):
+        raise GitHubActionsError("Artifact workflow attempt does not match selected run")
     return {"id": raw["id"], "name": name, "repository": slug,
             "run_id": remote_run["id"], "run_attempt": remote_run.get("run_attempt"),
             "head_sha": sha.lower(), "size_in_bytes": size,
@@ -106,6 +111,10 @@ def check_zip(path: Path) -> dict[str, int]:
                     or any(ord(c) < 32 for c in filename)
                     or (parts and re.match(r"[a-zA-Z]:", parts[0]))):
                     raise GitHubActionsError("Artifact ZIP contains unsafe paths")
+                # Reject distinct ZIP spellings of the same normalized path.
+                # PurePosixPath silently folds ./ and duplicate separators.
+                if ("//" in filename or any(part in ("", ".") for part in filename.rstrip("/").split("/"))):
+                    raise GitHubActionsError("Artifact ZIP contains noncanonical member paths")
                 key = filename.rstrip("/").casefold()
                 if not key or key in names:
                     raise GitHubActionsError("Artifact ZIP contains duplicate or unsafe member names")
@@ -243,6 +252,8 @@ def verify_download(client: GitHubActionsClient, slug: str, identity: int, artif
     zip_check = check_zip(path)
     if record["metadata"].get("remote_head_sha") != remote.get("head_sha"):
         raise GitHubActionsError("Registered artifact remote source commit changed")
+    if record["metadata"].get("remote_run_attempt") != remote.get("run_attempt"):
+        raise GitHubActionsError("Registered artifact belongs to a different workflow attempt")
     return {"phase":"ACTIONS-04", "repository":slug,"run_id":identity,
             "artifact_id":artifact_id,"sha256":expected,"file":str(path),
             "zip_validation":zip_check,"archive_verified":True,"qualified_release":False}

@@ -1,0 +1,900 @@
+{
+  "schema_version": 1,
+  "source_head": "e72335640aab0db58ae96c3e319a6bcec1e2ac19",
+  "status_definitions": {
+    "LIVE_VERIFIED": "At least one real user/GitHub/Termux observation for the scoped claim",
+    "SOURCE_TESTED": "Implementation + focused offline tests; not necessarily live acceptance",
+    "PARTIAL": "Implemented or observed only for a subset; acceptance outstanding",
+    "OPEN": "Original feature not implemented/connected as promised",
+    "EXCLUDED": "User-excluded paid GitHub private protected-CI gate; never claim PASS"
+  },
+  "counts": {
+    "SOURCE_TESTED": 21,
+    "PARTIAL": 32,
+    "LIVE_VERIFIED": 23,
+    "OPEN": 11,
+    "EXCLUDED": 1
+  },
+  "obligations": [
+    {
+      "id": "00.1",
+      "phase": "00",
+      "original_obligation": "Post-Git-optimization clean source baseline",
+      "status": "SOURCE_TESTED",
+      "evidence": "Clean HEAD e72335640aab0db58ae96c3e319a6bcec1e2ac19; git status empty",
+      "open_requirement": "",
+      "closure_wave": "G0",
+      "priority": "P0"
+    },
+    {
+      "id": "00.2",
+      "phase": "00",
+      "original_obligation": "Inventory existing GitHub provider/workflows",
+      "status": "SOURCE_TESTED",
+      "evidence": "devtool/github_actions.py; .github/workflows/{devtool-android-build,devtool-android-unsigned-release,release-qualification}.yml",
+      "open_requirement": "",
+      "closure_wave": "G0",
+      "priority": "P0"
+    },
+    {
+      "id": "00.3",
+      "phase": "00",
+      "original_obligation": "Preserve existing run store/transaction/artifact trust boundaries",
+      "status": "PARTIAL",
+      "evidence": "actions_dispatch.py; actions_artifacts.py; source negative fixtures",
+      "open_requirement": "Run current producer→consumer integration suites, not just focused Actions tests",
+      "closure_wave": "G0",
+      "priority": "P1"
+    },
+    {
+      "id": "00.4",
+      "phase": "00",
+      "original_obligation": "Record, do not erase, V105 baseline failures and original audit obligations",
+      "status": "PARTIAL",
+      "evidence": "V106 ROADMAP audit and PRIORITIES_AND_NEXT_STEPS.md retained",
+      "open_requirement": "Attach unresolved R01–R36/G3 crosswalk as external dependencies; no retroactive pass",
+      "closure_wave": "G8",
+      "priority": "P1"
+    },
+    {
+      "id": "00.5",
+      "phase": "00",
+      "original_obligation": "Keep native Termux debug build as regression baseline",
+      "status": "LIVE_VERIFIED",
+      "evidence": "User run e8851a5e2dd24df4b5e8b9562ab0681d; Gradle assembleDebug; 1 valid APK",
+      "open_requirement": "Repeat after shared build-provider modifications only",
+      "closure_wave": "G8",
+      "priority": "P1"
+    },
+    {
+      "id": "00.6",
+      "phase": "00",
+      "original_obligation": "Preserve Git optimization performance and logging contract",
+      "status": "PARTIAL",
+      "evidence": "User said Git became much faster after V4; no numeric or race-regression bench preserved",
+      "open_requirement": "Small repeatable Git latency/reliability and no-mirroring regression check before touching shared Git core",
+      "closure_wave": "G8",
+      "priority": "P2"
+    },
+    {
+      "id": "01.1",
+      "phase": "01",
+      "original_obligation": "Authenticated GitHub API using gh or environment token, gh optional",
+      "status": "SOURCE_TESTED",
+      "evidence": "github_actions.py:resolve_token; tests/test_actions_00_01_github_provider.py",
+      "open_requirement": "",
+      "closure_wave": "G0",
+      "priority": "P0"
+    },
+    {
+      "id": "01.2",
+      "phase": "01",
+      "original_obligation": "Explicit repository identity / origin discovery",
+      "status": "SOURCE_TESTED",
+      "evidence": "github_actions.py:resolve_repository, parse_github_remote, repository; provider tests",
+      "open_requirement": "",
+      "closure_wave": "G0",
+      "priority": "P0"
+    },
+    {
+      "id": "01.3",
+      "phase": "01",
+      "original_obligation": "Read-only workflow discovery and metadata",
+      "status": "LIVE_VERIFIED",
+      "evidence": "Original Actions conversation contained live Skybind discovery; Devtool workflow dispatched in ACTIONS-10",
+      "open_requirement": "",
+      "closure_wave": "G1",
+      "priority": "P1"
+    },
+    {
+      "id": "01.4",
+      "phase": "01",
+      "original_obligation": "Permission validation before mutating workflow requests",
+      "status": "PARTIAL",
+      "evidence": "github_actions.py checks authenticated token; API denial on POST; no independent permission matrix",
+      "open_requirement": "Real API test missing scopes/SSO/readonly vs dispatch permission; actionable preflight",
+      "closure_wave": "G1",
+      "priority": "P1"
+    },
+    {
+      "id": "01.5",
+      "phase": "01",
+      "original_obligation": "Pagination, API origins, rate limits, bounded errors and token redaction",
+      "status": "SOURCE_TESTED",
+      "evidence": "github_actions.py fixed api.github.com, pagination bounds, 401/403/404/429 error categories; provider tests",
+      "open_requirement": "Live negative/secondary rate-limit tests still useful",
+      "closure_wave": "G1",
+      "priority": "P2"
+    },
+    {
+      "id": "01.6",
+      "phase": "01",
+      "original_obligation": "Device-live authentication matrix and credential hygiene",
+      "status": "PARTIAL",
+      "evidence": "Live GitHub dispatch with gh; no comprehensive auth methods/expiry/denials",
+      "open_requirement": "Exercise gh, env/FGPAT, expired/no token and disallowed repositories with redacted receipts",
+      "closure_wave": "G1",
+      "priority": "P2"
+    },
+    {
+      "id": "02.1",
+      "phase": "02",
+      "original_obligation": "Discover workflows and inspect declared workflow_dispatch inputs",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_dispatch.py: _parse_workflow_yaml, _validated_inputs; tests/test_actions_02_workflow_dispatch.py",
+      "open_requirement": "",
+      "closure_wave": "G1",
+      "priority": "P1"
+    },
+    {
+      "id": "02.2",
+      "phase": "02",
+      "original_obligation": "Select branch/tag; validate SHA and declared input types",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_dispatch.py:_ref, dispatch_workflow; tests/test_actions_02_workflow_dispatch.py",
+      "open_requirement": "",
+      "closure_wave": "G1",
+      "priority": "P1"
+    },
+    {
+      "id": "02.3",
+      "phase": "02",
+      "original_obligation": "Explicit confirmation and no accidental remote mutation",
+      "status": "SOURCE_TESTED",
+      "evidence": "github_actions.py; actions_cli.py; tests/test_actions_02_workflow_dispatch.py",
+      "open_requirement": "",
+      "closure_wave": "G1",
+      "priority": "P0"
+    },
+    {
+      "id": "02.4",
+      "phase": "02",
+      "original_obligation": "Remote dispatch with run ID correlated to Devtool receipt",
+      "status": "LIVE_VERIFIED",
+      "evidence": "ACTIONS-10 GitHub run 38340976284 source f3185b6…; provider and user run outputs",
+      "open_requirement": "",
+      "closure_wave": "G1",
+      "priority": "P0"
+    },
+    {
+      "id": "02.5",
+      "phase": "02",
+      "original_obligation": "Handle normal GitHub 204 accepted/uncorrelated response safely",
+      "status": "PARTIAL",
+      "evidence": "github_actions.py:dispatch returns accepted-uncorrelated on 204; no automatic guessing",
+      "open_requirement": "Add explicit safe reconciliation UX, matching repo+workflow+ref+source+time; never blind redispatch",
+      "closure_wave": "G1",
+      "priority": "P0"
+    },
+    {
+      "id": "02.6",
+      "phase": "02",
+      "original_obligation": "Handle mutable-ref movement between inspect, POST and actual run",
+      "status": "PARTIAL",
+      "evidence": "actions_dispatch.py records pre-dispatch SHA; actions_runs.py compares head_sha",
+      "open_requirement": "Live moved-ref negative, foreign-run and ambiguous-match end-to-end fixtures",
+      "closure_wave": "G1",
+      "priority": "P1"
+    },
+    {
+      "id": "03.1",
+      "phase": "03",
+      "original_obligation": "Watch queued/running/completed outcomes with job and step details",
+      "status": "LIVE_VERIFIED",
+      "evidence": "ACTIONS-10 live UI and run logs; actions_runs.py:watch,snapshot",
+      "open_requirement": "Additional multi-job/matrix acceptance",
+      "closure_wave": "G1",
+      "priority": "P1"
+    },
+    {
+      "id": "03.2",
+      "phase": "03",
+      "original_obligation": "Distinguish accepted dispatch from final workflow outcome",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_runs.py; actions_pipeline.py; test_actions_03_run_lifecycle.py",
+      "open_requirement": "",
+      "closure_wave": "G1",
+      "priority": "P0"
+    },
+    {
+      "id": "03.3",
+      "phase": "03",
+      "original_obligation": "Durable private receipts and manual resume after Termux exit",
+      "status": "PARTIAL",
+      "evidence": "actions_runs.py:_safe_receipt,select_run; pipeline private journal; offline restart tests",
+      "open_requirement": "Live kill/restart, restore exact run/attempt/job and verify no duplicate dispatch",
+      "closure_wave": "G2",
+      "priority": "P0"
+    },
+    {
+      "id": "03.4",
+      "phase": "03",
+      "original_obligation": "Explicit cancellation and rerun/failed-jobs operations",
+      "status": "SOURCE_TESTED",
+      "evidence": "github_actions.py:run_mutation; tests/test_actions_03_run_lifecycle.py",
+      "open_requirement": "Native live cancelled/failed/rerun acceptance with no duplicate work",
+      "closure_wave": "G2",
+      "priority": "P1"
+    },
+    {
+      "id": "03.5",
+      "phase": "03",
+      "original_obligation": "Timeout, stale and unknown status handling",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_runs.py: _FINAL, _normalize_run, bounded watch",
+      "open_requirement": "Live timeout/API outage/permission mutation recovery evidence",
+      "closure_wave": "G2",
+      "priority": "P1"
+    },
+    {
+      "id": "03.6",
+      "phase": "03",
+      "original_obligation": "Persist and select exact run attempt/job lineage",
+      "status": "PARTIAL",
+      "evidence": "actions_runs.py includes run_attempt and jobs; API lists jobs; no live attempt-history matrix",
+      "open_requirement": "Re-run attempt, previous-attempt logs/jobs and stale receipt negative tests",
+      "closure_wave": "G2",
+      "priority": "P1"
+    },
+    {
+      "id": "03.7",
+      "phase": "03",
+      "original_obligation": "GitHub logs with safe redirects, bounded archives and diagnostics",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_runs.py:remote_logs and safety tests",
+      "open_requirement": "Real failed multi-job logs and precise failed step evidence",
+      "closure_wave": "G1",
+      "priority": "P1"
+    },
+    {
+      "id": "03.8",
+      "phase": "03",
+      "original_obligation": "Background durable monitoring without ongoing terminal session",
+      "status": "OPEN",
+      "evidence": "docs/actions-06-pipeline.md explicitly foreground; actions_runs.py bounded watch",
+      "open_requirement": "Implement opted-in background watch/reconnect with single authoritative process/session",
+      "closure_wave": "G2",
+      "priority": "P2"
+    },
+    {
+      "id": "04.1",
+      "phase": "04",
+      "original_obligation": "Discover run-scoped GitHub artifacts",
+      "status": "SOURCE_TESTED",
+      "evidence": "github_actions.py:run_artifacts; actions_artifacts.py:artifact_list",
+      "open_requirement": "",
+      "closure_wave": "G1",
+      "priority": "P1"
+    },
+    {
+      "id": "04.2",
+      "phase": "04",
+      "original_obligation": "Authenticated metadata request + credential-free redirect download",
+      "status": "SOURCE_TESTED",
+      "evidence": "github_actions.py:artifact_download_location; actions_artifacts.py; download redirect negative tests",
+      "open_requirement": "",
+      "closure_wave": "G1",
+      "priority": "P0"
+    },
+    {
+      "id": "04.3",
+      "phase": "04",
+      "original_obligation": "Reject ZIP traversal/symlinks/duplicates/corruption/bombs",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_artifacts.py and tests/test_actions_04_artifact_retrieval.py; ACTIONS10 V4 stricter APK validation",
+      "open_requirement": "Repeat against adversarial ZIP corpus + ZIP case-distinct Android resources",
+      "closure_wave": "G1",
+      "priority": "P0"
+    },
+    {
+      "id": "04.4",
+      "phase": "04",
+      "original_obligation": "Verify SHA256 and repository, run and commit provenance",
+      "status": "LIVE_VERIFIED",
+      "evidence": "ACTIONS-10 import run 38340976284/artifact 11786881190; github_provenance_verified=true",
+      "open_requirement": "",
+      "closure_wave": "G1",
+      "priority": "P0"
+    },
+    {
+      "id": "04.5",
+      "phase": "04",
+      "original_obligation": "Register verified artifacts with original run and attempt",
+      "status": "LIVE_VERIFIED",
+      "evidence": "unsigned registry 6ff5620c855d; signed registry 26529ad5f699",
+      "open_requirement": "",
+      "closure_wave": "G1",
+      "priority": "P0"
+    },
+    {
+      "id": "04.6",
+      "phase": "04",
+      "original_obligation": "Expired, mismatched, corrupted and missing artifact cases fail closed",
+      "status": "SOURCE_TESTED",
+      "evidence": "tests/test_actions_04_artifact_retrieval.py; tests/test_actions_10_unsigned_candidate.py",
+      "open_requirement": "Live expiration/re-run/mismatch demonstration on existing repo",
+      "closure_wave": "G1",
+      "priority": "P2"
+    },
+    {
+      "id": "04.7",
+      "phase": "04",
+      "original_obligation": "Generic artifact archive consumer compatible with Android collect and pipeline",
+      "status": "PARTIAL",
+      "evidence": "actions_artifacts.py; actions_android.py; pipeline github-archive; offline tests",
+      "open_requirement": "Exercise end-to-end cross-node producer→consumer path on GitHub",
+      "closure_wave": "G2",
+      "priority": "P1"
+    },
+    {
+      "id": "05.1",
+      "phase": "05",
+      "original_obligation": "Static discovery of Android project/modules/variants",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_android.py:android_discover and android_plan; static-only variant awareness",
+      "open_requirement": "Dynamic Gradle-flavor/product/environment variants matrix live",
+      "closure_wave": "G4",
+      "priority": "P2"
+    },
+    {
+      "id": "05.2",
+      "phase": "05",
+      "original_obligation": "Remote debug APK compilation, download, signature/metadata inspection",
+      "status": "LIVE_VERIFIED",
+      "evidence": "Historical GitHub debug run 38172480778; APK verified; native Termux debug build user confirmed",
+      "open_requirement": "Preserve as regression baseline",
+      "closure_wave": "G4",
+      "priority": "P0"
+    },
+    {
+      "id": "05.3",
+      "phase": "05",
+      "original_obligation": "Remote explicitly unsigned release APK for private/free GitHub",
+      "status": "LIVE_VERIFIED",
+      "evidence": "Workflow devtool-android-unsigned-release.yml; GitHub run 38340976284, source f3185b6…",
+      "open_requirement": "",
+      "closure_wave": "G4",
+      "priority": "P0"
+    },
+    {
+      "id": "05.4",
+      "phase": "05",
+      "original_obligation": "Real release APK signed using stable existing local identity",
+      "status": "LIVE_VERIFIED",
+      "evidence": "V7 Termux output signature_verified=true, signer 5601d498…, app 1.17.0 code31",
+      "open_requirement": "",
+      "closure_wave": "G4",
+      "priority": "P0"
+    },
+    {
+      "id": "05.5",
+      "phase": "05",
+      "original_obligation": "Android AAB build/collection and bundletool verification",
+      "status": "PARTIAL",
+      "evidence": "actions_android.py has fmt=aab, bundletool inspection; signed workflow has aab branch",
+      "open_requirement": "Real AAB GitHub build, source-bound collect and bundle verification not supplied",
+      "closure_wave": "G4",
+      "priority": "P1"
+    },
+    {
+      "id": "05.6",
+      "phase": "05",
+      "original_obligation": "Android lint/test success bound to exact binary release variant",
+      "status": "PARTIAL",
+      "evidence": "release-qualification.yml runs lintRelease and unit tests; unsigned CI only assemble stage",
+      "open_requirement": "Create explicit gate mapping of lint/tests to unsigned candidate source and output; live receipts",
+      "closure_wave": "G4",
+      "priority": "P1"
+    },
+    {
+      "id": "05.7",
+      "phase": "05",
+      "original_obligation": "Package/version/applicationId and certificate verification",
+      "status": "LIVE_VERIFIED",
+      "evidence": "Termux V7 verification application_id io.github.mikeceead.devtoolhud, version 1.17.0/31, expected fingerprint",
+      "open_requirement": "",
+      "closure_wave": "G4",
+      "priority": "P0"
+    },
+    {
+      "id": "05.8",
+      "phase": "05",
+      "original_obligation": "Different Android modules, build flavors, toolchain errors and release variants",
+      "status": "PARTIAL",
+      "evidence": "android_plan parameterized app modules; test suite has static Gradle cases",
+      "open_requirement": "Live second fixture project/variant and unsupported toolchain negative acceptance",
+      "closure_wave": "G4",
+      "priority": "P2"
+    },
+    {
+      "id": "06.1",
+      "phase": "06",
+      "original_obligation": "Single canonical native DAG authority for local and remote execution",
+      "status": "PARTIAL",
+      "evidence": "actions_pipeline.py delegates local-invoke to native invoke but keeps its own ACTIONS journal",
+      "open_requirement": "Reconcile pipeline node/run-store identity and event projections; no duplicate authoritative state",
+      "closure_wave": "G2",
+      "priority": "P0"
+    },
+    {
+      "id": "06.2",
+      "phase": "06",
+      "original_obligation": "Local checks gate GitHub dispatch and artifact verification",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_pipeline.py: _execute_node and needs; test_actions_06_pipeline_dag.py",
+      "open_requirement": "Live full local→GitHub→verified artifact pipeline run",
+      "closure_wave": "G2",
+      "priority": "P0"
+    },
+    {
+      "id": "06.3",
+      "phase": "06",
+      "original_obligation": "Parallel independent GitHub branches and bounded concurrency",
+      "status": "OPEN",
+      "evidence": "actions_pipeline.py:_drive traverses one node sequentially; docs explicitly sequential",
+      "open_requirement": "Concurrent ready-set execution, global per-resource caps, deterministic journal conflict tests",
+      "closure_wave": "G2",
+      "priority": "P1"
+    },
+    {
+      "id": "06.4",
+      "phase": "06",
+      "original_obligation": "Persistent parent/child lineage across native and remote run IDs",
+      "status": "PARTIAL",
+      "evidence": "Private actions/pipelines journal contains nodes+IDs; native engine separate",
+      "open_requirement": "Single recoverable provenance graph across native job, remote run, attempt and artifact",
+      "closure_wave": "G2",
+      "priority": "P0"
+    },
+    {
+      "id": "06.5",
+      "phase": "06",
+      "original_obligation": "Idempotent restart and duplicate-POST prevention",
+      "status": "PARTIAL",
+      "evidence": "dispatch journal written before POST; uncertain stays blocked, offline tests",
+      "open_requirement": "Real crash windows before/after POST, reconcile without duplicate dispatch or permanent orphan",
+      "closure_wave": "G2",
+      "priority": "P0"
+    },
+    {
+      "id": "06.6",
+      "phase": "06",
+      "original_obligation": "Cancellation propagation across pipeline/dependencies",
+      "status": "OPEN",
+      "evidence": "actions_pipeline.py has no pipeline cancel operation; run-level cancel separate",
+      "open_requirement": "Propagate explicit cancellation to remote jobs/children with receipt and no unrelated processes",
+      "closure_wave": "G2",
+      "priority": "P1"
+    },
+    {
+      "id": "06.7",
+      "phase": "06",
+      "original_obligation": "Dependency status recovery after Termux process exit",
+      "status": "PARTIAL",
+      "evidence": "pipeline_resume explicit; no background observer; waiting state",
+      "open_requirement": "Device stop/restart/crash and resume integration acceptance",
+      "closure_wave": "G2",
+      "priority": "P1"
+    },
+    {
+      "id": "06.8",
+      "phase": "06",
+      "original_obligation": "Lock stale/interrupted journal handling and concurrent resume",
+      "status": "PARTIAL",
+      "evidence": "actions_pipeline.py:_lock directory guard; interruption needs manual review",
+      "open_requirement": "Stale lock lease/recovery and multi-process race tests",
+      "closure_wave": "G2",
+      "priority": "P1"
+    },
+    {
+      "id": "06.9",
+      "phase": "06",
+      "original_obligation": "Mixed provider path including Termux/Linux/SSH/OCI native run identity",
+      "status": "PARTIAL",
+      "evidence": "Original architecture names local SSH/OCI providers; actions_pipeline local-invoke delegates native, no live remote-provider matrix",
+      "open_requirement": "Live configured native Termux+SSH/OCI execution producer/consumer with explicit unavailable-provider skips",
+      "closure_wave": "G2",
+      "priority": "P2"
+    },
+    {
+      "id": "07.1",
+      "phase": "07",
+      "original_obligation": "CLI operations for discovery, execution, status, artifacts and signing",
+      "status": "LIVE_VERIFIED",
+      "evidence": "actions_cli.py and github_actions.py; user ran unsigned-import/unsigned-sign",
+      "open_requirement": "",
+      "closure_wave": "G3",
+      "priority": "P0"
+    },
+    {
+      "id": "07.2",
+      "phase": "07",
+      "original_obligation": "TUI workflow chooser and dedicated CI pipeline run/job/step tree",
+      "status": "PARTIAL",
+      "evidence": "Textual live observer and status display; docs/actions-07-surfaces.md says no dedicated pipeline screen",
+      "open_requirement": "Build native dedicated Textual CI screen with selectable workflows, per-job steps/artifacts",
+      "closure_wave": "G3",
+      "priority": "P1"
+    },
+    {
+      "id": "07.3",
+      "phase": "07",
+      "original_obligation": "Desktop GTK CI dashboard, artifacts and execution history",
+      "status": "PARTIAL",
+      "evidence": "devtool/desktop/run_workflow.py and gtk_control_center.py typed pipeline forms",
+      "open_requirement": "Live desktop dashboard/interaction acceptance with workflow/job diagnostics",
+      "closure_wave": "G3",
+      "priority": "P1"
+    },
+    {
+      "id": "07.4",
+      "phase": "07",
+      "original_obligation": "Android HUD build status, failures, artifacts and permitted controls",
+      "status": "PARTIAL",
+      "evidence": "Android MainActivity/AppSettings pipeline UI; user tested V7 signed HUD basic runtime",
+      "open_requirement": "Test actual pipeline controls, failure, artifact and state recovery on device",
+      "closure_wave": "G3",
+      "priority": "P1"
+    },
+    {
+      "id": "07.5",
+      "phase": "07",
+      "original_obligation": "Canonical status parity and cross-surface command/state identity",
+      "status": "PARTIAL",
+      "evidence": "actions_presentation.py normalized projections; tests/test_actions_07_surface_integration.py",
+      "open_requirement": "Golden traces replayed through CLI/Textual/GTK/HUD including failed/retried runs",
+      "closure_wave": "G3",
+      "priority": "P0"
+    },
+    {
+      "id": "07.6",
+      "phase": "07",
+      "original_obligation": "Compact Termux live indicator updates through actual stages",
+      "status": "PARTIAL",
+      "evidence": "ACTIONS10 V4 stage tracker, source tests; user V5 pass for Textual; no V7 stage UX capture",
+      "open_requirement": "Native actual operation trace test for Review→Qualify→Apply→Validate→Commit→Finish",
+      "closure_wave": "G3",
+      "priority": "P2"
+    },
+    {
+      "id": "07.7",
+      "phase": "07",
+      "original_obligation": "No independent UI credential store, remote executor or false completed state",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_presentation.py; documented shared RunStore; 07 tests",
+      "open_requirement": "Adversarial UI stale partial, cancellation and attestation data projection acceptance",
+      "closure_wave": "G3",
+      "priority": "P1"
+    },
+    {
+      "id": "08.1",
+      "phase": "08",
+      "original_obligation": "Fail-closed release policy with private trust anchor and correct source binding",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_release.py; tests/test_actions_08_release_security.py",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "08.2",
+      "phase": "08",
+      "original_obligation": "Stable authorized signing identity (not disposable debug key)",
+      "status": "LIVE_VERIFIED",
+      "evidence": "user V7 local-sign success; signing_identity_id devtool-android-release",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "08.3",
+      "phase": "08",
+      "original_obligation": "Independent signed APK digest, signer fingerprint, package verification",
+      "status": "LIVE_VERIFIED",
+      "evidence": "signed registry 26529ad5f699; signature_verified=true; SHA 291b8920…",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "08.4",
+      "phase": "08",
+      "original_obligation": "GitHub run→unsigned candidate→local signed provenance chain",
+      "status": "LIVE_VERIFIED",
+      "evidence": "ACTIONS-10 parent github_provenance_verified=true; local verify scope=false as designed",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "08.5",
+      "phase": "08",
+      "original_obligation": "External/GitHub source attestation and formal release qualification",
+      "status": "PARTIAL",
+      "evidence": "ACTIONS-10 source_attested=false, qualified_release=false; code gates designed to fail closed",
+      "open_requirement": "Preserve NOT QUALIFIED; optionally add separate free local-source manifest attestation, never pretend protected-CI",
+      "closure_wave": "G6",
+      "priority": "P2"
+    },
+    {
+      "id": "08.6",
+      "phase": "08",
+      "original_obligation": "Publishing approval, permissions and high-risk negative proof",
+      "status": "PARTIAL",
+      "evidence": "release security tests and policy; no production publishing observed",
+      "open_requirement": "Live unauthorized source, changed signer, tampered APK, cross-run substitution negatives; explicit consent",
+      "closure_wave": "G6",
+      "priority": "P1"
+    },
+    {
+      "id": "08.7",
+      "phase": "08",
+      "original_obligation": "GitHub workflow third-party action supply-chain pinning and minimal permissions",
+      "status": "PARTIAL",
+      "evidence": "All three workflows use action version tags, not immutable 40-hex commits; explicit permissions are scoped",
+      "open_requirement": "Review unpinned action/runner dependencies, pin trusted SHA or enforce monitored tag policy with update tests",
+      "closure_wave": "G6",
+      "priority": "P2"
+    },
+    {
+      "id": "08.EX",
+      "phase": "08",
+      "original_obligation": "Paid GitHub Free private protected-ref / CI signing-secret release gate",
+      "status": "EXCLUDED",
+      "evidence": "User explicitly excludes paid-account signing/protection requirement",
+      "open_requirement": "Keep legacy signed-CI policy fail closed; never claim qualified_release=true or bypass controls",
+      "closure_wave": "",
+      "priority": "EXCLUDED"
+    },
+    {
+      "id": "09.1",
+      "phase": "09 original",
+      "original_obligation": "General Python project CI, not only Devtool self-CI",
+      "status": "PARTIAL",
+      "evidence": "release-qualification.yml has Python 3.11/3.12/3.13 matrix for Devtool itself",
+      "open_requirement": "Generic target registration/discovery, workflow generation/dispatch and artifact contract",
+      "closure_wave": "G5",
+      "priority": "P1"
+    },
+    {
+      "id": "09.2",
+      "phase": "09 original",
+      "original_obligation": "Go project CI with tests and artifacts",
+      "status": "OPEN",
+      "evidence": "No GitHub workflow Go lane or Actions Go target producer in supplied source",
+      "open_requirement": "Go fixture, go test on Linux/Windows as supported, results through native provider",
+      "closure_wave": "G5",
+      "priority": "P1"
+    },
+    {
+      "id": "09.3",
+      "phase": "09 original",
+      "original_obligation": "Rust project CI with tests and artifacts",
+      "status": "OPEN",
+      "evidence": "No Cargo/GitHub Rust lane or Actions Rust target provider found",
+      "open_requirement": "Rust fixture cargo test/build; attached artifacts/metadata",
+      "closure_wave": "G5",
+      "priority": "P1"
+    },
+    {
+      "id": "09.4",
+      "phase": "09 original",
+      "original_obligation": "Java/Gradle project CI beyond Android specialization",
+      "status": "PARTIAL",
+      "evidence": "Android Java21 build path exists; not a general Java/JVM CI template",
+      "open_requirement": "Pure JVM Gradle/Maven fixture, test outcomes and artifact binding",
+      "closure_wave": "G5",
+      "priority": "P1"
+    },
+    {
+      "id": "09.5",
+      "phase": "09 original",
+      "original_obligation": "Cross-platform Linux and Windows build/test matrix",
+      "status": "OPEN",
+      "evidence": "Current Actions workflows all runs-on Ubuntu; no Windows runner jobs",
+      "open_requirement": "Windows + Linux matrix with OS-specific commands, artifact consistency and truthful skip",
+      "closure_wave": "G5",
+      "priority": "P1"
+    },
+    {
+      "id": "09.6",
+      "phase": "09 original",
+      "original_obligation": "Reusable workflow / workflow generator support",
+      "status": "OPEN",
+      "evidence": "No workflow_call in checked-in Actions workflows; manual YAML workflows exist",
+      "open_requirement": "Schema-checked generator or reusable workflow, least privilege and run acceptance",
+      "closure_wave": "G5",
+      "priority": "P1"
+    },
+    {
+      "id": "09.7",
+      "phase": "09 original",
+      "original_obligation": "CI matrix state/attempt/artifact fan-in for many jobs",
+      "status": "PARTIAL",
+      "evidence": "actions_runs.py stores jobs/steps and attempts; no generic matrix scheduler/collator",
+      "open_requirement": "One matrix run with partial failures, retries and exact multi-platform artifact mapping",
+      "closure_wave": "G5",
+      "priority": "P1"
+    },
+    {
+      "id": "09.8",
+      "phase": "09 original",
+      "original_obligation": "Self-hosted runner discovery and selection",
+      "status": "OPEN",
+      "evidence": "Release verifier denies self-hosted for trust; no general runner catalog/selection",
+      "open_requirement": "Optional: permit explicitly trusted runner profiles only for nonrelease tasks",
+      "closure_wave": "G7",
+      "priority": "P3"
+    },
+    {
+      "id": "09.9",
+      "phase": "09 original",
+      "original_obligation": "GitHub Releases publishing with explicit approval",
+      "status": "OPEN",
+      "evidence": "No Actions release publisher for generic artifacts in supplied provider",
+      "open_requirement": "Optional: propose and review release, bind signed immutable assets, no implicit publish",
+      "closure_wave": "G7",
+      "priority": "P3"
+    },
+    {
+      "id": "09.10",
+      "phase": "09 original",
+      "original_obligation": "CI performance and historical metrics",
+      "status": "OPEN",
+      "evidence": "Run durations/status exist; no aggregated CI metrics/benchmark views",
+      "open_requirement": "Optional: historical duration, retry/failure rates, runner timing, no fabricated data",
+      "closure_wave": "G7",
+      "priority": "P3"
+    },
+    {
+      "id": "09.11",
+      "phase": "09 original",
+      "original_obligation": "GitLab CI provider",
+      "status": "OPEN",
+      "evidence": "No GitLab Actions-equivalent provider in supplied source",
+      "open_requirement": "Optional future independent provider, preserve canonical state and trust contracts",
+      "closure_wave": "G7",
+      "priority": "P3"
+    },
+    {
+      "id": "09.g1",
+      "phase": "09 delivered",
+      "original_obligation": "Guided native LIFE signing governance setup",
+      "status": "SOURCE_TESTED",
+      "evidence": "actions_setup.py; docs/ACTIONS_09_GOVERNANCE.md; tests/test_actions_09_release_setup.py",
+      "open_requirement": "Private paid gate excluded; leave source-only scope as is",
+      "closure_wave": "G6",
+      "priority": "P2"
+    },
+    {
+      "id": "09.g2",
+      "phase": "09 delivered",
+      "original_obligation": "Use single existing signing authority, no second key store",
+      "status": "LIVE_VERIFIED",
+      "evidence": "Native LIFE identity used by V7 local sign; no remote keystore export",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "10.1",
+      "phase": "10",
+      "original_obligation": "Separate explicitly unsigned GitHub workflow and Gradle task",
+      "status": "LIVE_VERIFIED",
+      "evidence": ".github/workflows/devtool-android-unsigned-release.yml, app/build.gradle; GitHub run 38340976284",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "10.2",
+      "phase": "10",
+      "original_obligation": "Existing Actions provider dispatch/monitor reused, no parallel GitHub integration",
+      "status": "LIVE_VERIFIED",
+      "evidence": "actions_unsigned.py + github_actions.py; user run/manifest evidence",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "10.3",
+      "phase": "10",
+      "original_obligation": "Unsigned APK ZIP check and manifest SHA binding",
+      "status": "LIVE_VERIFIED",
+      "evidence": "Uploaded artifact ZIP digest 0c2abe…; output APK 67 entries checked; V4 fixed legitimate case-distinct names",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "10.4",
+      "phase": "10",
+      "original_obligation": "Verified remote import/run-attempt/source/registry",
+      "status": "LIVE_VERIFIED",
+      "evidence": "run 38340976284, artifact 11786881190, unsigned registry 6ff5620c855d",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "10.5",
+      "phase": "10",
+      "original_obligation": "Local existing signing identity, alignment and independent verify",
+      "status": "LIVE_VERIFIED",
+      "evidence": "V7 output locally_signed=true, signature_verified=true, expected cert SHA 5601d498…",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "10.6",
+      "phase": "10",
+      "original_obligation": "Secure handling of Android apksigner 0.9 certificate fields",
+      "status": "LIVE_VERIFIED",
+      "evidence": "e723356 V7; user signed success on Termux Android",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "10.7",
+      "phase": "10",
+      "original_obligation": "Signed output SHA/identity/manifest and durable registry",
+      "status": "LIVE_VERIFIED",
+      "evidence": "signed sha256 291b8920f445dc530383e3916f86e11f95480cea6131d95ba9808ec717300f2a; registry 26529ad5f699",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "10.8",
+      "phase": "10",
+      "original_obligation": "Human-device Android HUD installed/smoke tested",
+      "status": "PARTIAL",
+      "evidence": "User confirmed tested Android HUD after signed APK",
+      "open_requirement": "Automate reproducible session/UI/device acceptance beyond manual basic smoke",
+      "closure_wave": "G3",
+      "priority": "P1"
+    },
+    {
+      "id": "10.9",
+      "phase": "10",
+      "original_obligation": "Source attestation and protected release gates remain honestly unqualified",
+      "status": "LIVE_VERIFIED",
+      "evidence": "source_attested=false, qualified_release=false; not erroneously promoted",
+      "open_requirement": "",
+      "closure_wave": "G6",
+      "priority": "P0"
+    },
+    {
+      "id": "10.10",
+      "phase": "10",
+      "original_obligation": "Negative / recovery live matrix beyond successful happy path",
+      "status": "PARTIAL",
+      "evidence": "Offline negative tests; real V4 failure and V5/V6/V7 recovery; remaining matrix not live",
+      "open_requirement": "Expired artifacts, ref race, tampering, interrupted sign, duplicate import/device tests",
+      "closure_wave": "G6",
+      "priority": "P2"
+    }
+  ]
+}
