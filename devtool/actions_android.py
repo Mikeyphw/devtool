@@ -311,6 +311,45 @@ def _inspect_apk(package_file: Path) -> dict[str, Any]:
             "signature_verified":True, "manifest_verified":True}
 
 
+def _verify_aab_jar_signature(package_file: Path) -> None:
+    """Verify signed JAR bytes without confusing local PKI trust with integrity.
+
+    `jarsigner -verify -strict` returns 4 for a correctly signed JAR using an
+    untrusted/self-signed LIFE certificate.  Plain `-verify` checks cryptographic
+    signatures but may *also* return 0 for unsigned JARs and JARs with unsigned
+    added entries.  Require an explicit verified verdict, reject unsigned
+    members, and require a matching JAR signature pair.  `local_verify` then
+    independently pins the signer's certificate via keytool and LIFE profile.
+    """
+    try:
+        with zipfile.ZipFile(package_file) as archive:
+            names = {item.filename.upper() for item in archive.infolist()
+                     if not item.is_dir()}
+        signatures = {n[9:-3] for n in names
+                      if n.startswith('META-INF/') and n.count('/') == 1 and n.endswith('.SF')}
+        blocks = {n[9:-4] for n in names
+                  if n.startswith('META-INF/') and n.count('/') == 1 and n.endswith(('.RSA', '.DSA'))}
+        blocks |= {n[9:-3] for n in names
+                   if n.startswith('META-INF/') and n.count('/') == 1 and n.endswith('.EC')}
+    except (zipfile.BadZipFile, OSError, ValueError):
+        raise GitHubActionsError('AAB JAR signature archive is invalid') from None
+    if len(signatures) != 1 or signatures != blocks or not next(iter(signatures)):
+        raise GitHubActionsError('AAB JAR signature entries are missing or ambiguous')
+
+    output = _run([_tool('jarsigner'), '-verify', '-verbose', str(package_file)],
+                  purpose='AAB JAR signature verification')
+    verdicts = [line.strip().lower() for line in output.splitlines()
+                if line.strip().lower() in ('jar verified.', 'jar is unsigned.',
+                                            'jar verified, with signer errors.')]
+    # The ordinary (non-strict) verification result is cryptographic: chains
+    # may be self-signed but damaged signatures still return a nonzero code.
+    # A zero return alone is never enough, as unsigned archives also return 0.
+    if (verdicts != ['jar verified.'] or
+            'unsigned entries' in output.lower() or
+            re.search(r'(?m)^\s*\?\s+\d+\s+', output)):
+        raise GitHubActionsError('AAB JAR signature is unsigned, partial or ambiguous')
+
+
 def _inspect_aab(package_file: Path) -> dict[str, Any]:
     jar = os.environ.get("DEVTOOL_BUNDLETOOL_JAR", "")
     if not jar or not Path(jar).is_file():
@@ -322,7 +361,7 @@ def _inspect_aab(package_file: Path) -> dict[str, Any]:
     pkg = dump.strip().strip('"').strip("'")
     if not _PACKAGE.fullmatch(pkg):
         raise GitHubActionsError("AAB application ID is not verified")
-    _run([_tool("jarsigner"), "-verify", "-strict", str(package_file)], purpose="AAB JAR signature verification")
+    _verify_aab_jar_signature(package_file)
     cert = _run([_tool("keytool"), "-printcert", "-jarfile", str(package_file)], purpose="AAB signing identity inspection")
     code_text = _run([java, "-jar", jar, "dump", "manifest", "--bundle", str(package_file),
                       "--xpath", "/manifest/@android:versionCode"], purpose="AAB versionCode inspection").strip()
