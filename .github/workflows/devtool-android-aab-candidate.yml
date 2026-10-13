@@ -1,0 +1,64 @@
+# G4: unqualified and unsigned Android App Bundle candidate. No signing secrets.
+name: Devtool Android Unsigned Bundle Candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bundle-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare exact Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Build unsigned AAB and run same-source unit tests and release lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$GITHUB_REPOSITORY" = 'Mikeyphw/devtool'
+          test -f android/devtool-live-hud/gradlew && test ! -L android/devtool-live-hud/gradlew
+          cd android/devtool-live-hud
+          chmod +x gradlew
+          # No signing values or secrets are passed to CI. Only dedicated opt-in task.
+          ./gradlew --no-daemon -Pdevtool.unsignedReleaseBundle=true \
+            :app:devtoolBundleUnsignedReleaseCandidate
+      - name: Stage exact bundle with source-bound tests and lint receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          shopt -s nullglob
+          aabs=(android/devtool-live-hud/app/build/outputs/bundle/release/*.aab)
+          test "${#aabs[@]}" -eq 1
+          test ! -L "${aabs[0]}"
+          stage="$RUNNER_TEMP/devtool-aab-candidate"
+          mkdir -m 700 "$stage"
+          python3 tools/actions_g4_aab_manifest.py emit \
+            "${aabs[0]}" \
+            android/devtool-live-hud/app/build/test-results/testDebugUnitTest \
+            android/devtool-live-hud/app/build/reports/lint/lint-results-release.xml \
+            "$stage"
+      - name: Upload exact unqualified AAB and validation receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: devtool-android-unsigned-aab
+          path: |
+            ${{ runner.temp }}/devtool-aab-candidate/unsigned-release.aab
+            ${{ runner.temp }}/devtool-aab-candidate/manifest.json
+            ${{ runner.temp }}/devtool-aab-candidate/unit-tests.json
+            ${{ runner.temp }}/devtool-aab-candidate/lint-results-release.xml
+          if-no-files-found: error
+          retention-days: 7

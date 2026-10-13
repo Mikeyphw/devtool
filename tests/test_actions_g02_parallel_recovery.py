@@ -4,7 +4,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import json
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -192,13 +191,23 @@ def test_bounded_parallel_remote_limit_and_local_serialization(tmp_path,monkeypa
     (repo/'pipeline.json').write_text(json.dumps(body))
     head=commit(repo);api=API(head)
     active=0;maximum=0;count=0;lock=threading.Lock()
+    first_batch_ready=threading.Event()
     def dispatch(client,slug,workflow,ref,inputs,*,execute):
         nonlocal active,maximum,count
         if not execute:
             return {'pre_dispatch_sha':head,'workflow_id':99,'workflow_path':'.github/workflows/devtool-android-build.yml'}
         with lock:
             count+=1;number=count;active+=1;maximum=max(maximum,active)
-        time.sleep(.05)
+            if number == _MAX_REMOTE_WORKERS:
+                first_batch_ready.set()
+        # A timed sleep cannot prove four-way concurrency on busy Termux.
+        # Keep the first batch alive until all four real workers enter.
+        # If the scheduler is serialized or capped below four, fail instead
+        # of relaxing the worker-limit assertion.
+        if number <= _MAX_REMOTE_WORKERS:
+            assert first_batch_ready.wait(timeout=20), (
+                'Four remote workers did not overlap; scheduler concurrency regressed'
+            )
         with lock:active-=1
         return {'pre_dispatch_sha':head,'workflow_id':99,'run_id':number,
                 'request_id':str(number).zfill(32),'state':'accepted-correlated'}

@@ -15,9 +15,18 @@ def releaseSigningReady = [releaseStoreFile, releaseStorePassword, releaseKeyAli
 // Merely passing the property to assembleRelease or devtoolReleaseValidation
 // cannot bypass the ordinary protected/signed-release checks.
 def unsignedTask = ':app:devtoolAssembleUnsignedReleaseCandidate'
+def unsignedAabTask = ':app:devtoolBundleUnsignedReleaseCandidate'
+def unsignedBundleRequested = (providers.gradleProperty('devtool.unsignedReleaseBundle').orNull == 'true')
+def unsignedBundleCandidate = unsignedBundleRequested && gradle.startParameter.taskNames == [unsignedAabTask]
+if (unsignedBundleRequested && !unsignedBundleCandidate) {
+    throw new GradleException('Unsigned AAB property is restricted to the dedicated bundle candidate task')
+}
+if (unsignedBundleCandidate && releaseSigningReady) {
+    throw new GradleException('Unsigned AAB candidate refuses configured release credentials')
+}
 def unsignedRequested = (providers.gradleProperty('devtool.unsignedReleaseCandidate').orNull == 'true')
 def unsignedCandidate = unsignedRequested && gradle.startParameter.taskNames == [unsignedTask]
-if (unsignedRequested && !unsignedCandidate) {
+if (unsignedRequested && (!unsignedCandidate || unsignedBundleRequested)) {
     throw new GradleException('Unsigned release property is restricted to the dedicated candidate task')
 }
 if (unsignedCandidate && releaseSigningReady) {
@@ -90,6 +99,7 @@ android {
         checkReleaseBuilds true
         warningsAsErrors false
         htmlOutput file("${layout.buildDirectory.get()}/reports/lint/lint.html")
+        xmlOutput file("${layout.buildDirectory.get()}/reports/lint/lint-results-release.xml")
         sarifOutput file("${layout.buildDirectory.get()}/reports/lint/lint.sarif")
     }
 
@@ -123,7 +133,9 @@ tasks.register('verifyReleaseSigning') {
 }
 
 tasks.matching { it.name == 'preReleaseBuild' }.configureEach {
-    if (!unsignedCandidate) dependsOn tasks.named('verifyReleaseSigning')
+    if (!unsignedCandidate) {
+        if (!unsignedBundleCandidate) dependsOn tasks.named('verifyReleaseSigning')
+    }
 }
 
 // Produces ONLY an unqualified, unsigned release-variant candidate.
@@ -140,6 +152,24 @@ tasks.register('devtoolAssembleUnsignedReleaseCandidate') {
         def outputs = folder.listFiles()?.findAll { it.isFile() && it.name.endsWith('.apk') } ?: []
         if (outputs.size() != 1 || !outputs[0].name.endsWith('-unsigned.apk')) {
             throw new GradleException('Expected exactly one unsigned release APK; refusing ambiguous/signed output')
+        }
+    }
+}
+
+// G4 candidate is an explicitly unsigned and unqualified AAB only.
+// Ordinary bundleRelease still requires the LIFE/release signing contract.
+tasks.register('devtoolBundleUnsignedReleaseCandidate') {
+    group = 'build'
+    description = 'Build a private, unsigned AAB for source-bound local LIFE signing.'
+    dependsOn 'bundleRelease', 'testDebugUnitTest', 'lintRelease'
+    doLast {
+        if (!unsignedBundleCandidate || releaseSigningReady) {
+            throw new GradleException('Unsigned AAB candidate requires opt-in and no signing credentials')
+        }
+        def folder = layout.buildDirectory.dir('outputs/bundle/release').get().asFile
+        def outputs = folder.listFiles()?.findAll { it.isFile() && it.name.endsWith('.aab') } ?: []
+        if (outputs.size() != 1) {
+            throw new GradleException('Expected exactly one unsigned AAB; refusing ambiguous output')
         }
     }
 }

@@ -451,8 +451,8 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign"],
-        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign"],
+        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)", "android aab-run (explicit --yes only)", "android aab-sign (explicit --yes only)"],
         "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
         "remote_execution": False,
@@ -494,6 +494,17 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
                 execute=bool(getattr(args, 'yes', False)))
         except AndroidSigningError:
             raise GitHubActionsError('Local LIFE Android signer unavailable or invalid') from None
+    if action == 'android' and str(getattr(args, 'android_command', '') or '') == 'aab-sign':
+        # Signing remains offline and uses only the canonical LIFE identity.
+        from .actions_aab import aab_local_sign
+        from .android.signing import AndroidSigningError
+        try:
+            return aab_local_sign(local_root, registry_id=str(getattr(args,'registry_id','') or ''),
+                identity_id=str(getattr(args, 'signing_identity', '') or ''),
+                target=str(getattr(args, 'signing_target', 'android_hud') or 'android_hud'),
+                execute=bool(getattr(args, 'yes', False)))
+        except AndroidSigningError:
+            raise GitHubActionsError('Local LIFE AAB signer unavailable or invalid') from None
     # Journal-only status never authenticates to GitHub or depends on remote availability.
     if action == "pipeline" and str(getattr(args, "pipeline_command", "")) == "status":
         from .actions_pipeline import pipeline_status
@@ -570,6 +581,20 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
     if action == "android":
         from .actions_android import android_discover, android_plan, android_collect
         sub = str(getattr(args,"android_command","") or "")
+        if sub in ('aab-plan', 'aab-run'):
+            from .actions_aab import aab_dispatch
+            execute = sub == 'aab-run'
+            if execute and not bool(getattr(args,'yes',False)):
+                raise GitHubActionsError('Explicit --yes required for AAB dispatch')
+            return aab_dispatch(client, slug, local_root, ref=str(getattr(args,'ref','') or ''), execute=execute)
+        if sub in ('aab-check', 'aab-import'):
+            from .actions_aab import aab_import
+            from .actions_runs import run_id
+            from .actions_artifacts import _artifact_id
+            return aab_import(client, slug, local_root, run_id=run_id(args.run_id),
+                artifact_id=_artifact_id(args.artifact_id),
+                expected_sha=str(getattr(args,'expected_sha','') or ''),
+                download=bool(getattr(args,'download',False)), materialize=sub == 'aab-import')
         if sub in ('unsigned-plan', 'unsigned-run'):
             from .actions_unsigned import unsigned_dispatch
             if sub == 'unsigned-run' and not bool(getattr(args, 'yes', False)):
