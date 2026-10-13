@@ -232,6 +232,139 @@ def artifact_stage_compact_line(state: Mapping[str, Any], *, returncode: int | N
     return f"{current} {index}/{len(APPLY_STAGES)}{suffix}"
 
 
+
+class ApplyStageTracker:
+    """Phone-friendly apply markers backed by observed lifecycle evidence.
+
+    This tracks *presentation only*. Neither output text nor the model's stage
+    classification can grant validation, Git commit, or successful application.
+    The canonical child exit code and transaction records remain authoritative.
+    """
+
+    def __init__(self) -> None:
+        self.outcomes: dict[str, str] = {name: "pending" for name in APPLY_STAGES}
+        self.current = "Review"
+        self.outcomes["Review"] = "active"
+
+    def begin(self) -> None:
+        self._set("Review", "done")
+        self._activate("Qualify")
+
+    def _set(self, name: str, value: str) -> None:
+        if name not in self.outcomes:
+            return
+        # A late stale event must not turn a failed or completed stage active.
+        if self.outcomes[name] in {"done", "failed", "skipped"} and value == "active":
+            return
+        self.outcomes[name] = value
+
+    def _activate(self, name: str) -> None:
+        if self.outcomes.get(name) in {"done", "failed", "skipped"}:
+            return
+        if APPLY_STAGES.index(name) < APPLY_STAGES.index(self.current):
+            return
+        if self.outcomes.get(self.current) == "active" and self.current != name:
+            self.outcomes[self.current] = "pending"
+        self.current = name
+        self.outcomes[name] = "active"
+
+    def observe_line(self, line: str) -> None:
+        """Consume narrowly recognized canonical child output, not arbitrary words.
+
+        Log output may be delayed or may omit individual lifecycle phases; we
+        only mark a stage done from direct evidence of its actual completion.
+        """
+        text = _ANSI_RE.sub("", str(line or "")).strip()
+        lower = text.lower()
+        if lower.startswith("applied overlay from ") or lower.startswith("applied changes from "):
+            self._set("Qualify", "done")
+            self._set("Apply", "done")
+            self._activate("Validate")
+        elif lower.startswith("artifact-validation:") and (
+            "base contract verified" in lower or "artifact validation passed" in lower
+        ):
+            self._set("Qualify", "done")
+            # This line is the *artifact* preflight, not the validation child.
+            if self.outcomes["Apply"] == "pending":
+                self._activate("Apply")
+        elif (text.startswith("$ ") and
+              (".devtool-artifact/validate.sh" in text or "pytest" in text)):
+            self._activate("Validate")
+        elif lower.startswith("devtool apply · finalizing transaction"):
+            # Finalization can occur without Git commit (commit_mode=none).
+            # Do not claim Commit was completed merely because a transaction ended.
+            if self.outcomes["Commit"] == "pending":
+                self._activate("Finish")
+        elif lower.startswith("devtool apply · source artifact cleanup passed"):
+            self._activate("Finish")
+        elif lower.startswith("devtool apply · finalizing"):
+            self._activate("Finish")
+        elif lower.startswith("$ git commit") or lower.startswith("commit changes"):
+            self._activate("Commit")
+        elif lower.startswith("$ git add") or lower.startswith("stage changes"):
+            self._activate("Commit")
+        # A canonical Git commit receipt (including detached-HEAD output) is
+        # also evidence that the validator and commit finished successfully.
+        elif (text.startswith("[") and re.match(r"^\[[^]]+ [0-9a-f]{7,40}\] ", text)):
+            self._set("Validate", "done")
+            self._set("Commit", "done")
+            self._activate("Finish")
+
+    def observe_state(self, state: Mapping[str, Any]) -> None:
+        if not isinstance(state, Mapping) or not state:
+            return
+        phase = state.get("phase")
+        if not isinstance(phase, Mapping):
+            return
+        label = str(phase.get("name") or "").lower()
+        command = str(phase.get("command_name") or "").lower()
+        if "preflight" in label or "preflight" in command or "qualif" in label:
+            stage = "Qualify"
+        elif "commit" in label or "git-commit" in command or "git-add" in command:
+            stage = "Commit"
+        elif any(word in label for word in ("validation", "validate", "test")) or                 "validate" in command or "artifact-post" in command:
+            stage = "Validate"
+        elif command in {"apply-overlay", "apply-overlays", "apply-snapshot"} or                 "apply overlay" in label:
+            stage = "Apply"
+        else:
+            return
+        event = str(state.get("event_type") or "").lower()
+        if event == "phase_finished":
+            result = state.get("result")
+            if isinstance(result, Mapping):
+                if bool(result.get("skipped")):
+                    self._set(stage, "skipped")
+                elif result.get("returncode") is not None:
+                    try:
+                        ok = int(result["returncode"]) == 0
+                    except (TypeError, ValueError):
+                        ok = False
+                    self._set(stage, "done" if ok else "failed")
+                    if not ok:
+                        self.current = stage
+        elif event == "phase_started":
+            self._activate(stage)
+        # For progress events the phase name is descriptive but may represent
+        # a stale phase, so do not advance without an explicit start event.
+
+    def finish(self, returncode: int) -> None:
+        rc = int(returncode)
+        if rc == 0:
+            # A completed process does not prove an unobserved intermediate
+            # stage ran. Remove its spinner, but never turn it green.
+            if self.current != "Finish" and self.outcomes.get(self.current) == "active":
+                self._set(self.current, "pending")
+            self._set("Finish", "done")
+        else:
+            # Do not replace the actual failing stage with a green Finish.
+            if self.current != "Finish" and self.outcomes.get(self.current) == "active":
+                self._set(self.current, "failed" if rc != 130 else "skipped")
+            self._set("Finish", "failed" if rc != 130 else "skipped")
+        self.current = "Finish"
+
+    def visible_current(self) -> str:
+        return self.current
+
 def artifact_review_text(review: Mapping[str, Any]) -> str:
     rows = (
         ("Artifact", review.get("artifact") or review.get("path") or "-"),
@@ -405,6 +538,7 @@ def artifact_display_progress(
 
 __all__ = [
     "APPLY_STAGES",
+    "ApplyStageTracker",
     "ArtifactActivityTracker",
     "TEXTUAL_COMPACT_WIDTH",
     "TEXTUAL_SHARED_CSS",

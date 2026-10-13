@@ -93,6 +93,16 @@ def project_observation(data: Mapping[str, Any]) -> tuple[dict[str, Any], tuple[
         detail += f' · {job_name}'
         if chosen is not None:
             detail += ' / ' + _display_text(chosen.get('name') or 'Step')
+    if failed is not None:
+        bad_steps = failed.get('steps') if isinstance(failed.get('steps'), list) else []
+        failing_step = next((step for step in bad_steps if isinstance(step, Mapping)
+                             and step.get('conclusion') in ('failure', 'timed_out', 'cancelled')), None)
+        failure_location = _display_text(failed.get('name') or 'Job')
+        if failing_step:
+            failure_location += ' / ' + _display_text(failing_step.get('name') or 'Step')
+        # Prominent, factual failure line even when raw GitHub log output is
+        # unavailable. Never fabricate a Gradle exception from step metadata.
+        lines.append(f'FAILED GitHub step: {failure_location}')
     for j in jobs:
         job_name = _display_text(j.get('name') or 'Job')
         jstate = _display_text(j.get('conclusion') or j.get('status') or 'unknown')
@@ -103,7 +113,12 @@ def project_observation(data: Mapping[str, Any]) -> tuple[dict[str, Any], tuple[
                              f'{_display_text(step.get("conclusion") or step.get("status") or "unknown")}')
     # These are observed GitHub job/step statuses, never inferred CLI phases.
     stages: list[dict[str, str]] = []
-    for job in jobs[:4]:
+    visible_jobs = jobs[:4]
+    if failed is not None and failed not in visible_jobs:
+        # GitHub may put a failed job after many successful matrix jobs.
+        # Keep its actual status and step on screen at the end of the run.
+        visible_jobs = jobs[:3] + [failed]
+    for job in visible_jobs:
         job_status = _display_text(job.get('conclusion') or job.get('status') or 'unknown', 32)
         stages.append({'name': _display_text(job.get('name') or 'Job', 90), 'status': job_status})
         if job.get('status') == 'in_progress' or job.get('conclusion') in ('failure', 'cancelled', 'timed_out'):

@@ -161,7 +161,8 @@ def compact_job_projection(state: Mapping[str, Any], *, width: int = 80) -> dict
         "normalized_status": normalized,
         "detail": fit_middle(str(state.get("detail") or "Working…"), length),
         "percent": progress_percent(state),
-        "counter": progress_counter(state) or "working",
+        "counter": (status_label(raw_status).upper() if normalized in {"completed", "failed", "cancelled"}
+                    else progress_counter(state) or "working"),
         "finished": normalized in {"completed", "failed", "cancelled"},
     }
 

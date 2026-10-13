@@ -173,6 +173,7 @@ class ExecutionTextualHostSource:
         self.remote_run_id: int | None = None
         self.remote_run_url: str = ''
         self._remote_lines: dict[int, str] = {}
+        self._last_remote_snapshot: dict[str, Any] = {}
         self.presenter = create_textual_execution_source(max_log_lines=max_log_lines)
         self.presenter.terminal_host_ready = True
         self.presenter.set_stop_callback(self.request_cancel)
@@ -218,6 +219,7 @@ class ExecutionTextualHostSource:
                     self.presenter.output_line('Invalid GitHub progress update (ignored)')
                     return
                 snapshot, lines = project_observation(data)
+                self._last_remote_snapshot = dict(snapshot)
                 remote = data['remote']
                 if type(remote.get('id')) is int:
                     self.remote_run_id = remote['id']
@@ -318,15 +320,26 @@ class ExecutionTextualHostSource:
                             self._present_line(self._lines.get_nowait())
                         except queue.Empty:
                             break
-                    self.presenter.update({
-                        "command": self.command,
-                        "phase_name": "Complete" if rc == 0 else ("Detached" if detached else "Failed"),
-                        "detail": "Completed successfully" if rc == 0 else (
-                            "Detached; GitHub workflow continues" if detached
-                            else "Cancelled" if rc == 130 else f"Exited with {rc}"),
+                    final = dict(self._last_remote_snapshot) if self.remote else {}
+                    remote_detail = str(final.get('detail') or '').strip()
+                    # Never change process truth based on the last API poll.
+                    # Retain observed GitHub steps, run ID and source binding
+                    # through the final snapshot. No observation means a clear
+                    # local monitor error, not invented remote job success.
+                    final.update({
+                        "command": final.get('command') or self.command,
+                        "phase_name": (final.get('phase_name') if self.remote and not detached
+                                       else 'Detached' if detached
+                                       else 'Complete' if rc == 0 else 'Failed'),
+                        "detail": ("Detached; GitHub workflow continues" if detached
+                                   else ((remote_detail + ' · ') if remote_detail else '')
+                                   + ("monitor completed" if rc == 0
+                                      else "monitor interrupted" if rc == 130
+                                      else f"monitor exited {rc}")),
                         "completion_status": "ok" if rc == 0 else ("cancelled" if detached or rc == 130 else "failed"),
                         "percent": 100.0 if rc == 0 else None,
                     })
+                    self.presenter.update(final)
                     # Keep the completed workspace on screen until the operator
                     # explicitly closes it. The terminal snapshot above is the
                     # final presentation event; canonical execution is already done.

@@ -99,10 +99,43 @@ def _no_apk_signatures(apk: Path) -> None:
     """
     try:
         with zipfile.ZipFile(apk) as z:
-            names = z.namelist()
-            if not names or len(names) != len(set(n.casefold() for n in names)):
-                raise GitHubActionsError('Unsigned APK ZIP has ambiguous member names')
-            if not any(n == 'AndroidManifest.xml' for n in names):
+            entries = z.infolist()
+            names = [item.filename for item in entries]
+            if not names:
+                raise GitHubActionsError('Unsigned APK ZIP has no members')
+            # ZIP and Android asset/resource paths are case-sensitive. A global
+            # casefold() uniqueness requirement rejects legitimate AGP output
+            # when two distinct files differ only in case. Exact duplicate
+            # entries, however, have ambiguous lookup semantics and remain
+            # unconditionally forbidden.
+            seen_exact: set[str] = set()
+            seen_sensitive: dict[str, str] = {}
+            for info in entries:
+                name = info.filename
+                parts = name.rstrip('/').split('/')
+                if (not name or name.startswith('/') or '\\' in name or ':' in name
+                    or any(part in ('', '.', '..') for part in parts)):
+                    raise GitHubActionsError('Unsigned APK ZIP contains an unsafe member path')
+                if name in seen_exact:
+                    raise GitHubActionsError('Unsigned APK ZIP has duplicate exact member names')
+                seen_exact.add(name)
+                # Entries that Android signing and package identity consumers
+                # inspect must remain unique even under case-insensitive lookup.
+                folded = name.casefold()
+                critical = (folded == 'androidmanifest.xml'
+                            or folded == 'resources.arsc'
+                            or folded.startswith('meta-inf/')
+                            or re.fullmatch(r'classes[0-9]*\.dex', folded) is not None)
+                if critical and folded in seen_sensitive:
+                    raise GitHubActionsError('Unsigned APK ZIP has ambiguous security-sensitive member names')
+                if critical:
+                    seen_sensitive[folded] = name
+                # APK payloads must not contain symlink-shaped members, even
+                # though no ZIP member is extracted on the runner.
+                mode = (info.external_attr >> 16) & 0o170000
+                if mode == stat.S_IFLNK:
+                    raise GitHubActionsError('Unsigned APK ZIP contains a symlink member')
+            if 'AndroidManifest.xml' not in seen_exact:
                 raise GitHubActionsError('Unsigned APK lacks AndroidManifest.xml')
             for name in names:
                 upper = name.upper()

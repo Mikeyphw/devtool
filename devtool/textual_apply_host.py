@@ -29,7 +29,7 @@ from .tasker import DEFAULT_TASKER_DIR, resolve_cli_path
 from .job_ui import job_ui_mode, run_job_app, styled_job_line, job_icons, readable_job_line
 from .invocation_origin import create_managed_run_handoff
 from .textual_ux import (
-    APPLY_STAGES, ArtifactActivityTracker, TEXTUAL_SHARED_CSS, artifact_display_progress, artifact_stage,
+    APPLY_STAGES, ApplyStageTracker, ArtifactActivityTracker, TEXTUAL_SHARED_CSS, artifact_display_progress, artifact_stage,
     artifact_review_text, artifact_running_summary, artifact_stage_compact_line,
     artifact_stage_line, fit_middle, responsive_class_names, status_label,
 )
@@ -603,7 +603,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             self._last_semantic_phase: str = ""
             self._activity = ArtifactActivityTracker()
             self._raw_lines: list[str] = []
-            self._seen_stages: list[str] = []
+            self._stage_tracker = ApplyStageTracker()
 
         def compose(self) -> ComposeResult:
             review = source.review
@@ -679,43 +679,39 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             )
 
         def _refresh_stage_line(self) -> None:
-            state = self._last_state
             rc = source.returncode
-            current = artifact_stage(state, returncode=rc)
-            if state and current not in self._seen_stages and rc is None:
-                self._seen_stages.append(current)
-            if rc is not None and "Finish" not in self._seen_stages:
-                self._seen_stages.append("Finish")
+            if rc is not None:
+                self._stage_tracker.finish(rc)
+            current = self._stage_tracker.visible_current()
             compact = self.screen.has_class("compact") or self.screen.has_class("short")
-            text = artifact_stage_compact_line(state, returncode=rc, tiny=self.screen.has_class("tiny")) if compact else artifact_stage_line(state, returncode=rc)
+            index = APPLY_STAGES.index(current) + 1
+            text = (f"{index}/{len(APPLY_STAGES)} {current}" if self.screen.has_class("tiny")
+                    else f"{current} {index}/{len(APPLY_STAGES)}" if compact
+                    else "  ".join(f"▶ {name}" if name == current else f"· {name}"
+                                   for name in APPLY_STAGES))
             try:
                 self.query_one("#apply-stage", Static).update(text)
-                status = "FAILED" if rc not in (None, 0, 130) else "CANCELLED" if rc == 130 else "COMPLETE" if rc == 0 else "ACTIVE"
                 from rich.text import Text
                 rows = Text()
+                symbols = {"active": icons["active"], "done": icons["done"],
+                           "pending": icons["pending"], "failed": icons["failed"],
+                           "skipped": "−"}
+                colors = {"active": "bold cyan", "done": "green", "pending": "dim",
+                          "failed": "bold red", "skipped": "yellow"}
                 for name in APPLY_STAGES:
-                    # Past stage is only marked complete if it was actually
-                    # observed and the state later advanced; never fill gaps.
-                    was_observed = name in self._seen_stages
-                    is_current = name == current and rc is None
-                    if is_current:
-                        marker, style = icons["active"], "bold cyan"
-                    elif name == "Finish" and rc not in (None, 0):
-                        marker, style = icons["failed"], "bold red" if rc != 130 else "yellow"
-                    elif was_observed and (name != "Finish" or rc == 0):
-                        marker, style = icons["done"], "green"
-                    else:
-                        marker, style = icons["pending"], "dim"
-                    rows.append(f"{marker} {name}" + (f" · {status}" if name == "Finish" and rc is not None else ""), style=style)
+                    value = self._stage_tracker.outcomes[name]
+                    suffix = " · COMPLETE" if name == "Finish" and rc == 0 else (
+                        " · FAILED" if name == "Finish" and rc not in (None, 0, 130)
+                        else " · CANCELLED" if name == "Finish" and rc == 130 else "")
+                    rows.append(f"{symbols[value]} {name}{suffix}", style=colors[value])
                     if name != APPLY_STAGES[-1]:
                         rows.append("\n")
                 self.query_one("#apply-stages", Static).update(rows)
                 if self.screen.has_class("tiny"):
-                    self.query_one("#apply-stages", Static).update(f"{status} · {text}")
+                    self.query_one("#apply-stages", Static).update(text)
                 elif self.screen.has_class("short"):
-                    self.query_one("#apply-stages", Static).update(
-                        f"{text}\n" + (f"{status} · observed {len(self._seen_stages)}/{len(APPLY_STAGES)} stages")
-                    )
+                    done = sum(s == "done" for s in self._stage_tracker.outcomes.values())
+                    self.query_one("#apply-stages", Static).update(f"{text}\n{done} confirmed complete")
             except NoMatches:
                 pass
 
@@ -766,6 +762,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             if self._started_child:
                 return
             self._started_child = True
+            self._stage_tracker.begin()
             self._started_at = time.monotonic()
             self.screen.add_class("running")
             self.query_one("#apply-meta", Static).update("STARTING · canonical LIFE/RUN child")
@@ -785,6 +782,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
 
         def _apply_state(self, state: Mapping[str, Any]) -> None:
             self._last_state = dict(state)
+            self._stage_tracker.observe_state(state)
             status = str(state.get("status") or "running")
             message = str(state.get("message") or "Working…")
             percent, counter, scope = artifact_display_progress(state, self._activity, returncode=source.returncode)
@@ -821,6 +819,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             if not text:
                 return False
             self._raw_lines.append(text)
+            self._stage_tracker.observe_line(text)
             if len(self._raw_lines) > source.max_log_lines:
                 del self._raw_lines[: len(self._raw_lines) - source.max_log_lines]
             return self._activity.observe(readable_job_line(text))
@@ -836,6 +835,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                 surfaced = self._remember_line(line)
                 self._emit_line(str(line), surfaced)
             self._refresh_activity()
+            self._refresh_stage_line()
 
         def _poll_child(self) -> None:
             try:
