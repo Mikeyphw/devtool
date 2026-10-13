@@ -26,6 +26,7 @@ from types import SimpleNamespace
 import uuid
 
 from .tasker import DEFAULT_TASKER_DIR, resolve_cli_path
+from .job_ui import job_ui_mode, run_job_app
 from .invocation_origin import create_managed_run_handoff
 from .textual_ux import (
     ArtifactActivityTracker, TEXTUAL_SHARED_CSS, artifact_display_progress,
@@ -112,7 +113,7 @@ def select_apply_textual_host(
         return ApplyTextualHostDecision(False, "explicit stdout payload requested")
     if str(environment.get("CI", "")).strip().lower() in _TRUE:
         return ApplyTextualHostDecision(False, "CI environment")
-    if str(environment.get("DEVTOOL_EXECUTION_PRESENTATION", "auto") or "auto").strip().lower() == "plain":
+    if str(environment.get("DEVTOOL_EXECUTION_PRESENTATION", "auto") or "auto").strip().lower() == "plain" or job_ui_mode(environment) == "plain":
         return ApplyTextualHostDecision(False, "plain execution presentation requested")
     in_stream = sys.stdin if stdin is None else stdin
     out_stream = sys.stdout if stdout is None else stdout
@@ -443,7 +444,7 @@ def create_overlay_apply_source(
         args, env=env, cwd=root, popen_factory=popen_factory, live_state_dir=live_state_dir,
     )
 
-def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required: bool) -> Any:
+def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required: bool, compact: bool = False) -> Any:
     """Build the real main-thread Textual artifact workspace.
 
     The workspace is intentionally mobile-first. Once execution starts the large
@@ -454,23 +455,30 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
     """
 
     from textual.app import App, ComposeResult
-    from textual.containers import Horizontal, Vertical
+    from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.css.query import NoMatches
     from textual.screen import ModalScreen
     from textual.widgets import Button, Footer, Header, ProgressBar, RichLog, Static
 
     class ApplyConfirmationModal(ModalScreen[bool]):
+        # Keep confirmation controls reachable even on 32×10 Termux screens.
         DEFAULT_CSS = """
         ApplyConfirmationModal { align: center middle; }
-        #apply-confirm-box { width: 92%; max-width: 72; height: auto; max-height: 92%; border: round $warning; padding: 1 2; background: $surface; }
-        #apply-confirm-actions { height: auto; align-horizontal: right; margin-top: 1; }
-        #apply-confirm-actions Button { margin-left: 1; }
+        #apply-confirm-box {
+            width: 96%; max-width: 72; height: 85%; max-height: 92%;
+            min-height: 7; border: round $warning; padding: 0 1; background: $surface;
+        }
+        #apply-confirm-title { height: 1; overflow-x: hidden; text-style: bold; }
+        #apply-confirm-body { height: 1fr; min-height: 1; }
+        #apply-confirm-actions { height: 3; min-height: 3; align-horizontal: right; }
+        #apply-confirm-actions Button { min-width: 8; margin-left: 1; }
         """
 
         def compose(self) -> ComposeResult:
             with Vertical(id="apply-confirm-box"):
                 yield Static("Apply this artifact?", id="apply-confirm-title", classes="ux-title")
-                yield Static(artifact_review_text(source.review))
+                with VerticalScroll(id="apply-confirm-body"):
+                    yield Static(artifact_review_text(source.review))
                 with Horizontal(id="apply-confirm-actions"):
                     yield Button("Cancel", id="apply-confirm-no")
                     yield Button("Apply", variant="warning", id="apply-confirm-yes")
@@ -483,11 +491,12 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
 
         def compose(self) -> ComposeResult:
             with Vertical(id="apply-confirm-box"):
-                yield Static("Cancel the active artifact apply?", id="apply-confirm-title", classes="ux-title")
-                yield Static("Devtool will signal the managed apply process and preserve canonical rollback/recovery behavior.")
+                yield Static("Cancel the active artifact apply?", id="apply-confirm-title")
+                with VerticalScroll(id="apply-confirm-body"):
+                    yield Static("Devtool will signal the managed apply process. Rollback and recovery remain controlled by the canonical transaction.")
                 with Horizontal(id="apply-confirm-actions"):
-                    yield Button("Keep running", id="apply-confirm-no")
-                    yield Button("Cancel apply", variant="error", id="apply-confirm-yes")
+                    yield Button("Keep", id="apply-confirm-no")
+                    yield Button("Cancel", variant="error", id="apply-confirm-yes")
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             self.dismiss(event.button.id == "apply-confirm-yes")
@@ -504,6 +513,15 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             ("enter", "close_finished", "Close"),
         ]
         CSS = TEXTUAL_SHARED_CSS + """
+        .compact-job Header, .compact-job Footer { display: none; }
+        .compact-job #apply-context { min-height: 2; }
+        .compact-job #apply-review { display: none; }
+        .compact-job #apply-log-toolbar { height: 1; min-height: 1; }
+        .compact-job #apply-log-toggle, .compact-job #apply-raw-toggle { display: none; }
+        .compact-job #apply-activity { max-height: 2; }
+        .compact-job #apply-log { max-height: 12; }
+        .compact-job.short #apply-log { max-height: 5; }
+        .compact-job.tiny #apply-log { max-height: 2; }
         #apply-root { height: 1fr; min-height: 0; }
         #apply-context { height: auto; min-height: 3; }
         #apply-status { height: 1; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
@@ -552,6 +570,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
 
         def __init__(self) -> None:
             super().__init__()
+            self._compact_job = compact
             self._logs_visible = True
             self._show_raw = False
             self._details_visible = False
@@ -666,6 +685,8 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                 pass
 
         def on_mount(self) -> None:
+            if self._compact_job:
+                self.screen.add_class("compact-job")
             self._apply_responsive_geometry(self.size.width, self.size.height)
             self._poll_timer = self.set_interval(0.10, self._poll_child)
             if confirm_required:
@@ -874,9 +895,19 @@ def run_apply_textual_host(raw_argv: Sequence[str], args: Any) -> int:
 
     source = ArtifactApplyHostSource(raw_argv, args)
     confirm_required = not bool(getattr(args, "yes", False) or getattr(args, "force", False))
-    app = build_apply_textual_app(source, confirm_required=confirm_required)
-    result = app.run()
-    rc = int(result if isinstance(result, int) else (source.wait(timeout=0.1) or 0))
+    mode = job_ui_mode(source.env)
+    app = build_apply_textual_app(source, confirm_required=confirm_required, compact=mode == "compact")
+    try:
+        result = run_job_app(app, mode=mode)
+    finally:
+        # Closing/crashing the Textual view must not orphan a mutating apply.
+        if source.running:
+            source.terminate()
+    observed = result if isinstance(result, int) else source.returncode
+    if observed is None:
+        observed = source.wait(timeout=3.0)
+    # A prematurely closed UI or unknown child exit must not pass validation.
+    rc = int(observed) if observed is not None else 1
     status, log_path = source.final_summary()
     # Keep the post-TUI terminal useful for shell history / support bundles.
     if rc == 0:

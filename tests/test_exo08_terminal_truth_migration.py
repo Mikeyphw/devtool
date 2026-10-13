@@ -78,18 +78,3 @@ def test_non_terminal_surfaces_keep_legacy_state_until_their_migration(tmp_path:
     assert "execution_truth" not in state.raw
 
 
-def test_tui_repo_snapshot_reads_canonical_runtime_projection(monkeypatch, tmp_path: Path) -> None:
-    from devtool import tasker
-    from devtool.tui import _repo_snapshot
-
-    repo = tmp_path / "demo"
-    repo.mkdir()
-    hud = tmp_path / "hud"
-    hud.mkdir()
-    (hud / "execution.json").write_text(json.dumps(_failed_execution_document()))
-    monkeypatch.setattr(tasker, "DEFAULT_TASKER_DIR", hud)
-
-    snapshot = _repo_snapshot(repo)
-    assert snapshot["live"]["execution_truth"] == "canonical"
-    assert snapshot["live"]["execution"]["run_id"] == "exo08"
-    assert snapshot["live"]["progress"]["measured_percent"] == 43

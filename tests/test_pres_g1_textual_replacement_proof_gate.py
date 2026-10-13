@@ -71,13 +71,13 @@ def test_backend_selection_matrix_is_gate_qualified() -> None:
     effective = [(selection.requested_backend, selection.effective_backend, selection.require_textual) for selection in gate.backend_selections]
     assert effective == [
         ("auto", "textual", False),
-        ("auto", "legacy", False),
+        ("auto", "unavailable", True),
         ("auto", "unavailable", True),
         ("textual", "unavailable", True),
-        ("legacy", "legacy", False),
+        ("textual", "textual", False),
     ]
     severities = [notice.severity for notice in gate.notices]
-    assert severities == ["info", "warning", "error", "error", "notice"]
+    assert severities == ["info", "error", "error", "error", "info"]
 
 
 def test_gate_embeds_feature_parity_without_missing_features() -> None:
@@ -128,14 +128,14 @@ def test_gate_reuses_x07_notice_semantics_for_missing_textual() -> None:
         availability=TextualAvailability(False, reason="textual package is not importable"),
     )
     notice = build_tui_backend_notice(selection)
-    assert notice.severity == "warning"
-    assert "legacy fallback" in notice.message
-    assert any("--require-textual" in item for item in notice.remediations)
+    assert notice.severity == "error"
+    assert "no legacy fallback" in notice.message
+    assert any("devtool[textual]" in item for item in notice.remediations)
 
 
 def test_hardening_contract_is_still_gate_ready() -> None:
     contract = textual_replacement_hardening_contract()
-    assert contract["legacy_backend_status"] == "fallback-only"
+    assert contract["legacy_backend_status"] == "removed"
     assert "devtool tui --explain-backend" == contract["explain_command"]
     assert contract["machine_output_changed"] is False
     assert contract["textual_owns_truth"] is False

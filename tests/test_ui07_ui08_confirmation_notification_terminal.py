@@ -7,7 +7,6 @@ from rich.console import Console
 
 from devtool.cli import main as devtool_main
 from devtool.hud import HudState, TerminalHud
-from devtool.tui import render_page
 from devtool.ui_core.actions import ActionContext, actions_for_context
 from devtool.ui_core.confirmations import confirmation_decision, normalize_confirmation_policy
 from devtool.ui_core.notifications import notification_for_event, normalize_notification_policy
@@ -103,24 +102,6 @@ def test_terminal_hud_renders_semantic_progress_diagnostics_and_actions() -> Non
     assert "Open log" in text
 
 
-def test_tui_build_page_uses_semantic_live_panels(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("devtool.tui._repo_snapshot", lambda _root: {
-        "repo": "demo", "root": str(tmp_path), "branch": "main", "commit": "abc", "dirty": False,
-        "dirty_count": 0, "artifacts": [], "history": [], "core_events": [],
-        "live": {
-            "run_id": "r1", "status": "running", "command": "validate", "repo_name": "demo",
-            "phase_name": "tests", "message": "running selected tests", "log_path": "/tmp/run.log",
-            "phase_progress": [{"phase_id": "tests", "display_name": "Tests", "status": "running", "current": 2, "total": 4}],
-        },
-    })
-    renderable, _ = render_page(tmp_path, page="build", width=100, height=30)
-    console = Console(record=True, width=100)
-    console.print(renderable)
-    text = console.export_text()
-    assert "Live build/test run" in text
-    assert "Progress" in text
-    assert "Actions" in text
-    assert "Cancel" in text
 
 
 def test_ui_contract_cli_exposes_confirmation_notification_contracts(capsys) -> None:

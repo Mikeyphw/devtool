@@ -88,9 +88,9 @@ def test_textual_launch_plan_prefers_textual_when_available():
 
 def test_textual_launch_plan_falls_back_when_optional_dependency_missing():
     plan = choose_textual_launch_plan(availability=TextualAvailability(False, reason="not installed"))
-    assert plan.selected_backend == "legacy"
-    assert plan.fallback_backend == "legacy"
-    assert "fallback" in plan.reason
+    assert plan.selected_backend == "unavailable"
+    assert plan.fallback_backend is None
+    assert plan.reason == "not installed"
 
 
 def test_textual_launch_plan_can_fail_closed_when_required():

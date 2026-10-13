@@ -27046,11 +27046,10 @@
       "metadata": {
         "choices": [
           "auto",
-          "textual",
-          "legacy"
+          "textual"
         ],
         "dest": "backend",
-        "help": "TUI backend; auto prefers Textual and falls back to legacy",
+        "help": "Textual dashboard backend (auto or textual)",
         "hidden": false,
         "nargs": null,
         "path": [
@@ -52093,26 +52092,6 @@
     },
     {
       "aliases": [],
-      "canonical": "--legacy-tui",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "legacy_tui",
-        "help": "Force the legacy Rich terminal TUI backend",
-        "hidden": false,
-        "nargs": 0,
-        "path": [
-          "tui"
-        ],
-        "required": false
-      },
-      "scope": "tui",
-      "sensitive": false,
-      "stable_id": "cli.option.tui.legacy_tui",
-      "value_kind": "_StoreTrueAction"
-    },
-    {
-      "aliases": [],
       "canonical": "--require-textual",
       "config_field_id": null,
       "metadata": {
@@ -52138,7 +52117,7 @@
       "metadata": {
         "choices": [],
         "dest": "require_textual",
-        "help": "Alias for --require-textual; do not fall back to legacy TUI",
+        "help": "Require Textual; the removed Rich dashboard has no fallback",
         "hidden": false,
         "nargs": 0,
         "path": [
@@ -56235,6 +56214,28 @@
       "sensitive": false,
       "stable_id": "cli.option.actions.android.unsigned_sign.help",
       "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ui",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "compact",
+          "full",
+          "plain"
+        ],
+        "dest": "job_ui",
+        "help": "Job display: compact Textual (default), full Textual or plain stream",
+        "hidden": false,
+        "nargs": null,
+        "path": [],
+        "required": false
+      },
+      "scope": "global",
+      "sensitive": false,
+      "stable_id": "cli.option.global.job_ui",
+      "value_kind": "_StoreAction"
     }
   ],
   "parser": {
@@ -57984,6 +57985,27 @@
         "nargs": null,
         "option_strings": [
           "--aapt2-provider"
+        ],
+        "required": false,
+        "type": null
+      },
+      {
+        "action": "store",
+        "choices": [
+          "compact",
+          "full",
+          "plain"
+        ],
+        "const": null,
+        "default": null,
+        "dest": "job_ui",
+        "group": 0,
+        "help": "Job display: compact Textual (default), full Textual or plain stream",
+        "metavar": null,
+        "mutex": null,
+        "nargs": null,
+        "option_strings": [
+          "--ui"
         ],
         "required": false,
         "type": null
@@ -84263,36 +84285,18 @@
                 "action": "store",
                 "choices": [
                   "auto",
-                  "textual",
-                  "legacy"
+                  "textual"
                 ],
                 "const": null,
                 "default": "auto",
                 "dest": "backend",
                 "group": null,
-                "help": "TUI backend; auto prefers Textual and falls back to legacy",
+                "help": "Textual dashboard backend (auto or textual)",
                 "metavar": null,
                 "mutex": null,
                 "nargs": null,
                 "option_strings": [
                   "--backend"
-                ],
-                "required": false,
-                "type": null
-              },
-              {
-                "action": "store_true",
-                "choices": null,
-                "const": true,
-                "default": false,
-                "dest": "legacy_tui",
-                "group": null,
-                "help": "Force the legacy Rich terminal TUI backend",
-                "metavar": null,
-                "mutex": null,
-                "nargs": 0,
-                "option_strings": [
-                  "--legacy-tui"
                 ],
                 "required": false,
                 "type": null
@@ -84321,7 +84325,7 @@
                 "default": false,
                 "dest": "require_textual",
                 "group": null,
-                "help": "Alias for --require-textual; do not fall back to legacy TUI",
+                "help": "Require Textual; the removed Rich dashboard has no fallback",
                 "metavar": null,
                 "mutex": null,
                 "nargs": 0,
@@ -107962,4 +107966,3 @@
   "parser_authority": "canonical-schema-compiler-v1",
   "schema_version": 2
 }
-

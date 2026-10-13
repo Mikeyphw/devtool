@@ -8,7 +8,6 @@ from devtool.cli import main as devtool_main
 from devtool.hud import AndroidAppHud, HudState
 from devtool.models import Issue, OperationResult
 from devtool.tasker import TaskerProgressSink
-from devtool.tui import terminal_profile
 from devtool.ui_core import (
     capability_catalog,
     capabilities_for_surface,
@@ -49,10 +48,6 @@ def test_responsive_policy_has_consistent_surface_breakpoints() -> None:
     assert resolve_responsive_layout("android", width=900).mode == "three-pane"
 
 
-def test_terminal_profile_consumes_shared_responsive_policy() -> None:
-    assert terminal_profile(width=50, height=24).mode == "compact"
-    assert terminal_profile(width=80, height=24).mode == "narrow"
-    assert terminal_profile(width=130, height=24).mode == "wide"
 
 
 def test_runtime_snapshot_builds_canonical_progress_hierarchy_and_summary() -> None:

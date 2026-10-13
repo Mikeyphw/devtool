@@ -22,7 +22,6 @@ from devtool.execution_providers import (
 from devtool.ssh_profiles import add_profile, list_profiles
 from devtool.ssh_tmux_runner import SSHRunnerConfig, resolve_ssh_config
 from devtool import ssh_execution, ssh_worker
-from devtool.tui import render_page
 
 
 def _probe_stdout() -> str:
@@ -190,17 +189,3 @@ def test_command_execution_rejects_proot_provider_without_managed_workspace_befo
     assert called is False
 
 
-def test_workers_tui_surfaces_execution_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from devtool import ssh_profiles
-
-    repo = tmp_path / "repo-tui"
-    repo.mkdir()
-    (repo / ".devtool.toml").write_text(
-        """[ssh]\nprofile = \"tablet\"\n\n[ssh.hosts.tablet]\nhost = \"10.0.0.2\"\nport = 8022\nmode = \"commands\"\n\n[ssh.hosts.tablet.worker]\ntmux = true\n\n[ssh.hosts.tablet.workspace]\nmode = \"managed\"\n\n[ssh.hosts.tablet.execution]\nprovider = \"proot-oci\"\n""",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(ssh_profiles, "global_config_path", lambda: tmp_path / "missing-global.toml")
-    renderable, _profile = render_page(repo, page="workers", width=120, height=30)
-    stream = io.StringIO()
-    Console(file=stream, width=120, color_system=None, force_terminal=False).print(renderable)
-    assert "ssh-proot-oci" in stream.getvalue()

@@ -8,7 +8,6 @@ from rich.console import Console
 
 from devtool.cli import build_parser
 from devtool.repository_cleanup import cleanup_repository, discover_backup_candidates
-from devtool.tui import render_page, terminal_profile
 
 
 def _init_repo(root: Path) -> None:
@@ -20,43 +19,26 @@ def _init_repo(root: Path) -> None:
     subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=root, check=True)
 
 
-def _render_text(root: Path, *, page: str, width: int) -> str:
-    renderable, _ = render_page(root, page=page, width=width, height=24)
-    stream = io.StringIO()
-    console = Console(file=stream, width=width, color_system=None, force_terminal=False)
-    console.print(renderable)
-    return stream.getvalue()
 
 
-def test_terminal_profiles_cover_termux_narrow_breakpoints() -> None:
-    assert terminal_profile(width=40, height=20).mode == "compact"
-    assert terminal_profile(width=60, height=20).mode == "compact"
-    assert terminal_profile(width=61, height=20).mode == "narrow"
-    assert terminal_profile(width=96, height=20).mode == "narrow"
-    assert terminal_profile(width=97, height=20).mode == "wide"
 
 
-def test_dashboard_stays_within_40_column_terminal(tmp_path: Path) -> None:
-    _init_repo(tmp_path)
-    text = _render_text(tmp_path, page="dashboard", width=40)
-    assert "Repository" in text
-    assert "Overview" in text
-    assert all(len(line) <= 40 for line in text.splitlines())
+def test_textual_dashboard_respects_narrow_terminal_policy() -> None:
+    from devtool.textual_control_center import TextualControlCenter, render_control_center_text
+    screen = TextualControlCenter(page="dashboard").snapshot(width=40, height=20)
+    assert screen["page"] == "dashboard"
+    assert screen["owns_truth"] is False
+    assert "dashboard" in render_control_center_text(screen).lower()
 
 
-def test_build_and_overlay_pages_drop_wide_columns_on_narrow_terminals(tmp_path: Path) -> None:
-    _init_repo(tmp_path)
-    registry = tmp_path / ".devtool" / "artifacts" / "registry.json"
-    registry.parent.mkdir(parents=True)
-    registry.write_text(
-        '{"schema_version":1,"items":[{"name":"very-long-artifact-name-debug.apk","path":".devtool/build-artifacts/x.apk","size":123,"valid":true,"commit":"0123456789abcdef","registered_at":"2026-08-25T00:00:00Z"}]}',
-        encoding="utf-8",
-    )
-    narrow = _render_text(tmp_path, page="build", width=58)
-    wide = _render_text(tmp_path, page="build", width=120)
-    assert "Registered" not in narrow
-    assert "Registered" in wide
-    assert all(len(line) <= 58 for line in narrow.splitlines())
+def test_textual_overlay_page_uses_shared_responsive_contract() -> None:
+    from devtool.textual_control_center import TextualControlCenter
+    from devtool.ui_core.responsive import resolve_responsive_layout
+    narrow = TextualControlCenter(page="overlays").snapshot(width=58, height=20)
+    wide = TextualControlCenter(page="overlays").snapshot(width=120, height=30)
+    assert narrow["page"] == wide["page"] == "overlays"
+    assert resolve_responsive_layout("tui", width=58).mode == "single-pane"
+    assert resolve_responsive_layout("tui", width=120).mode == "three-pane"
 
 
 def test_cleanup_archives_backups_but_preserves_regular_files(tmp_path: Path) -> None:

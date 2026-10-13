@@ -6,6 +6,7 @@ import os
 import socket
 import stat
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -31,7 +32,6 @@ from devtool.ui_core.confirmations import confirmation_decision
 from devtool.ui_core.preferences import resolve_ui_preferences
 from devtool.ui_core.viewmodels import runtime_state_to_ui_snapshot
 from devtool.tasker import TaskerProgressSink
-from devtool.tui import TerminalProfile, _semantic_live_panels
 
 
 def action_ids(snapshot: dict[str, object]) -> set[str]:
@@ -66,25 +66,6 @@ def test_rollback_failed_is_failed_terminal_and_retryable() -> None:
     assert "validation.retry_failed" in ids
 
 
-def test_tui_live_progress_uses_canonical_summary_fields() -> None:
-    snapshot = {
-        "live": {
-            "status": "running",
-            "run_id": "r1",
-            "command": "validate",
-            "phase_progress": [
-                {"node_id": "done", "name": "done", "status": "ok", "percent": 100},
-                {"node_id": "run", "name": "run", "status": "running", "percent": 50},
-            ],
-        }
-    }
-    panels = _semantic_live_panels(snapshot, TerminalProfile(100, 30, "narrow", False))
-    console = Console(record=True, width=120)
-    for panel in panels:
-        console.print(panel)
-    text = console.export_text()
-    assert "75% · 1/2" in text
-    assert "run" in text
 
 
 def test_progress_tree_preserves_cancelled_cyclic_and_duplicate_nodes() -> None:
@@ -210,29 +191,68 @@ def test_desktop_launcher_callback_errors_do_not_kill_pump(tmp_path: Path) -> No
     assert handle.stdout_lines == ["ok"]
 
 
+def _short_private_ipc_socket_dir() -> tempfile.TemporaryDirectory[str]:
+    """Keep AF_UNIX names below Android's sockaddr_un limit, even in deep worktrees.
+
+    pytest's tmp_path may live in a very long Devtool transaction checkout.
+    Use a separate private directory under the Termux prefix (or a short
+    system temporary directory) for the *socket only*, never shared storage.
+    """
+    roots: list[Path] = []
+    prefix = os.environ.get("PREFIX", "").strip()
+    if prefix:
+        roots.append(Path(prefix) / "tmp")
+    runtime_tmp = os.environ.get("TMPDIR", "").strip()
+    if runtime_tmp:
+        roots.append(Path(runtime_tmp))
+    roots.extend((Path("/tmp"), Path(tempfile.gettempdir())))
+    for root in dict.fromkeys(roots):
+        if not root.is_dir():
+            continue
+        # Leave room for the randomized private subdirectory and socket name.
+        if len(os.fsencode(str(root))) + len("/dt-ipc-xxxxxxxx/ipc.sock") > 103:
+            continue
+        try:
+            private = tempfile.TemporaryDirectory(prefix="dt-ipc-", dir=root)
+        except OSError:
+            continue
+        if len(os.fsencode(str(Path(private.name) / "ipc.sock"))) <= 103:
+            return private
+        private.cleanup()
+    raise OSError("No writable short private directory available for AF_UNIX IPC test")
+
+
 def test_desktop_ipc_reads_fragmented_json(tmp_path: Path) -> None:
-    socket_path = tmp_path / "ipc.sock"
     payload = b'{"ok":true,"runs":[{"run_id":"r1"}]}' + b"\n"
+    with _short_private_ipc_socket_dir() as socket_dir:
+        socket_path = Path(socket_dir) / "ipc.sock"
+        server_failure: list[BaseException] = []
 
-    def server() -> None:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as srv:
-            srv.bind(str(socket_path))
-            srv.listen(1)
-            conn, _ = srv.accept()
-            with conn:
-                conn.recv(128)
-                conn.sendall(payload[:8])
-                time.sleep(0.05)
-                conn.sendall(payload[8:])
+        def server() -> None:
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as srv:
+                    srv.bind(str(socket_path))
+                    srv.listen(1)
+                    conn, _ = srv.accept()
+                    with conn:
+                        conn.recv(128)
+                        conn.sendall(payload[:8])
+                        time.sleep(0.05)
+                        conn.sendall(payload[8:])
+            except BaseException as exc:
+                server_failure.append(exc)
 
-    thread = threading.Thread(target=server, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 2
-    while not socket_path.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    snapshot = DesktopIpcClient(socket_path=socket_path, timeout_s=2).snapshot()
-    assert snapshot["ok"] is True
-    assert snapshot["runs"][0]["run_id"] == "r1"
+        thread = threading.Thread(target=server, daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 2
+        while not socket_path.exists() and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        snapshot = DesktopIpcClient(socket_path=socket_path, timeout_s=2).snapshot()
+        thread.join(timeout=2)
+        assert not thread.is_alive(), "IPC test server thread did not terminate"
+        assert not server_failure, f"IPC test server failed: {server_failure!r}"
+        assert snapshot["ok"] is True
+        assert snapshot["runs"][0]["run_id"] == "r1"
 
 
 def test_desktop_history_limit_zero_and_nonfinite_model_numbers(monkeypatch, tmp_path: Path) -> None:

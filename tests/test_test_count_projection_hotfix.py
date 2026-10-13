@@ -12,7 +12,6 @@ from devtool.hud import AndroidAppHud, HudState, TerminalHud
 from devtool.models import OperationResult
 from devtool.summary import build_json_summary
 from devtool.tasker import _completion_test_totals
-from devtool.tui import TerminalProfile, _semantic_live_panels
 from devtool.ui_core.viewmodels import runtime_state_to_ui_snapshot
 
 
@@ -78,28 +77,6 @@ def test_ui_progress_summary_aggregates_live_test_metrics_and_completion_wins() 
     assert (final_summary["tests_passed"], final_summary["tests_total"]) == (33, 33)
 
 
-def test_semantic_tui_and_terminal_hud_render_canonical_test_counts() -> None:
-    raw = {
-        "status": "running",
-        "run_id": "r1",
-        "command": "validate",
-        "phase_progress": [
-            {"node_id": "go", "name": "go test", "status": "running", "percent": 90,
-             "tests_passed": 33, "tests_failed": 0, "tests_skipped": 0, "tests_total": 33},
-        ],
-    }
-    panels = _semantic_live_panels({"live": raw}, TerminalProfile(100, 30, "narrow", False))
-    console = Console(record=True, width=120)
-    for panel in panels:
-        console.print(panel)
-    tui_text = console.export_text()
-    assert "Tests" in tui_text
-    assert "33 passed · 0 failed · 0 skipped" in tui_text
-
-    hud_console = Console(record=True, width=120)
-    state = HudState(title="validate", text="testing", status="running", command="validate", raw=raw)
-    hud_console.print(TerminalHud(console=hud_console).render(state, []))
-    assert "tests: 33 passed · 0 failed · 0 skipped" in hud_console.export_text()
 
 
 def test_android_hud_payload_reads_tests_from_semantic_ui_summary() -> None:

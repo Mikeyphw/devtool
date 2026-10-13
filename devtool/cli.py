@@ -13135,6 +13135,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(parse_argv)
     _apply_ui_cli_overrides(args)
+    if getattr(args, "job_ui", None) is not None:
+        os.environ["DEVTOOL_JOB_UI"] = str(args.job_ui)
     configure_logging(verbose=bool(getattr(args, "verbose", False)), quiet=bool(getattr(args, "quiet", False)), trace=bool(getattr(args, "trace", False)))
     console.quiet = bool(getattr(args, "quiet", False))
     configure_event_console(console, enabled=bool((getattr(args, "verbose", False) or getattr(args, "trace", False)) and not getattr(args, "quiet", False) and not universal_json))

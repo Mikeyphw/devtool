@@ -15,7 +15,6 @@ from devtool.desktop.ui_semantics import build_desktop_semantic_view
 from devtool.federation_observability import build_federation_observability, runtime_federation_projection
 from devtool.ui_core.machine import machine_state_from_runtime
 from devtool.ui_core.viewmodels import runtime_state_to_ui_snapshot
-from devtool.tui import TerminalProfile, _dashboard
 
 
 def _load(root: Path):
@@ -161,22 +160,6 @@ def test_machine_and_desktop_semantic_views_share_federation_projection() -> Non
     assert desktop["federation"]["children"][0]["child_run_id"] == "child-run"
 
 
-def test_tui_dashboard_adds_one_compact_federation_panel_not_a_new_destination() -> None:
-    snapshot = {
-        "repo": "parent", "root": "/parent", "branch": "main", "commit": "abc123",
-        "dirty": False, "dirty_count": 0, "artifacts": [], "history": [], "live": {}, "core_events": [],
-        "federation": {
-            "enabled": True,
-            "summary": {"healthy": True, "repositories": 2, "available_repositories": 2, "workflows": 1},
-            "repositories": [{"name": "android"}, {"name": "backend"}],
-        },
-    }
-    console = Console(record=True, width=80, force_terminal=False)
-    console.print(_dashboard(snapshot, TerminalProfile(80, 24, "narrow", False)))
-    text = console.export_text()
-    assert "Federation" in text
-    assert "2/2 available" in text
-    assert "android, backend" in text
 
 
 def test_completion_state_and_zsh_expose_federation_names(tmp_path: Path) -> None:

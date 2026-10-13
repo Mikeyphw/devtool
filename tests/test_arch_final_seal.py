@@ -22,7 +22,6 @@ from devtool.plugins.registry import discover_plugins
 from devtool.repository_cleanup import discover_backup_candidates
 from devtool.runners import run_specs
 from devtool.summary import build_runner_json, render_summary
-from devtool.tui import render_page
 from devtool.validation_profiles import BUILTIN_PROFILES
 
 GOLDEN = Path(__file__).parent / "golden"
@@ -224,15 +223,6 @@ def test_plugin_api_version_mismatch_is_isolated(monkeypatch) -> None:
     assert "unsupported plugin API version" in errors[0]["error"]
 
 
-def test_tui_width_matrix_never_overflows(tmp_path: Path) -> None:
-    _init_repo(tmp_path)
-    for width in (40, 60, 80, 120):
-        for page in ("dashboard", "build", "overlays"):
-            renderable, _profile = render_page(tmp_path, page=page, width=width, height=24)
-            stream = io.StringIO()
-            console = Console(file=stream, width=width, color_system=None, force_terminal=False)
-            console.print(renderable)
-            assert all(len(line) <= width for line in stream.getvalue().splitlines()), (width, page)
 
 
 def test_cleanup_recognizes_all_historical_top_level_backup_shapes(tmp_path: Path) -> None:

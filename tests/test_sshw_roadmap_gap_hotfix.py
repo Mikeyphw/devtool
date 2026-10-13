@@ -10,7 +10,6 @@ from rich.console import Console
 from devtool.cli import build_parser
 from devtool.ssh_tmux_runner import SSHRunnerConfig
 from devtool import ssh_qualification
-from devtool.tui import render_page
 from devtool.ui_core.navigation import navigation_shortcut_map
 
 
@@ -95,21 +94,6 @@ def test_project_validation_failure_fails_qualification(monkeypatch, tmp_path: P
         raise AssertionError("failed project validation must fail the seal")
 
 
-def test_tui_workers_page_surfaces_profiles_and_actions(tmp_path: Path, monkeypatch) -> None:
-    repo = _repo(tmp_path)
-    # Avoid reading a developer machine's global config during the test.
-    from devtool import ssh_profiles
-    monkeypatch.setattr(ssh_profiles, "global_config_path", lambda: tmp_path / "missing-global.toml")
-    renderable, _ = render_page(repo, page="workers", width=100, height=24)
-    stream = io.StringIO()
-    Console(file=stream, width=100, color_system=None, force_terminal=False).print(renderable)
-    text = stream.getvalue()
-    assert "SSH worker configuration" in text
-    assert "tablet" in text
-    assert "10.0.0.2:8022" in text
-    assert "devtool ssh doctor tablet" in text
-    assert "--project-validation" in text
-    assert navigation_shortcut_map("tui")["w"] == "workers"
 
 
 def test_tui_cli_accepts_workers_page() -> None:
