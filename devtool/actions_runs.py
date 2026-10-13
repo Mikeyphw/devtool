@@ -147,12 +147,18 @@ def snapshot(client: GitHubActionsClient, slug: str, identity: int, path: Path |
 
 def watch(client: GitHubActionsClient, slug: str, identity: int, path: Path | None,
           receipt: dict[str, Any] | None, *, max_checks: int = 10, interval: float = 3,
-          sleep: Callable[[float], Any] = time.sleep) -> dict[str, Any]:
+          sleep: Callable[[float], Any] = time.sleep,
+          on_observation: Callable[[dict[str, Any]], Any] | None = None) -> dict[str, Any]:
     if max_checks < 1 or max_checks > 120 or interval < 1 or interval > 300:
         raise GitHubActionsError("Watch bounds: 1..120 checks, 1..300 seconds interval")
     observations = []
     for i in range(max_checks):
-        result = snapshot(client, slug, identity, path, receipt)
+        result = snapshot(client, slug, identity, path, receipt,
+                          with_jobs=on_observation is not None)
+        # Observations are remote API facts. A callback may display them, but
+        # never alters persistence, qualification or the poll bounds.
+        if on_observation is not None:
+            on_observation(result)
         observations.append({"status":result["remote"]["status"],
                              "conclusion":result["remote"]["conclusion"],
                              "attempt":result["remote"]["run_attempt"]})

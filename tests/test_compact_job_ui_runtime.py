@@ -60,7 +60,9 @@ def test_real_textual_widget_runs_in_phone_sized_terminal():
                 "command": "build", "phase_name": "Compiling", "detail": "Gradle", "completion_status": "running",
             }))
             await pilot.pause(0.15)
-            assert app.query_one("#job-progress", ProgressBar).display is False
+            progress = app.query_one("#job-progress", ProgressBar)
+            assert progress.display is True
+            assert progress.total is None  # unknown progress must stay indeterminate
             assert len(app._buffer.raw) == 2
             assert len(app._buffer.activity) == 1
             assert not app._finished
@@ -140,7 +142,9 @@ def test_real_textual_apply_app_in_tiny_termux_screen():
             assert fake.started
             await pilot.pause(0.15)
             assert app.screen.has_class("compact-job")
-            assert app.query_one("#apply-progress", ProgressBar).display is False
+            progress = app.query_one("#apply-progress", ProgressBar)
+            assert progress.display is True
+            assert progress.total is None  # canonical child did not report a percentage
             fake.returncode = 1
             await pilot.pause(0.20)
             assert app._returncode == 1

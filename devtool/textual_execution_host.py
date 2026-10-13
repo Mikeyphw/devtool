@@ -70,7 +70,12 @@ def select_execution_textual_host(
 ) -> ExecutionTextualHostDecision:
     environment = env if env is not None else os.environ
     command = str(getattr(args, "command", "") or "").strip()
-    if command not in _EXECUTION_COMMANDS:
+    if command == 'actions':
+        action = str(getattr(args, 'actions_command', '') or '')
+        subcommand = str(getattr(args, 'android_command', '') or '')
+        if action != 'watch' and not (action == 'android' and subcommand == 'unsigned-run'):
+            return ExecutionTextualHostDecision(False, "not a foreground GitHub monitoring operation")
+    elif command not in _EXECUTION_COMMANDS:
         return ExecutionTextualHostDecision(False, "not a normal interactive execution command")
     if str(environment.get(_CHILD_ENV, "")).strip().lower() in _TRUE:
         return ExecutionTextualHostDecision(False, "managed execution child process")
@@ -129,6 +134,21 @@ def _phase_snapshot(state: Mapping[str, Any], *, command: str) -> dict[str, Any]
     }
 
 
+def interactive_watch_argv(raw_argv: Sequence[str], *, enabled: bool) -> list[str]:
+    """Use long follow bounds only in the managed interactive watch child.
+
+    Explicit command options always win. CLI JSON/non-TTY defaults remain
+    unchanged, and the child never introduces an additional dispatch.
+    """
+    args = [str(value) for value in raw_argv]
+    if not enabled:
+        return args
+    for option, default in (("--max-checks", "120"), ("--interval", "10")):
+        if not any(a == option or a.startswith(option + "=") for a in args):
+            args.extend([option, default])
+    return args
+
+
 class ExecutionTextualHostSource:
     def __init__(
         self,
@@ -149,6 +169,10 @@ class ExecutionTextualHostSource:
         self.live_state_dir = Path(live_state_dir) if live_state_dir is not None else None
         self.run_id = uuid.uuid4().hex
         self.command = str(getattr(args, "command", "") or "devtool")
+        self.remote = self.command == 'actions'
+        self.remote_run_id: int | None = None
+        self.remote_run_url: str = ''
+        self._remote_lines: dict[int, str] = {}
         self.presenter = create_textual_execution_source(max_log_lines=max_log_lines)
         self.presenter.terminal_host_ready = True
         self.presenter.set_stop_callback(self.request_cancel)
@@ -185,6 +209,31 @@ class ExecutionTextualHostSource:
     def cancel_requested(self) -> bool:
         return self._cancel_requested
 
+    def _present_line(self, line: str) -> None:
+        if self.remote:
+            from .actions_live_progress import EVENT_PREFIX, decode_observation, project_observation
+            if line.startswith(EVENT_PREFIX):
+                data = decode_observation(line)
+                if data is None:
+                    self.presenter.output_line('Invalid GitHub progress update (ignored)')
+                    return
+                snapshot, lines = project_observation(data)
+                remote = data['remote']
+                if type(remote.get('id')) is int:
+                    self.remote_run_id = remote['id']
+                if isinstance(remote.get('html_url'), str):
+                    self.remote_run_url = remote['html_url']
+                self.presenter.update(snapshot)
+                for index, entry in enumerate(lines):
+                    # The same step name can appear in multiple jobs. Never
+                    # suppress one job's state because another used its label.
+                    key = index
+                    if self._remote_lines.get(key) != entry:
+                        self._remote_lines[key] = entry
+                        self.presenter.output_line(entry)
+                return
+        self.presenter.output_line(line)
+
     def _offer_line(self, line: str) -> None:
         text = str(line or "").rstrip("\r\n")
         if not text:
@@ -205,11 +254,21 @@ class ExecutionTextualHostSource:
         child_env = dict(self.env)
         child_env[_CHILD_ENV] = "1"
         child_env["DEVTOOL_AUTO_HUD_CHILD"] = "1"
+        if self.remote:
+            child_env['DEVTOOL_ACTIONS_STREAM'] = '1'
         child_env["DEVTOOL_RUN_ID"] = self.run_id
         child_env["DEVTOOL_MANAGED_RUN_HANDOFF"] = create_managed_run_handoff(self.run_id)
         # Child runner presentation stays plain because the parent owns the TTY.
         child_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
-        argv = [sys.executable, "-m", "devtool", *self.raw_argv]
+        # Captured pipes are not a TTY. Restore opt-in CLI colors where tools
+        # support FORCE_COLOR, while honoring an explicit NO_COLOR preference.
+        if "NO_COLOR" not in child_env and "FORCE_COLOR" not in child_env:
+            child_env["FORCE_COLOR"] = "1"
+        command_args = interactive_watch_argv(
+            self.raw_argv,
+            enabled=self.remote and str(getattr(self.args, 'actions_command', '')) == 'watch',
+        )
+        argv = [sys.executable, "-m", "devtool", *command_args]
         self._process = self.popen_factory(
             argv,
             cwd=str(self.cwd), env=child_env,
@@ -238,8 +297,8 @@ class ExecutionTextualHostSource:
                         line = self._lines.get_nowait()
                     except queue.Empty:
                         break
-                    self.presenter.output_line(line)
-                state = self.read_state()
+                    self._present_line(line)
+                state = self.read_state() if not self.remote else {}
                 if state:
                     encoded = json.dumps(state, sort_keys=True, default=str)
                     if encoded != last_state:
@@ -247,16 +306,25 @@ class ExecutionTextualHostSource:
                         self.presenter.update(_phase_snapshot(state, command=self.command))
                 rc = self.returncode
                 if rc is not None:
-                    for _ in range(512):
+                    # A finished process can still have unread stdout. Wait for
+                    # the bounded reader before emitting the terminal snapshot
+                    # so the final GitHub observation and run URL are not lost.
+                    reader = self._reader
+                    if reader is not None and reader is not threading.current_thread():
+                        reader.join(timeout=1.5)
+                    detached = self.remote and self._cancel_requested and rc != 0
+                    while True:
                         try:
-                            self.presenter.output_line(self._lines.get_nowait())
+                            self._present_line(self._lines.get_nowait())
                         except queue.Empty:
                             break
                     self.presenter.update({
                         "command": self.command,
-                        "phase_name": "Complete" if rc == 0 else "Failed",
-                        "detail": "Completed successfully" if rc == 0 else ("Cancelled" if rc == 130 else f"Exited with {rc}"),
-                        "completion_status": "ok" if rc == 0 else ("cancelled" if rc == 130 else "failed"),
+                        "phase_name": "Complete" if rc == 0 else ("Detached" if detached else "Failed"),
+                        "detail": "Completed successfully" if rc == 0 else (
+                            "Detached; GitHub workflow continues" if detached
+                            else "Cancelled" if rc == 130 else f"Exited with {rc}"),
+                        "completion_status": "ok" if rc == 0 else ("cancelled" if detached or rc == 130 else "failed"),
                         "percent": 100.0 if rc == 0 else None,
                     })
                     # Keep the completed workspace on screen until the operator
@@ -323,7 +391,7 @@ def run_execution_textual_host(raw_argv: Sequence[str], args: Any) -> int:
     source = ExecutionTextualHostSource(raw_argv, args)
     source.start()
     mode = job_ui_mode(source.env)
-    app = build_compact_execution_app(source.presenter, run_id=source.run_id) if mode == "compact" else build_textual_execution_app(source.presenter)
+    app = build_compact_execution_app(source.presenter, run_id=source.run_id, remote=source.remote) if mode == "compact" else build_textual_execution_app(source.presenter)
     try:
         run_job_app(app, mode=mode)
     finally:
@@ -334,13 +402,19 @@ def run_execution_textual_host(raw_argv: Sequence[str], args: Any) -> int:
         observed = source.wait(timeout=3.0)
     # A missing child exit result must never be presented as success.
     rc = int(observed) if observed is not None else 1
+    if source.remote and source.cancel_requested and rc != 0:
+        # SIGINT may be translated to exit 1 by Python CLI exception handlers.
+        # This is a local detach, not a claimed remote failure/cancellation.
+        rc = 130
     if rc == 0:
         print("Devtool completed successfully.")
     elif rc == 130:
-        print("Devtool cancelled.")
+        print('Detached from remote GitHub monitoring; the workflow was not cancelled.' if source.remote else 'Devtool cancelled.')
     else:
         print("Devtool failed.")
     print(f"Run: {source.run_id}")
+    if source.remote_run_url:
+        print(f'GitHub: {source.remote_run_url}')
     log_path = source.log_path()
     if log_path:
         print(f"Log: {log_path}")

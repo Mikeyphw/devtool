@@ -22,11 +22,11 @@ def test_compact_default_and_opt_in_modes():
     assert job_ui_mode({"DEVTOOL_JOB_UI":"plain"}) == "plain"
 
 
-def test_job_run_selects_inline_without_catching_backend_errors():
+def test_job_run_uses_clean_alternate_screen_without_catching_backend_errors():
     class App:
         def run(self, *, inline=False, inline_no_clear=False):
             return (inline, inline_no_clear)
-    assert run_job_app(App(), mode="compact") == (True,True)
+    assert run_job_app(App(), mode="compact") == (False,False)
     assert run_job_app(App(), mode="full") == (False,False)
     class OldApp:
         def run(self): return "ok"

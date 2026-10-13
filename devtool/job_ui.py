@@ -5,7 +5,6 @@ logs, mutation, rollback and cancellation; a renderer cannot qualify a job.
 """
 from __future__ import annotations
 
-import inspect
 import os
 import re
 import time
@@ -16,12 +15,13 @@ from typing import Any, Mapping
 from .textual_ux import fit_middle, normalized_status, progress_counter, progress_percent, status_label
 
 _ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+_SGR = re.compile(r"\x1b\[[0-9;]*m")
 _DOT_LINE = re.compile(r"^[.sFxX-]{8,}(?:\s+\[\s*\d+%\])?\s*$")
 _ACTIVITY = re.compile(
     r"(?:\b(?:error|failed|failure|warning|traceback|exception|fatal|cancelled|" 
     r"rollback|recover|validat|commit|compile|complete|success|passed|" 
     r"started|finished|progress|applied|artifact|download|upload|" 
-    r"task|run id|exit code|transaction)\b|^\$\s|^>\s*Task|^---\s*devtool)",
+    r"task|job|step|github|run id|exit code|transaction)\b|^\$\s|^>\s*Task|^---\s*devtool)",
     re.IGNORECASE,
 )
 
@@ -38,14 +38,12 @@ def job_ui_mode(env: Mapping[str, str] | None = None) -> str:
 
 
 def run_job_app(app: Any, *, mode: str) -> Any:
-    """Ask Textual for inline/no-clear only if this installed version supports it."""
+    """Use a clean alternate screen for both compact and full execution hosts."""
     kwargs: dict[str, Any] = {}
-    if mode == "compact":
-        params = inspect.signature(app.run).parameters
-        if "inline" in params:
-            kwargs["inline"] = True
-        if "inline_no_clear" in params:
-            kwargs["inline_no_clear"] = True
+    # Compact has a clean alternate-screen canvas just like the full host.
+    # Inline mode left stale shell output / giant blank regions on Termux and
+    # clipped the live log to a tiny strip at the bottom of the viewport.
+    # Textual restores the terminal's original screen when the app exits.
     return app.run(**kwargs)
 
 
@@ -59,6 +57,66 @@ def readable_job_line(value: object, *, max_chars: int = 2048) -> str:
     if len(text) > max_chars:
         text = text[:max_chars - 1] + "…"
     return text
+
+
+def safe_ansi_line(value: object, *, max_chars: int = 2048) -> str:
+    """Keep only safe color SGR codes. No cursor actions, OSC, or controls.
+
+    The result can be passed to Rich's ANSI parser. It is bounded independent
+    of how many control sequences an untrusted subprocess emits.
+    """
+    raw = str(value or "")[:max_chars * 4]
+    chunks: list[str] = []
+    offset = 0
+    for token in _SGR.finditer(raw):
+        chunks.append(_ANSI.sub("", raw[offset:token.start()]))
+        chunks.append(token.group())
+        offset = token.end()
+    chunks.append(_ANSI.sub("", raw[offset:]))
+    safe = "".join(chunks).replace("\r", " ").rstrip("\n")
+    # Strip unmatched ESC bytes (including incomplete CSI/OSC) and all C0
+    # controls except tab. Even raw output from failed commands stays inert.
+    safe = "".join(c for c in safe if c == "\t" or (c.isprintable() and c != "\x7f") or c == "\x1b")
+    safe = re.sub(r"\x1b(?!\[[0-9;]*m)", "", safe)
+    if len(readable_job_line(safe, max_chars=max_chars * 4)) > max_chars:
+        # Avoid truncating in the middle of a color control sequence.
+        safe = readable_job_line(raw, max_chars=max_chars)
+    return safe[: max_chars * 2]
+
+
+def styled_job_line(value: object, *, no_color: bool | None = None):
+    """Preserve Rich/ANSI color and emphasis without terminal side effects.
+
+    RichLog expects a Rich Text object; writing a literal string would show
+    escape codes as text. Log files remain the unmodified source of truth.
+    """
+    from rich.text import Text
+
+    if no_color is None:
+        no_color = "NO_COLOR" in os.environ
+    plain = readable_job_line(value)
+    if no_color:
+        return Text(plain)
+    colored = safe_ansi_line(value)
+    result = Text.from_ansi(colored)
+    if not _SGR.search(colored):
+        low = plain.lower()
+        if any(token in low for token in ("failed", "error:", "traceback", "fatal")):
+            result.stylize("bold red")
+        elif any(token in low for token in ("warning", "skipped")):
+            result.stylize("yellow")
+        elif any(token in low for token in ("passed", "success", "completed")):
+            result.stylize("green")
+    return result
+
+
+def job_icons(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Nerd Font is opt-in: Termux's standard font must never display tofu."""
+    values = os.environ if env is None else env
+    enabled = str(values.get("DEVTOOL_NERD_FONT", "") or "").lower() in {"1", "on", "true", "yes"}
+    if enabled:
+        return {"brand": "\uf489", "done": "\uf00c", "active": "\uf110", "pending": "\uf10c", "failed": "\uf00d", "logs": "\uf120"}
+    return {"brand": "◆", "done": "✓", "active": "●", "pending": "○", "failed": "✕", "logs": "▤"}
 
 
 def activity_job_line(value: object) -> bool:
@@ -77,14 +135,16 @@ class CompactLogBuffer:
         self.activity: deque[str] = deque(maxlen=self.raw.maxlen)
 
     def append(self, text: object) -> tuple[str, bool]:
-        clean = readable_job_line(text)
-        if not clean:
+        # Retain safe SGR in the bounded in-memory view. Filtering decisions
+        # use plain text; original on-disk output is untouched.
+        colored = safe_ansi_line(text)
+        if not colored or not readable_job_line(colored).strip():
             return "", False
-        self.raw.append(clean)
-        visible = activity_job_line(clean)
+        self.raw.append(colored)
+        visible = activity_job_line(colored)
         if visible:
-            self.activity.append(clean)
-        return clean, visible
+            self.activity.append(colored)
+        return colored, visible
 
 
 def compact_job_projection(state: Mapping[str, Any], *, width: int = 80) -> dict[str, Any]:
@@ -106,11 +166,13 @@ def compact_job_projection(state: Mapping[str, Any], *, width: int = 80) -> dict
     }
 
 
-def build_compact_execution_app(source: Any, *, run_id: str = "") -> Any:
-    """Main-thread inline Textual app consuming existing canonical progress events."""
+def build_compact_execution_app(source: Any, *, run_id: str = "", remote: bool = False) -> Any:
+    """Main-thread full-screen Textual app consuming canonical progress events."""
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical
     from textual.widgets import ProgressBar, RichLog, Static
+
+    icons = job_icons()
 
     class CompactExecutionApp(App):
         TITLE = "Devtool job"
@@ -123,21 +185,30 @@ def build_compact_execution_app(source: Any, *, run_id: str = "") -> Any:
         ]
         CSS = """
         Screen { background: $background; }
-        #job-root { height: 1fr; min-height: 0; padding: 0 1; }
-        #job-title { height: 1; text-style: bold; color: $text; overflow-x: hidden; }
+        #job-root { height: 1fr; min-height: 0; padding: 1 2; }
+        #job-header { height: 3; border-bottom: solid $accent; margin-bottom: 1; }
+        #job-brand { height: 1; text-style: bold; color: $accent; }
+        #job-title { height: 1; text-style: bold; overflow-x: hidden; }
         #job-meta { height: 1; color: $text-muted; overflow-x: hidden; }
+        #job-section { height: 1; color: $text-muted; text-style: bold; }
         #job-row { height: 1; min-height: 1; }
         #job-progress { width: 1fr; height: 1; margin-right: 1; }
         #job-count { width: auto; min-width: 7; height: 1; content-align: right middle; }
-        #job-detail { height: 1; overflow-x: hidden; }
-        #job-log-label { height: 1; color: $text-muted; }
-        #job-logs { height: 1fr; min-height: 1; max-height: 12; border-top: solid $surface-lighten-2; }
-        #job-help { height: 1; color: $text-muted; overflow-x: hidden; }
-        .narrow #job-root { padding: 0; }
+        #job-detail { height: 2; margin-top: 1; overflow-x: hidden; }
+        #job-stages { height: 5; min-height: 0; color: $text; overflow-x: hidden; }
+        #job-log-label { height: 1; color: $accent; text-style: bold; }
+        #job-logs { height: 1fr; min-height: 2; border: round $panel; }
+        #job-help { height: 1; margin-top: 1; color: $text-muted; }
+        .narrow #job-root { padding: 0 1; }
+        .narrow #job-header { height: 2; }
         .narrow #job-count { min-width: 5; }
-        .short #job-logs { max-height: 5; }
-        .tiny #job-logs { max-height: 2; }
-        .tiny #job-log-label { display: none; }
+        .short #job-root { padding-top: 0; padding-bottom: 0; }
+        .short #job-detail { height: 1; margin-top: 0; }
+        .short #job-stages { height: 2; }
+        .short #job-header { margin-bottom: 0; }
+        .tiny #job-brand, .tiny #job-section, .tiny #job-stages { display: none; }
+        .tiny #job-header { height: 2; }
+        .tiny #job-help { margin-top: 0; }
         .finished #job-title { color: $success; }
         .failed #job-title { color: $error; }
         .cancelled #job-title { color: $warning; }
@@ -154,31 +225,36 @@ def build_compact_execution_app(source: Any, *, run_id: str = "") -> Any:
             self._start = time.monotonic()
             self._last_status = "STARTING"
             self._last_meta = ""
+            self._phase_history: deque[str] = deque(maxlen=4)
             self._poll_timer: Any | None = None
 
         def compose(self) -> ComposeResult:
             with Vertical(id="job-root"):
-                yield Static("Devtool · starting…", id="job-title")
-                yield Static("Preparing managed command", id="job-meta")
+                with Vertical(id="job-header"):
+                    yield Static(f"{icons['brand']}  DEVTOOL  /  LIVE EXECUTION", id="job-brand")
+                    yield Static("Starting job…", id="job-title")
+                    yield Static("Preparing managed command", id="job-meta")
+                yield Static("PROGRESS  ·  verified runtime status", id="job-section")
                 with Horizontal(id="job-row"):
                     yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="job-progress")
                     yield Static("working", id="job-count")
                 yield Static("Waiting for canonical progress", id="job-detail")
-                yield Static("Activity · r raw", id="job-log-label")
+                yield Static("Awaiting observed stages", id="job-stages")
+                yield Static(f"{icons['logs']}  Activity · r raw", id="job-log-label")
                 yield RichLog(id="job-logs", wrap=True, highlight=False, markup=False, max_lines=self._buffer.raw.maxlen)
-                yield Static("l logs · r raw · Ctrl+C ×2 cancel · q close", id="job-help")
+                yield Static("l logs · r raw · Ctrl+C ×2 " + ("detach" if remote else "cancel") + " · q close", id="job-help")
 
         def _geometry(self, width: int, height: int) -> None:
             screen = self.screen
             screen.set_class(width < 52, "narrow")
             screen.set_class(height < 24, "short")
             screen.set_class(height < 16, "tiny")
-            # The display is an inline app. Keep the log widget bounded on small phones.
+            # Fill the alternate screen but keep controls reachable on phones.
             self.query_one("#job-logs", RichLog).display = self._logs_visible
             if width < 36:
-                self.query_one("#job-help", Static).update("l logs · r raw · ^C×2 · q end")
+                self.query_one("#job-help", Static).update("l logs · r raw · ^C×2 " + ("detach" if remote else "cancel"))
             elif not self._finished:
-                self.query_one("#job-help", Static).update("l logs · r raw · Ctrl+C ×2 cancel · q close")
+                self.query_one("#job-help", Static).update("l logs · r raw · Ctrl+C ×2 " + ("detach" if remote else "cancel") + " · q close")
 
         def on_mount(self) -> None:
             source._ready.set()
@@ -189,24 +265,30 @@ def build_compact_execution_app(source: Any, *, run_id: str = "") -> Any:
             self._geometry(event.size.width, event.size.height)
 
         def _render_meta(self) -> None:
+            from textual.css.query import NoMatches
             elapsed = int(time.monotonic() - self._start)
             ref = f" · {run_id[:8]}" if run_id else ""
-            self.query_one("#job-meta", Static).update(
-                fit_middle(f"{self._last_status} · {elapsed}s{ref}", max(8, self.size.width - 2))
-            )
+            try:
+                self.query_one("#job-meta", Static).update(
+                    fit_middle(f"{self._last_status} · {elapsed}s{ref}", max(8, self.size.width - 2))
+                )
+            except NoMatches:
+                # An in-flight timer can fire during the last render teardown.
+                # Nothing may resurrect or affect a finished/closing job.
+                return
 
         def _log_write(self, line: str, *, activity: bool) -> None:
             if self._logs_visible and (self._raw_mode or activity):
-                self.query_one("#job-logs", RichLog).write(line)
+                self.query_one("#job-logs", RichLog).write(styled_job_line(line))
 
         def _replay(self) -> None:
             log = self.query_one("#job-logs", RichLog)
             log.clear()
             if self._logs_visible:
                 for line in (self._buffer.raw if self._raw_mode else self._buffer.activity):
-                    log.write(line)
+                    log.write(styled_job_line(line))
             self.query_one("#job-log-label", Static).update(
-                ("Raw" if self._raw_mode else "Activity") + f" · {len(self._buffer.raw)} recent lines · r toggle"
+                f"{icons['logs']}  " + ("Raw" if self._raw_mode else "Activity") + f" · {len(self._buffer.raw)} recent lines · r toggle"
             )
 
         def _drain(self) -> None:
@@ -239,14 +321,48 @@ def build_compact_execution_app(source: Any, *, run_id: str = "") -> Any:
             self._last_status = view["status"]
             self.query_one("#job-detail", Static).update(view["detail"])
             widget = self.query_one("#job-progress", ProgressBar)
-            widget.display = view["percent"] is not None
-            if view["percent"] is not None:
-                widget.update(progress=view["percent"])
+            # Textual supports a real indeterminate bar (total=None). Never
+            # replace unknown Gradle progress with a synthetic percentage.
+            if view["percent"] is None:
+                widget.update(total=None)
+                widget.display = not view["finished"]
+            else:
+                widget.update(total=100, progress=view["percent"])
+                widget.display = True
             self.query_one("#job-count", Static).update(view["counter"])
+            stages = state.get("stages")
+            if isinstance(stages, list):
+                rows = []
+                for stage in stages[:5]:
+                    if not isinstance(stage, Mapping):
+                        continue
+                    name = readable_job_line(stage.get("name"), max_chars=120)
+                    state_name = str(stage.get("status") or "unknown").lower()
+                    glyph = (icons["failed"] if state_name in {"failure", "failed", "cancelled", "timed_out"}
+                             else icons["done"] if state_name in {"success", "completed", "skipped"}
+                             else icons["active"] if state_name in {"running", "in_progress"}
+                             else icons["pending"])
+                    rows.append(f"{glyph} {name} · {state_name}")
+                if rows:
+                    self.query_one("#job-stages", Static).update("\n".join(rows))
+            else:
+                # Generic jobs expose canonical phase transitions rather than
+                # individual verified GitHub steps. A previously SEEN phase is
+                # not automatically marked successful.
+                phase = readable_job_line(state.get("phase_name"), max_chars=120).strip()
+                if phase and (not self._phase_history or self._phase_history[-1] != phase):
+                    self._phase_history.append(phase)
+                if self._phase_history:
+                    rows = [f"{icons['pending']} {name} · observed" for name in list(self._phase_history)[:-1]]
+                    status_icon = icons["done"] if view["normalized_status"] == "completed" else (icons["failed"] if view["finished"] else icons["active"])
+                    rows.append(f"{status_icon} {self._phase_history[-1]} · {view['status']}")
+                    self.query_one("#job-stages", Static).update("\n".join(rows[-5:]))
             if view["finished"]:
                 self._finished = True
                 self._outcome = view["normalized_status"]
                 self.screen.add_class("finished" if self._outcome == "completed" else self._outcome)
+                symbol = icons["done"] if self._outcome == "completed" else icons["failed"]
+                self.query_one("#job-title", Static).update(f"{symbol}  {view['title']}")
                 self.query_one("#job-help", Static).update(
                     f"{self._outcome.upper()} · r raw · l logs · q/Enter close"
                 )
@@ -264,7 +380,7 @@ def build_compact_execution_app(source: Any, *, run_id: str = "") -> Any:
             if self._finished:
                 self.exit()
             else:
-                self.query_one("#job-help", Static).update("Job still running · Ctrl+C twice to cancel")
+                self.query_one("#job-help", Static).update("Job still running · Ctrl+C twice to " + ("detach" if remote else "cancel"))
 
         def action_request_cancel(self) -> None:
             if self._finished:
@@ -273,10 +389,12 @@ def build_compact_execution_app(source: Any, *, run_id: str = "") -> Any:
             if now <= self._armed_until:
                 self._armed_until = 0.0
                 source._request_cancel()
-                self.query_one("#job-help", Static).update("Cancellation requested · awaiting canonical finalization")
+                self.query_one("#job-help", Static).update(
+                    "Detaching locally; GitHub workflow continues" if remote else
+                    "Cancellation requested · awaiting canonical finalization")
             else:
                 self._armed_until = now + 3.0
-                self.query_one("#job-help", Static).update("Press Ctrl+C again within 3s to cancel")
+                self.query_one("#job-help", Static).update("Press Ctrl+C again within 3s to " + ("detach" if remote else "cancel"))
 
         def on_unmount(self) -> None:
             if self._poll_timer is not None:

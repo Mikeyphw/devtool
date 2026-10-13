@@ -149,7 +149,10 @@ def test_r03_h02_confirmation_css_uses_textual_supported_sizing() -> None:
     source = Path(__file__).resolve().parents[1] / "devtool" / "textual_apply_host.py"
     text = source.read_text(encoding="utf-8")
     assert "width: min(" not in text
-    assert "#apply-confirm-box { width: 92%; max-width: 72;" in text
+    # Compact Termux UI V2 uses bounded, scrollable phone-safe modal sizing.
+    assert "width: 96%; max-width: 72; height: 85%; max-height: 92%;" in text
+    assert 'with VerticalScroll(id="apply-confirm-body"):' in text
+    assert 'with Horizontal(id="apply-confirm-actions"):' in text
 
 
 def test_r03_devtool_palette_exclusively_owns_ctrl_p() -> None:

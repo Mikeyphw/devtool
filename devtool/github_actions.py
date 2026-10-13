@@ -450,7 +450,7 @@ def actions_baseline() -> dict[str, Any]:
     }
 
 
-def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
+def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None) -> dict[str, Any]:
     action = str(getattr(args, "actions_command", "") or "")
     if action == "baseline":
         return actions_baseline()
@@ -546,8 +546,26 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
             from .actions_unsigned import unsigned_dispatch
             if sub == 'unsigned-run' and not bool(getattr(args, 'yes', False)):
                 raise GitHubActionsError('Explicit --yes is required for unsigned CI dispatch')
-            return unsigned_dispatch(client, slug, local_root, ref=str(getattr(args, 'ref', '') or ''),
-                                     execute=sub == 'unsigned-run')
+            result = unsigned_dispatch(client, slug, local_root, ref=str(getattr(args, 'ref', '') or ''),
+                                       execute=sub == 'unsigned-run')
+            if sub == 'unsigned-run' and observation_callback is not None:
+                # Only the actual correlated dispatch receipt may supply the run
+                # identity. Never infer the latest run on a mutable branch.
+                from .actions_runs import select_run, watch
+                dispatch = result.get('dispatch', {})
+                # Surface the accepted run ID immediately, before polling:
+                # a later API error must not hide the already-created workflow.
+                observation_callback({'remote': {
+                    'id': dispatch.get('run_id'), 'repository': slug,
+                    'status': 'requested', 'conclusion': None, 'completed': False,
+                    'html_url': dispatch.get('run_url') or '',
+                    'head_sha': None}, 'jobs': [], 'source_binding': 'unbound'})
+                request_id = str(dispatch.get('request_id') or '')
+                selected, identity, location, receipt = select_run('', None, request_id, lambda: slug)
+                result['monitor'] = watch(client, selected, identity, location, receipt,
+                                          max_checks=120, interval=10,
+                                          on_observation=observation_callback)
+            return result
         if sub in ('unsigned-import', 'unsigned-check'):
             from .actions_unsigned import unsigned_import
             from .actions_runs import run_id
@@ -640,7 +658,8 @@ def actions_cli(args: Any, local_root: Path) -> dict[str, Any]:
         if action == "watch":
             return watch(client,selected,identity,location,receipt,
                          max_checks=int(getattr(args,"max_checks",10)),
-                         interval=float(getattr(args,"interval",3)))
+                         interval=float(getattr(args,"interval",3)),
+                         on_observation=observation_callback)
         if action == "logs":
             return {"phase":"ACTIONS-03","logs":remote_logs(client,selected,identity)}
         if not bool(getattr(args,"yes",False)):

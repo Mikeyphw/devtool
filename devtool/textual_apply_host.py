@@ -26,10 +26,10 @@ from types import SimpleNamespace
 import uuid
 
 from .tasker import DEFAULT_TASKER_DIR, resolve_cli_path
-from .job_ui import job_ui_mode, run_job_app
+from .job_ui import job_ui_mode, run_job_app, styled_job_line, job_icons, readable_job_line
 from .invocation_origin import create_managed_run_handoff
 from .textual_ux import (
-    ArtifactActivityTracker, TEXTUAL_SHARED_CSS, artifact_display_progress,
+    APPLY_STAGES, ArtifactActivityTracker, TEXTUAL_SHARED_CSS, artifact_display_progress, artifact_stage,
     artifact_review_text, artifact_running_summary, artifact_stage_compact_line,
     artifact_stage_line, fit_middle, responsive_class_names, status_label,
 )
@@ -323,6 +323,8 @@ class ArtifactApplyHostSource:
         child_env["DEVTOOL_MANAGED_RUN_HANDOFF"] = create_managed_run_handoff(self.run_id)
         # Nested runner/hook presentation remains plain; the parent owns the TTY.
         child_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
+        if "NO_COLOR" not in child_env and "FORCE_COLOR" not in child_env:
+            child_env["FORCE_COLOR"] = "1"
         argv = [sys.executable, "-m", "devtool", *child_argv(self.raw_argv, force_yes=force_yes)]
         self._process = self.popen_factory(
             argv,
@@ -501,6 +503,8 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
         def on_button_pressed(self, event: Button.Pressed) -> None:
             self.dismiss(event.button.id == "apply-confirm-yes")
 
+    icons = job_icons()
+
     class ArtifactApplyApp(App[int]):
         TITLE = "Devtool"
         SUB_TITLE = "Artifact apply"
@@ -513,20 +517,36 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             ("enter", "close_finished", "Close"),
         ]
         CSS = TEXTUAL_SHARED_CSS + """
+        /* Compact jobs use the full clean screen, not a 5-row inline strip. */
         .compact-job Header, .compact-job Footer { display: none; }
-        .compact-job #apply-context { min-height: 2; }
+        .compact-job #apply-root { padding: 1 2; }
+        .compact-job #apply-context { min-height: 3; border-bottom: solid $accent; margin-bottom: 1; }
         .compact-job #apply-review { display: none; }
-        .compact-job #apply-log-toolbar { height: 1; min-height: 1; }
+        .compact-job #apply-stages { height: 6; min-height: 0; color: $text; }
+        .compact-job #apply-stage { color: $accent; text-style: bold; }
+        .compact-job #apply-log-toolbar { height: 1; min-height: 1; border-top: none; }
         .compact-job #apply-log-toggle, .compact-job #apply-raw-toggle { display: none; }
         .compact-job #apply-activity { max-height: 2; }
-        .compact-job #apply-log { max-height: 12; }
-        .compact-job.short #apply-log { max-height: 5; }
-        .compact-job.tiny #apply-log { max-height: 2; }
+        .compact-job #apply-log { height: 1fr; min-height: 2; max-height: 100%; border: round $panel; }
+        .compact-job #apply-help { height: 1; color: $text-muted; }
+        .compact-job.compact #apply-root { padding: 0 1; }
+        .compact-job.short #apply-root { padding-top: 0; padding-bottom: 0; }
+        .compact-job.short #apply-context { min-height: 2; margin-bottom: 0; }
+        .compact-job.short #apply-stages { height: 2; }
+        .compact-job.short #apply-activity { display: none; }
+        .compact-job.tiny #apply-stages { height: 1; }
+        .compact-job.tiny #apply-phase { display: none; }
+        .compact-job.tiny #apply-stage { display: none; }
+        .compact-job.tiny #apply-log-toolbar { display: none; }
         #apply-root { height: 1fr; min-height: 0; }
         #apply-context { height: auto; min-height: 3; }
         #apply-status { height: 1; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
         #apply-meta { height: 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
         #apply-review { height: auto; max-height: 8; margin: 0 1; }
+        #apply-stages { display: none; }
+        .compact-job #apply-stages { display: block; }
+        #apply-help { display: none; }
+        .compact-job #apply-help { display: block; }
         #apply-stage { height: 1; padding: 0 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
         #apply-progress-row { height: 1; min-height: 1; padding: 0 1; }
         #apply-progress { width: 1fr; height: 1; margin-right: 1; }
@@ -583,17 +603,19 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             self._last_semantic_phase: str = ""
             self._activity = ArtifactActivityTracker()
             self._raw_lines: list[str] = []
+            self._seen_stages: list[str] = []
 
         def compose(self) -> ComposeResult:
             review = source.review
             yield Header()
             with Vertical(id="apply-root"):
                 with Vertical(id="apply-context", classes="ux-context"):
-                    yield Static("DEVTOOL · ARTIFACT APPLY", classes="ux-kicker")
+                    yield Static(f"{icons['brand']}  DEVTOOL / ARTIFACT APPLY", classes="ux-kicker")
                     yield Static(str(review.get("artifact") or review.get("path") or "Artifact"), id="apply-status", classes="ux-title")
                     yield Static("Review canonical artifact contract", id="apply-meta")
                 yield Static(artifact_review_text(review), id="apply-review", classes="ux-card")
                 yield Static(artifact_stage_line({}), id="apply-stage")
+                yield Static("\n".join(f"{icons['pending']} {stage}" for stage in APPLY_STAGES), id="apply-stages")
                 with Horizontal(id="apply-progress-row"):
                     yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="apply-progress")
                     yield Static("working", id="apply-progress-meta")
@@ -605,6 +627,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                     yield Button("Hide", id="apply-log-toggle")
                     yield Button("Raw", id="apply-raw-toggle")
                 yield RichLog(id="apply-log", wrap=True, highlight=False, markup=False, max_lines=source.max_log_lines)
+                yield Static("l logs  ·  r raw  ·  d details  ·  Ctrl+C cancel  ·  q close", id="apply-help")
             yield Footer()
 
         def _apply_responsive_geometry(self, width: int, height: int) -> None:
@@ -626,6 +649,14 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             self._refresh_stage_line()
             self._refresh_context_summary()
             self._refresh_activity()
+            if self._compact_job:
+                try:
+                    self.query_one("#apply-help", Static).update(
+                        "l logs · r raw · ^C cancel · q close" if width < 48 else
+                        "l logs  ·  r raw  ·  d details  ·  Ctrl+C cancel  ·  q close"
+                    )
+                except NoMatches:
+                    pass
             try:
                 screen.refresh(layout=True)
             except Exception:
@@ -650,13 +681,41 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
         def _refresh_stage_line(self) -> None:
             state = self._last_state
             rc = source.returncode
+            current = artifact_stage(state, returncode=rc)
+            if state and current not in self._seen_stages and rc is None:
+                self._seen_stages.append(current)
+            if rc is not None and "Finish" not in self._seen_stages:
+                self._seen_stages.append("Finish")
             compact = self.screen.has_class("compact") or self.screen.has_class("short")
-            if compact:
-                text = artifact_stage_compact_line(state, returncode=rc, tiny=self.screen.has_class("tiny"))
-            else:
-                text = artifact_stage_line(state, returncode=rc)
+            text = artifact_stage_compact_line(state, returncode=rc, tiny=self.screen.has_class("tiny")) if compact else artifact_stage_line(state, returncode=rc)
             try:
                 self.query_one("#apply-stage", Static).update(text)
+                status = "FAILED" if rc not in (None, 0, 130) else "CANCELLED" if rc == 130 else "COMPLETE" if rc == 0 else "ACTIVE"
+                from rich.text import Text
+                rows = Text()
+                for name in APPLY_STAGES:
+                    # Past stage is only marked complete if it was actually
+                    # observed and the state later advanced; never fill gaps.
+                    was_observed = name in self._seen_stages
+                    is_current = name == current and rc is None
+                    if is_current:
+                        marker, style = icons["active"], "bold cyan"
+                    elif name == "Finish" and rc not in (None, 0):
+                        marker, style = icons["failed"], "bold red" if rc != 130 else "yellow"
+                    elif was_observed and (name != "Finish" or rc == 0):
+                        marker, style = icons["done"], "green"
+                    else:
+                        marker, style = icons["pending"], "dim"
+                    rows.append(f"{marker} {name}" + (f" · {status}" if name == "Finish" and rc is not None else ""), style=style)
+                    if name != APPLY_STAGES[-1]:
+                        rows.append("\n")
+                self.query_one("#apply-stages", Static).update(rows)
+                if self.screen.has_class("tiny"):
+                    self.query_one("#apply-stages", Static).update(f"{status} · {text}")
+                elif self.screen.has_class("short"):
+                    self.query_one("#apply-stages", Static).update(
+                        f"{text}\n" + (f"{status} · observed {len(self._seen_stages)}/{len(APPLY_STAGES)} stages")
+                    )
             except NoMatches:
                 pass
 
@@ -720,7 +779,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                 self.screen.add_class("result-failed")
                 self.query_one("#apply-meta", Static).update("FAILED · could not start canonical child")
                 self.query_one("#apply-phase", Static).update(f"{type(exc).__name__}: {exc}")
-                self.query_one("#apply-log", RichLog).write(f"{type(exc).__name__}: {exc}")
+                self.query_one("#apply-log", RichLog).write(styled_job_line(f"{type(exc).__name__}: {exc}"))
                 self.query_one("#apply-notice", Static).update("✕ FAILED · press q or Enter to close")
                 self._stop_polling()
 
@@ -737,9 +796,12 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                 width = max(24, self.size.width - 2)
                 self.query_one("#apply-phase", Static).update(fit_middle(phase_line, width))
             progress_widget = self.query_one("#apply-progress", ProgressBar)
-            progress_widget.display = percent is not None
-            if percent is not None:
-                progress_widget.update(progress=percent)
+            if percent is None:
+                progress_widget.update(total=None)
+                progress_widget.display = source.returncode is None
+            else:
+                progress_widget.update(total=100, progress=percent)
+                progress_widget.display = True
             self.query_one("#apply-progress-meta", Static).update(counter)
             self._refresh_stage_line()
             if message and message not in {phase_line, status}:
@@ -761,13 +823,13 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             self._raw_lines.append(text)
             if len(self._raw_lines) > source.max_log_lines:
                 del self._raw_lines[: len(self._raw_lines) - source.max_log_lines]
-            return self._activity.observe(text)
+            return self._activity.observe(readable_job_line(text))
 
         def _emit_line(self, line: str, surfaced: bool) -> None:
             if not self._logs_visible:
                 return
             if self._show_raw or surfaced:
-                self.query_one("#apply-log", RichLog).write(line)
+                self.query_one("#apply-log", RichLog).write(styled_job_line(line))
 
         def _drain_source_lines(self) -> None:
             for line in source.drain_lines():
@@ -785,9 +847,12 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                     # Do not pin a fake 0% while a validator subprocess is alive.
                     percent, counter, _scope = artifact_display_progress({}, self._activity, returncode=source.returncode)
                     progress_widget = self.query_one("#apply-progress", ProgressBar)
-                    progress_widget.display = percent is not None
-                    if percent is not None:
-                        progress_widget.update(progress=percent)
+                    if percent is None:
+                        progress_widget.update(total=None)
+                        progress_widget.display = source.returncode is None
+                    else:
+                        progress_widget.update(total=100, progress=percent)
+                        progress_widget.display = True
                     self.query_one("#apply-progress-meta", Static).update(counter)
                     self._refresh_activity()
                 rc = source.returncode
@@ -815,9 +880,9 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                         self.query_one("#apply-phase", Static).update(f"Devtool {label}")
                     if rc == 0:
                         self.query_one("#apply-progress", ProgressBar).display = True
-                        self.query_one("#apply-progress", ProgressBar).update(progress=100.0)
+                        self.query_one("#apply-progress", ProgressBar).update(total=100, progress=100.0)
                         self.query_one("#apply-progress-meta", Static).update("100%")
-                    symbol = "✓" if rc == 0 else ("■" if rc == 130 else "✕")
+                    symbol = icons["done"] if rc == 0 else ("■" if rc == 130 else icons["failed"])
                     self.query_one("#apply-notice", Static).update(
                         f"{symbol} {status_label(outcome)} · press q or Enter to close"
                     )
@@ -848,12 +913,12 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             if self._logs_visible:
                 if self._show_raw:
                     for line in self._raw_lines:
-                        log.write(line)
+                        log.write(styled_job_line(line))
                 else:
                     replay = ArtifactActivityTracker()
                     for line in self._raw_lines:
                         if replay.observe(line):
-                            log.write(line)
+                            log.write(styled_job_line(line))
             self.query_one("#apply-raw-toggle", Button).label = "Activity" if self._show_raw else "Raw"
             self._refresh_activity()
 
