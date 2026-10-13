@@ -451,8 +451,8 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign"],
-        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)", "android aab-run (explicit --yes only)", "android aab-sign (explicit --yes only)"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect"],
+        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)", "android aab-run (explicit --yes only)", "android aab-sign (explicit --yes only)", "ci run (explicit --yes only)"],
         "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
         "remote_execution": False,
@@ -536,6 +536,28 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
         slug = resolve_repository(explicit, local_root)
     token, authentication = resolve_token(str(getattr(args, "auth", "auto") or "auto"))
     client = GitHubActionsClient(token)
+    if action == 'ci':
+        from .actions_polyglot import ci_dispatch, ci_check, ci_collect
+        sub = str(getattr(args, 'ci_command', '') or '')
+        languages = str(getattr(args, 'languages', 'python,go,rust,java') or '')
+        systems = str(getattr(args, 'systems', 'ubuntu-latest,windows-latest') or '')
+        if sub in ('plan', 'run'):
+            if sub == 'run' and not bool(getattr(args, 'yes', False)):
+                raise GitHubActionsError('Explicit --yes required for G5 CI dispatch')
+            return ci_dispatch(client, slug, local_root,
+                ref=str(getattr(args,'ref','') or ''),languages=languages,
+                systems=systems,execute=sub == 'run')
+        from .actions_runs import run_id
+        identity=run_id(getattr(args,'run_id',None))
+        sha=str(getattr(args,'expected_sha','') or '')
+        if sub == 'check':
+            return ci_check(client,slug,run_id=identity,expected_sha=sha,
+                            languages=languages,systems=systems)
+        if sub == 'collect':
+            return ci_collect(client,slug,local_root,run_id=identity,
+                expected_sha=sha,languages=languages,systems=systems,
+                download=bool(getattr(args,'download',False)),materialize=True)
+        raise GitHubActionsError('Unsupported G5 CI command')
     if action == "pipeline":
         from .actions_pipeline import pipeline_plan, pipeline_run, pipeline_status, pipeline_resume
         sub = str(getattr(args, "pipeline_command", "") or "")

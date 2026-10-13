@@ -70,6 +70,10 @@ def run_actions_command(args: Any) -> int:
             and str(getattr(args, 'release_command', '')) == 'readiness'
             and not payload.get('ready', False)):
         return 1
+    if (str(getattr(args,'actions_command','')) == 'ci'
+            and str(getattr(args,'ci_command','')) == 'check'
+            and payload.get('matrix_complete') is not True):
+        return 1
     if (str(getattr(args, "actions_command", "")) == "pipeline"
             and payload.get("state") in ("blocked", "cancelled")
             and str(getattr(args, "pipeline_command", "")) != "cancel"):

@@ -1,0 +1,71 @@
+name: Devtool G5 polyglot matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      languages:
+        description: 'JSON array: subset of python, go, rust, java'
+        required: true
+        type: string
+        default: '["python","go","rust","java"]'
+      operating_systems:
+        description: 'JSON array: subset of ubuntu-latest, windows-latest'
+        required: true
+        type: string
+        default: '["ubuntu-latest","windows-latest"]'
+  workflow_call:
+    inputs:
+      languages:
+        required: false
+        type: string
+        default: '["python","go","rust","java"]'
+      operating_systems:
+        required: false
+        type: string
+        default: '["ubuntu-latest","windows-latest"]'
+
+permissions:
+  contents: read
+
+jobs:
+  matrix-validation:
+    name: polyglot (${{ matrix.language }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os == 'windows-latest' && 'windows-latest' || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(inputs.languages) }}
+        os: ${{ fromJSON(inputs.operating_systems) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-go@v6
+        if: matrix.language == 'go'
+        with:
+          go-version: '1.24.x'
+      - uses: actions/setup-java@v5
+        if: matrix.language == 'java'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Configure Rust
+        if: matrix.language == 'rust'
+        shell: bash
+        run: rustup toolchain install stable --profile minimal
+      - name: Run exact language fixture and emit receipt
+        shell: bash
+        env:
+          DEVTOOL_G5_LANGUAGE: ${{ matrix.language }}
+          DEVTOOL_G5_OS: ${{ matrix.os }}
+          DEVTOOL_G5_LANGUAGES: ${{ inputs.languages }}
+          DEVTOOL_G5_SYSTEMS: ${{ inputs.operating_systems }}
+        run: python tools/actions_g5_runner.py --out dist/actions-g5/receipt.json
+      - name: Upload source-bound test receipt
+        uses: actions/upload-artifact@v5
+        with:
+          name: devtool-g5-${{ matrix.language }}-${{ matrix.os }}-attempt${{ github.run_attempt }}
+          path: dist/actions-g5/receipt.json
+          if-no-files-found: error
+          retention-days: 7

@@ -5850,6 +5850,90 @@
       },
       "options": [],
       "stable_id": "cli.command.actions.android.aab_sign"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "ci",
+        "plan"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "G5 polyglot plan",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.ci.plan"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "ci",
+        "run"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "G5 polyglot run",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.ci.run"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "ci",
+        "check"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "G5 polyglot check",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.ci.check"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "ci",
+        "collect"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "G5 polyglot collect",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.ci.collect"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "ci"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "G5 polyglot CI",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.ci"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -57211,6 +57295,761 @@
       "sensitive": false,
       "stable_id": "cli.option.actions.android.aab_sign.help",
       "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions ci plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.plan.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions ci plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.plan.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions ci plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.plan.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ref",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ref",
+        "help": "Branch or tag; remote must match local HEAD",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "plan"
+        ],
+        "required": true
+      },
+      "scope": "actions ci plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.plan.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--languages",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "languages",
+        "help": "Comma-separated subset: python,go,rust,java",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions ci plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.plan.languages",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--systems",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "systems",
+        "help": "Comma-separated subset of ubuntu-latest,windows-latest",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions ci plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.plan.systems",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions ci run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.run.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions ci run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.run.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions ci run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.run.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ref",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ref",
+        "help": "Branch or tag; remote must match local HEAD",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "run"
+        ],
+        "required": true
+      },
+      "scope": "actions ci run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.run.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly dispatch matrix workflow",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions ci run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.run.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--languages",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "languages",
+        "help": "Comma-separated subset: python,go,rust,java",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions ci run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.run.languages",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--systems",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "systems",
+        "help": "Comma-separated subset of ubuntu-latest,windows-latest",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions ci run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.run.systems",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "check"
+        ],
+        "required": false
+      },
+      "scope": "actions ci check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.check.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "check"
+        ],
+        "required": false
+      },
+      "scope": "actions ci check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.check.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci",
+          "check"
+        ],
+        "required": false
+      },
+      "scope": "actions ci check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.check.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact GitHub workflow run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "check"
+        ],
+        "required": true
+      },
+      "scope": "actions ci check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.check.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha",
+        "help": "Exact 40-hex GitHub source commit",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "check"
+        ],
+        "required": true
+      },
+      "scope": "actions ci check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.check.expected_sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--languages",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "languages",
+        "help": "Comma-separated subset: python,go,rust,java",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "check"
+        ],
+        "required": false
+      },
+      "scope": "actions ci check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.check.languages",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--systems",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "systems",
+        "help": "Comma-separated subset of ubuntu-latest,windows-latest",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "check"
+        ],
+        "required": false
+      },
+      "scope": "actions ci check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.check.systems",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "collect"
+        ],
+        "required": false
+      },
+      "scope": "actions ci collect",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.collect.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "collect"
+        ],
+        "required": false
+      },
+      "scope": "actions ci collect",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.collect.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci",
+          "collect"
+        ],
+        "required": false
+      },
+      "scope": "actions ci collect",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.collect.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact GitHub workflow run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "collect"
+        ],
+        "required": true
+      },
+      "scope": "actions ci collect",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.collect.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha",
+        "help": "Exact 40-hex GitHub source commit",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "collect"
+        ],
+        "required": true
+      },
+      "scope": "actions ci collect",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.collect.expected_sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--download",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "download",
+        "help": "Download canonical GitHub artifact archives",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci",
+          "collect"
+        ],
+        "required": false
+      },
+      "scope": "actions ci collect",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.collect.download",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--languages",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "languages",
+        "help": "Comma-separated subset: python,go,rust,java",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "collect"
+        ],
+        "required": false
+      },
+      "scope": "actions ci collect",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.collect.languages",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--systems",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "systems",
+        "help": "Comma-separated subset of ubuntu-latest,windows-latest",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "ci",
+          "collect"
+        ],
+        "required": false
+      },
+      "scope": "actions ci collect",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.collect.systems",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci"
+        ],
+        "required": false
+      },
+      "scope": "actions ci",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions ci plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.plan.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions ci run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.run.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci",
+          "check"
+        ],
+        "required": false
+      },
+      "scope": "actions ci check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.check.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "ci",
+          "collect"
+        ],
+        "required": false
+      },
+      "scope": "actions ci collect",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.ci.collect.help",
+      "value_kind": "_HelpAction"
     }
   ],
   "parser": {
@@ -105981,10 +106820,10 @@
                   }
                 },
                 {
-                  "name": "android",
                   "aliases": [],
                   "help": "Android builds on GitHub Actions and verified APK/AAB acquisition",
                   "help_present": true,
+                  "name": "android",
                   "parser": {
                     "actions": [],
                     "add_help": true,
@@ -105998,10 +106837,10 @@
                     "subparsers": {
                       "children": [
                         {
-                          "name": "discover",
                           "aliases": [],
                           "help": "Discover statically declared Android app modules",
                           "help_present": true,
+                          "name": "discover",
                           "parser": {
                             "actions": [
                               {
@@ -106091,10 +106930,10 @@
                           }
                         },
                         {
-                          "name": "plan",
                           "aliases": [],
                           "help": "Validate source parity and Android workflow inputs without dispatch",
                           "help_present": true,
+                          "name": "plan",
                           "parser": {
                             "actions": [
                               {
@@ -106292,10 +107131,10 @@
                           }
                         },
                         {
-                          "name": "run",
                           "aliases": [],
                           "help": "Dispatch an Android build only with explicit --yes",
                           "help_present": true,
+                          "name": "run",
                           "parser": {
                             "actions": [
                               {
@@ -106510,10 +107349,10 @@
                           }
                         },
                         {
-                          "name": "collect",
                           "aliases": [],
                           "help": "Fetch or verify and inspect an APK/AAB, registering output as unqualified",
                           "help_present": true,
+                          "name": "collect",
                           "parser": {
                             "actions": [
                               {
@@ -106728,10 +107567,10 @@
                           }
                         },
                         {
-                          "name": "verify",
                           "aliases": [],
                           "help": "Verify a downloaded Android archive and inspect its package",
                           "help_present": true,
+                          "name": "verify",
                           "parser": {
                             "actions": [
                               {
@@ -106929,10 +107768,10 @@
                           }
                         },
                         {
-                          "name": "unsigned-plan",
                           "aliases": [],
                           "help": "Preview source-bound, unsigned GitHub release candidate",
                           "help_present": true,
+                          "name": "unsigned-plan",
                           "parser": {
                             "actions": [
                               {
@@ -107022,10 +107861,10 @@
                           }
                         },
                         {
-                          "name": "unsigned-run",
                           "aliases": [],
                           "help": "Dispatch dedicated unsigned candidate workflow (requires --yes)",
                           "help_present": true,
+                          "name": "unsigned-run",
                           "parser": {
                             "actions": [
                               {
@@ -107132,10 +107971,10 @@
                           }
                         },
                         {
-                          "name": "unsigned-check",
                           "aliases": [],
                           "help": "Verify exact GitHub unsigned archive and APK (read-only)",
                           "help_present": true,
+                          "name": "unsigned-check",
                           "parser": {
                             "actions": [
                               {
@@ -107259,10 +108098,10 @@
                           }
                         },
                         {
-                          "name": "unsigned-import",
                           "aliases": [],
                           "help": "Download, validate and register unsigned GitHub APK",
                           "help_present": true,
+                          "name": "unsigned-import",
                           "parser": {
                             "actions": [
                               {
@@ -107403,10 +108242,10 @@
                           }
                         },
                         {
-                          "name": "unsigned-sign",
                           "aliases": [],
                           "help": "Locally align, LIFE-sign and verify imported candidate (requires --yes)",
                           "help_present": true,
+                          "name": "unsigned-sign",
                           "parser": {
                             "actions": [
                               {
@@ -107547,10 +108386,10 @@
                           }
                         },
                         {
-                          "name": "aab-plan",
                           "aliases": [],
                           "help": "Preview unsigned Android AAB workflow with source pin",
                           "help_present": true,
+                          "name": "aab-plan",
                           "parser": {
                             "actions": [
                               {
@@ -107640,10 +108479,10 @@
                           }
                         },
                         {
-                          "name": "aab-run",
                           "aliases": [],
                           "help": "Dispatch unsigned AAB candidate (requires --yes)",
                           "help_present": true,
+                          "name": "aab-run",
                           "parser": {
                             "actions": [
                               {
@@ -107750,10 +108589,10 @@
                           }
                         },
                         {
-                          "name": "aab-check",
                           "aliases": [],
                           "help": "Inspect source-bound AAB with bundletool (read-only)",
                           "help_present": true,
+                          "name": "aab-check",
                           "parser": {
                             "actions": [
                               {
@@ -107877,10 +108716,10 @@
                           }
                         },
                         {
-                          "name": "aab-import",
                           "aliases": [],
                           "help": "Download, verify and register unsigned AAB",
                           "help_present": true,
+                          "name": "aab-import",
                           "parser": {
                             "actions": [
                               {
@@ -108021,10 +108860,10 @@
                           }
                         },
                         {
-                          "name": "aab-sign",
                           "aliases": [],
                           "help": "Locally sign imported AAB using LIFE (requires --yes)",
                           "help_present": true,
+                          "name": "aab-sign",
                           "parser": {
                             "actions": [
                               {
@@ -108175,10 +109014,10 @@
                   }
                 },
                 {
-                  "name": "pipeline",
                   "aliases": [],
                   "help": "Cross-boundary local/remote DAG with frozen source and durable resume",
                   "help_present": true,
+                  "name": "pipeline",
                   "parser": {
                     "actions": [],
                     "add_help": true,
@@ -108192,10 +109031,10 @@
                     "subparsers": {
                       "children": [
                         {
-                          "name": "cancel",
                           "aliases": [],
                           "help": "Request durable pipeline stop; does not cancel remote GitHub jobs",
                           "help_present": true,
+                          "name": "cancel",
                           "parser": {
                             "actions": [
                               {
@@ -108263,10 +109102,10 @@
                           }
                         },
                         {
-                          "name": "plan",
                           "aliases": [],
                           "help": "Validate local Git and remote GitHub DAG without mutations",
                           "help_present": true,
+                          "name": "plan",
                           "parser": {
                             "actions": [
                               {
@@ -108356,10 +109195,10 @@
                           }
                         },
                         {
-                          "name": "run",
                           "aliases": [],
                           "help": "Create durable pipeline journal and execute ready nodes",
                           "help_present": true,
+                          "name": "run",
                           "parser": {
                             "actions": [
                               {
@@ -108466,10 +109305,10 @@
                           }
                         },
                         {
-                          "name": "status",
                           "aliases": [],
                           "help": "Read local durable pipeline states (no GitHub operations)",
                           "help_present": true,
+                          "name": "status",
                           "parser": {
                             "actions": [
                               {
@@ -108559,10 +109398,10 @@
                           }
                         },
                         {
-                          "name": "resume",
                           "aliases": [],
                           "help": "Continue waiting pipeline nodes, never repeat uncertain dispatch",
                           "help_present": true,
+                          "name": "resume",
                           "parser": {
                             "actions": [
                               {
@@ -108679,10 +109518,10 @@
                   }
                 },
                 {
-                  "name": "release",
                   "aliases": [],
                   "help": "Independent-policy Android release attestation and qualification",
                   "help_present": true,
+                  "name": "release",
                   "parser": {
                     "actions": [],
                     "add_help": true,
@@ -108693,19 +109532,13 @@
                     "formatter": "HelpFormatter",
                     "groups": [],
                     "mutexes": [],
-                    "usage": null,
                     "subparsers": {
-                      "dest": "release_command",
-                      "required": true,
-                      "help": null,
-                      "metavar": null,
-                      "group": null,
                       "children": [
                         {
-                          "name": "verify",
                           "aliases": [],
                           "help": "Read-only qualification of already-registered signed release",
                           "help_present": true,
+                          "name": "verify",
                           "parser": {
                             "actions": [
                               {
@@ -108846,10 +109679,10 @@
                           }
                         },
                         {
-                          "name": "setup",
                           "aliases": [],
                           "help": "Guided preview or --yes release provisioning",
                           "help_present": true,
+                          "name": "setup",
                           "parser": {
                             "actions": [
                               {
@@ -109109,10 +109942,10 @@
                           }
                         },
                         {
-                          "name": "readiness",
                           "aliases": [],
                           "help": "Check protected ref, signing secret names and private policy",
                           "help_present": true,
+                          "name": "readiness",
                           "parser": {
                             "actions": [
                               {
@@ -109253,10 +110086,10 @@
                           }
                         },
                         {
-                          "name": "local-build",
                           "aliases": [],
                           "help": "Preview or execute local signed release build without Github qualification",
                           "help_present": true,
+                          "name": "local-build",
                           "parser": {
                             "actions": [
                               {
@@ -109429,10 +110262,10 @@
                           }
                         },
                         {
-                          "name": "local-verify",
                           "aliases": [],
                           "help": "Verify local package manifest and pinned LIFE signing certificate",
                           "help_present": true,
+                          "name": "local-verify",
                           "parser": {
                             "actions": [
                               {
@@ -109604,8 +110437,617 @@
                             "usage": null
                           }
                         }
-                      ]
-                    }
+                      ],
+                      "dest": "release_command",
+                      "group": null,
+                      "help": null,
+                      "metavar": null,
+                      "required": true
+                    },
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Advanced polyglot GitHub CI: plan, run, check and collect",
+                  "help_present": true,
+                  "name": "ci",
+                  "parser": {
+                    "actions": [],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": {
+                      "children": [
+                        {
+                          "aliases": [],
+                          "help": "G5 polyglot matrix plan",
+                          "help_present": true,
+                          "name": "plan",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "ref",
+                                "group": null,
+                                "help": "Branch or tag; remote must match local HEAD",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--ref"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "python,go,rust,java",
+                                "dest": "languages",
+                                "group": null,
+                                "help": "Comma-separated subset: python,go,rust,java",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--languages"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "ubuntu-latest,windows-latest",
+                                "dest": "systems",
+                                "group": null,
+                                "help": "Comma-separated subset of ubuntu-latest,windows-latest",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--systems"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "G5 polyglot matrix run",
+                          "help_present": true,
+                          "name": "run",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "ref",
+                                "group": null,
+                                "help": "Branch or tag; remote must match local HEAD",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--ref"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Explicitly dispatch matrix workflow",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "python,go,rust,java",
+                                "dest": "languages",
+                                "group": null,
+                                "help": "Comma-separated subset: python,go,rust,java",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--languages"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "ubuntu-latest,windows-latest",
+                                "dest": "systems",
+                                "group": null,
+                                "help": "Comma-separated subset of ubuntu-latest,windows-latest",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--systems"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "G5 polyglot matrix check",
+                          "help_present": true,
+                          "name": "check",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "run_id",
+                                "group": null,
+                                "help": "Exact GitHub workflow run ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--run-id"
+                                ],
+                                "required": true,
+                                "type": "int"
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_sha",
+                                "group": null,
+                                "help": "Exact 40-hex GitHub source commit",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-sha"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "python,go,rust,java",
+                                "dest": "languages",
+                                "group": null,
+                                "help": "Comma-separated subset: python,go,rust,java",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--languages"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "ubuntu-latest,windows-latest",
+                                "dest": "systems",
+                                "group": null,
+                                "help": "Comma-separated subset of ubuntu-latest,windows-latest",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--systems"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "G5 polyglot matrix collect",
+                          "help_present": true,
+                          "name": "collect",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "run_id",
+                                "group": null,
+                                "help": "Exact GitHub workflow run ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--run-id"
+                                ],
+                                "required": true,
+                                "type": "int"
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_sha",
+                                "group": null,
+                                "help": "Exact 40-hex GitHub source commit",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-sha"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "download",
+                                "group": null,
+                                "help": "Download canonical GitHub artifact archives",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--download"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "python,go,rust,java",
+                                "dest": "languages",
+                                "group": null,
+                                "help": "Comma-separated subset: python,go,rust,java",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--languages"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "ubuntu-latest,windows-latest",
+                                "dest": "systems",
+                                "group": null,
+                                "help": "Comma-separated subset of ubuntu-latest,windows-latest",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--systems"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        }
+                      ],
+                      "dest": "ci_command",
+                      "group": null,
+                      "help": null,
+                      "metavar": null,
+                      "required": true
+                    },
+                    "usage": null
                   }
                 }
               ],
