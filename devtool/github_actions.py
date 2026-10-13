@@ -451,7 +451,7 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "release local-evidence", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "release local-evidence", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect", "extensions metrics", "extensions runners", "extensions publish-plan", "extensions publish", "extensions gitlab-pipelines"],
         "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)", "android aab-run (explicit --yes only)", "android aab-sign (explicit --yes only)", "ci run (explicit --yes only)"],
         "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
@@ -463,6 +463,37 @@ def actions_baseline() -> dict[str, Any]:
 
 def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None) -> dict[str, Any]:
     action = str(getattr(args, "actions_command", "") or "")
+    if action == 'extensions':
+        from .actions_extensions import (ci_metrics, trusted_runners, upload_plan, publish_asset, gitlab_pipelines)
+        sub=str(getattr(args,'extensions_command','') or '')
+        if sub == 'gitlab-pipelines':
+            if not bool(getattr(args,'enable_gitlab',False)):
+                raise GitHubActionsError('G7 GitLab requires --enable-gitlab explicit opt-in')
+            from os import environ
+            project_raw=str(getattr(args,'gitlab_project_id','') or '')
+            if not project_raw.isascii() or not project_raw.isdecimal() or len(project_raw)>16:
+                raise GitHubActionsError('G7 GitLab requires numeric project ID')
+            return gitlab_pipelines(project_id=int(project_raw),
+                token=environ.get('GITLAB_TOKEN',''),limit=int(getattr(args,'limit',20)))
+        slug=resolve_repository(str(getattr(args,'github_repo','') or ''),local_root)
+        token,source=resolve_token(str(getattr(args,'auth','auto') or 'auto'))
+        client=GitHubActionsClient(token)
+        if sub=='metrics':
+            return ci_metrics(client,slug,limit=int(getattr(args,'limit',30)))
+        if sub=='runners':
+            return trusted_runners(client,slug,policy_path=str(getattr(args,'trust_file','') or ''))
+        if sub in ('publish-plan','publish'):
+            options={'registry_id':str(getattr(args,'registry_id','') or ''),
+              'tag':str(getattr(args,'tag','') or ''),
+              'asset_name':str(getattr(args,'asset_name','') or ''),
+              'expected_sha':str(getattr(args,'expected_sha','') or ''),
+              'fmt':str(getattr(args,'format','apk') or 'apk')}
+            if sub=='publish-plan':
+                return upload_plan(client,slug,local_root,**options)[0]
+            return publish_asset(client,slug,local_root,**options,
+                yes=bool(getattr(args,'yes',False)),
+                allow_unqualified=bool(getattr(args,'allow_unqualified_upload',False)))
+        raise GitHubActionsError('Unknown G7 extension operation')
     if action == "baseline":
         return actions_baseline()
     # Purely local signing lane: must not depend on gh auth, GitHub plans,
