@@ -605,7 +605,7 @@ class ArtifactV2Tests(unittest.TestCase):
             ignored = validate_artifact(repo, bundle, ignore_checksum=True)
             self.assertTrue(ignored.ok, ignored.messages)
 
-    def test_cli_ignore_checksum_applies_overlay_without_disabling_manifest_checks(self) -> None:
+    def test_cli_ignore_checksum_never_bypasses_canonical_mutation_payload_hash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo = root / "repo"
@@ -625,9 +625,12 @@ class ArtifactV2Tests(unittest.TestCase):
             archive = root / "bad-checksum.zip"
             write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode(), "file.txt": payload})
 
+            # --ignore-checksum is an artifact-validation compatibility flag;
+            # canonical mutation payload digests remain mandatory.  We must
+            # reject, not install, an intentionally false inventory SHA.
             rc = main(["-r", str(repo), "--yes", "apply-overlay", str(archive), "--ignore-checksum", "--keep-artifact"])
-            self.assertEqual(rc, 0)
-            self.assertEqual((repo / "file.txt").read_bytes(), payload)
+            self.assertNotEqual(rc, 0)
+            self.assertFalse((repo / "file.txt").exists())
 
     def test_embedded_validator_runs_from_repo_root_and_is_never_extracted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
