@@ -451,7 +451,7 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "release local-evidence", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect", "extensions metrics", "extensions runners", "extensions publish-plan", "extensions publish", "extensions gitlab-pipelines"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "release local-evidence", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect", "extensions metrics", "extensions runners", "extensions publish-plan", "extensions publish", "extensions gitlab-pipelines", "qualification report", "qualification check"],
         "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)", "android aab-run (explicit --yes only)", "android aab-sign (explicit --yes only)", "ci run (explicit --yes only)"],
         "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
@@ -463,6 +463,12 @@ def actions_baseline() -> dict[str, Any]:
 
 def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None) -> dict[str, Any]:
     action = str(getattr(args, "actions_command", "") or "")
+    if action == 'qualification':
+        from .actions_qualification import qualification_report
+        command = str(getattr(args, 'qualification_command', '') or '')
+        if command not in ('report', 'check'):
+            raise GitHubActionsError('Unsupported G8 qualification operation')
+        return qualification_report(local_root, strict_source=(command == 'check'))
     if action == 'extensions':
         from .actions_extensions import (ci_metrics, trusted_runners, upload_plan, publish_asset, gitlab_pipelines)
         sub=str(getattr(args,'extensions_command','') or '')

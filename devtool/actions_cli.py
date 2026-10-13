@@ -66,6 +66,11 @@ def run_actions_command(args: Any) -> int:
         print(pipeline_text(payload))
     else:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
+    if command == 'qualification' and str(getattr(args, 'qualification_command', '') or '') == 'check':
+        if not payload.get('source_contract_consistent', False):
+            return 1
+        if bool(getattr(args, 'require_complete', False)) and not payload.get('campaign_closed', False):
+            return 2  # Explicitly requested closure is blocked by live/historical gates.
     if (str(getattr(args, 'actions_command', '')) == 'release'
             and str(getattr(args, 'release_command', '')) == 'readiness'
             and not payload.get('ready', False)):

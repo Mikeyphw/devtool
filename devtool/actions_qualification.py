@@ -1,0 +1,195 @@
+"""G8 read-only Actions qualification and historical obligation reconciliation.
+
+A source hash, pytest pass, and user-reported observation are different kinds of
+proof. This module deliberately never changes the frozen ledger or promotes an
+unsigned/locally signed artifact into a protected release qualification.
+"""
+from __future__ import annotations
+
+from collections import Counter
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+import re
+import subprocess
+from typing import Any
+
+from .github_actions import GitHubActionsError
+
+_PLAN = 'docs/actions/ACTIONS_G08_QUALIFICATION_MATRIX.json'
+_PLAN_SHA256 = '12ca3595ffc59007b1b6a20bfd429a65fae2a40445f159094ff34b6a9b9d65bf'
+_SHA = re.compile(r'[0-9a-f]{64}\Z')
+_VALID_STATES = {'LIVE_VERIFIED', 'SOURCE_TESTED', 'PARTIAL', 'OPEN', 'EXCLUDED'}
+
+
+def _unique(items: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in items:
+        if key in out:
+            raise ValueError('duplicate JSON key')
+        out[key] = value
+    return out
+
+
+def _bounded_file(root: Path, relative: str, *, max_size: int) -> bytes:
+    if not isinstance(relative, str) or not relative or '\\' in relative or ':' in relative:
+        raise GitHubActionsError('G8 source inventory has an unsafe path')
+    pure = PurePosixPath(relative)
+    if pure.is_absolute() or any(part in ('', '.', '..') for part in relative.split('/')) or len(relative) > 350:
+        raise GitHubActionsError('G8 source inventory has a noncanonical path')
+    target = root
+    for part in pure.parts:
+        target = target / part
+        if target.is_symlink():
+            raise GitHubActionsError('G8 source inventory contains a symlink')
+    if not target.is_file():
+        raise GitHubActionsError('G8 source inventory is missing a required file')
+    try:
+        size = target.stat().st_size
+        if size > max_size:
+            raise GitHubActionsError('G8 source inventory file exceeds size bound')
+        return target.read_bytes()
+    except OSError:
+        raise GitHubActionsError('G8 source inventory cannot be read') from None
+
+
+def _document(root: Path, name: str) -> dict[str, Any]:
+    try:
+        result = json.loads(_bounded_file(root, name, max_size=1024*1024), object_pairs_hook=_unique)
+    except (ValueError, UnicodeDecodeError):
+        raise GitHubActionsError('G8 qualification JSON is malformed or ambiguous') from None
+    if not isinstance(result, dict):
+        raise GitHubActionsError('G8 qualification document must be a JSON object')
+    return result
+
+
+def _record_hash(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _git_head(root: Path) -> tuple[str, bool | None]:
+    try:
+        head = subprocess.run(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
+                              capture_output=True, text=True, timeout=5, check=False)
+        status = subprocess.run(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'],
+                                capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return '', None
+    if head.returncode or not re.fullmatch('[0-9a-f]{40}', head.stdout.strip()):
+        return '', None
+    return head.stdout.strip(), (status.stdout.strip() == '' if status.returncode == 0 else None)
+
+
+def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str, Any]:
+    """Verify G0 baseline and G0-G7 source pins; return truthful pending gates.
+
+    `strict_source` stops on missing/mutated source contracts. Pending live gates
+    are not failures of the source checker and cannot be marked passed here.
+    """
+    root = Path(root).absolute()
+    if _record_hash(_bounded_file(root, _PLAN, max_size=1024*1024)) != _PLAN_SHA256:
+        raise GitHubActionsError('G8 qualification matrix SHA-256 differs from installed immutable plan')
+    plan = _document(root, _PLAN)
+    if plan.get('schema_version') != 1 or plan.get('kind') != 'devtool.actions.g8.qualification-plan':
+        raise GitHubActionsError('G8 qualification plan schema/kind mismatch')
+    ledger_path = plan.get('original_ledger_path')
+    if ledger_path != 'docs/actions/ACTIONS_BASELINE_OBLIGATIONS.json':
+        raise GitHubActionsError('G8 original ledger location has changed')
+    raw = _bounded_file(root, ledger_path, max_size=1024*1024)
+    if not _SHA.fullmatch(str(plan.get('original_ledger_sha256', ''))) or _record_hash(raw) != plan['original_ledger_sha256']:
+        raise GitHubActionsError('G8 frozen original obligation ledger SHA-256 mismatch')
+    ledger = _document(root, ledger_path)
+    obligations = ledger.get('obligations')
+    if not isinstance(obligations, list) or len(obligations) != plan.get('original_requirement_count') or len(obligations) != 88:
+        raise GitHubActionsError('G8 original obligation count mismatch')
+    counts: Counter[str] = Counter()
+    ids: set[str] = set()
+    for obligation in obligations:
+        if not isinstance(obligation, dict):
+            raise GitHubActionsError('G8 original obligation row is invalid')
+        key, status, wave = obligation.get('id'), obligation.get('status'), obligation.get('closure_wave')
+        if not isinstance(key, str) or not key or key in ids or status not in _VALID_STATES:
+            raise GitHubActionsError('G8 original obligation ID/status is ambiguous')
+        if (status == 'EXCLUDED') != (wave == ''):
+            raise GitHubActionsError('G8 excluded requirement was incorrectly assigned to a gate')
+        if status != 'EXCLUDED' and wave not in {f'G{i}' for i in range(9)}:
+            raise GitHubActionsError('G8 original requirement has no closure wave')
+        ids.add(key)
+        counts[status] += 1
+    if dict(counts) != plan.get('historical_status_counts') or dict(counts) != ledger.get('counts'):
+        raise GitHubActionsError('G8 historical requirement statistics changed')
+    waves = plan.get('waves')
+    if not isinstance(waves, list) or [w.get('id') for w in waves if isinstance(w, dict)] != [f'G{i}' for i in range(8)]:
+        raise GitHubActionsError('G8 expected G0-G7 source wave inventory is incomplete')
+    source_rows: list[dict[str, Any]] = []
+    checked_files: set[str] = set()
+    for wave in waves:
+        contracts = wave.get('source_contracts')
+        if not isinstance(contracts, list) or len(contracts) < 2:
+            raise GitHubActionsError('G8 wave source contract is incomplete')
+        matching = True
+        for entry in contracts:
+            if not isinstance(entry, dict) or not _SHA.fullmatch(str(entry.get('sha256', ''))):
+                raise GitHubActionsError('G8 source contract digest is malformed')
+            name = entry.get('path')
+            if name in checked_files:
+                raise GitHubActionsError('G8 duplicated source contract path')
+            checked_files.add(name)
+            try:
+                data = _bounded_file(root, name, max_size=2 * 1024 * 1024)
+                ok = _record_hash(data) == entry['sha256']
+            except GitHubActionsError:
+                ok = False
+            if not ok:
+                matching = False
+                source_rows.append({'wave':wave['id'],'path':name,'status':'MISSING_OR_DIFFERENT'})
+        source_rows.append({'wave':wave['id'],'status':'SOURCE_PINS_MATCH' if matching else 'SOURCE_PINS_MISMATCH',
+                            'source_only':True,'live_qualified':False})
+    gates = plan.get('gates')
+    if not isinstance(gates, list) or len(gates) != 9:
+        raise GitHubActionsError('G8 live gate inventory is incomplete')
+    gate_ids: set[str] = set()
+    pending = []
+    for gate in gates:
+        if not isinstance(gate, dict) or gate.get('live_status') != 'pending' or gate.get('evidence_receipt') != 'not_present_in_this_source_snapshot':
+            raise GitHubActionsError('G8 plan tries to promote an unsupported live gate')
+        identifier = gate.get('id')
+        if not isinstance(identifier, str) or not identifier or identifier in gate_ids or gate.get('wave') not in {f'G{i}' for i in range(9)}:
+            raise GitHubActionsError('G8 live gate has invalid identity')
+        if not isinstance(gate.get('required_for_final_claim'), bool) or not isinstance(gate.get('operator_deferred'), bool):
+            raise GitHubActionsError('G8 live gate has ambiguous status')
+        gate_ids.add(identifier)
+        pending.append({'id':identifier, 'wave':gate['wave'], 'status':'PENDING_LIVE',
+                        'operator_deferred':gate['operator_deferred'],
+                        'required':gate['required_for_final_claim'],
+                        'acceptance':gate.get('acceptance','')})
+    if 'G8_BROAD_REGRESSIONS' not in gate_ids or 'G1_GITHUB_NEGATIVES' not in gate_ids:
+        raise GitHubActionsError('G8 essential acceptance gates are missing')
+    prior = plan.get('historical_dependencies',{}).get('V105_pre_actions',{})
+    if not isinstance(prior, dict) or prior.get('status') != 'unresolved_historical_cross_campaign' or prior.get('required_reconciliation') is not True:
+        raise GitHubActionsError('G8 historical V105 blockers were incorrectly promoted')
+    rules = plan.get('qualification_rules',{})
+    if rules.get('qualified_release') is not False or rules.get('source_attested') is not False:
+        raise GitHubActionsError('G8 qualification policy cannot assert source attestation or release readiness')
+    if plan.get('paid_private_github_branch_protection',{}).get('status') != 'excluded_by_user':
+        raise GitHubActionsError('G8 paid private GitHub requirement was silently changed')
+    source_consistent = all(row['status'] != 'SOURCE_PINS_MISMATCH' for row in source_rows)
+    if strict_source and not source_consistent:
+        raise GitHubActionsError('G8 source contract does not match the pinned post-G7 snapshot')
+    current_head, clean = _git_head(root)
+    return {'schema_version':1,'operation':'actions-qualification','mode':'read-only',
+            'source_head':current_head,'working_tree_tracked_clean':clean,
+            'source_reference_head':plan.get('reference_source_commit'),
+            'source_contract_consistent':source_consistent,
+            'source_contracts':source_rows,
+            'original_obligations':{'count':len(obligations),'historical_status_counts':dict(counts),
+                                    'preserved_verbatim':True,'source_snapshot_only':True},
+            'wave_implementation':[{ 'wave':w['id'],'source_pins_present':
+                                    next(x['status'] == 'SOURCE_PINS_MATCH' for x in source_rows if x.get('wave') == w['id'] and 'source_only' in x),
+                                    'status':'SOURCE_IMPLEMENTED_LIVE_UNQUALIFIED'} for w in waves],
+            'acceptance_gates':pending,'pending_required_gate_count':sum(g['required'] for g in pending),
+            'historical_dependencies':plan['historical_dependencies'],
+            'user_excluded_paid_github_gate':True,
+            'qualified_release':False,'source_attested':False,'campaign_closed':False,
+            'status':'BLOCKED_ON_LIVE_AND_HISTORICAL_EVIDENCE',
+            'note':'This source-only report never runs tests or upgrades historical and external evidence.'}

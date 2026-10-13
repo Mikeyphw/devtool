@@ -1,0 +1,318 @@
+{
+  "gates": [
+    {
+      "acceptance": "Termux debug Gradle regression after shared provider modifications; source and V105 baseline retained",
+      "evidence_receipt": "not_present_in_this_source_snapshot",
+      "id": "G0_BASELINE",
+      "live_status": "pending",
+      "operator_deferred": false,
+      "required_for_final_claim": true,
+      "wave": "G0"
+    },
+    {
+      "acceptance": "Live GitHub authentication/403/429, ambiguous 204 dispatch, moved ref, corrupt/expired artifact and retry safety",
+      "evidence_receipt": "not_present_in_this_source_snapshot",
+      "id": "G1_GITHUB_NEGATIVES",
+      "live_status": "pending",
+      "operator_deferred": true,
+      "required_for_final_claim": true,
+      "wave": "G1"
+    },
+    {
+      "acceptance": "Native process restart, multi-process pipeline contention, cancellation ownership and remote run correlation",
+      "evidence_receipt": "not_present_in_this_source_snapshot",
+      "id": "G2_NATIVE_RECOVERY",
+      "live_status": "pending",
+      "operator_deferred": true,
+      "required_for_final_claim": true,
+      "wave": "G2"
+    },
+    {
+      "acceptance": "Actual Textual stage transitions, GTK workflow and Android HUD pipeline controls across failed/resumed states",
+      "evidence_receipt": "not_present_in_this_source_snapshot",
+      "id": "G3_UI_RUNTIMES",
+      "live_status": "pending",
+      "operator_deferred": true,
+      "required_for_final_claim": true,
+      "wave": "G3"
+    },
+    {
+      "acceptance": "Remote unsigned AAB, same-build tests and lint, bundletool import, LIFE signing, second project/variant",
+      "evidence_receipt": "not_present_in_this_source_snapshot",
+      "id": "G4_AAB_HOSTED",
+      "live_status": "pending",
+      "operator_deferred": true,
+      "required_for_final_claim": true,
+      "wave": "G4"
+    },
+    {
+      "acceptance": "Real Linux and Windows Python/Go/Rust/Java matrix; missing/retried cell and artifact fan-in",
+      "evidence_receipt": "not_present_in_this_source_snapshot",
+      "id": "G5_MATRIX_HOSTED",
+      "live_status": "pending",
+      "operator_deferred": true,
+      "required_for_final_claim": true,
+      "wave": "G5"
+    },
+    {
+      "acceptance": "Independent signer tamper, parent mismatch, and release/attestation truth on Termux",
+      "evidence_receipt": "not_present_in_this_source_snapshot",
+      "id": "G6_RELEASE_NEGATIVES",
+      "live_status": "pending",
+      "operator_deferred": true,
+      "required_for_final_claim": true,
+      "wave": "G6"
+    },
+    {
+      "acceptance": "Optional runner API, metrics, GitLab, and approved draft upload negative/live checks",
+      "evidence_receipt": "not_present_in_this_source_snapshot",
+      "id": "G7_EXTENSIONS_LIVE",
+      "live_status": "pending",
+      "operator_deferred": true,
+      "required_for_final_claim": false,
+      "wave": "G7"
+    },
+    {
+      "acceptance": "Run full original Devtool regression and cross-domain producer-consumer tests on resource-capable environment; reconcile V105 R01\u2013R36/G3",
+      "evidence_receipt": "not_present_in_this_source_snapshot",
+      "id": "G8_BROAD_REGRESSIONS",
+      "live_status": "pending",
+      "operator_deferred": true,
+      "required_for_final_claim": true,
+      "wave": "G8"
+    }
+  ],
+  "historical_dependencies": {
+    "ACTIONS10": {
+      "local_signature_verified": true,
+      "qualified_release": false,
+      "run_id": 38340976284,
+      "signed_registry_id": "26529ad5f699",
+      "source_attested": false,
+      "status": "historical_user_observation"
+    },
+    "G6": {
+      "qualified_release": false,
+      "scope": "single read-only signed-registry verification only",
+      "status": "user_reported_local_evidence_ok"
+    },
+    "V105_pre_actions": {
+      "G3_historical_pin_mismatches": {
+        "bad_pins": 352,
+        "inspected": 2062,
+        "paths": 10
+      },
+      "R01_to_R36": "source evidence and obligations not requalified by Actions overlays",
+      "V103_report": {
+        "collected": 5146,
+        "errors": 1,
+        "failed": 130,
+        "passed": 5007,
+        "skipped": 8
+      },
+      "V104_Termux": {
+        "collected": 5150,
+        "elapsed_limit_seconds": 3600,
+        "interim_errors": 1,
+        "interim_failed": 76,
+        "interim_passed": 3167,
+        "interrupted": true
+      },
+      "original_sources": "V106/V107 handoff; V105 baseline remains outside this source snapshot",
+      "required_reconciliation": true,
+      "status": "unresolved_historical_cross_campaign"
+    }
+  },
+  "historical_status_counts": {
+    "EXCLUDED": 1,
+    "LIVE_VERIFIED": 23,
+    "OPEN": 11,
+    "PARTIAL": 32,
+    "SOURCE_TESTED": 21
+  },
+  "kind": "devtool.actions.g8.qualification-plan",
+  "original_ledger_path": "docs/actions/ACTIONS_BASELINE_OBLIGATIONS.json",
+  "original_ledger_sha256": "d912b2b7bdcb05828c2b19582ed5ff89aedaa9d97b0ad40ec54358a68464b1d4",
+  "original_requirement_count": 88,
+  "paid_private_github_branch_protection": {
+    "release_policy": "unchanged_fail_closed",
+    "status": "excluded_by_user"
+  },
+  "qualification_rules": {
+    "offline_tests": "not-proof-of-live-acceptance",
+    "qualified_release": false,
+    "signed_apk": "not-GitHub-source-attestation",
+    "source_attested": false,
+    "source_file_exists": "not-proof-of-runtime",
+    "untrusted_external_receipts": "cannot_promote"
+  },
+  "reference_source_commit": "a00f96465d6a1562d2d8f5282ab916b0c7f78005",
+  "require_all_gates_for_complete": true,
+  "schema_version": 1,
+  "waves": [
+    {
+      "id": "G0",
+      "live_status": "pending-independent-acceptance",
+      "source_contracts": [
+        {
+          "path": "docs/actions/ACTIONS_BASELINE_OBLIGATIONS.json",
+          "sha256": "d912b2b7bdcb05828c2b19582ed5ff89aedaa9d97b0ad40ec54358a68464b1d4"
+        },
+        {
+          "path": "docs/actions/ACTIONS_G00_G01_EVIDENCE_INDEX.json",
+          "sha256": "eceb42a46f1cb4a2c9d75201f1f3a471b0f877f8bb0dc1680ac64d8a4e0f3102"
+        },
+        {
+          "path": "tests/test_actions_g00_g01_provider_recovery.py",
+          "sha256": "3a3f303a88c193234a466b6c1eeca063cc512b99477846b6f54ba97ed5083c6a"
+        }
+      ],
+      "source_status": "implemented-source-observable-only"
+    },
+    {
+      "id": "G1",
+      "live_status": "pending-independent-acceptance",
+      "source_contracts": [
+        {
+          "path": "devtool/actions_runs.py",
+          "sha256": "5f2fce82a77b3bc7885c923b6892bb9e17818b007daaa4573edc6a4143fc9d6b"
+        },
+        {
+          "path": "devtool/actions_dispatch.py",
+          "sha256": "86cefd9457bc5ba0675321b37779a42af2a7375ee5b44d5695365a2c90e15867"
+        },
+        {
+          "path": "devtool/actions_artifacts.py",
+          "sha256": "60e181a6e242e5e0fa2062e8d222dd937d00c3a610e3758aa9d5fd5d87c79f67"
+        },
+        {
+          "path": "tests/test_actions_00_01_github_provider.py",
+          "sha256": "dde19fa9c0a6166c8915dfe3e02ded2308db718f9272d4b53839038d67f6ed45"
+        }
+      ],
+      "source_status": "implemented-source-observable-only"
+    },
+    {
+      "id": "G2",
+      "live_status": "pending-independent-acceptance",
+      "source_contracts": [
+        {
+          "path": "devtool/actions_pipeline.py",
+          "sha256": "22b4708ee4eb535de46b2685666bc0766e06057ad6613a3446339172e07552d1"
+        },
+        {
+          "path": "tests/test_actions_g02_parallel_recovery.py",
+          "sha256": "e1f3bcfdf80c0795c0d5af114aa326b2c283eb8dec5ffe3a0054d58797b6acd4"
+        },
+        {
+          "path": "docs/actions/ACTIONS_G02_PARALLEL_DAG_RECOVERY.md",
+          "sha256": "b52a4deffd006af44d5f9b9ad16e75afe55472e7402b668a29da37bcf8746667"
+        }
+      ],
+      "source_status": "implemented-source-observable-only"
+    },
+    {
+      "id": "G3",
+      "live_status": "pending-independent-acceptance",
+      "source_contracts": [
+        {
+          "path": "devtool/actions_pipeline_textual.py",
+          "sha256": "13405b4faf1a98b0c399c6b248b4ddb4f9b5d7c01ad7b4a6e47b810a0b2c1ef5"
+        },
+        {
+          "path": "tests/test_actions_g03_pipeline_interfaces.py",
+          "sha256": "3900818f6e25debd5306e5ce1bd41af5fb3370da423e41951396eda723b33033"
+        },
+        {
+          "path": "docs/actions/ACTIONS_G03_CI_INTERFACE_PARITY.md",
+          "sha256": "8f1ef6bf9bad172c9f7b379f508f7367890ceaff19c7e7750b4cd779df919722"
+        }
+      ],
+      "source_status": "implemented-source-observable-only"
+    },
+    {
+      "id": "G4",
+      "live_status": "pending-independent-acceptance",
+      "source_contracts": [
+        {
+          "path": "devtool/actions_aab.py",
+          "sha256": "fc5d578bb93e8ab1ec989d5d85a4f4edc8a079e3ddbe437344ac4c4c158b736a"
+        },
+        {
+          "path": ".github/workflows/devtool-android-aab-candidate.yml",
+          "sha256": "5360b230bf5a3aa9ad66a07cce738b0c8abfd30c62db9fb681678b35ad2e9c1a"
+        },
+        {
+          "path": "tests/test_actions_g04_android_aab_candidate.py",
+          "sha256": "ca5dce408114286814122235d742bc956bf85596be5b66bab68eee624fb77dfb"
+        },
+        {
+          "path": "docs/actions/ACTIONS_G04_ANDROID_BUNDLE_EVIDENCE.md",
+          "sha256": "b72328287efd7c302aff454f418edade5de9eedd6c52ca576f1bbd53d3e2bb0f"
+        }
+      ],
+      "source_status": "implemented-source-observable-only"
+    },
+    {
+      "id": "G5",
+      "live_status": "pending-independent-acceptance",
+      "source_contracts": [
+        {
+          "path": "devtool/actions_polyglot.py",
+          "sha256": "2572f25625caa3fc720b3c2a9cb0808878e0c7b68fd7eec717a7ea8520d5a326"
+        },
+        {
+          "path": ".github/workflows/devtool-polyglot-ci.yml",
+          "sha256": "70589f8651b922f60f2cbb0b7fc84ab7b8fb1bcc26373faa598bb9dd23331e11"
+        },
+        {
+          "path": "tests/test_actions_g05_polyglot_ci.py",
+          "sha256": "65ab136587f32db5e74d15c0fa32552a9842bb237836d317663423b95585b46f"
+        },
+        {
+          "path": "docs/actions/ACTIONS_G05_POLYGLOT_MATRIX_AND_EVIDENCE.md",
+          "sha256": "da91b756ab6be27e0759d92f2148ee8dbd7d939bd25aebfb06b13db7f3fb6941"
+        }
+      ],
+      "source_status": "implemented-source-observable-only"
+    },
+    {
+      "id": "G6",
+      "live_status": "pending-independent-acceptance",
+      "source_contracts": [
+        {
+          "path": "devtool/actions_local_evidence.py",
+          "sha256": "97856c5f5e79f9c31ca12a832ea1ec55c6879426ae9f18e33df403708b0d330e"
+        },
+        {
+          "path": "tests/test_actions_g06_local_release_truth.py",
+          "sha256": "2bd598bf660fa2a8d1ae079a154da64adcc311cce60b7c6bafe19407868fdcb6"
+        },
+        {
+          "path": "docs/actions/ACTIONS_G06_LOCAL_RELEASE_TRUTH.md",
+          "sha256": "21113c069469fe79cb68c70139752140e711a7467bfce46ab9df371fecb47519"
+        }
+      ],
+      "source_status": "implemented-source-observable-only"
+    },
+    {
+      "id": "G7",
+      "live_status": "pending-independent-acceptance",
+      "source_contracts": [
+        {
+          "path": "devtool/actions_extensions.py",
+          "sha256": "acc98f4eed3acb828fff150599ed7888d84b80f31a21a45a9bb0732b1bdef1d7"
+        },
+        {
+          "path": "tests/test_actions_g07_optional_extensions.py",
+          "sha256": "d582c8e6ecec2c5cf22691e8d7361b70d66f42bbc0e2184e1991c8e96b9fa23d"
+        },
+        {
+          "path": "docs/actions/ACTIONS_G07_OPTIONAL_EXTENSIONS.md",
+          "sha256": "aa0f994597c2a7440a3bf411996f091603e8cf7c9db7d0d8f7a4cb7aceb7ad02"
+        }
+      ],
+      "source_status": "implemented-source-observable-only"
+    }
+  ]
+}

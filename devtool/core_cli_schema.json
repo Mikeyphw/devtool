@@ -6052,6 +6052,56 @@
       },
       "options": [],
       "stable_id": "cli.command.wrapper.verify"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "qualification"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "G8 Actions qualification",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.qualification"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "qualification",
+        "check"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "G8 read-only qualification check",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.qualification.check"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "qualification",
+        "report"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "G8 read-only qualification report",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.qualification.report"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -59204,6 +59254,143 @@
       "scope": "wrapper verify",
       "sensitive": false,
       "stable_id": "cli.option.ipc-server.help.aea0e981",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "qualification"
+        ],
+        "required": false
+      },
+      "scope": "actions qualification",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.qualification.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "qualification",
+          "check"
+        ],
+        "required": false
+      },
+      "scope": "actions qualification check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.qualification.check.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--require-complete",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "require_complete",
+        "help": "Fail if any required live/historical qualification is pending",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "qualification",
+          "check"
+        ],
+        "required": false
+      },
+      "scope": "actions qualification check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.qualification.check.require_complete",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "qualification",
+          "check"
+        ],
+        "required": false
+      },
+      "scope": "actions qualification check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.qualification.check.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "qualification",
+          "report"
+        ],
+        "required": false
+      },
+      "scope": "actions qualification report",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.qualification.report.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "qualification",
+          "report"
+        ],
+        "required": false
+      },
+      "scope": "actions qualification report",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.qualification.report.help",
       "value_kind": "_HelpAction"
     }
   ],
@@ -113024,6 +113211,124 @@
                         }
                       ],
                       "dest": "extensions_command",
+                      "group": null,
+                      "help": null,
+                      "metavar": null,
+                      "required": true
+                    },
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "G8 Actions qualification and historical evidence reconciliation",
+                  "help_present": true,
+                  "name": "qualification",
+                  "parser": {
+                    "actions": [],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": {
+                      "children": [
+                        {
+                          "aliases": [],
+                          "help": "G8 read-only qualification report",
+                          "help_present": true,
+                          "name": "report",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "G8 read-only qualification check",
+                          "help_present": true,
+                          "name": "check",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "require_complete",
+                                "group": null,
+                                "help": "Fail if any required live/historical qualification is pending",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--require-complete"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        }
+                      ],
+                      "dest": "qualification_command",
                       "group": null,
                       "help": null,
                       "metavar": null,
