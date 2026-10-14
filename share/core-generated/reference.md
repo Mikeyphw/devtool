@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `fc25573357c786d21aaf8a4e855aef7e66d5a2a91f0cc9068a1197a8ce3a5aa0`
+Registry digest: `b04756a4e8d96ebe76377440f1ae36c8c34943a84e7e793ed9ce18753f1ac00b`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -8,25 +8,50 @@ This file is generated from the CORE command/config registry and the canonical C
 
 - `actions` — Read-only GitHub Actions provider
 - `actions android` — Android builds on GitHub Actions and verified APK/AAB acquisition
+- `actions android aab-check` — Inspect source-bound AAB with bundletool (read-only)
+- `actions android aab-import` — Download, verify and register unsigned AAB
+- `actions android aab-plan` — Preview unsigned Android AAB workflow with source pin
+- `actions android aab-run` — Dispatch unsigned AAB candidate (requires --yes)
+- `actions android aab-sign` — Locally sign imported AAB using LIFE (requires --yes)
 - `actions android collect` — Fetch or verify and inspect an APK/AAB, registering output as unqualified
 - `actions android discover` — Discover statically declared Android app modules
 - `actions android plan` — Validate source parity and Android workflow inputs without dispatch
 - `actions android run` — Dispatch an Android build only with explicit --yes
+- `actions android unsigned-check` — Verify exact GitHub unsigned archive and APK (read-only)
+- `actions android unsigned-import` — Download, validate and register unsigned GitHub APK
+- `actions android unsigned-plan` — Preview source-bound, unsigned GitHub release candidate
+- `actions android unsigned-run` — Dispatch dedicated unsigned candidate workflow (requires --yes)
+- `actions android unsigned-sign` — Locally align, LIFE-sign and verify imported candidate (requires --yes)
 - `actions android verify` — Verify a downloaded Android archive and inspect its package
 - `actions artifacts` — List artifacts associated with a specific GitHub workflow run
 - `actions baseline` — Read-only GitHub Actions provider
 - `actions cancel` — Request cancellation of a remote workflow run (explicit confirmation)
+- `actions ci` — G5 polyglot CI
+- `actions ci check` — G5 polyglot check
+- `actions ci collect` — G5 polyglot collect
+- `actions ci plan` — G5 polyglot plan
+- `actions ci run` — G5 polyglot run
 - `actions diagnose` — Diagnose GitHub repository identity, access and workflow discovery without mutation
 - `actions download` — Download, SHA-256 verify and register an unextracted Actions ZIP
+- `actions extensions` — G7 optional provider integrations
+- `actions extensions gitlab-pipelines` — G7 optional gitlab-pipelines
+- `actions extensions metrics` — G7 optional metrics
+- `actions extensions publish` — G7 optional publish
+- `actions extensions publish-plan` — G7 optional publish-plan
+- `actions extensions runners` — G7 optional runners
 - `actions jobs` — Inspect run and job/step states
 - `actions logs` — Download remote workflow run logs as a bounded unextracted ZIP to private state
 - `actions pipeline` — Cross-boundary local/remote DAG with frozen source and durable resume
+- `actions pipeline cancel` — Request safe, durable pipeline cancellation without cancelling remote jobs
 - `actions pipeline plan` — Validate local Git and remote GitHub DAG without mutations
 - `actions pipeline resume` — Continue waiting pipeline nodes, never repeat uncertain dispatch
 - `actions pipeline run` — Create durable pipeline journal and execute ready nodes
 - `actions pipeline status` — Read local durable pipeline states (no GitHub operations)
 - `actions plan` — Validate workflow ref and inputs without dispatching
 - `actions release` — Independent-policy release provenance qualification
+- `actions release local-build` — Preview or execute local signed release build without Github qualification
+- `actions release local-evidence` — G6 read-only signed APK/AAB provenance and certificate re-verification
+- `actions release local-verify` — Verify local package manifest and pinned LIFE signing certificate
 - `actions release readiness` — Check protected ref, signing secret names and private policy
 - `actions release setup` — Minimum allowed release versionCode
 - `actions release verify` — Read-only package release qualification with signed GitHub provenance
@@ -326,6 +351,9 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
+- `actions qualification` — G8 Actions qualification
+- `actions qualification check` — G8 read-only qualification check
+- `actions qualification report` — G8 read-only qualification report
 
 ## Configuration documents
 

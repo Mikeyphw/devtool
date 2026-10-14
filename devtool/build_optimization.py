@@ -526,7 +526,12 @@ def resolve_build_policy(config: ProjectConfig, kind: str) -> BuildResourcePolic
         if environment in {CHROOT, NATIVE_TERMUX} and memory is not None and memory < 3000:
             workers = min(workers, 2)
 
-    workers = max(1, min(cpus, workers))
+    # Explicit worker counts are an operator-selected resource budget, not an
+    # estimate of available logical CPUs.  In CI/containers os.cpu_count() may
+    # report 1-2 even when the target build executor accepts more workers.
+    # Preserve automatic CPU and RAM caps, but honor deliberate overrides.
+    # Prevent accidentally unbounded values from exhausting a host.
+    workers = max(1, min(64 if explicit is not None else cpus, workers))
     low_memory = bool(memory is not None and memory < 3500)
     return BuildResourcePolicy(
         environment=environment,

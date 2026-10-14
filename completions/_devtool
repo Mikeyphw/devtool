@@ -686,6 +686,7 @@ _devtool() {
     '(--output-debug --no-output-debug)--output-debug[show and persist the terminal summary and any clipboard payload]' \
     '(--output-debug --no-output-debug)--no-output-debug[disable terminal and clipboard output debugging even when DEVTOOL_OUTPUT_DEBUG is enabled]' \
     '--theme[summary theme]:theme:(auto plain)' \
+    '--ui[job display]:layout:(compact full plain)' \
     '--ui-profile[shared UI profile]:profile:_devtool_ui_profiles' \
     '--ui-theme[shared UI theme]:theme:(auto light dark)' \
     '--ui-density[shared information density]:density:(dense compact comfortable detailed)' \
@@ -1514,7 +1515,7 @@ _devtool() {
           fi
           ;;
         tui)
-          _arguments '--page[initial page]:page:(dashboard runs logs diagnostics history targets workers validation artifacts overlays evidence build run log diagnostic worker ssh artifact overlay)' '--artifact[overlay artifact to preflight]:artifact:_devtool_artifact_path' '--once[render once and exit]' '--width[override terminal width]:columns:' '--backend[TUI backend]:backend:(auto textual legacy)' '--legacy-tui[force the legacy Rich terminal TUI backend]' '--require-textual[fail instead of falling back when Textual is unavailable]' '--no-tui-fallback[alias for --require-textual]' '--explain-backend[print resolved TUI backend selection and exit]'
+          _arguments '--page[initial page]:page:(dashboard runs logs diagnostics history targets workers validation artifacts overlays evidence build run log diagnostic worker ssh artifact overlay)' '--artifact[overlay artifact to preflight]:artifact:_devtool_artifact_path' '--once[render once and exit]' '--width[override terminal width]:columns:' '--backend[TUI backend]:backend:(auto textual)' '--require-textual[require Textual (no fallback)]' '--no-tui-fallback[require Textual]' '--explain-backend[print resolved TUI backend selection and exit]'
           ;;
         cleanup)
           _arguments '--dry-run[show changes without moving or deleting files]' '--prune-history-days[delete archived backup batches older than this many days]:days:'

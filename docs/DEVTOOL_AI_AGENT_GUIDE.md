@@ -288,7 +288,7 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--ssh, --ssh-host HOST` | Use HOST as the SSH execution target (whole devtool or command-phase mode) |
 | `--ssh-profile NAME` | Use a named SSH worker from [ssh.hosts.NAME]; explicit SSH flags override profile fields |
 | `--proot-distro DISTRO` | Run command phases inside a PRoot-Distro container; guest does not need devtool |
-| `--execution-environment EXECUTION_ENVIRONMENT` | Execution backend: auto, native-termux, chroot, proot-distro, desktop-linux, ssh, android-device, or external-device Choices: auto, native-termux, chroot, desktop-linux, android-device, external-device, ssh, proot-distro |
+| `--execution-environment EXECUTION_ENVIRONMENT` | Execution backend: auto, native-termux, chroot, proot-distro, desktop-linux, ssh, android-device, or external-device Choices: auto, native-termux, chroot, desktop-linux, desktop-macos, desktop-windows, host, android-device, external-device, ssh, proot-distro |
 | `--ssh-port PORT` | SSH port (default: 22 or [ssh].port) |
 | `--ssh-user USER` | SSH login user |
 | `--ssh-identity PATH` | SSH private-key identity file |
@@ -334,6 +334,81 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `--native-cache NATIVE_CACHE` | Native compiler cache provider: auto, ccache, or off Choices: auto, ccache, off |
 | `--android-build-tools-provider ANDROID_BUILD_TOOLS_PROVIDER` | Android native build-tools provider: auto, termux, sdk, commit451, or none Choices: auto, commit451, none, sdk, termux |
 | `--aapt2-provider AAPT2_PROVIDER` | AAPT2 provider for Android builds Choices: auto, termux, sdk, revanced, none |
+| `--ui JOB_UI` | Job display: compact Textual (default), full Textual or plain stream Choices: compact, full, plain |
+
+### `devtool gradle`
+
+Inspect and control canonical Gradle execution
+
+**Subcommands:** `takeover`, `real`
+
+### `devtool gradle takeover`
+
+Manage optional Gradle takeover/interception
+
+**Subcommands:** `status`, `doctor`, `explain`, `disable`, `enable`, `intercept`
+
+### `devtool gradle takeover status`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit structured JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool gradle takeover doctor`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit structured JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool gradle takeover explain`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit structured JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool gradle takeover disable`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit structured JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool gradle takeover enable`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--mode MODE` | Choices: observe, manage, strict |
+| `--scope SCOPE` | Choices: devtool, shell, both |
+| `--json` | Emit structured JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool gradle takeover intercept`
+
+==SUPPRESS==
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--origin ORIGIN` | Choices: shell, devtool, wrapper, invoke, workflow, validation, testspec, artifact, android, ssh, federation |
+| `--intent INTENT` | Choices: work, probe, control |
+| `--requested-launcher REQUESTED_LAUNCHER` | Accepted by this command. |
+| `GRADLE_ARGS` | Accepted by this command. |
+
+### `devtool gradle real`
+
+Run the authoritative real Gradle launcher, bypassing takeover planning for diagnostics
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--launcher LAUNCHER` | auto, wrapper, system, gradle, or an explicit launcher path |
+| `GRADLE_ARGS` | Accepted by this command. |
 
 ### `devtool restore`
 
@@ -763,6 +838,7 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--workflow-parallel` | Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe |
 | `--no-workflow-parallel` | Force workflow DAG nodes to execute sequentially |
 | `--workflow-max-workers COUNT` | Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default |
+| `--module RELEASE_MODULE` | Release module lane override |
 | `--device-tests DEVICE_TESTS` | Release device/instrumentation policy Choices: disabled, when-device-present, required |
 | `--previous-apk PREVIOUS_APK` | Previous APK used by upgrade-smoke |
 | `--package RELEASE_PACKAGE` | Application package override for smoke gates |
@@ -789,9 +865,11 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--affected-base AFFECTED_BASE` | Git base revision for affected selection |
 | `--affected-head AFFECTED_HEAD` | Git head revision for affected selection |
 | `--variant VARIANT` | Variant within the selected workspace target(s) |
-| `--caches` | Also prune repository-scoped devtool-managed caches and transient state |
-| `--space` | Prune safe global Android/toolchain caches managed by Devtool |
-| `--gradle-user-cache` | With --space, also prune old version-specific ~/.gradle caches and build-cache-1; modules/wrapper caches are preserved |
+| `--project-clean, --project-outputs` | Clean project-owned outputs through the selected project runner; this is the default when no cleanup scope flag is given |
+| `--caches` | Prune repository-scoped Devtool-managed caches and transient state without implicitly running project clean |
+| `--space` | Prune Devtool-managed Android/toolchain caches without touching user-global caches |
+| `--global-caches` | Explicitly include user-global Android download cache cleanup |
+| `--gradle-user-cache` | Explicitly include old version-specific ~/.gradle caches and build-cache-1; modules/wrapper caches are preserved |
 | `--space-target-free-mb SPACE_TARGET_FREE_MB` | With --space, stop after reaching this much free space; 0 removes all safe candidates |
 | `--managed-gradle-retention MANAGED_GRADLE_RETENTION` | With --space, keep this many newest Devtool-managed Gradle distributions |
 
@@ -822,6 +900,9 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--affected-base AFFECTED_BASE` | Git base revision for affected selection |
 | `--affected-head AFFECTED_HEAD` | Git head revision for affected selection |
 | `--variant VARIANT` | Variant within the selected workspace target(s) |
+| `--json` | Emit structured project, execution, repository identity, and federation boundary status |
+
+Agent note: machine-friendly controls on this command include `--json`.
 
 ### `devtool doctor`
 
@@ -1102,6 +1183,7 @@ Open the validation menu and wizard
 | Argument / option | Meaning |
 | --- | --- |
 | `MESSAGE` | Accepted by this command. |
+| `--signing SIGNING` | Git SSH signing policy for this commit; default comes from [git].signing Choices: off, if-configured, required |
 
 ### `devtool apply-overlay`
 
@@ -1205,7 +1287,16 @@ Open the validation menu and wizard
 | `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
-| `--no-commit` | Disable a commit requested by the artifact manifest |
+| `--commit-mode COMMIT_MODE` | Git result policy: new, amend, fixup, or none (default inferred from artifact/flags) Choices: new, amend, fixup, none |
+| `--amend` | Safely amend HEAD after apply; alias for --commit-mode amend |
+| `--no-commit` | Disable a commit requested by the artifact manifest; alias for --commit-mode none |
+| `--fixup-target REV` | Create a fixup! commit targeting REV (defaults to HEAD in fixup mode) |
+| `--reset-author` | With amend mode, reset commit author to the current Git identity |
+| `--allow-merge-amend` | Allow amending a merge commit (refused by default) |
+| `--allow-published-rewrite` | Allow amending HEAD when reachable from a protected upstream/remote ref; never pushes |
+| `--preserve-dirty` | Explicitly request transactional preservation/restoration of staged, unstaged, untracked, symlink, mode, and index state |
+| `--signing SIGNING` | Git SSH signing policy for the result commit; default comes from [git].signing Choices: off, if-configured, required |
+| `--isolation ISOLATION` | Apply in an isolated Devtool-owned Git worktree when supported (default: worktree); use direct for legacy in-place mutation Choices: worktree, direct |
 | `--no-artifact-script` | Skip embedded artifact validation scripts while keeping built-in validation |
 | `--rebase` | Rebase a single overlay inventory against the current repository before applying |
 
@@ -1313,7 +1404,16 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
-| `--no-commit` | Disable a commit requested by the artifact manifest |
+| `--commit-mode COMMIT_MODE` | Git result policy: new, amend, fixup, or none (default inferred from artifact/flags) Choices: new, amend, fixup, none |
+| `--amend` | Safely amend HEAD after apply; alias for --commit-mode amend |
+| `--no-commit` | Disable a commit requested by the artifact manifest; alias for --commit-mode none |
+| `--fixup-target REV` | Create a fixup! commit targeting REV (defaults to HEAD in fixup mode) |
+| `--reset-author` | With amend mode, reset commit author to the current Git identity |
+| `--allow-merge-amend` | Allow amending a merge commit (refused by default) |
+| `--allow-published-rewrite` | Allow amending HEAD when reachable from a protected upstream/remote ref; never pushes |
+| `--preserve-dirty` | Explicitly request transactional preservation/restoration of staged, unstaged, untracked, symlink, mode, and index state |
+| `--signing SIGNING` | Git SSH signing policy for the result commit; default comes from [git].signing Choices: off, if-configured, required |
+| `--isolation ISOLATION` | Apply in an isolated Devtool-owned Git worktree when supported (default: worktree); use direct for legacy in-place mutation Choices: worktree, direct |
 | `--no-artifact-script` | Skip embedded artifact validation scripts while keeping built-in validation |
 | `--rebase` | Rebase a single overlay inventory against the current repository before applying |
 
@@ -1421,7 +1521,16 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
-| `--no-commit` | Disable a commit requested by the artifact manifest |
+| `--commit-mode COMMIT_MODE` | Git result policy: new, amend, fixup, or none (default inferred from artifact/flags) Choices: new, amend, fixup, none |
+| `--amend` | Safely amend HEAD after apply; alias for --commit-mode amend |
+| `--no-commit` | Disable a commit requested by the artifact manifest; alias for --commit-mode none |
+| `--fixup-target REV` | Create a fixup! commit targeting REV (defaults to HEAD in fixup mode) |
+| `--reset-author` | With amend mode, reset commit author to the current Git identity |
+| `--allow-merge-amend` | Allow amending a merge commit (refused by default) |
+| `--allow-published-rewrite` | Allow amending HEAD when reachable from a protected upstream/remote ref; never pushes |
+| `--preserve-dirty` | Explicitly request transactional preservation/restoration of staged, unstaged, untracked, symlink, mode, and index state |
+| `--signing SIGNING` | Git SSH signing policy for the result commit; default comes from [git].signing Choices: off, if-configured, required |
+| `--isolation ISOLATION` | Apply in an isolated Devtool-owned Git worktree when supported (default: worktree); use direct for legacy in-place mutation Choices: worktree, direct |
 | `--no-artifact-script` | Skip embedded artifact validation scripts while keeping built-in validation |
 | `--rebase` | Rebase a single overlay inventory against the current repository before applying |
 
@@ -1533,7 +1642,16 @@ Apply an overlay, overlay bundle, or snapshot
 | `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
-| `--no-commit` | Disable a commit requested by the artifact manifest |
+| `--commit-mode COMMIT_MODE` | Git result policy: new, amend, fixup, or none (default inferred from artifact/flags) Choices: new, amend, fixup, none |
+| `--amend` | Safely amend HEAD after apply; alias for --commit-mode amend |
+| `--no-commit` | Disable a commit requested by the artifact manifest; alias for --commit-mode none |
+| `--fixup-target REV` | Create a fixup! commit targeting REV (defaults to HEAD in fixup mode) |
+| `--reset-author` | With amend mode, reset commit author to the current Git identity |
+| `--allow-merge-amend` | Allow amending a merge commit (refused by default) |
+| `--allow-published-rewrite` | Allow amending HEAD when reachable from a protected upstream/remote ref; never pushes |
+| `--preserve-dirty` | Explicitly request transactional preservation/restoration of staged, unstaged, untracked, symlink, mode, and index state |
+| `--signing SIGNING` | Git SSH signing policy for the result commit; default comes from [git].signing Choices: off, if-configured, required |
+| `--isolation ISOLATION` | Apply in an isolated Devtool-owned Git worktree when supported (default: worktree); use direct for legacy in-place mutation Choices: worktree, direct |
 | `--no-artifact-script` | Skip embedded artifact validation scripts while keeping built-in validation |
 | `--rebase` | Rebase a single overlay inventory against the current repository before applying |
 
@@ -1639,7 +1757,16 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
-| `--no-commit` | Disable a commit requested by the artifact manifest |
+| `--commit-mode COMMIT_MODE` | Git result policy: new, amend, fixup, or none (default inferred from artifact/flags) Choices: new, amend, fixup, none |
+| `--amend` | Safely amend HEAD after apply; alias for --commit-mode amend |
+| `--no-commit` | Disable a commit requested by the artifact manifest; alias for --commit-mode none |
+| `--fixup-target REV` | Create a fixup! commit targeting REV (defaults to HEAD in fixup mode) |
+| `--reset-author` | With amend mode, reset commit author to the current Git identity |
+| `--allow-merge-amend` | Allow amending a merge commit (refused by default) |
+| `--allow-published-rewrite` | Allow amending HEAD when reachable from a protected upstream/remote ref; never pushes |
+| `--preserve-dirty` | Explicitly request transactional preservation/restoration of staged, unstaged, untracked, symlink, mode, and index state |
+| `--signing SIGNING` | Git SSH signing policy for the result commit; default comes from [git].signing Choices: off, if-configured, required |
+| `--isolation ISOLATION` | Apply in an isolated Devtool-owned Git worktree when supported (default: worktree); use direct for legacy in-place mutation Choices: worktree, direct |
 | `--no-artifact-script` | Skip embedded artifact validation scripts while keeping built-in validation |
 | `--rebase` | Rebase a single overlay inventory against the current repository before applying |
 
@@ -1745,7 +1872,16 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 | `--no-rollback-on-failure` | Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity |
 | `--no-apply-notification` | Do not show the final apply notification/toast |
 | `--commit COMMIT` | Commit with this message after apply and optional validation |
-| `--no-commit` | Disable a commit requested by the artifact manifest |
+| `--commit-mode COMMIT_MODE` | Git result policy: new, amend, fixup, or none (default inferred from artifact/flags) Choices: new, amend, fixup, none |
+| `--amend` | Safely amend HEAD after apply; alias for --commit-mode amend |
+| `--no-commit` | Disable a commit requested by the artifact manifest; alias for --commit-mode none |
+| `--fixup-target REV` | Create a fixup! commit targeting REV (defaults to HEAD in fixup mode) |
+| `--reset-author` | With amend mode, reset commit author to the current Git identity |
+| `--allow-merge-amend` | Allow amending a merge commit (refused by default) |
+| `--allow-published-rewrite` | Allow amending HEAD when reachable from a protected upstream/remote ref; never pushes |
+| `--preserve-dirty` | Explicitly request transactional preservation/restoration of staged, unstaged, untracked, symlink, mode, and index state |
+| `--signing SIGNING` | Git SSH signing policy for the result commit; default comes from [git].signing Choices: off, if-configured, required |
+| `--isolation ISOLATION` | Apply in an isolated Devtool-owned Git worktree when supported (default: worktree); use direct for legacy in-place mutation Choices: worktree, direct |
 | `--no-artifact-script` | Skip embedded artifact validation scripts while keeping built-in validation |
 | `--rebase` | Rebase a single overlay inventory against the current repository before applying |
 
@@ -1775,7 +1911,7 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 
 Inspect, preflight, and rebase overlay artifacts
 
-**Subcommands:** `check`, `rebase`
+**Subcommands:** `check`, `status`, `rebase`
 
 ### `devtool overlay check`
 
@@ -1792,9 +1928,20 @@ Preflight an overlay against the current repository
 
 Agent note: machine-friendly controls on this command include `--json`.
 
+### `devtool overlay status`
+
+Classify overlay patch equivalence against the current repository
+
+| Argument / option | Meaning |
+| --- | --- |
+| `ARTIFACT` | Accepted by this command. |
+| `--json` | Emit structured patch-equivalence JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
 ### `devtool overlay rebase`
 
-Regenerate overlay inventory source hashes against the current repository
+Three-way rebase an overlay against the current repository
 
 | Argument / option | Meaning |
 | --- | --- |
@@ -1927,16 +2074,175 @@ Prune old registry entries
 
 Agent note: machine-friendly controls on this command include `--json`.
 
+### `devtool delivery`
+
+Resolve and qualify canonical delivery artifacts
+
+**Subcommands:** `plan`
+
+### `devtool delivery plan`
+
+Resolve one artifact into the canonical LIFE delivery plan
+
+| Argument / option | Meaning |
+| --- | --- |
+| `ARTIFACT` | Accepted by this command. |
+| `--public-runner` | Enforce public-runner fail-closed assurance |
+| `--isolation ISOLATION` | Choices: worktree, direct, none |
+| `--unsafe-authorize CODE[:REASON]` | Accepted by this command. |
+| `--json` | Emit canonical plan JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool repo-pack`
+
+Plan and atomically publish canonical repository packs
+
+**Subcommands:** `plan`, `create`, `list`, `status`, `pin`, `unpin`, `prune`
+
+### `devtool repo-pack plan`
+
+Plan a repository pack without writing it
+
+| Argument / option | Meaning |
+| --- | --- |
+| `REPOSITORIES...` | Repository roots; defaults to --repo/current repository |
+| `-o, --output OUTPUT` | Required. |
+| `--mode MODE` | Choices: worktree, tracked, commit, handoff |
+| `--compression COMPRESSION` | Choices: tar.gz, tar.zst, tar, zip |
+| `--commit COMMIT` | Accepted by this command. |
+| `--git-bundle` | Accepted by this command. |
+| `--pin` | Accepted by this command. |
+| `--retention RETENTION` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool repo-pack create`
+
+Create, verify, and atomically publish a repository pack
+
+| Argument / option | Meaning |
+| --- | --- |
+| `REPOSITORIES...` | Repository roots; defaults to --repo/current repository |
+| `-o, --output OUTPUT` | Required. |
+| `--mode MODE` | Choices: worktree, tracked, commit, handoff |
+| `--compression COMPRESSION` | Choices: tar.gz, tar.zst, tar, zip |
+| `--commit COMMIT` | Accepted by this command. |
+| `--git-bundle` | Accepted by this command. |
+| `--pin` | Accepted by this command. |
+| `--retention RETENTION` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool repo-pack list`
+
+List durable repository-pack lifecycle records
+
+**Aliases:** `devtool repo-pack ls`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--all` | include tombstoned packs |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool repo-pack status`
+
+Verify repository-pack bytes and retention state
+
+**Aliases:** `devtool repo-pack show`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `SELECTOR` | pack id, receipt id, or output path |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool repo-pack pin`
+
+Pin a repository pack against lifecycle GC
+
+| Argument / option | Meaning |
+| --- | --- |
+| `SELECTOR` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool repo-pack unpin`
+
+Release an explicit repository-pack pin
+
+| Argument / option | Meaning |
+| --- | --- |
+| `SELECTOR` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool repo-pack prune`
+
+Garbage-collect unpinned policy packs through LIFE cleanup
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--older-than-days OLDER_THAN_DAYS` | minimum pack age in days |
+| `--dry-run` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--dry-run`, `--json`.
+
+### `devtool signing-identity`
+
+Manage private non-secret signing identity references
+
+**Subcommands:** `list`, `register`
+
+### `devtool signing-identity list`
+
+**Aliases:** `devtool signing-identity ls`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool signing-identity register`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `IDENTITY_ID` | Accepted by this command. |
+| `--provider PROVIDER` | Required. |
+| `--key-reference KEY_REFERENCE` | Required. |
+| `--alias ALIAS` | Accepted by this command. |
+| `--certificate-sha256 CERTIFICATE_SHA256` | Accepted by this command. |
+| `--purpose PURPOSE` | Accepted by this command. |
+| `--variant VARIANT` | Accepted by this command. |
+| `--secret-provider SECRET_PROVIDER` | Choices: local, keyring, private-file, fd, stdin, external-command |
+| `--secret-reference SECRET_REFERENCE` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
 ### `devtool tui`
 
 Open the responsive terminal dashboard
 
 | Argument / option | Meaning |
 | --- | --- |
-| `--page PAGE` | Initial terminal dashboard page Choices: dashboard, build, overlays, workers |
+| `--page PAGE` | Initial Textual control-center page (legacy aliases remain accepted) Choices: dashboard, runs, logs, diagnostics, history, targets, workers, validation, artifacts, overlays, evidence, build, run, log, diagnostic, worker, ssh, artifact, overlay |
 | `--artifact ARTIFACT` | Overlay artifact to preflight on the overlays page |
 | `--once` | Render one frame and exit |
 | `--width WIDTH` | Override terminal width for rendering/debugging |
+| `--backend BACKEND` | Textual dashboard backend (auto or textual) Choices: auto, textual |
+| `--require-textual` | Fail instead of falling back when Textual cannot be launched |
+| `--no-tui-fallback` | Require Textual; the removed Rich dashboard has no fallback |
+| `--explain-backend` | Print the resolved TUI backend selection and exit |
 
 ### `devtool cleanup`
 
@@ -2008,6 +2314,29 @@ Agent note: machine-friendly controls on this command include `--dry-run`.
 | `--fzf` | Accepted by this command. |
 | `--no-fzf` | Accepted by this command. |
 
+### `devtool runs`
+
+Query canonical CORE RUN V3 history
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable run query results |
+| `--root ROOT` | Override RUN V3 catalog root |
+| `--run-id RUN_ID` | Filter by exact run ID |
+| `--command-id COMMAND_ID` | Filter by canonical command ID |
+| `--status STATUS` | Filter by projected run status |
+| `--provider PROVIDER` | Filter by execution provider |
+| `--name NAME` | Case-insensitive run name/label filter |
+| `--attachment-kind ATTACHMENT_KIND` | Require an available attachment kind |
+| `--include-tombstoned` | Include tombstoned attachment metadata |
+| `--offset OFFSET` | Pagination offset |
+| `--limit LIMIT` | Pagination limit (1..1000) |
+| `--storage-status` | Show canonical storage/ownership/doctor status |
+| `--migration-plan` | Show read-only legacy run/log migration classification |
+| `--migrate-legacy` | Explicitly adopt readable legacy run/log/history files into RUN V3 metadata without deleting source bytes |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
 ### `devtool tag`
 
 | Argument / option | Meaning |
@@ -2026,7 +2355,8 @@ Agent note: machine-friendly controls on this command include `--dry-run`.
 
 | Argument / option | Meaning |
 | --- | --- |
-| `SHELL` | Choices: zsh |
+| `SHELL` | Choices: zsh, bash, fish |
+| `--canonical` | Generate completion from the CORE command registry instead of the legacy checked-in Zsh projection |
 
 ### `devtool completion-state`
 
@@ -2034,8 +2364,130 @@ Emit config-aware values for shell/editor completion
 
 | Argument / option | Meaning |
 | --- | --- |
-| `--kind KIND` | Choices: targets, groups, ui-profiles, test-profiles, variants, jobs, workflows, pytest-tests, all |
+| `--kind KIND` | Choices: targets, groups, ui-profiles, test-profiles, variants, jobs, target-jobs, target-job-keys, target-job-refs, workflows, wrapper-commands, wrapper-aliases, wrapper-options, pytest-tests, all |
 | `--format FORMAT` | Choices: lines, json |
+
+### `devtool wrapper`
+
+Resolve, describe, and execute repository wrapper commands
+
+**Subcommands:** `describe`, `help`, `discover`, `resolve`, `exec`, `init`, `update`, `verify`, `status`, `migrate`, `seal`
+
+### `devtool wrapper describe`
+
+Describe the repository wrapper contract
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit the wrapper contract as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool wrapper help`
+
+Show repository wrapper help
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[COMMAND_NAME]` | Optional wrapper command to describe |
+| `--json` | Emit wrapper discovery metadata as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool wrapper discover`
+
+Discover wrapper commands, launchers, and docs
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit wrapper discovery metadata as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool wrapper resolve`
+
+Resolve wrapper argv without executing it
+
+**Aliases:** `devtool wrapper plan`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit the resolved command as JSON |
+| `WRAPPER_ARGS` | Repository wrapper argv to resolve |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool wrapper exec`
+
+Resolve wrapper argv and execute the canonical Devtool command
+
+| Argument / option | Meaning |
+| --- | --- |
+| `WRAPPER_ARGS` | Repository wrapper argv to execute |
+
+### `devtool wrapper init`
+
+Create repository devtoolw launchers
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--force` | Explicitly replace drifted or unmanaged launcher files |
+| `--json` | Emit launcher status as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool wrapper update`
+
+Refresh repository devtoolw launchers
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--force` | Explicitly replace unmanaged launcher files |
+| `--json` | Emit launcher status as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool wrapper verify`
+
+Verify repository devtoolw launchers are current
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit launcher status as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool wrapper status`
+
+Show repository devtoolw launcher status
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit launcher status as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool wrapper migrate`
+
+Migrate a schema-1 repository wrapper contract to canonical schema 2
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--check` | Report whether wrapper schema migration is needed without changing files |
+| `--write` | Atomically update only the [wrapper] schema declaration |
+| `--json` | Emit secret-safe migration metadata as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool wrapper seal`
+
+Run wrapper cross-surface final seal checks
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit wrapper final seal as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
 
 ### `devtool compatibility`
 
@@ -2071,7 +2523,7 @@ Agent note: machine-friendly controls on this command include `--json`.
 
 Inspect and profile Devtool's pytest suite
 
-**Subcommands:** `profile`
+**Subcommands:** `profile`, `inventory`, `select`
 
 ### `devtool pytest profile`
 
@@ -2087,9 +2539,798 @@ Run pytest with Devtool slow-test reporting enabled
 
 Agent note: machine-friendly controls on this command include `--json`.
 
+### `devtool pytest inventory`
+
+Inspect stable Devtool test/check identity and lane/resource policy
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--lane LANE` | Filter inventory by semantic lane Choices: fast, integration, external, system, full |
+| `--group GROUP` | Filter by stable check group or alias |
+| `--explain CHECK` | Explain one durable check ID or historical alias |
+| `--json` | Emit canonical inventory JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool pytest select`
+
+Resolve an immutable deterministic test selection
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--lane LANE` | Select a semantic lane; repeatable Choices: fast, integration, external, system, full |
+| `--check CHECK` | Select a durable check ID or alias; repeatable |
+| `--group GROUP` | Select a stable check group or alias; repeatable |
+| `--shards COUNT` | Produce a deterministic immutable shard plan |
+| `--qualify` | Qualify exact required tools/capabilities and the declared test environment |
+| `--json` | Emit canonical selection JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool audit`
+
+Record and compare federation-aware source audit passes
+
+**Subcommands:** `record`, `delta`, `status`
+
+### `devtool audit record`
+
+Persist one campaign audit pass
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--campaign CAMPAIGN` | Campaign identifier Required. |
+| `--roadmap ROADMAP` | Inspected roadmap range, for example GIT-FRX-01..17 |
+| `--evidence EVIDENCE` | Evidence file to hash into the audit pass; repeatable |
+| `--gaps GAPS` | Material gap count for this audit pass |
+| `--pass-id PASS_ID` | Optional stable audit pass identifier |
+| `--json` | Emit machine-readable audit pass |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool audit delta`
+
+Compare two persisted audit passes
+
+| Argument / option | Meaning |
+| --- | --- |
+| `OLD_PASS` | Accepted by this command. |
+| `NEW_PASS` | Accepted by this command. |
+| `--campaign CAMPAIGN` | Disambiguate pass identifiers within a campaign |
+| `--json` | Emit machine-readable audit delta |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool audit status`
+
+Show audit freshness for a campaign
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--campaign CAMPAIGN` | Campaign identifier Required. |
+| `--json` | Emit machine-readable audit status |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git`
+
+Inspect Devtool's authoritative Git repository state
+
+**Subcommands:** `state`, `doctor`, `rerere`, `bisect`, `notes`, `campaign`
+
+### `devtool git state`
+
+Show the authoritative repository Git-state snapshot
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable Git state |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git doctor`
+
+Diagnose Git/Devtool repository state
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable Git doctor evidence |
+| `--repair-safe` | Apply only conservative, non-source-mutating repairs |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git rerere`
+
+Inspect Devtool-owned scoped conflict memory
+
+**Subcommands:** `suggest`, `capture`, `record`, `apply`
+
+### `devtool git rerere suggest`
+
+Suggest an exact repository/campaign conflict resolution
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--campaign CAMPAIGN` | Campaign context for conflict memory |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git rerere capture`
+
+Capture the exact unresolved conflict preimage before manual resolution
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--campaign CAMPAIGN` | Campaign context for conflict memory |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git rerere record`
+
+Record a validated manual resolution for the captured exact conflict
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--campaign CAMPAIGN` | Campaign context for conflict memory |
+| `--path RERERE_PATHS` | Resolved conflict path; repeatable Required. |
+| `--test RERERE_TESTS` | Repository-declared Devtool test ID used to validate the resolution; repeatable Required. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git rerere apply`
+
+Apply an exact stored resolution according to the configured rerere policy and rerun validation
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--campaign CAMPAIGN` | Campaign context for conflict memory |
+| `--mode MODE` | Override [git].rerere for this invocation Choices: off, suggest, validated-auto |
+| `--test RERERE_TESTS` | Repository-declared Devtool test ID rerun after reuse; required for validated-auto |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git bisect`
+
+Find the first bad revision using Devtool-managed detached worktrees
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--good GOOD` | Known-good Git revision Required. |
+| `--bad BAD` | Known-bad Git revision Required. |
+| `--task TASK` | Devtool workflow/test/action to evaluate for each candidate Required. |
+| `--json` | Emit machine-readable managed-bisect evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git notes`
+
+Inspect Devtool execution evidence stored in Git notes
+
+**Subcommands:** `show`
+
+### `devtool git notes show`
+
+Show refs/notes/devtool execution evidence for a commit
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[REVISION]` | Commit/revision to inspect (default: HEAD) |
+| `--json` | Emit machine-readable execution-note evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git campaign`
+
+Manage multi-repository Git campaign generations
+
+**Subcommands:** `start`, `checkpoint`, `rollback`, `supersede`, `range-diff`, `status`, `restore-dirty`, `seal`
+
+### `devtool git campaign start`
+
+Start a frozen multi-repository campaign generation
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `--workflow WORKFLOW` | Federation workflow to campaign |
+| `--group GROUP` | Executable federation group to campaign |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git campaign checkpoint`
+
+Record the next campaign generation
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `[STEP]` | Roadmap/campaign step name recorded for this generation |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git campaign rollback`
+
+Move only Devtool private campaign tip refs back to a prior generation/step
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `SELECTOR` | Generation number or checkpoint step name |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git campaign supersede`
+
+Mark one campaign generation superseded by another and move private campaign tips
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `OLD_GENERATION` | Accepted by this command. |
+| `NEW_GENERATION` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git campaign range-diff`
+
+Compare two campaign generations with git range-diff
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `--old OLD_GENERATION` | Required. |
+| `--new NEW_GENERATION` | Required. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git campaign status`
+
+Show persisted campaign generations and identities
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git campaign restore-dirty`
+
+Restore GIT-FRX-13 dirty-tree state captured at campaign start
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `--repository REPOSITORY` | Restore only one enrolled repository |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool git campaign seal`
+
+Create and verify the GIT-FRX-18 federated provenance seal
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `--signing SIGNING` | Override [git].signing for the final campaign tag Choices: off, if-configured, required |
+| `--tag` | Create/update the optional devtool/<campaign>/<generation> annotated tag in the control repository |
+| `--verify` | Verify an existing final seal without creating a new one |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool campaign`
+
+Manage multi-repository Git campaign generations (compatibility surface for git campaign)
+
+**Subcommands:** `status`, `checkpoint`, `rollback`, `range-diff`, `supersede`
+
+### `devtool campaign status`
+
+Show persisted campaign generations and identities
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool campaign checkpoint`
+
+Record a named campaign checkpoint generation
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `STEP` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool campaign rollback`
+
+Roll Devtool private campaign tips back to a generation/step without mutating user branches
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `SELECTOR` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool campaign range-diff`
+
+Compare two campaign generations
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `OLD_GENERATION` | Accepted by this command. |
+| `NEW_GENERATION` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool campaign supersede`
+
+Mark one generation superseded by another
+
+| Argument / option | Meaning |
+| --- | --- |
+| `CAMPAIGN_ID` | Accepted by this command. |
+| `OLD_GENERATION` | Accepted by this command. |
+| `NEW_GENERATION` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation`
+
+Inspect explicitly enrolled federated repositories
+
+**Aliases:** `devtool fed`
+
+**Subcommands:** `list`, `inspect`, `preflight`, `gate2`, `final-seal`, `doctor`, `status`, `capabilities`, `diff`, `artifacts`, `logs`, `failures`, `interfaces`, `conformance`, `affected`, `why`, `plan`, `lock`, `bisect`, `run`, `resume`, `retry`, `recover`, `rollback`, `integrate`, `bootstrap`, `sync`, `exec`
+
+### `devtool federation list`
+
+List enrolled repositories and resolved ownership boundaries
+
+**Aliases:** `devtool federation ls`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable federation discovery state |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation inspect`
+
+Inspect one enrolled repository and its child-owned resolution
+
+**Aliases:** `devtool federation show`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `REPOSITORY` | Federation repository name |
+| `--json` | Emit machine-readable repository boundary state |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation preflight`
+
+Run the FRX-04 repository identity and boundary validation gate
+
+**Aliases:** `devtool federation gate1`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit the machine-readable FRX-04 gate report |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation gate2`
+
+Run the FRX-08 cross-repository execution and contract validation gate
+
+**Aliases:** `devtool federation execution-preflight`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit the machine-readable FRX-08 gate report |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation final-seal`
+
+Run the FRX-12 federation final release qualification
+
+**Aliases:** `devtool federation seal`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit the machine-readable FRX-12 final seal report |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation doctor`
+
+Diagnose federation Git lineage, refs, and participating repositories
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[SUBJECT]` | Optional run or campaign identifier |
+| `--json` | Emit machine-readable federation Git doctor evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation status`
+
+Show one coherent federation observability snapshot
+
+**Aliases:** `devtool federation summary`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--run RUN` | Limit run observations to one parent or child EXO run ID |
+| `--json` | Emit the machine-readable federation observability snapshot |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation capabilities`
+
+Show the declared repository capability/dependency graph
+
+**Aliases:** `devtool federation graph`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--group GROUP` | Limit graph projection to one federation group |
+| `--json` | Emit the machine-readable capability graph |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation diff`
+
+Compare two persisted federation parent-run checkpoints
+
+| Argument / option | Meaning |
+| --- | --- |
+| `OLD_RUN` | Accepted by this command. |
+| `NEW_RUN` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation artifacts`
+
+Show producer/consumer artifact evidence for one federation run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RUN_ID` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation logs`
+
+Show canonical execution/evidence log paths for one federation run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RUN_ID` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation failures`
+
+Show failed/cancelled/blocked child evidence for one federation run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RUN_ID` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation interfaces`
+
+Show declared federation interface/conformance contracts
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit the machine-readable interface catalog |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation conformance`
+
+Check child repositories against a federation interface contract
+
+**Aliases:** `devtool federation interface-check`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--interface INTERFACE` | Check all groups bound to this interface |
+| `--group GROUP` | Check the interface bound to one federation group |
+| `--json` | Emit machine-readable conformance evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation affected`
+
+Compute dependency-aware affected federation repositories/workflows/groups
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--since SINCE` | Detect direct repository changes since this Git revision |
+| `--repository REPOSITORY` | Seed one directly changed federation repository; repeatable |
+| `--json` | Emit machine-readable impact/reason evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation why`
+
+Explain why a federation repository/node/workflow/group is affected
+
+| Argument / option | Meaning |
+| --- | --- |
+| `SUBJECT` | Repository, repository::node, workflow, or group to explain |
+| `--since SINCE` | Detect direct repository changes since this Git revision |
+| `--repository REPOSITORY` | Seed one directly changed federation repository; repeatable |
+| `--json` | Emit machine-readable reason evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation plan`
+
+Build a deterministic planning-only cross-repository workflow/group DAG
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[WORKFLOW]` | Federation workflow name |
+| `--group GROUP` | Executable federation group from [federation.groups] |
+| `--freeze` | Persist the plan's frozen multi-repository source lock |
+| `--drift-policy DRIFT_POLICY` | Drift policy recorded with --freeze (default: fail) Choices: fail, replan, allow-if-equivalent |
+| `--json` | Emit the machine-readable federated plan graph |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation lock`
+
+Inspect or explicitly update the persisted frozen federation source lock
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--update REPOSITORY` | Refresh exactly one participating repository in the persisted lock |
+| `--json` | Emit the machine-readable lock and verification state |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation bisect`
+
+Bisect one federation repository while every other participant remains pinned
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--repo NAME=GOOD..BAD` | Vary exactly one repository over GOOD..BAD Required. |
+| `--pin NAME=SHA` | Override one non-varying repository pin; repeatable |
+| `--task TASK` | Federated workflow name, workflow:NAME, or group:NAME Required. |
+| `--json` | Emit machine-readable candidate combinations and results |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation run`
+
+Execute a federated workflow or group with distinct parent/child EXO runs
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[WORKFLOW]` | Federation workflow name |
+| `--group GROUP` | Executable federation group from [federation.groups] |
+| `--parallel` | Run dependency-ready federation children concurrently when reservations allow |
+| `--max-parallel N` | Limit concurrent federation children; implies --parallel |
+| `--affected` | Run only dependency-aware affected workflow repositories |
+| `--since SINCE` | With --affected, detect direct changes since this Git revision |
+| `--repository REPOSITORY` | With --affected, seed one directly changed repository; repeatable |
+| `--drift-policy DRIFT_POLICY` | Frozen source drift policy (default: fail) Choices: fail, replan, allow-if-equivalent |
+| `--json` | Emit the machine-readable federated run, scheduler, and lineage report |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation resume`
+
+Resume a prior federation parent run using dependency-aware checkpoint reuse
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RUN_ID` | Prior federation parent run ID |
+| `--drift-policy DRIFT_POLICY` | Frozen source drift policy for re-executed children Choices: fail, replan, allow-if-equivalent |
+| `--json` | Emit machine-readable reuse/invalidation decisions and run result |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation retry`
+
+Retry a prior federation parent run while reusing still-valid successful children
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RUN_ID` | Prior federation parent run ID |
+| `--failed` | Retry failed/cancelled/blocked children only; fail closed if a successful child is invalidated |
+| `--drift-policy DRIFT_POLICY` | Frozen source drift policy for re-executed children Choices: fail, replan, allow-if-equivalent |
+| `--json` | Emit machine-readable reuse/invalidation decisions and run result |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation recover`
+
+Inspect persisted child/result/rollback recovery state for a federation run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RUN_ID` | Accepted by this command. |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation rollback`
+
+Explicitly roll integrated repository pointer(s) back to their validated start commit
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RUN_ID` | Accepted by this command. |
+| `--repo ROLLBACK_REPOSITORY` | Accepted by this command. |
+| `--integration-group ROLLBACK_INTEGRATION_GROUP` | Accepted by this command. |
+| `--dry-run` | Preflight rollback without moving branch pointers |
+| `--json` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--dry-run`, `--json`.
+
+### `devtool federation integrate`
+
+Integrate validated federation result commits into user branch pointers
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RUN_ID` | Completed federation parent run ID |
+| `--policy POLICY` | Override the workflow integration policy Choices: per-repo, dependency-group, all-or-nothing-pointer-update |
+| `--apply` | Apply branch pointer integration; without this flag the command is a dry-run |
+| `--json` | Emit machine-readable integration plan/evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation bootstrap`
+
+Preview or materialize repositories from the frozen federation source lock
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--repo REPOSITORY` | Limit source management to one frozen repository; repeatable |
+| `--apply` | Apply the lock-driven bootstrap; without this flag the command is a preview |
+| `--json` | Emit machine-readable bootstrap intent/evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation sync`
+
+Preview or update existing repositories to the frozen federation source lock
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--repo REPOSITORY` | Limit source management to one frozen repository; repeatable |
+| `--apply` | Apply the lock-driven sync; without this flag the command is a preview |
+| `--json` | Emit machine-readable sync intent/evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation exec`
+
+Execute one enrolled child wrapper or target-local-job public contract
+
+| Argument / option | Meaning |
+| --- | --- |
+| `REPOSITORY` | Federation repository name |
+| `--plan` | Resolve the child public contract without executing it |
+| `--json` | Emit machine-readable bridge resolution or execution state |
+| `CONTRACT_ARGV` | Use -- wrapper <args...> or -- job <reference> |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool core`
+
+Inspect canonical Devtool core registries and trust-boundary metadata
+
+**Subcommands:** `registry`, `runtime`, `run-store`, `surfaces`, `help`
+
+### `devtool core registry`
+
+Emit the canonical CLI/config/env registry
+
+**Aliases:** `devtool core reg`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable registry JSON |
+| `--parity` | Include parser/registry parity evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool core runtime`
+
+Resolve the CORE-X02 effective config and private run envelope
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable runtime envelope JSON |
+| `--format FORMAT` | Requested frontend output format Choices: human, json, copy |
+| `--stdout-payload STDOUT_PAYLOAD` | Requested stdout payload semantics Choices: auto, summary, raw |
+| `--assume-yes` | Resolve a non-interactive interaction policy |
+| `ARGV` | Command argv to lower into the runtime envelope; prefix with -- when needed |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool core run-store`
+
+Inspect the CORE-X03 private run catalog/doctor state
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable run catalog state |
+| `--root ROOT` | Override the run catalog root; defaults to <repo>/.devtool/private/run-v3 |
+| `--doctor` | Emit storage doctor/GC state instead of the full catalog |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool core surfaces`
+
+Generate or verify CORE-X04 machine help, schema, completion, and reference projections
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit the generated-surface manifest as JSON |
+| `--write DIR` | Write generated projections atomically to DIR |
+| `--check DIR` | Fail when generated projections in DIR drift from canonical sources |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool core help`
+
+Search canonical machine help without scraping argparse text
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit canonical machine-help JSON |
+| `--search SEARCH` | Filter by command ID, path, alias, domain, or summary |
+| `--aliases` | Include compatibility aliases |
+| `--advanced` | Include hidden/internal parser options |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool registry`
+
+==SUPPRESS==
+
+This command has no additional public command-local arguments.
+
 ### `devtool config`
 
-**Subcommands:** `path`, `show`, `defaults`, `init`, `edit`, `resolve`, `explain`, `migrate`, `doctor`
+**Subcommands:** `path`, `show`, `defaults`, `init`, `edit`, `resolve`, `explain`, `migrate`, `doctor`, `schema`, `status`, `diff`
 
 ### `devtool config path`
 
@@ -2172,11 +3413,41 @@ Agent note: machine-friendly controls on this command include `--json`.
 | --- | --- |
 | `--global` | Diagnose the user global config |
 
+### `devtool config schema`
+
+Emit the generated CORE configuration schema/reference contract
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable schema JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool config status`
+
+Show canonical effective configuration, migration, and provenance status
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable status JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool config diff`
+
+Show effective fields whose provenance differs from built-in/default authority
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable provenance diff JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
 ### `devtool ssh`
 
 Manage, qualify, and operate named SSH build workers
 
-**Subcommands:** `profiles`, `add`, `remove`, `default`, `qualify`, `doctor`, `bootstrap`, `sessions`, `workspace`, `sync`, `retrieve`, `runs`, `resume`, `cancel`, `recover`
+**Subcommands:** `profiles`, `add`, `remove`, `default`, `qualify`, `doctor`, `env`, `prepare`, `bootstrap`, `sessions`, `workspace`, `sync`, `retrieve`, `runs`, `output`, `exec`, `resume`, `cancel`, `recover`, `gc`
 
 ### `devtool ssh profiles`
 
@@ -2203,6 +3474,7 @@ Create or replace a reusable named SSH worker profile
 | `--workspace-mode WORKSPACE_MODE` | Choices: managed, existing, ephemeral |
 | `--workspace-root WORKSPACE_ROOT` | Accepted by this command. |
 | `--bootstrap-policy BOOTSTRAP_POLICY` | Choices: missing, never |
+| `--execution-provider EXECUTION_PROVIDER` | Worker execution provider; OCI-01 accepts proot-oci configuration but does not execute it yet Choices: native, ssh-native, proot-oci, ssh-proot-oci |
 | `--host-key-policy HOST_KEY_POLICY` | Choices: accept-new, strict, system |
 | `--min-free-mb MIN_FREE_MB` | Accepted by this command. |
 | `--no-default` | Do not make this the default SSH worker |
@@ -2257,12 +3529,36 @@ Agent note: machine-friendly controls on this command include `--dry-run`.
 
 ### `devtool ssh doctor`
 
-Read-only capability discovery for a named SSH worker
+Read-only capability, host identity, lifecycle, and target remediation discovery for a named SSH worker
 
 | Argument / option | Meaning |
 | --- | --- |
 | `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--target SSH_DOCTOR_TARGET` | Optional repository target for target-aware toolchain remediation evidence |
 | `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh env`
+
+Inspect the remote-owned worker environment and toolchain provenance
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--target SSH_ENV_TARGET` | Target name to associate with environment evidence |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh prepare`
+
+Prepare missing worker/runtime and target toolchain pieces without changing repository source
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--target SSH_PREPARE_TARGET` | Target to prepare |
+| `--dry-run` | Classify required preparation without installing anything |
+| `--format FORMAT` | Choices: text, json |
+
+Agent note: machine-friendly controls on this command include `--dry-run`.
 
 ### `devtool ssh bootstrap`
 
@@ -2326,12 +3622,42 @@ Retry retrieval of reports/artifacts from a prior SSH worker run
 
 ### `devtool ssh runs`
 
-List persisted Devtool SSH worker runs and tmux phase state
+List canonical persisted SSH runs grouped across remote phases
 
 | Argument / option | Meaning |
 | --- | --- |
 | `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
 | `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh output`
+
+Read or follow persisted stdout/stderr for a canonical SSH run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--run-id RUN_ID` | Select a canonical Devtool RunId |
+| `--session SESSION` | Select one persisted SSH phase session |
+| `--latest` | Select the newest persisted phase |
+| `--follow` | Follow persisted output without attaching to tmux |
+| `--stream SSH_OUTPUT_STREAM` | Choices: both, stdout, stderr |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh exec`
+
+Run an arbitrary command through managed SSH execution/history/recovery
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--target SSH_EXEC_TARGET` | Repository target context |
+| `--cwd SSH_EXEC_CWD` | Repository-relative working directory |
+| `--detached` | Launch and return while the remote tmux phase continues |
+| `--follow` | Launch detached, then follow persisted output to completion |
+| `--attach` | Foreground attach mode (default) |
+| `--shell SSH_EXEC_SHELL` | Explicit shell-text command; argv mode is used otherwise |
+| `--format FORMAT` | Choices: text, json |
+| `SSH_EXEC_ARGV...` | Command argv after --; argument boundaries are preserved |
 
 ### `devtool ssh resume`
 
@@ -2342,6 +3668,7 @@ Reattach to an active remote tmux phase or report its persisted status
 | `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
 | `--run-id RUN_ID` | Resume a specific Devtool SSH run; defaults to the newest run |
 | `--session SESSION` | Resume a specific tmux phase session |
+| `--node-id NODE_ID` | Resume the remote phase that owns this canonical provider node |
 | `--format FORMAT` | Choices: text, json |
 
 ### `devtool ssh cancel`
@@ -2353,6 +3680,7 @@ Cancel Devtool-owned tmux phases for a remote run
 | `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
 | `--run-id RUN_ID` | Cancel a specific run; defaults to the newest run |
 | `--session SESSION` | Cancel only a specific tmux phase session |
+| `--node-id NODE_ID` | Cancel only the remote phase that owns this canonical provider node |
 | `--format FORMAT` | Choices: text, json |
 
 ### `devtool ssh recover`
@@ -2363,7 +3691,214 @@ Reconcile stale remote run records after interrupted SSH sessions
 | --- | --- |
 | `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
 | `--run-id RUN_ID` | Restrict stale-run recovery to one run |
+| `--node-id NODE_ID` | Restrict stale-run recovery to one canonical provider node |
 | `--format FORMAT` | Choices: text, json |
+
+### `devtool ssh gc`
+
+Safely prune terminal Devtool-owned SSH run history using age/count/size policies
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named [ssh.hosts.*] profile; defaults to [ssh].profile/default_profile |
+| `--dry-run` | Plan cleanup without deleting anything (default) |
+| `--apply` | Apply the safe GC plan; active/recovery-sensitive runs remain protected |
+| `--max-age-days SSH_GC_MAX_AGE_DAYS` | Prune eligible terminal runs at least this old; 0 allows age selection immediately |
+| `--keep-last SSH_GC_KEEP_LAST` | Always protect this many newest runs |
+| `--max-mib SSH_GC_MAX_MIB` | Target maximum SSH run-state size after safe cleanup |
+| `--format FORMAT` | Choices: text, json |
+
+Agent note: machine-friendly controls on this command include `--dry-run`.
+
+### `devtool oci`
+
+Manage PRoot-Distro OCI runtime state on named SSH workers
+
+**Subcommands:** `definition`, `build`, `gate1`, `workspace`, `validate-image`, `image-status`, `update`, `prune`, `diagnostics`, `final-seal`, `doctor`, `images`, `containers`, `bootstrap`, `install`, `remove`
+
+### `devtool oci definition`
+
+Show the canonical deterministic Android ARM64 OCI image contract
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool oci build`
+
+Build the canonical Android ARM64 OCI image through PRoot-Distro
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--tag OCI_TAG` | Local image tag/reference; defaults to the canonical contract reference |
+| `--install-as OCI_INSTALL_AS` | Install the built image as this PRoot-Distro container and validate it |
+| `--no-cache` | Disable PRoot-Distro build cache for this image build |
+| `--dry-run` | Accepted by this command. |
+| `--format FORMAT` | Choices: text, json |
+
+Agent note: machine-friendly controls on this command include `--dry-run`.
+
+### `devtool oci gate1`
+
+Run OCI-03 Validation Gate 1 as one durable canonical EXO execution
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--container OCI_GATE1_CONTAINER` | Installed PRoot-Distro container name; defaults to a RunId-derived Gate-1 name |
+| `--tag OCI_TAG` | Image tag/reference; defaults to the canonical contract reference |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool oci workspace`
+
+Prepare OCI-04 managed workspace binds, persistent caches, and environment allowlist evidence
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--dry-run` | Validate workspace/cache paths without creating cache directories |
+| `--format FORMAT` | Choices: text, json |
+
+Agent note: machine-friendly controls on this command include `--dry-run`.
+
+### `devtool oci validate-image`
+
+Validate an installed container against the canonical Android OCI image contract
+
+| Argument / option | Meaning |
+| --- | --- |
+| `PROFILE` | Named SSH worker |
+| `CONTAINER` | Installed PRoot-Distro container name |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool oci image-status`
+
+Show canonical Android OCI image/container status without mutating the worker
+
+**Aliases:** `devtool oci status`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool oci update`
+
+Plan or apply immutable canonical Android OCI image refresh
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--apply` | Execute the planned build/install/validate update |
+| `--force` | Rebuild/reinstall even when cached image and container are present |
+| `--no-cache` | Disable PRoot-Distro build cache when --apply is used |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool oci prune`
+
+Plan or apply removal of non-canonical cached OCI images
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--apply` | Remove non-canonical cached OCI images |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool oci diagnostics`
+
+Show redacted OCI diagnostics and HUD visibility summary
+
+**Aliases:** `devtool oci diag`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool oci final-seal`
+
+Run the local OCI-10 final roadmap seal without mutating workers
+
+**Aliases:** `devtool oci seal`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--format FORMAT` | Choices: text, json |
+| `--strict` | Exit non-zero when any OCI-10 final seal check fails |
+
+### `devtool oci doctor`
+
+Discover PRoot-Distro, proot, containers, and cached OCI images
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool oci images`
+
+List cached OCI image references on a worker
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool oci containers`
+
+List installed PRoot-Distro containers on a worker
+
+**Aliases:** `devtool oci list`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool oci bootstrap`
+
+Install or repair PRoot-Distro on a Termux SSH worker
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[PROFILE]` | Named SSH worker; defaults to the configured default profile |
+| `--dry-run` | Accepted by this command. |
+| `--force` | Accepted by this command. |
+| `--format FORMAT` | Choices: text, json |
+
+Agent note: machine-friendly controls on this command include `--dry-run`.
+
+### `devtool oci install`
+
+Install a registry image or local OCI archive on a worker
+
+| Argument / option | Meaning |
+| --- | --- |
+| `PROFILE` | Named SSH worker |
+| `SOURCE` | OCI registry reference or local OCI/rootfs archive path |
+| `--name OCI_NAME` | Explicit local container name |
+| `--architecture OCI_ARCHITECTURE` | Target architecture, e.g. aarch64 or linux/arm64 |
+| `--dry-run` | Accepted by this command. |
+| `--format FORMAT` | Choices: text, json |
+
+Agent note: machine-friendly controls on this command include `--dry-run`.
+
+### `devtool oci remove`
+
+Remove an installed container or cached OCI image
+
+**Aliases:** `devtool oci rm`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `PROFILE` | Named SSH worker |
+| `TARGET` | Container name or cached image reference |
+| `--image` | Remove a cached OCI image instead of a container |
+| `--dry-run` | Accepted by this command. |
+| `--format FORMAT` | Choices: text, json |
+
+Agent note: machine-friendly controls on this command include `--dry-run`.
 
 ### `devtool bootstrap`
 
@@ -2422,7 +3957,56 @@ Remove the destination receipt without uninstalling shared system packages
 
 Inspect Android capabilities, ADB providers, and connected devices
 
-**Subcommands:** `capabilities`, `devices`, `doctor`, `signing`, `install`, `uninstall`, `launch`, `stop`, `restart`, `clear-data`, `shell`, `push`, `pull`, `logcat`, `screenshot`, `permission`, `release`, `instrumentation`, `smoke`
+**Subcommands:** `environment`, `env`, `qualification`, `capabilities`, `devices`, `doctor`, `signing`, `install`, `uninstall`, `launch`, `stop`, `restart`, `clear-data`, `shell`, `push`, `pull`, `logcat`, `screenshot`, `permission`, `release`, `instrumentation`, `smoke`
+
+### `devtool android environment`
+
+Explain the canonical Android environment identity and qualification
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--action ACTION` | Choices: build, package, release, test, lint, instrumentation, doctor, explain |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool android env`
+
+Explain or diff canonical Android environment identities
+
+**Subcommands:** `explain`, `diff`
+
+### `devtool android env explain`
+
+Explain the production Android environment resolver
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--action ACTION` | Choices: build, package, release, test, lint, instrumentation, doctor, explain |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool android env diff`
+
+Diff canonical component identities across Android actions
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--left-action LEFT_ACTION` | Choices: build, package, release, test, lint, instrumentation, doctor, explain |
+| `--right-action RIGHT_ACTION` | Choices: build, package, release, test, lint, instrumentation, doctor, explain |
+| `--format FORMAT` | Choices: text, json |
+
+### `devtool android qualification`
+
+Inspect canonical Android qualification truth
+
+**Subcommands:** `show`
+
+### `devtool android qualification show`
+
+Show qualification freshness, diagnostics, and component identities
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--action ACTION` | Choices: build, package, release, test, lint, instrumentation, doctor, explain |
+| `--format FORMAT` | Choices: text, json |
 
 ### `devtool android capabilities`
 
@@ -2459,6 +4043,7 @@ Diagnose Android tools and the active ADB/device transport
 | `--provider PROVIDER` | ADB provider override Choices: auto, sdk, termux, termux-adb, path, none |
 | `--adb-path ADB_PATH` | Explicit ADB executable path |
 | `--format FORMAT` | Choices: text, json |
+| `--for ANDROID_DOCTOR_FOR` | Diagnose only capabilities required by this Android action Choices: build, package, release, test, lint, instrumentation, doctor, explain, install, smoke |
 
 ### `devtool android signing`
 
@@ -2709,6 +4294,8 @@ Run the canonical Android release pipeline and seal evidence
 
 | Argument / option | Meaning |
 | --- | --- |
+| `--variant RELEASE_VARIANT` | Release variant lane override |
+| `--module RELEASE_MODULE` | Release module lane override |
 | `--device-tests DEVICE_TESTS` | Choices: disabled, when-device-present, required |
 | `--previous-apk PREVIOUS_APK` | Accepted by this command. |
 | `--package RELEASE_PACKAGE` | Accepted by this command. |
@@ -2728,6 +4315,8 @@ Run Android instrumentation through the canonical device orchestrator
 
 | Argument / option | Meaning |
 | --- | --- |
+| `--variant INSTRUMENTATION_VARIANT` | Instrumentation variant lane override |
+| `--module INSTRUMENTATION_MODULE` | Instrumentation module lane override |
 | `--class INSTRUMENTATION_CLASSES` | Accepted by this command. |
 | `--method INSTRUMENTATION_METHODS` | Accepted by this command. |
 | `--annotation INSTRUMENTATION_ANNOTATIONS` | Accepted by this command. |
@@ -2735,6 +4324,15 @@ Run Android instrumentation through the canonical device orchestrator
 | `--size INSTRUMENTATION_SIZE` | Choices: small, medium, large |
 | `--runner-arg INSTRUMENTATION_RUNNER_ARGS` | Accepted by this command. |
 | `--skip-build` | Accepted by this command. |
+| `--plan` | Print the ANDROID-X04 semantic plan without mutation |
+| `--explain` | Include ANDROID-X04 authority/migration explanation |
+| `--shards SHARDS` | Typed AndroidJUnitRunner shard count |
+| `--retry-failed-attempts RETRY_FAILED_ATTEMPTS` | Export failed-only retry policy to EXO |
+| `--quarantine QUARANTINE` | Explicit evidence-only quarantined testcase ID |
+| `--orchestrator-qualification ORCHESTRATOR_QUALIFICATION` | Qualified Android Test Orchestrator capability receipt ID |
+| `--orchestrator-target ORCHESTRATOR_TARGET` | Target instrumentation component for qualified Orchestrator mode |
+| `--ui-automator` | Use the typed UI Automator/cross-app execution profile |
+| `--cross-app` | Declare cross-app execution profile semantics |
 | `--format FORMAT` | Choices: text, json |
 
 ### `devtool android smoke`
@@ -3071,13 +4669,27 @@ Agent note: machine-friendly controls on this command include `--json`.
 
 ### `devtool jobs`
 
-List reusable polyglot jobs declared under [jobs.*]
+List reusable polyglot jobs declared under [jobs.*] and target-local jobs
 
 **Aliases:** `devtool jb`
 
 | Argument / option | Meaning |
 | --- | --- |
 | `--json` | Emit structured reusable-job metadata |
+| `--target TARGET` | Limit target-local jobs to one target while keeping repository jobs visible |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool target-local-jobs`
+
+Report target-local job adoption, workflow wiring, and migration commands
+
+**Aliases:** `devtool tlj`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit structured target-local adoption metadata |
+| `--target TARGET` | Limit the adoption report to one target |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -3111,13 +4723,31 @@ Plan the expanded workflow DAG, safe scheduling waves, scopes, and commands with
 | `--workflow-parallel` | Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe |
 | `--no-workflow-parallel` | Force workflow DAG nodes to execute sequentially |
 | `--workflow-max-workers COUNT` | Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default |
-| `[ACTION]` | Workflow/action to plan (default: validate) Choices: restore, build, test, lint, package, run, validate, wine-validate |
+| `[ACTION]` | Workflow/action to plan, including repository-defined workflow names (default: validate) |
 | `--json` | Emit the complete graph and scheduling plan as JSON |
 | `--dot` | Emit Graphviz DOT instead of the human plan |
 | `--explain` | Show read/write scope and serialization reasons for every node |
 | `--show-commands` | Include resolved command argv/cwd in the human plan |
 
 Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool invoke`
+
+Execute an arbitrary declared workflow action through the canonical workspace planner
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--target TARGET` | Named target/profile from .devtool.toml |
+| `--group GROUP` | Workspace target group; repeatable |
+| `--all-targets` | Select every configured workspace target |
+| `--affected` | Select dependency-aware targets affected by Git changes |
+| `--affected-base AFFECTED_BASE` | Git base revision for affected selection |
+| `--affected-head AFFECTED_HEAD` | Git head revision for affected selection |
+| `--variant VARIANT` | Variant within the selected workspace target(s) |
+| `--workflow-parallel` | Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe |
+| `--no-workflow-parallel` | Force workflow DAG nodes to execute sequentially |
+| `--workflow-max-workers COUNT` | Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default |
+| `ACTION` | Declared workflow action to execute, such as codegen or regenerate |
 
 ### `devtool affected`
 
@@ -3204,7 +4834,872 @@ Run or start the local Control Center IPC broker
 | `--state-dir STATE_DIR` | Load initial run snapshots from this state directory |
 | `--foreground` | Run the broker in the foreground |
 
+### `devtool actions`
 
-## SSH remote execution (SSH-01 → SSH-03)
+GitHub Actions API: inspect, dispatch, monitor and explicitly control runs
 
-For named remote workers, follow the authoritative operating guide in `docs/SSH_REMOTE_EXECUTION.md`. In particular: inspect `ssh doctor --target` and `ssh prepare --dry-run` before changing worker state; use persisted `ssh runs`/`ssh output` rather than tmux as history; recover interrupted work before rerunning it; and always review `ssh gc --dry-run` before applying cleanup. Do not use SSH workspace preparation as a substitute for federation lock-driven source synchronization.
+**Subcommands:** `baseline`, `plan`, `run`, `status`, `workflow`, `workflows`, `cancel`, `diagnose`, `jobs`, `logs`, `rerun`, `resume`, `runs`, `view`, `watch`, `artifacts`, `download`, `verify`, `android`, `pipeline`, `release`, `ci`, `extensions`, `qualification`
+
+### `devtool actions baseline`
+
+Print read-only ACTIONS-00/01 capability baseline
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions plan`
+
+Validate workflow ref and inputs without dispatching
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--input INPUT` | Workflow input KEY=VALUE (repeatable) |
+| `--inputs-json INPUTS_JSON` | Path to JSON object of workflow inputs |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | GitHub branch or tag to dispatch (required) Required. |
+| `WORKFLOW_ID` | Workflow ID or YAML filename |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions run`
+
+Dispatch workflow only with explicit --yes; return run ID if available
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--input INPUT` | Workflow input KEY=VALUE (repeatable) |
+| `--inputs-json INPUTS_JSON` | Path to JSON object of workflow inputs |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | GitHub branch or tag to dispatch (required) Required. |
+| `--yes` | Explicitly authorize remote workflow dispatch |
+| `WORKFLOW_ID` | Workflow ID or YAML filename |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions status`
+
+Read repository and authenticated viewer metadata
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions workflow`
+
+Inspect a workflow by numeric ID or YAML filename
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `WORKFLOW_ID` | Workflow ID or YAML filename |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions workflows`
+
+List workflows without dispatching them
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions cancel`
+
+Request cancellation of a remote workflow run (explicit confirmation)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+| `--yes` | Confirm remote run cancellation |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions diagnose`
+
+Diagnose GitHub repository identity, access and workflow discovery without mutation
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions jobs`
+
+Inspect run and job/step states
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions logs`
+
+Download remote workflow run logs as a bounded unextracted ZIP to private state
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions rerun`
+
+Request a new remote workflow attempt (explicit confirmation)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+| `--failed-only` | Rerun failed jobs only |
+| `--yes` | Confirm remote run retry |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions resume`
+
+Resume a recorded dispatch by its exact request ID
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions runs`
+
+List recent remote workflow runs from selected GitHub repository
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--limit LIMIT` | Maximum workflow runs (1..100) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions view`
+
+Inspect one remote workflow run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions watch`
+
+Poll a remote run in the foreground with finite limits (no daemon)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+| `--max-checks MAX_CHECKS` | Maximum status reads (1..120) |
+| `--interval INTERVAL` | Seconds between status reads (1..300) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions artifacts`
+
+List artifacts associated with a specific GitHub workflow run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions download`
+
+Download, SHA-256 verify and register an unextracted Actions ZIP
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub Actions artifact ID Required. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions verify`
+
+Verify a previously downloaded registered GitHub artifact
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub Actions artifact ID Required. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android`
+
+Android builds on GitHub Actions and verified APK/AAB acquisition
+
+**Subcommands:** `discover`, `plan`, `run`, `collect`, `verify`, `unsigned-plan`, `unsigned-run`, `unsigned-check`, `unsigned-import`, `unsigned-sign`, `aab-plan`, `aab-run`, `aab-check`, `aab-import`, `aab-sign`
+
+### `devtool actions android discover`
+
+Discover statically declared Android app modules
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--project-dir PROJECT_DIR` | Gradle project directory; auto-discovered if omitted |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android plan`
+
+Validate source parity and Android workflow inputs without dispatch
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--project-dir PROJECT_DIR` | Gradle project directory; auto-discovered if omitted |
+| `--module MODULE` | Gradle application module, e.g. app |
+| `--variant VARIANT` | Android build variant Choices: debug, release |
+| `--format FORMAT` | Android output format Choices: apk, aab |
+| `--ref REF` | Exact GitHub branch/tag to dispatch Required. |
+| `--workflow WORKFLOW` | Selected Android workflow YAML filename |
+| `--expected-package EXPECTED_PACKAGE` | Expected package/application ID, if dynamic Gradle sources |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android run`
+
+Dispatch an Android build only with explicit --yes
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--project-dir PROJECT_DIR` | Gradle project directory; auto-discovered if omitted |
+| `--module MODULE` | Gradle application module, e.g. app |
+| `--variant VARIANT` | Android build variant Choices: debug, release |
+| `--format FORMAT` | Android output format Choices: apk, aab |
+| `--ref REF` | Exact GitHub branch/tag to dispatch Required. |
+| `--workflow WORKFLOW` | Selected Android workflow YAML filename |
+| `--expected-package EXPECTED_PACKAGE` | Expected package/application ID, if dynamic Gradle sources |
+| `--yes` | Explicitly authorize remote workflow dispatch |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android collect`
+
+Fetch or verify and inspect an APK/AAB, registering output as unqualified
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub Actions run ID Required. |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub Actions artifact ID Required. |
+| `--format FORMAT` | Android output format Choices: apk, aab |
+| `--variant VARIANT` | Build variant Choices: debug, release |
+| `--expected-package EXPECTED_PACKAGE` | Expected package/application ID |
+| `--expected-cert-sha256 EXPECTED_CERT_SHA256` | Expected SHA-256 signing certificate (mandatory for release) |
+| `--member MEMBER` | Exact APK/AAB member in ZIP if multiple |
+| `--download` | Download the archive first, instead of verifying an existing archive |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android verify`
+
+Verify a downloaded Android archive and inspect its package
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub Actions run ID Required. |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub Actions artifact ID Required. |
+| `--format FORMAT` | Android output format Choices: apk, aab |
+| `--variant VARIANT` | Build variant Choices: debug, release |
+| `--expected-package EXPECTED_PACKAGE` | Expected package/application ID |
+| `--expected-cert-sha256 EXPECTED_CERT_SHA256` | Expected SHA-256 signing certificate (mandatory for release) |
+| `--member MEMBER` | Exact APK/AAB member in ZIP if multiple |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android unsigned-plan`
+
+Preview source-bound, unsigned GitHub release candidate
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | Exact branch or tag to dispatch; source must match local HEAD Required. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android unsigned-run`
+
+Dispatch dedicated unsigned candidate workflow (requires --yes)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | Exact branch or tag to dispatch; source must match local HEAD Required. |
+| `--yes` | Explicitly authorize remote workflow dispatch |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android unsigned-check`
+
+Verify exact GitHub unsigned archive and APK (read-only)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub Actions run ID |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub artifact ID |
+| `--expected-sha EXPECTED_SHA` | Expected GitHub commit SHA (40 hex characters) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android unsigned-import`
+
+Download, validate and register unsigned GitHub APK
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub Actions run ID |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub artifact ID |
+| `--expected-sha EXPECTED_SHA` | Expected GitHub commit SHA (40 hex characters) |
+| `--download` | Download the archive first, instead of verifying an existing archive |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android unsigned-sign`
+
+Locally align, LIFE-sign and verify imported candidate (requires --yes)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--registry-id REGISTRY_ID` | Exact imported unsigned registry ID |
+| `--signing-identity SIGNING_IDENTITY` | Canonical registered LIFE signing identity (optional) |
+| `--signing-target SIGNING_TARGET` | Devtool Android signing target |
+| `--yes` | Explicitly authorize remote workflow dispatch |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android aab-plan`
+
+Preview unsigned Android AAB workflow with source pin
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | Exact branch or tag to dispatch; source must match local HEAD Required. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android aab-run`
+
+Dispatch unsigned AAB candidate (requires --yes)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | Exact branch or tag to dispatch; source must match local HEAD Required. |
+| `--yes` | Explicitly authorize remote workflow dispatch |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android aab-check`
+
+Inspect source-bound AAB with bundletool (read-only)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub Actions run ID |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub artifact ID |
+| `--expected-sha EXPECTED_SHA` | Expected GitHub commit SHA (40 hex characters) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android aab-import`
+
+Download, verify and register unsigned AAB
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub Actions run ID |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub artifact ID |
+| `--expected-sha EXPECTED_SHA` | Expected GitHub commit SHA (40 hex characters) |
+| `--download` | Download the archive first, instead of verifying an existing archive |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android aab-sign`
+
+Locally sign imported AAB using LIFE (requires --yes)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--registry-id REGISTRY_ID` | Exact imported unsigned registry ID |
+| `--signing-identity SIGNING_IDENTITY` | Canonical registered LIFE signing identity (optional) |
+| `--signing-target SIGNING_TARGET` | Devtool Android signing target |
+| `--yes` | Explicitly authorize remote workflow dispatch |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions pipeline`
+
+Cross-boundary local/remote DAG with frozen source and durable resume
+
+**Subcommands:** `cancel`, `plan`, `run`, `status`, `resume`
+
+### `devtool actions pipeline cancel`
+
+Request durable pipeline stop; does not cancel remote GitHub jobs
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit Actions response as JSON |
+| `--pipeline-id PIPELINE_ID` | Previously persisted pipeline ID Required. |
+| `--yes` | Authorize pending pipeline work |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions pipeline plan`
+
+Validate local Git and remote GitHub DAG without mutations
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--file FILE` | Checked-in repository-relative pipeline JSON Required. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions pipeline run`
+
+Create durable pipeline journal and execute ready nodes
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--file FILE` | Checked-in repository-relative pipeline JSON Required. |
+| `--yes` | Authorize sequential local and remote actions |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions pipeline status`
+
+Read local durable pipeline states (no GitHub operations)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--pipeline-id PIPELINE_ID` | Previously persisted pipeline ID Required. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions pipeline resume`
+
+Continue waiting pipeline nodes, never repeat uncertain dispatch
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--pipeline-id PIPELINE_ID` | Previously persisted pipeline ID Required. |
+| `--yes` | Authorize pending pipeline work |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions release`
+
+Independent-policy Android release attestation and qualification
+
+**Subcommands:** `verify`, `setup`, `readiness`, `local-build`, `local-verify`, `local-evidence`
+
+### `devtool actions release verify`
+
+Read-only qualification of already-registered signed release
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub Actions run ID Required. |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub Actions artifact ID Required. |
+| `--member MEMBER` | Exact APK/AAB member in ZIP if multiple |
+| `--policy POLICY` | Absolute path to private owner-controlled release policy JSON (0600) Required. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions release setup`
+
+Guided preview or --yes release provisioning
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | Exact protected release branch |
+| `--policy POLICY` | Private external release policy path (default ~/.config/devtool/release-policy.json) |
+| `--project-dir PROJECT_DIR` | Gradle project relative to repository |
+| `--module MODULE` | Android Gradle application module |
+| `--application-id APPLICATION_ID` | Package ID (default statically inferred) |
+| `--format FORMAT` | Release package format: apk or aab |
+| `--minimum-version-code MINIMUM_VERSION_CODE` | Minimum allowed release versionCode |
+| `--yes` | Explicitly authorize provisioning |
+| `--signing-identity SIGNING_IDENTITY` | Existing Devtool signing identity |
+| `--signing-target SIGNING_TARGET` | Target with release signing profile |
+| `--rotate-secrets` | Explicitly replace existing GitHub signing secrets from the Devtool signer |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions release readiness`
+
+Check protected ref, signing secret names and private policy
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | Exact protected release branch |
+| `--policy POLICY` | Private external release policy path (default ~/.config/devtool/release-policy.json) |
+| `--signing-identity SIGNING_IDENTITY` | Accepted by this command. |
+| `--signing-target SIGNING_TARGET` | Accepted by this command. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions release local-build`
+
+Preview or execute local signed release build without Github qualification
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--project-dir PROJECT_DIR` | Gradle project within checked-out repository |
+| `--module MODULE` | Gradle application module |
+| `--format FORMAT` | Local package format Choices: apk, aab |
+| `--signing-identity SIGNING_IDENTITY` | Existing registered LIFE signing identity ID |
+| `--signing-target SIGNING_TARGET` | Devtool Android signing target |
+| `--application-id APPLICATION_ID` | Expected application ID (auto-discovered if omitted) |
+| `--minimum-version-code MINIMUM_VERSION_CODE` | Minimum acceptable versionCode |
+| `--json` | Print machine-readable JSON |
+| `--yes` | Explicitly authorize local Gradle execution |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions release local-verify`
+
+Verify local package manifest and pinned LIFE signing certificate
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--project-dir PROJECT_DIR` | Gradle project within checked-out repository |
+| `--module MODULE` | Gradle application module |
+| `--format FORMAT` | Local package format Choices: apk, aab |
+| `--signing-identity SIGNING_IDENTITY` | Existing registered LIFE signing identity ID |
+| `--signing-target SIGNING_TARGET` | Devtool Android signing target |
+| `--application-id APPLICATION_ID` | Expected application ID (auto-discovered if omitted) |
+| `--minimum-version-code MINIMUM_VERSION_CODE` | Minimum acceptable versionCode |
+| `--json` | Print machine-readable JSON |
+| `--artifact ARTIFACT` | Absolute path to APK/AAB to inspect Required. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions release local-evidence`
+
+Verify offline signed→unsigned registry lineage and LIFE identity without release promotion
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--registry-id REGISTRY_ID` | Exact locally signed artifact registry ID (12 hex) Required. |
+| `--format FORMAT` | Local package format Choices: apk, aab |
+| `--signing-identity SIGNING_IDENTITY` | Existing registered LIFE signing identity ID |
+| `--signing-target SIGNING_TARGET` | Devtool Android signing target |
+| `--json` | Print machine-readable JSON |
+| `--expected-sha EXPECTED_SHA` | Optional exact 40-hex remote source SHA pin |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions ci`
+
+Advanced polyglot GitHub CI: plan, run, check and collect
+
+**Subcommands:** `plan`, `run`, `check`, `collect`
+
+### `devtool actions ci plan`
+
+G5 polyglot matrix plan
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | Branch or tag; remote must match local HEAD Required. |
+| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
+| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions ci run`
+
+G5 polyglot matrix run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | Branch or tag; remote must match local HEAD Required. |
+| `--yes` | Explicitly dispatch matrix workflow |
+| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
+| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions ci check`
+
+G5 polyglot matrix check
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub workflow run ID Required. |
+| `--expected-sha EXPECTED_SHA` | Exact 40-hex GitHub source commit Required. |
+| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
+| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions ci collect`
+
+G5 polyglot matrix collect
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub workflow run ID Required. |
+| `--expected-sha EXPECTED_SHA` | Exact 40-hex GitHub source commit Required. |
+| `--download` | Download canonical GitHub artifact archives |
+| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
+| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions extensions`
+
+Optional runner, metrics, GitLab and draft publishing capabilities
+
+**Subcommands:** `metrics`, `runners`, `gitlab-pipelines`, `publish-plan`, `publish`
+
+### `devtool actions extensions metrics`
+
+G7 optional metrics
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--limit LIMIT` | Recent runs, maximum 100 |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions extensions runners`
+
+G7 optional runners
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--trust-file TRUST_FILE` | Optional local JSON trusted runner profiles |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions extensions gitlab-pipelines`
+
+G7 optional gitlab-pipelines
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--gitlab-project-id GITLAB_PROJECT_ID` | Numeric GitLab.com project ID Required. |
+| `--limit LIMIT` | Max 50 pipelines |
+| `--enable-gitlab` | Explicitly opt in to independent GitLab read-only provider |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions extensions publish-plan`
+
+G7 optional publish-plan
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--registry-id REGISTRY_ID` | Required. |
+| `--tag TAG` | Required. |
+| `--asset-name ASSET_NAME` | Required. |
+| `--expected-sha EXPECTED_SHA` | Required. |
+| `--format FORMAT` | APK or AAB format Choices: apk, aab |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions extensions publish`
+
+G7 optional publish
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--registry-id REGISTRY_ID` | Required. |
+| `--tag TAG` | Required. |
+| `--asset-name ASSET_NAME` | Required. |
+| `--expected-sha EXPECTED_SHA` | Required. |
+| `--format FORMAT` | APK or AAB format Choices: apk, aab |
+| `--allow-unqualified-upload` | Consent to upload signed-but-unqualified artifact |
+| `--yes` | Explicit remote asset upload approval |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions qualification`
+
+G8 Actions qualification and historical evidence reconciliation
+
+**Subcommands:** `report`, `check`
+
+### `devtool actions qualification report`
+
+G8 read-only qualification report
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit Actions response as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions qualification check`
+
+G8 read-only qualification check
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit Actions response as JSON |
+| `--require-complete` | Fail if any required live/historical qualification is pending |
+
+Agent note: machine-friendly controls on this command include `--json`.
+

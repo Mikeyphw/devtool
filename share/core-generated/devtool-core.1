@@ -14,6 +14,21 @@ Read\\-only GitHub Actions provider
 .B actions android
 Android builds on GitHub Actions and verified APK/AAB acquisition
 .TP
+.B actions android aab\\-check
+Inspect source\\-bound AAB with bundletool (read\\-only)
+.TP
+.B actions android aab\\-import
+Download, verify and register unsigned AAB
+.TP
+.B actions android aab\\-plan
+Preview unsigned Android AAB workflow with source pin
+.TP
+.B actions android aab\\-run
+Dispatch unsigned AAB candidate (requires \\-\\-yes)
+.TP
+.B actions android aab\\-sign
+Locally sign imported AAB using LIFE (requires \\-\\-yes)
+.TP
 .B actions android collect
 Fetch or verify and inspect an APK/AAB, registering output as unqualified
 .TP
@@ -25,6 +40,21 @@ Validate source parity and Android workflow inputs without dispatch
 .TP
 .B actions android run
 Dispatch an Android build only with explicit \\-\\-yes
+.TP
+.B actions android unsigned\\-check
+Verify exact GitHub unsigned archive and APK (read\\-only)
+.TP
+.B actions android unsigned\\-import
+Download, validate and register unsigned GitHub APK
+.TP
+.B actions android unsigned\\-plan
+Preview source\\-bound, unsigned GitHub release candidate
+.TP
+.B actions android unsigned\\-run
+Dispatch dedicated unsigned candidate workflow (requires \\-\\-yes)
+.TP
+.B actions android unsigned\\-sign
+Locally align, LIFE\\-sign and verify imported candidate (requires \\-\\-yes)
 .TP
 .B actions android verify
 Verify a downloaded Android archive and inspect its package
@@ -38,11 +68,44 @@ Read\\-only GitHub Actions provider
 .B actions cancel
 Request cancellation of a remote workflow run (explicit confirmation)
 .TP
+.B actions ci
+G5 polyglot CI
+.TP
+.B actions ci check
+G5 polyglot check
+.TP
+.B actions ci collect
+G5 polyglot collect
+.TP
+.B actions ci plan
+G5 polyglot plan
+.TP
+.B actions ci run
+G5 polyglot run
+.TP
 .B actions diagnose
 Diagnose GitHub repository identity, access and workflow discovery without mutation
 .TP
 .B actions download
 Download, SHA\\-256 verify and register an unextracted Actions ZIP
+.TP
+.B actions extensions
+G7 optional provider integrations
+.TP
+.B actions extensions gitlab\\-pipelines
+G7 optional gitlab\\-pipelines
+.TP
+.B actions extensions metrics
+G7 optional metrics
+.TP
+.B actions extensions publish
+G7 optional publish
+.TP
+.B actions extensions publish\\-plan
+G7 optional publish\\-plan
+.TP
+.B actions extensions runners
+G7 optional runners
 .TP
 .B actions jobs
 Inspect run and job/step states
@@ -52,6 +115,9 @@ Download remote workflow run logs as a bounded unextracted ZIP to private state
 .TP
 .B actions pipeline
 Cross\\-boundary local/remote DAG with frozen source and durable resume
+.TP
+.B actions pipeline cancel
+Request safe, durable pipeline cancellation without cancelling remote jobs
 .TP
 .B actions pipeline plan
 Validate local Git and remote GitHub DAG without mutations
@@ -70,6 +136,15 @@ Validate workflow ref and inputs without dispatching
 .TP
 .B actions release
 Independent\\-policy release provenance qualification
+.TP
+.B actions release local\\-build
+Preview or execute local signed release build without Github qualification
+.TP
+.B actions release local\\-evidence
+G6 read\\-only signed APK/AAB provenance and certificate re\\-verification
+.TP
+.B actions release local\\-verify
+Verify local package manifest and pinned LIFE signing certificate
 .TP
 .B actions release readiness
 Check protected ref, signing secret names and private policy
@@ -1069,7 +1144,16 @@ Canonical Devtool command.
 .TP
 .B wrapper verify
 Canonical Devtool command.
+.TP
+.B actions qualification
+G8 Actions qualification
+.TP
+.B actions qualification check
+G8 read\\-only qualification check
+.TP
+.B actions qualification report
+G8 read\\-only qualification report
 .SH GENERATED CONTRACT
-Registry digest: fc25573357c786d21aaf8a4e855aef7e66d5a2a91f0cc9068a1197a8ce3a5aa0
+Registry digest: b04756a4e8d96ebe76377440f1ae36c8c34943a84e7e793ed9ce18753f1ac00b
 .SH SEE ALSO
 devtool(1)
