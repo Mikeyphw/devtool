@@ -1,0 +1,92 @@
+name: Devtool Full Python Regression (24 Shards)
+
+# Deliberately manual. This is a regression/evidence workflow, NOT release qualification.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devtool-full-python-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pytest:
+    name: Python 3.13 / shard ${{ matrix.shard }}/24
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+    steps:
+      - name: Checkout exact selected commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install Devtool test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[textual]' pytest
+      - name: Run assigned modules with bounded subprocesses and live output
+        shell: bash
+        env:
+          DT_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          python tools/actions_full_pytest_ci.py run \
+            --shards 24 --shard "$DT_SHARD" \
+            --module-timeout 600 --idle-timeout 240 \
+            --out "out/shard-$DT_SHARD"
+      - name: Upload diagnostics, JUnit and exact-source receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devtool-full-shard-${{ matrix.shard }}
+          path: out/shard-${{ matrix.shard }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  summarize:
+    name: Summarize all 24 shards (fail closed)
+    if: always()
+    needs: [pytest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact selected commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download shard evidence (missing shards remain failures)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: devtool-full-shard-*
+          path: artifacts
+          merge-multiple: false
+      - name: Validate test/module coverage, source identity and evidence hashes
+        shell: bash
+        run: |
+          python tools/actions_full_pytest_ci.py summarize \
+            --shards 24 --artifacts artifacts --out out/summary
+      - name: Upload consolidated report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devtool-full-pytest-summary
+          path: out/summary/
+          if-no-files-found: warn
+          retention-days: 14
