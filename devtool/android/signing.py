@@ -306,11 +306,11 @@ def tasks_require_release_signing(tasks: Sequence[str]) -> bool:
 
 
 def _secret_source_label(profile: SigningProfile, which: str) -> str:
-    env_name = getattr(profile, f"{which}_password_env")
-    file_name = getattr(profile, f"{which}_password_file")
-    fd = getattr(profile, f"{which}_password_fd")
-    command = getattr(profile, f"{which}_password_command")
-    stdin = getattr(profile, f"{which}_password_stdin")
+    env_name = getattr(profile, f"{which}_password_env", "")
+    file_name = getattr(profile, f"{which}_password_file", "")
+    fd = getattr(profile, f"{which}_password_fd", None)
+    command = getattr(profile, f"{which}_password_command", "")
+    stdin = getattr(profile, f"{which}_password_stdin", False)
     if env_name:
         return f"env:{env_name}"
     if file_name:

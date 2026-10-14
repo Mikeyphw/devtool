@@ -383,10 +383,18 @@ def checkpoint_report(parent: "ProjectConfig", report: "FederatedRunReport", *, 
     scoped, workflow = _workflow_for(parent, report.plan)
     by_step = {child.step_id: child for child in report.children}
     known_steps = {step.step_id for step in workflow.steps}
-    child_ids = [str(child.run_id or "") for child in report.children]
+    # A blocked/unstarted step is represented in the parent report, but has no
+    # child execution and therefore cannot have a child run ID.  Preserve its
+    # non-success checkpoint row for truthful retry decisions; never treat it
+    # as reusable evidence.  Executed children must still have unique IDs.
+    child_ids = [str(child.run_id or "").strip() for child in report.children]
+    executed_ids = [run_id for run_id in child_ids if run_id]
+    no_run_allowed = {"blocked", "cancelled", "pending", "skipped"}
     if (len(by_step) != len(report.children) or
         any(not child.step_id or child.step_id not in known_steps for child in report.children) or
-        any(not run_id for run_id in child_ids) or len(set(child_ids)) != len(child_ids)):
+        any(not run_id and str(child.status or "") not in no_run_allowed
+            for child, run_id in zip(report.children, child_ids)) or
+        len(set(executed_ids)) != len(executed_ids)):
         raise FederationResumeError("Federation checkpoint has duplicate, unknown, or missing child identity")
     result_ids: dict[str, str] = {}
     artifact_ids: dict[str, str] = {}

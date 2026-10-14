@@ -15803,9 +15803,13 @@ def _main_after_parse(
                 write_log(_run_log_start_text(args, None), log_path)
                 started_at = datetime.now(timezone.utc)
                 from .git_signing import GitSigningError, resolve_signing_decision, signing_mode_from_config, verify_commit_signature
+                # `commit` is also a standalone Git operation in directories
+                # without a Devtool project file.  Its signing policy defaults
+                # to off there; a configured project still supplies its policy.
+                commit_config = _load_command_config(args) if (repo / ".devtool.toml").is_file() else None
                 try:
                     signing_decision = resolve_signing_decision(
-                        repo, signing_mode_from_config(config, str(getattr(args, "signing", "") or ""))
+                        repo, signing_mode_from_config(commit_config, str(getattr(args, "signing", "") or ""))
                     )
                 except GitSigningError as exc:
                     console.print(f"[red]{exc}[/red]")

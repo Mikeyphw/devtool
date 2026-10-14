@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install -e '.[textual]' pytest
+          python -m pip install -e '.[textual]' pytest pexpect
       - name: Run assigned modules with bounded subprocesses and live output
         shell: bash
         env:
