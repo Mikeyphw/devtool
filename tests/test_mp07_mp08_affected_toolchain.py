@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 from contextlib import redirect_stdout
 from pathlib import Path
 import subprocess
@@ -221,11 +222,32 @@ class AffectedSelectionTests(unittest.TestCase):
             )
             repo.git("add", ".")
             repo.git("commit", "-qm", "base")
-            stream = io.StringIO()
-            with redirect_stdout(stream):
-                code = main(["--repo", str(root), "--dry-run", "--json", "build", "--affected"])
+            # The generic no-change test models a desktop Linux host.
+            # Native Termux execution is tested separately.
+            with tempfile.TemporaryDirectory() as synthetic_home:
+                with mock.patch.dict(os.environ, {
+                    "HOME": synthetic_home,
+                    "PREFIX": "/usr",
+                    "TERMUX_VERSION": "",
+                    "DEVTOOL_EXECUTION_CONTEXT": "",
+                    "DEVTOOL_INSIDE_TERMUX_CHROOT": "",
+                    "DEVTOOL_INSIDE_SSH": "",
+                    "SSH_CONNECTION": "",
+                }), mock.patch(
+                    "devtool.host_context.platform.system",
+                    return_value="Linux",
+                ):
+                    self.assertEqual(git_changed_paths(root), ())
+                    stream = io.StringIO()
+                    with redirect_stdout(stream):
+                        code = main([
+                            "--repo", str(root),
+                            "--dry-run", "--json",
+                            "build", "--affected",
+                        ])
+
             envelope = json.loads(stream.getvalue())
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 0, envelope)
             self.assertEqual(envelope["data"]["failed"], 0)
             self.assertTrue(all(item.get("skipped") and item.get("returncode") == 0 for item in envelope["data"]["results"]))
 
