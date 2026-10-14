@@ -87,6 +87,33 @@ def _g4_unsigned_jar_amendment_valid(root: Path) -> bool:
     return True
 
 
+# Explicit post-G8 G3 compact Textual amendment. This is an exact-byte
+# authentication of the accepted narrow-terminal source and its independent
+# supporting records. The frozen matrix/ledger remain completely immutable,
+# and this verifier does NOT independently qualify live device evidence.
+_G3_TEXTUAL_HOTFIX_ID = 'G3_TERMUX_COMPACT_TEXTUAL_VISIBILITY_20261014'
+_G3_TEXTUAL_HOTFIX_ANCHORS = {
+    'devtool/actions_pipeline_textual.py': '5e5554118653c513213956597f84a80b87da3d208a3744a843e0fdb1a69f70b5',
+    'tests/test_actions_g03_compact_narrow.py': '0fcfa57936b87968584f5cb8faddf1f7c45d9e12ebfa754e7ee78ae995b80be8',
+    'docs/actions/ACTIONS_G03_NARROW_TEXTUAL_FIX.md': '903ebd71a2cf2865a62f9040dcbbfb6cbfc894a10787f07d43216a2b327f87b6',
+}
+_G3_TEXTUAL_HOTFIX_EVIDENCE = {
+    'docs/actions/ACTIONS_G03_G8_SOURCE_AMENDMENT_20261014.md': '146d9b88d39c3c366d2b38f372605fdbc8bd6f9af7bea2db218fcaf36b402f13',
+    'tests/test_actions_g08_g03_amendment.py': '453f24f05251313081228c85dea7ca2b6bcb8b1b750c4266843baa6eb050b96e',
+}
+
+
+def _g3_textual_amendment_valid(root: Path) -> bool:
+    for name, expected in {**_G3_TEXTUAL_HOTFIX_ANCHORS,
+                           **_G3_TEXTUAL_HOTFIX_EVIDENCE}.items():
+        try:
+            if _record_hash(_bounded_file(root, name, max_size=2 * 1024 * 1024)) != expected:
+                return False
+        except GitHubActionsError:
+            return False
+    return True
+
+
 def _git_head(root: Path) -> tuple[str, bool | None]:
     try:
         head = subprocess.run(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
@@ -143,6 +170,7 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
         raise GitHubActionsError('G8 expected G0-G7 source wave inventory is incomplete')
     source_rows: list[dict[str, Any]] = []
     checked_files: set[str] = set()
+    amended_g3 = _g3_textual_amendment_valid(root)
     amended_g4 = _g4_unsigned_jar_amendment_valid(root)
     amendment_records: list[dict[str, Any]] = []
     for wave in waves:
@@ -162,7 +190,15 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
                 ok = _record_hash(data) == entry['sha256']
             except GitHubActionsError:
                 ok = False
-            if not ok and wave['id'] == 'G4' and amended_g4 and name in _G4_UNSIGNED_JAR_HOTFIX_ANCHORS:
+            if not ok and wave['id'] == 'G3' and amended_g3 and name == 'devtool/actions_pipeline_textual.py':
+                amendment_records.append({'wave':'G3','path':name,
+                    'status':'VERIFIED_POST_G08_AMENDMENT',
+                    'hotfix_id':_G3_TEXTUAL_HOTFIX_ID,
+                    'original_sha256':entry['sha256'],
+                    'amended_sha256':_G3_TEXTUAL_HOTFIX_ANCHORS[name]})
+                source_rows.append({'wave':'G3','path':name,
+                    'status':'VERIFIED_POST_G08_AMENDMENT'})
+            elif not ok and wave['id'] == 'G4' and amended_g4 and name in _G4_UNSIGNED_JAR_HOTFIX_ANCHORS:
                 # G8 still retains the original frozen SHA in its immutable
                 # matrix. An explicit hotfix transition is separately verified.
                 amendment_records.append({'wave':'G4','path':name,
@@ -176,7 +212,7 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
                 matching = False
                 source_rows.append({'wave':wave['id'],'path':name,'status':'MISSING_OR_DIFFERENT'})
         source_rows.append({'wave':wave['id'],
-                            'status':('SOURCE_PINS_AMENDED_VERIFIED' if matching and wave['id'] == 'G4' and amendment_records
+                            'status':('SOURCE_PINS_AMENDED_VERIFIED' if matching and ((wave['id'] == 'G4' and amended_g4) or (wave['id'] == 'G3' and amended_g3))
                                       else 'SOURCE_PINS_MATCH' if matching else 'SOURCE_PINS_MISMATCH'),
                             'source_only':True,'live_qualified':False})
     gates = plan.get('gates')

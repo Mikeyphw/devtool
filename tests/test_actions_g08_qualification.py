@@ -23,7 +23,11 @@ def fixture(tmp_path):
     paths = {PLAN, plan['original_ledger_path']}
     paths.update(c['path'] for wave in plan['waves'] for c in wave['source_contracts'])
     paths.update({'docs/actions/ACTIONS_G04_JARSIGNER_UNSIGNED_VERDICT_HOTFIX.md',
-                  'tests/test_actions_g04_unsigned_jarsigner_truth.py'})
+                  'tests/test_actions_g04_unsigned_jarsigner_truth.py',
+                  'docs/actions/ACTIONS_G03_NARROW_TEXTUAL_FIX.md',
+                  'tests/test_actions_g03_compact_narrow.py',
+                  'docs/actions/ACTIONS_G03_G8_SOURCE_AMENDMENT_20261014.md',
+                  'tests/test_actions_g08_g03_amendment.py'})
     for name in paths:
         dest = root / name
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -143,7 +147,7 @@ def test_g4_live_unsigned_amendment_is_traced_and_original_matrix_unchanged(tmp_
     got = qualification_report(root, strict_source=True)
     assert got['source_contract_consistent'] is True
     assert got['qualified_release'] is False
-    amendments = got['verified_source_amendments']
+    amendments = [row for row in got['verified_source_amendments'] if row['wave'] == 'G4']
     assert len(amendments) == 2
     assert {row['path'] for row in amendments} == {
         'devtool/actions_aab.py', 'tests/test_actions_g04_android_aab_candidate.py'}
