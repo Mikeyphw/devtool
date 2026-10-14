@@ -247,8 +247,18 @@ def test_ssh_go_toolchain_is_fail_closed_when_missing() -> None:
     spec = CommandSpec("test", ["go","test","./..."], metadata={"runner":"go"})
     with pytest.raises(ValueError, match="does not provide a usable go"):
         ensure_remote_toolchain(config, [spec], worker=_worker(), dry_run=False)
-    result = ensure_remote_toolchain(config, [spec], worker=_worker(go="/data/data/com.termux/files/usr/bin/go"), dry_run=False)
+    # The fake host cannot actually be reached. Exercise the positive path
+    # using a destination-owned Go environment response.
+    from subprocess import CompletedProcess
+    with patch("devtool.ssh_execution._run_remote", return_value=CompletedProcess(
+        ["ssh", "host"], 0,
+        stdout=json.dumps({"GOOS": "android", "GOARCH": "arm64", "CGO_ENABLED": "1", "GOROOT": "/usr/lib/go"}),
+        stderr="",
+    )) as remote_probe:
+        result = ensure_remote_toolchain(config, [spec], worker=_worker(go="/data/data/com.termux/files/usr/bin/go"), dry_run=False)
+    remote_probe.assert_called_once()
     assert result["ok"] and result["kind"] == "go"
+    assert result["go_environment"]["GOOS"] == "android"
 
 
 def test_composition_wrapper_preserves_language_environment_domains(tmp_path: Path) -> None:

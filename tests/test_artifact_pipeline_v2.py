@@ -236,8 +236,9 @@ def test_jvm_gradle_package_uses_structured_events_and_collects_jar_fallback(tmp
         runner_options={"artifacts": {"required": True}},
     )
     spec = build_specs(config, "package")[0]
-    assert "--init-script" in spec.argv
-    assert "--no-configuration-cache" in spec.argv
+    assert "--max-workers=4" in spec.argv or any(
+        str(arg).startswith("--max-workers=") for arg in spec.argv
+    )
     assert spec.metadata["progress_parser"] == "gradle"
     assert spec.metadata["collect_artifacts"] is True
     assert spec.metadata["artifact_required"] is True

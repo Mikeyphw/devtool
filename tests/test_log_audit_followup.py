@@ -53,7 +53,9 @@ def test_run_log_start_is_nonempty_and_records_resolved_artifact(tmp_path: Path)
     artifact.write_bytes(b"x")
     args = argparse.Namespace(command="apply-overlay", artifact=str(artifact), target="devtool")
     config = SimpleNamespace(repo_root=tmp_path, selected_target="devtool")
-    text = cli._run_log_start_text(args, config)
+    from unittest.mock import patch
+    with patch.dict(os.environ, dict(os.environ), clear=True):
+        text = cli._run_log_start_text(args, config)
     path = tmp_path / "run.log"
     logstore.write_log(text, path)
     assert path.stat().st_size > 0

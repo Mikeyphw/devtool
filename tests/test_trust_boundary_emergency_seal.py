@@ -80,12 +80,9 @@ def test_direct_apply_revalidates_artifact_before_repository_mutation(tmp_path: 
     validation = validate_artifact(repo, archive)
     assert validation.ok is False
 
-    result = apply_overlay(repo, str(archive))
-
-    assert result.returncode == 1
-    assert result.failure_kind == "artifact_failure"
-    assert result.metadata.get("artifact_validation_enforced") is True
-    assert "Artifact validation failed before direct apply" in result.output
+    import pytest
+    with pytest.raises(RuntimeError, match="Canonical artifact qualification failed: artifact-validation: Payload SHA-256 mismatch"):
+        apply_overlay(repo, str(archive))
     assert not (repo / "payload.txt").exists()
     assert not (repo / ".devtool").exists()
 

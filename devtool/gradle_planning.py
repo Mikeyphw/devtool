@@ -1190,6 +1190,16 @@ def resolve_gradle_policy(
 
     requested_workers = _positive(options.get("max_workers"))
     raw_workers = raw.get("max_workers", set())
+    env_workers = None
+    # Explicit typed or raw Gradle policy has authority over inherited host
+    # defaults. The legacy environment ceiling applies only to auto policy.
+    if requested_workers is None and not raw_workers:
+        env_raw = str(os.environ.get("DEVTOOL_MAX_WORKERS", "") or "").strip()
+        if env_raw:
+            env_workers = _positive(env_raw)
+            if env_workers is None:
+                raise GradlePlanningError("DEVTOOL_MAX_WORKERS must be a positive integer")
+            requested_workers = env_workers
     if raw_workers:
         raw_worker_value = _positive(next(iter(raw_workers)))
         if raw_worker_value is None:
@@ -1205,7 +1215,7 @@ def resolve_gradle_policy(
     else: effective_workers = base_workers
     workers = PolicyValue(
         requested_workers or "auto", effective_workers,
-        "raw-argv" if raw_workers else "typed-config" if requested_workers else "host-capability",
+        "raw-argv" if raw_workers else "typed-config" if requested_workers and env_workers is None else "environment:DEVTOOL_MAX_WORKERS" if env_workers is not None else "host-capability",
         "resource-profile clamp" if requested_workers and effective_workers != requested_workers else "",
     )
 

@@ -171,7 +171,7 @@ def test_ov16_ci_provisions_toolchains_signing_and_uploads_evidence() -> None:
         "python-version: ['3.11', '3.12', '3.13']",
         "group: [1, 2, 3, 4]",
         "actions/setup-java@v5",
-        "java-version: '17'",
+        "java-version: '21'",
         "sdkmanager\" \"platforms;android-36\" \"build-tools;36.0.0\" \"platform-tools\"",
         "keytool -genkeypair",
         "DEVTOOL_RELEASE_STORE_FILE=$RUNNER_TEMP/devtool-ci-release.jks",

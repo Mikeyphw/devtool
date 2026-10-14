@@ -364,7 +364,10 @@ def test_outer_run_id_propagates_to_ssh_and_proot(monkeypatch, tmp_path: Path) -
     ssh_env = _translate_env_for_repo({}, tmp_path, "/srv/repo")
     assert ssh_env["DEVTOOL_RUN_ID"] == "run-auth-123"
     script = build_remote_tmux_script(SSHRunnerConfig(host="host"), ["test"])
-    assert "DEVTOOL_RUN_ID=run-auth-123" in script
+    # The remote tmux operation binds to run-scoped paths and session
+    # identity; it must not rely on a forgeable ambient shell assignment.
+    assert "run-auth-123" in script
+    assert "ssh-runs/run-auth-123" in script
     proot = ProotRunnerConfig(distro="debian")
     guest = _guest_env(proot, CommandSpec("test", ["python3"]), mappings=[], cwd=str(tmp_path), stage=tmp_path)
     assert "DEVTOOL_RUN_ID=run-auth-123" in guest

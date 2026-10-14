@@ -127,9 +127,10 @@ def test_command_mode_clears_stale_local_outputs_then_cleans_stage_after_retriev
     project = SimpleNamespace(runner_options={"artifacts": {"output_directory": ".devtool/build-artifacts"}})
     wrapped = wrap_specs_for_ssh_commands([spec], cfg, project_config=project, repo_root=repo, dry_run=True)[0]
     shell = wrapped.argv[-1]
-    assert "rm -rf --" in shell
     assert ".devtool/build-artifacts" in shell
-    assert "ssh -p 22 host" in shell and "rm -rf --" in shell
+    assert "ssh -p 22 host" in shell
+    assert "rm -rf --" not in shell, "remote worker stage is recovery-owned"
+    assert "retained SSH operation staging for provider lifecycle recovery" in shell
 
 
 def test_remote_owned_absolute_file_is_not_copied_by_host_existence(tmp_path: Path) -> None:
@@ -180,12 +181,11 @@ def test_artifact_phase_without_helpers_cleans_operation_output_after_retrieval(
     shell = wrapped.argv[-1]
     assert wrapped.metadata["ssh_staged_files"] == []
     assert "scp" in shell
-    assert "rm -rf --" in shell
     assert "/outputs" in shell
-    # One rm is local destination clearing; the final remote ssh cleanup must
-    # remove the operation stage even though there were no staged helpers.
+    assert "rm -rf --" not in shell, "stage disposal requires lifecycle-owned proof"
+    assert "retained SSH operation staging for provider lifecycle recovery" in shell
     assert shell.count("ssh -p 22 host") >= 1
-    assert "ssh -p 22 host 'sh -lc" in shell
+    assert "sh -lc" in shell, "remote command remains shell-qualified"
 
 
 def test_command_phase_without_helpers_refuses_active_session_before_launch(tmp_path: Path) -> None:

@@ -1821,7 +1821,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             with ZipFile(artifact, "w") as zf:
                 zf.writestr(
                     ".devtool-artifact.json",
-                    json.dumps({"type": "overlay", "validation": {"required": True}}),
+                    json.dumps({"type": "overlay", "validation": {"required": True, "tasks": ["test"]}}),
                 )
                 zf.writestr("new.txt", "new")
 
@@ -1848,6 +1848,9 @@ artifact-cleanup: ok exit=0 time=0.10s
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"
             root.mkdir()
+            # Transaction owner must have a live journal before rollback can run.
+            # A stale path alone intentionally cannot authorize rollback.
+            (root / "tx.json").write_text("{}", encoding="utf-8")
             artifact = Path(tmp) / "artifact.zip"
             artifact.write_bytes(b"placeholder")
             config = ProjectConfig(repo_root=root, kind="unknown", runner_options={})
@@ -1876,7 +1879,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.read_artifact_manifest", return_value={}),
                 patch("devtool.cli._run_apply", side_effect=fake_apply),
                 patch("devtool.cli._run_transaction_rollback", return_value=(rollback, "rollback raw")) as mock_rollback,
-                patch("devtool.cli._delete_original_artifact_after_apply") as mock_cleanup,
+                patch("devtool.cli._delete_original_artifact_after_apply", return_value=None) as mock_cleanup,
                 patch("devtool.cli._emit_summary", return_value=(
                     {"warnings": 0, "errors": 1, "failed": 1, "skipped": 0},
                     "",
@@ -2034,7 +2037,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli._run_transaction_rollback", side_effect=fake_stale_rollback), \
                 patch("devtool.cli._run_apply", side_effect=lambda *args, **kwargs: (calls.append("apply") or [OperationResult("apply-overlay", ["apply-overlay", str(artifact)], 0, 0.2, "applied", [], metadata={"transaction_path": str(root / "tx")})], "apply raw")), \
                 patch("devtool.cli._reload_config_after_artifact_apply", return_value=config), \
-                patch("devtool.cli._maybe_commit_after_apply", side_effect=lambda config, args, results, raw_output, log_path=None: (results, raw_output)), \
+                patch("devtool.cli._maybe_commit_after_apply", side_effect=lambda config, args, results, raw_output, **kwargs: (results, raw_output)), \
                 patch("devtool.cli._record_apply_history"), \
                 patch("devtool.cli._delete_original_artifact_after_apply", return_value=None), \
                 patch("devtool.cli._finish_live_progress"), \
@@ -2046,7 +2049,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertEqual(rc, 0)
             self.assertEqual(calls, ["rollback", "apply"])
             self.assertEqual(rollback_kwargs[-1]["failure_kind"], "stale_apply_rolled_back")
-            self.assertEqual(summary_calls[-1], ["apply-rollback", "apply-overlay", "apply-verification"])
+            self.assertEqual(summary_calls[-1], ["apply-rollback", "apply-overlay"])
 
     def test_apply_history_uses_actual_apply_result_after_stale_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3215,7 +3218,7 @@ class BundleEntryValidationTaskApplyTests(unittest.TestCase):
             "schema_version": 2,
             "type": "overlay_bundle",
             "kind": "devtool.overlay_bundle",
-            "validation": {"required": True, "strategy": "per-overlay"},
+            "validation": {"required": True, "strategy": "per-overlay", "tasks": [":app:compileDebugKotlin"]},
             "apply_order": [
                 {
                     "id": "android",
@@ -3250,7 +3253,7 @@ class BundleEntryValidationTaskApplyTests(unittest.TestCase):
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["-r", str(root), "--yes", "apply-overlays", str(bundle), "--validate"])
+                rc = main(["-r", str(root), "--yes", "--no-clipboard", "apply-overlays", str(bundle), "--validate"])
 
             self.assertEqual(rc, 0)
             self.assertIn([":app:compileDebugKotlin", ":app:testDebugUnitTest", ":app:lintDebug"], captured)
@@ -3273,7 +3276,7 @@ class BundleEntryValidationTaskApplyTests(unittest.TestCase):
                 patch("devtool.cli.render_summary"),
             ):
                 rc = main([
-                    "-r", str(root), "--yes", "apply-overlays", str(bundle), "--validate",
+                    "-r", str(root), "--yes", "--no-clipboard", "apply-overlays", str(bundle), "--validate",
                     "--task", ":app:assembleDebug",
                 ])
 
