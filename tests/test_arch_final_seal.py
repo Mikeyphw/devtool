@@ -236,7 +236,7 @@ def test_cleanup_recognizes_all_historical_top_level_backup_shapes(tmp_path: Pat
     regular.mkdir()
     found = {path.name for path in discover_backup_candidates(tmp_path)}
     assert ".transitive-connected-skip-backup-20260821-162845" in found
-    assert ".future-migration-backup-20260825" in found
+    assert ".future-migration-backup-20260825" not in found  # Unknown user data has no managed ownership
     assert ".no-device-config-cache-fix-20260821-163601" in found
     assert ".github" not in found
 

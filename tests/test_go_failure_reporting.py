@@ -233,7 +233,14 @@ def test_append_run_log_persists_orchestration_evidence(tmp_path: Path) -> None:
 
 def test_run_apply_appends_artifact_validation_to_durable_log(tmp_path: Path) -> None:
     artifact = tmp_path / "overlay.zip"
-    artifact.write_bytes(b"overlay")
+    # Use a structurally valid overlay so the canonical preflight gate runs;
+    # this regression tests durable log propagation, not malformed ZIP recovery.
+    from zipfile import ZipFile
+    with ZipFile(artifact, "w") as archive:
+        archive.writestr(".devtool-artifact.json", json.dumps({
+            "schema_version": 2, "type": "overlay",
+            "validation": {"required": False, "mode": "disabled"},
+        }))
     log_path = tmp_path / "run.log"
     config = ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="go")
     args = SimpleNamespace(

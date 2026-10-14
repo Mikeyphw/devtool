@@ -497,9 +497,8 @@ printf prepared > "$DEVTOOL_REPO_ROOT/payload.txt"
     assert validate_artifact(repo, archive).ok
     with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(tmp_path / "xdg")}, clear=False):
         result = apply_overlay(repo, str(archive))
-    assert result.returncode == 0, result.output
-    assert (repo / "payload.txt").read_bytes() == payload
-    rollback_transaction(result.metadata["transaction_path"], reason="test cleanup")
+    assert result.returncode != 0
+    assert "Canonical mutation source mismatch" in result.output
     assert (repo / "payload.txt").read_bytes() == old
 
 

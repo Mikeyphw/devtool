@@ -175,7 +175,8 @@ class Fs01CompatibilityAuditTests(unittest.TestCase):
         self.assertIn('Backward-compatible string entries are accepted', artifacts)
         self.assertIn('Implicit legacy wrapper bundle detected by devtool.', artifacts)
         self.assertIn('Import legacy/index-only entries for backward compatibility.', artifacts)
-        self.assertIn('version not in {1, 2, 3, 4, 5}', sessions)
+        self.assertIn('SESSION_SCHEMA_VERSION = 7', sessions)
+        self.assertIn('version not in {1, 2, 3, 4, 5, 6}', sessions)
         self.assertIn('Legacy single-transaction marker retained for read/recovery compatibility.', transactions)
 
     def test_generated_global_template_does_not_emit_legacy_confirmation_booleans(self) -> None:

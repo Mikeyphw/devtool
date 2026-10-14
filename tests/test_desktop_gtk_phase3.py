@@ -145,7 +145,9 @@ def test_cli_control_center_options_and_scripts_are_registered() -> None:
 
     assert 'devtool-control-center = "devtool.desktop.control_center_cli:main"' in pyproject
     assert 'devtool-gtk-control-center =' not in pyproject
-    assert 'choices=["auto", "gtk4"]' in cli
+    from devtool.desktop.control_center_cli import build_parser as build_desktop_parser
+    backend = build_desktop_parser().parse_args(["--backend", "gtk4"])
+    assert backend.backend == "gtk4"
     assert 'Gtk4ControlCenter.available()' in cli
     assert 'launch_legacy_qt_control_center' not in read(ROOT / "devtool" / "desktop" / "gtk_control_center.py")
     assert '--page[initial GTK4 shell page]' in completion

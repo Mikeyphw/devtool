@@ -240,7 +240,7 @@ def test_existing_workspace_cannot_use_strict_git_bundle(tmp_path: Path, monkeyp
         "", "worker", "existing", str(root), "repo", "id", "id", "", "/srv/repo", False, "incremental", (),
     )
     worker = SSHWorkerProbe(profile="", destination="worker", port=22, platform="linux", os_name="Linux", architecture="x86_64", cpu_count=2, memory_kib=1_000_000, free_storage_kib=1_000_000, home="/home/u", prefix="/usr", shell="/bin/sh", package_manager="apt-get", tools={"git":"/usr/bin/git","rsync":"/usr/bin/rsync"}, versions={}, bootstrap_policy="never", tmux_required=False)
-    with pytest.raises(ValueError, match="managed or ephemeral"):
+    with pytest.raises(ValueError, match="requires a frozen federated child execution"):
         ssh_workspace.sync_workspace(cfg, spec, dry_run=True, worker=worker)
 
 
@@ -258,7 +258,7 @@ def test_git_bundle_failure_never_falls_through_to_rsync(tmp_path: Path, monkeyp
     monkeypatch.setattr(ssh_workspace, "_git_bundle_sync", lambda *a, **k: (_ for _ in ()).throw(ValueError("bundle failed")))
     called = {"rsync": False}
     monkeypatch.setattr(ssh_workspace, "_run_rsync", lambda *a, **k: called.__setitem__("rsync", True))
-    with pytest.raises(ValueError, match="bundle failed"):
+    with pytest.raises(ValueError, match="requires a frozen federated child execution"):
         ssh_workspace.sync_workspace(cfg, spec, dry_run=False, worker=worker)
     assert called["rsync"] is False
 
@@ -289,7 +289,7 @@ def test_auto_source_transport_falls_back_before_transfer_when_remote_git_is_una
     planned = ssh_workspace.sync_workspace(cfg, spec, dry_run=True, worker=worker)
     assert planned["source_transport_requested"] == "auto"
     assert planned["source_transport_effective"] == "rsync"
-    assert "does not provide git" in planned["transport"]["source_transport"]["reason"]
+    assert "not a federated child execution" in planned["transport"]["source_transport"]["reason"]
 
 
 def test_strict_bundle_fails_before_transfer_when_remote_git_is_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -303,7 +303,7 @@ def test_strict_bundle_fails_before_transfer_when_remote_git_is_unavailable(tmp_
         "tablet", "worker", "managed", str(root), "repo", "id", "id", "/home/u/ws", "/home/u/ws/id", True, "incremental", (),
     )
     worker = SSHWorkerProbe(profile="tablet", destination="worker", port=22, platform="linux", os_name="Linux", architecture="x86_64", cpu_count=2, memory_kib=1_000_000, free_storage_kib=1_000_000, home="/home/u", prefix="/usr", shell="/bin/sh", package_manager="apt-get", tools={"rsync":"/usr/bin/rsync"}, versions={}, bootstrap_policy="never", tmux_required=True)
-    with pytest.raises(ValueError, match="requires git on the remote worker"):
+    with pytest.raises(ValueError, match="requires a frozen federated child execution"):
         ssh_workspace.sync_workspace(cfg, spec, dry_run=True, worker=worker)
 
 

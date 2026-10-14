@@ -247,8 +247,11 @@ class TermuxNativeProviderTests(unittest.TestCase):
                 return_value=runtime,
             ):
                 self.assertEqual(android_artifacts._tool_from_sdk("apksigner"), str(apksigner))
-        with patch("devtool.android_instrumentation.shutil.which", return_value="/prefix/bin/adb"):
+        with patch.dict(os.environ, {"DEVTOOL_ANDROID_ADB_PATH": "/prefix/bin/adb"}, clear=False), patch(
+            "devtool.android_instrumentation.locate_adb_path", return_value=Path("/prefix/bin/adb")
+        ) as resolver:
             self.assertEqual(android_instrumentation._device_prefix("device-1"), ["/prefix/bin/adb", "-s", "device-1"])
+            self.assertEqual(resolver.call_args.kwargs["explicit_path"], "/prefix/bin/adb")
 
     def test_native_requirement_android_cmake_requires_full_ndk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

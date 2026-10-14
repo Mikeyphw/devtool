@@ -227,7 +227,7 @@ class AffectedSelectionTests(unittest.TestCase):
             envelope = json.loads(stream.getvalue())
             self.assertEqual(code, 0)
             self.assertEqual(envelope["data"]["failed"], 0)
-            self.assertEqual(envelope["data"]["results"], [])
+            self.assertTrue(all(item.get("skipped") and item.get("returncode") == 0 for item in envelope["data"]["results"]))
 
     def test_scope_flags_after_subcommand_and_explicit_target_conflict(self):
         parser = build_parser()

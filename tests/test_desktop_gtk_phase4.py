@@ -145,7 +145,7 @@ def test_control_center_parser_and_completion_include_run_page() -> None:
     completion = read(ROOT / "devtool" / "completion.py")
     cli = read(ROOT / "devtool" / "cli.py")
     assert "overview runs history diagnostics repositories targets run settings" in completion
-    assert '"run", "settings"' in cli
+    assert args.page == "run"  # The dedicated GTK parser is the page authority, not the core CLI.
 
 
 def test_gtk_control_center_source_contains_mutable_run_workflow() -> None:

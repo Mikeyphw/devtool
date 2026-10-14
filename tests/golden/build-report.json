@@ -74,7 +74,7 @@
         },
         "requires_confirmation": false,
         "short_label": "Run again",
-        "shortcut": "",
+        "shortcut": "r",
         "token": "action.secondary"
       },
       {

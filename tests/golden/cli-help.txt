@@ -19,7 +19,7 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET] [--group GROUP]
                [--no-hud] [--hud-mode HUD_MODE] [--hud-overlay |
                --hud-no-overlay] [--host] [--chroot CHROOT] [--ssh HOST]
                [--ssh-profile NAME] [--proot-distro DISTRO]
-               [--execution-environment {auto,native-termux,chroot,desktop-linux,android-device,external-device,ssh,proot-distro}]
+               [--execution-environment {auto,native-termux,chroot,desktop-linux,desktop-macos,desktop-windows,host,android-device,external-device,ssh,proot-distro}]
                [--ssh-port PORT] [--ssh-user USER] [--ssh-identity PATH]
                [--ssh-session NAME] [--ssh-cwd PATH] [--ssh-tool COMMAND]
                [--ssh-mode {devtool,commands}] [--ssh-stage-dir PATH]
@@ -48,12 +48,14 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET] [--group GROUP]
                [--native-cache {auto,ccache,off}]
                [--android-build-tools-provider {auto,commit451,none,sdk,termux}]
                [--aapt2-provider {auto,termux,sdk,revanced,none}]
-               {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,git,federation,fed,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server} ...
+               [--ui {compact,full,plain}]
+               {gradle,restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,delivery,repo-pack,signing-identity,tui,cleanup,batch,init-config,init,logs,runs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,audit,git,campaign,federation,fed,core,registry,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server,actions} ...
 
 Apply artifacts, validate projects, and produce reviewable handoff commits.
 
 positional arguments:
-  {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,git,federation,fed,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server}
+  {gradle,restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,delivery,repo-pack,signing-identity,tui,cleanup,batch,init-config,init,logs,runs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,audit,git,campaign,federation,fed,core,registry,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server,actions}
+    gradle              Inspect and control canonical Gradle execution
     variants            List Android variant execution profiles for the
                         selected target
     start-validation (sv)
@@ -71,9 +73,13 @@ positional arguments:
                         validation, and diff metadata
     artifact            Inspect and maintain the produced build-artifact
                         registry
+    delivery            Resolve and qualify canonical delivery artifacts
+    repo-pack           Plan and atomically publish canonical repository packs
+    signing-identity    Manage private non-secret signing identity references
     tui                 Open the responsive terminal dashboard
     cleanup             Archive historical repository backups and optionally
                         prune old backup history
+    runs                Query canonical CORE RUN V3 history
     completion-state    Emit config-aware values for shell/editor completion
     wrapper             Resolve, describe, and execute repository wrapper
                         commands
@@ -81,8 +87,15 @@ positional arguments:
                         Audit retained legacy interfaces and migration paths
     final-seal (seal)   Run the FS03 repository-wide final release seal audit
     pytest              Inspect and profile Devtool's pytest suite
+    audit               Record and compare federation-aware source audit
+                        passes
     git                 Inspect Devtool's authoritative Git repository state
+    campaign            Manage multi-repository Git campaign generations
+                        (compatibility surface for git campaign)
     federation (fed)    Inspect explicitly enrolled federated repositories
+    core                Inspect canonical Devtool core registries and trust-
+                        boundary metadata
+    registry            ==SUPPRESS==
     ssh                 Manage, qualify, and operate named SSH build workers
     oci                 Manage PRoot-Distro OCI runtime state on named SSH
                         workers
@@ -147,6 +160,8 @@ positional arguments:
     control-center (gui)
                         Launch the Devtool desktop Control Center
     ipc-server          Run or start the local Control Center IPC broker
+    actions             GitHub Actions API: inspect, dispatch, monitor and
+                        explicitly control runs
 
 options:
   -h, --help            show this help message and exit
@@ -173,6 +188,9 @@ Project selection:
   --runner, --project-type {auto,dotnet,android,gradle,python,node,rust,go,maven,cmake,meson,make,command,unknown}
                         Override the project runner for this run; --project-
                         type remains a compatibility alias
+  --ui {compact,full,plain}
+                        Job display: compact Textual (default), full Textual
+                        or plain stream
 
 Execution:
   -v, --verbose         Stream full command output
@@ -256,7 +274,7 @@ Execution environment:
   --proot-distro DISTRO
                         Run command phases inside a PRoot-Distro container;
                         guest does not need devtool
-  --execution-environment {auto,native-termux,chroot,desktop-linux,android-device,external-device,ssh,proot-distro}
+  --execution-environment {auto,native-termux,chroot,desktop-linux,desktop-macos,desktop-windows,host,android-device,external-device,ssh,proot-distro}
                         Execution backend: auto, native-termux, chroot, proot-
                         distro, desktop-linux, ssh, android-device, or
                         external-device

@@ -18,7 +18,9 @@ def test_parse_and_select_declared_tests(tmp_path):
 
 def test_gradle_task_sugar(tmp_path):
     c=repo(tmp_path,'\n[[test]]\nid="android-unit"\nrunner="gradle"\ntask=":app:testDebugUnitTest"\n')
-    assert list(c.tests['android-unit'].command)==['./gradlew',':app:testDebugUnitTest']
+    # Semantic task requests are preserved until the canonical Gradle planner.
+    assert c.tests['android-unit'].command == ()
+    assert c.tests['android-unit'].gradle_tasks == (':app:testDebugUnitTest',)
 
 def test_duplicate_and_invalid_declarations_fail(tmp_path):
     with pytest.raises(SystemExit): repo(tmp_path,'\n[[test]]\nid="x"\nrunner="pytest"\ncommand=["pytest"]\n[[test]]\nid="x"\nrunner="pytest"\ncommand=["pytest"]\n')

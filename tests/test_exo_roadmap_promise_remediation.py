@@ -209,10 +209,9 @@ def test_gradle_structured_producer_preserves_cache_up_to_date_and_no_source_out
         "devtool/resources/oci/android-arm64/devtool-events.init.gradle",
     ):
         script = (ROOT / relative).read_text(encoding="utf-8")
-        assert "state.skipMessage" in script
-        assert "skipMessage == 'FROM-CACHE' ? 'from-cache'" in script
-        no_source = script.index("state.noSource ? 'no-source'")
-        up_to_date = script.index("state.upToDate ? 'up-to-date'")
-        generic_skipped = script.index("state.skipped ? 'skipped'")
-        assert no_source < generic_skipped
-        assert up_to_date < generic_skipped
+        assert "BuildEventsListenerRegistry" in script
+        assert "TaskSuccessResult" in script and "TaskSkippedResult" in script
+        assert "result.fromCache" in script and "outcome = 'from-cache'" in script
+        assert "result.upToDate" in script and "outcome = 'up-to-date'" in script
+        assert "outcome = 'skipped'" in script
+        assert "TaskFailureResult" in script and "outcome = 'failed'" in script

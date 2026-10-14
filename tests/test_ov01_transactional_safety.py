@@ -13,7 +13,7 @@ import pytest
 
 from devtool.models import CommandSpec, ProjectConfig
 from devtool.runners import _wait_process_returncode, git_commit, run_specs
-from devtool.transactions import create_apply_transaction, record_transaction_git_commit, rollback_transaction
+from devtool.transactions import checkpoint_transaction_applied, create_apply_transaction, record_transaction_git_commit, rollback_transaction
 from devtool.watch import watch_loop
 from tests._compat import portable_shell_argv
 
@@ -479,6 +479,7 @@ def test_mr085_resume_refuses_mode_only_edit_after_failed_rollback(tmp_path: Pat
         )
         tx_path = Path(tx["path"])
         (root / "file.txt").write_text("overlay\n", encoding="utf-8")
+        checkpoint_transaction_applied(tx_path)
         with patch("devtool.transactions._copy_path", side_effect=RuntimeError("forced rollback staging failure")):
             first = rollback_transaction(tx_path, reason="forced failure")
         assert first.returncode == 1
@@ -490,7 +491,7 @@ def test_mr085_resume_refuses_mode_only_edit_after_failed_rollback(tmp_path: Pat
         second = rollback_transaction(tx_path, reason="resume after mode-only user edit")
 
         assert second.returncode == 1
-        assert "changed after the previous rollback attempt" in second.output
+        assert "no longer matches its durable checkpoint" in second.output
         assert (root / "file.txt").read_bytes() == original_bytes
         assert (root / "file.txt").stat().st_mode & 0o777 == changed_mode
 
@@ -511,6 +512,7 @@ def test_mr085_resume_refuses_user_edit_after_failed_rollback(tmp_path: Path) ->
         )
         tx_path = Path(tx["path"])
         (root / "file.txt").write_text("overlay\n", encoding="utf-8")
+        checkpoint_transaction_applied(tx_path)
 
         with patch("devtool.transactions._copy_path", side_effect=RuntimeError("forced rollback staging failure")):
             first = rollback_transaction(tx_path, reason="forced failure")
@@ -521,5 +523,5 @@ def test_mr085_resume_refuses_user_edit_after_failed_rollback(tmp_path: Path) ->
         second = rollback_transaction(tx_path, reason="resume")
 
         assert second.returncode == 1
-        assert "changed after the previous rollback attempt" in second.output
+        assert "no longer matches its durable checkpoint" in second.output
         assert (root / "file.txt").read_bytes() == before

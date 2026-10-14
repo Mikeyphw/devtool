@@ -326,7 +326,12 @@ def build_android_environment_request(
     compile_sdk = project.compile_sdk
     explicit_raw = android.get("platform", android.get("android_platform", ""))
     explicit_platform = str(explicit_raw if explicit_raw is not None else "").strip()
-    if explicit_platform and explicit_platform.lower() != "auto":
+    if explicit_platform.lower() == "none":
+        # Explicitly disabled SDK platform installation is supported by the
+        # staged Android builder.  Do not reinterpret it as an invalid API
+        # level or silently select a different platform.
+        compile_sdk = None
+    elif explicit_platform and explicit_platform.lower() != "auto":
         normalized = explicit_platform.removeprefix("android-")
         # Explicit authority is not a hint. An invalid override must never
         # silently borrow the valid Gradle compileSdk from the project.

@@ -6777,17 +6777,28 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         hook_events = collect_hook_events(results)
         if hook_events:
             entry["hook_events"] = hook_events
+        # Live journals are removed on successful completion or rollback.
+        # Operation history still needs their *archived* terminal identity,
+        # but must never treat an archived journal as an active rollback target.
         transaction_path = _apply_transaction_path(results)
+        if not transaction_path:
+            for result in results:
+                metadata = result.metadata if isinstance(result.metadata, dict) else {}
+                candidate = str(metadata.get("transaction_path") or "").strip()
+                if Path(candidate).name == "transaction.json":
+                    tx_id = Path(candidate).parent.name
+                    if read_transaction_summary(history_root, tx_id):
+                        transaction_path = candidate
+                        break
         if transaction_path:
             transaction_id = Path(transaction_path).parent.name
-            try:
-                transaction = read_transaction(transaction_path)
-            except Exception:
-                transaction = read_transaction_summary(config.repo_root, transaction_id)
-            entry["transaction"] = {
-                "id": str(transaction.get("transaction_id") or transaction_id),
-                "status": str(transaction.get("status") or entry["rollback_status"]),
-            }
+            transaction = (read_transaction(transaction_path) if Path(transaction_path).is_file()
+                           else read_transaction_summary(history_root, transaction_id))
+            if transaction:
+                entry["transaction"] = {
+                    "id": str(transaction.get("transaction_id") or transaction_id),
+                    "status": str(transaction.get("status") or entry["rollback_status"]),
+                }
         static_plan = dict(getattr(args, "_devtool_resolved_validation_plan", {}) or {})
         step_outcomes = []
         for result in validation_results:
@@ -10311,13 +10322,17 @@ def _run_sequential_overlays(
         commit_args = argparse.Namespace(**vars(args))
         commit_args.artifact = str(source_bundle or apply_artifact)
         commit_start = len(all_results)
+        # A missing progress sink is not part of the commit contract.  In
+        # particular, the legacy sequential/bundle adapters accept only the
+        # stable log_path keyword; pass the additional sink only when active.
+        commit_progress_kwargs = ({"tasker_progress": tasker_progress} if tasker_progress is not None else {})
         all_results, commit_raw = _maybe_commit_after_apply(
             config,
             commit_args,
             all_results,
             "\n\n".join(raw_sections),
             log_path=log_path,
-            tasker_progress=tasker_progress,
+            **commit_progress_kwargs,
         )
         _record_transaction_commit_from_results(
             transaction_path, config.repo_root, all_results, start_index=commit_start

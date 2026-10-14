@@ -113,8 +113,12 @@ def test_child_invocation_metadata_persists_planned_git_lineage() -> None:
         "DEVTOOL_FEDERATION_FROZEN_REPOSITORY_SOURCE_IDENTITY": "source-id",
         "DEVTOOL_RUN_ID": "child",
     }
+    from devtool.invocation_origin import trusted_invocation_context
     with mock.patch.dict(os.environ, env, clear=False):
-        metadata = invocation_metadata_for_args(SimpleNamespace(_devtool_invocation_source="cli", _devtool_invocation_command="build"))
+        # Parent-shell variables alone are untrusted, and must not create lineage.
+        assert "run_lineage" not in invocation_metadata_for_args(SimpleNamespace())
+        with trusted_invocation_context(source="federation", command="build"):
+            metadata = invocation_metadata_for_args(SimpleNamespace())
     lineage = metadata["run_lineage"]
     assert lineage["parent_run_id"] == "parent"
     assert lineage["git_lineage"]["child_run_id"] == "child"

@@ -247,7 +247,13 @@ def test_checked_in_zsh_completion_matches_runtime_generator() -> None:
         text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.encode("utf-8") == (root / "completions" / "_devtool").read_bytes()
+    from devtool.core_surfaces import build_generated_surfaces
+    from devtool.cli import build_parser
+    from devtool.completion import ZSH_COMPLETION
+    canonical = build_generated_surfaces(build_parser()).completions["zsh"]
+    assert proc.stdout == canonical
+    assert (root / "completions" / "_devtool").read_text(encoding="utf-8") == ZSH_COMPLETION
+    assert "# Generated from the CORE-X04 command registry" in canonical
 
 
 

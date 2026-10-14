@@ -18,6 +18,7 @@ from devtool.cli import (
 )
 from devtool.models import ProjectConfig
 from devtool.transactions import (
+    checkpoint_transaction_applied,
     create_apply_transaction,
     mark_transaction_pending_validation,
     read_transaction,
@@ -116,6 +117,7 @@ def test_failed_transaction_can_be_resolved_and_resumed(tmp_path: Path, monkeypa
     )
     tx_path = Path(tx["path"])
     source.write_text("new\n", encoding="utf-8")
+    checkpoint_transaction_applied(tx_path)
     with patch("devtool.transactions._copy_path", side_effect=RuntimeError("simulated interruption")):
         failed = rollback_transaction(tx_path, reason="test")
     assert failed.returncode == 1
@@ -145,7 +147,15 @@ def test_allow_pending_validation_preserves_transaction_and_runs_command(tmp_pat
     )
     mark_transaction_pending_validation(tx["path"], session_id="session-1", next_phase="test")
 
-    with patch("devtool.cli.render_summary"):
+    # This recovery test checks pending-transaction semantics, not Android
+    # host-substrate selection. A sparse synthetic environment under Termux
+    # may resolve to unsupported host-android; pin a valid simulated host.
+    # Production must continue rejecting unsupported environment names.
+    with (
+        patch("devtool.cli.detect_current_environment", return_value="desktop-linux"),
+        patch("devtool.execution_environments.detect_current_environment", return_value="desktop-linux"),
+        patch("devtool.cli.render_summary"),
+    ):
         rc = main([
             "--repo", str(repo), "--no-clipboard", "--allow-pending-validation", "restore"
         ])

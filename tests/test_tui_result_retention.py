@@ -52,6 +52,7 @@ def test_terminal_result_colors_and_non_color_cues_are_declared() -> None:
 
 def test_cancelled_execution_projects_as_cancelled_not_failed() -> None:
     bridge_source = inspect.getsource(textual_execution_host.ExecutionTextualHostSource.start)
-    assert '"cancelled" if rc == 130 else "failed"' in bridge_source
+    # Detached remote monitors and local SIGINT both project cancellation.
+    assert '"cancelled" if detached or rc == 130 else "failed"' in bridge_source
     assert normalized_status("cancelled") == "cancelled"
     assert normalized_status("ok") == "completed"

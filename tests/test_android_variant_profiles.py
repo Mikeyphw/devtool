@@ -52,9 +52,16 @@ def test_release_artifact_selection_prefers_selected_custom_variant(tmp_path):
     c=cfg("playRelease")
     play=tmp_path/"app-playRelease.apk"; play.write_bytes(b"x")
     other=tmp_path/"app-release.apk"; other.write_bytes(b"x")
-    payload={"items":[{"valid":True,"type":"apk","path":str(other),"variant":"release"},{"valid":True,"type":"apk","path":str(play),"variant":"playRelease"}]}
+    import hashlib
+    # Artifacts must carry a producer-declared checksum before a release
+    # verifier may select them.  An unbound filename is not release evidence.
+    digest=hashlib.sha256(b"x").hexdigest()
+    payload={"items":[{"valid":True,"type":"apk","path":str(other),"variant":"release","sha256":digest},
+                      {"valid":True,"type":"apk","path":str(play),"variant":"playRelease","sha256":digest}]}
     got=AndroidReleaseOrchestrator._release_artifacts(c,payload)
     assert [x[0] for x in got]==[play.resolve()]
+    payload["items"][1]["sha256"]="0" * 64
+    assert AndroidReleaseOrchestrator._release_artifacts(c,payload)==[]
 
 
 def test_semantic_tasks_support_configured_application_module():

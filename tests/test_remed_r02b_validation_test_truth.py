@@ -176,7 +176,10 @@ def test_android_zero_and_setup_failures_do_not_fabricate_testcase_failures(tmp_
     assert counts["executed"] == 0
     assert counts["failed"] == 0
     assert failed_ids == []
-    assert failure_kind == ""
+    # Exit 0 without the required INSTRUMENTATION_CODE is incomplete evidence,
+    # not a fabricated successful zero-test run.
+    assert failure_kind == "incomplete-results"
+    assert "terminal INSTRUMENTATION_CODE" in reason
 
     request = InstrumentationRequest(project=tmp_path, policy="required")
     orchestrator = AndroidInstrumentationOrchestrator.__new__(AndroidInstrumentationOrchestrator)

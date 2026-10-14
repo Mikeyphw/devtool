@@ -149,7 +149,7 @@ def test_snapshot_runner_restores_transaction_repository_roots(monkeypatch, tmp_
         return OperationResult("apply-snapshot", ["snapshot"], 0, 0.0, "ok", [])
 
     monkeypatch.setattr(runners, "resolve_artifact_path", lambda _artifact: artifact)
-    monkeypatch.setattr(runners, "_direct_artifact_validation_failure", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runners, "_resolve_executable_artifact_plan", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(runners, "_apply_archive", fake_apply_archive)
     assert apply_snapshot(tmp_path, str(artifact)).returncode == 0
     assert "DEVTOOL_TRANSACTION_REPO_ROOT" not in os.environ

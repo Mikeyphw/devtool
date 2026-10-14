@@ -13,6 +13,15 @@ DESTRUCTIVE_PATTERN = re.compile(
 # blanket safety waiver: it records why the remaining destructive primitive is
 # not an unowned cleanup/GC authority for this campaign fixed point.
 CLASSIFIED_FILES: dict[str, str] = {
+    # Actions and async retention appeared after the original R03B inventory.
+    # Each callsite below is an operation-owned atomic/temp cleanup, not broad
+    # repository/artifact-history collection or caller-selected deletion.
+    "devtool/actions_android.py": "Verified Android package extraction removes only its exclusive mkstemp staging file after atomic publish; the SHA and destination no-clobber checks remain enforced.",
+    "devtool/actions_artifacts.py": "GitHub artifact acquisition removes only its exclusive temporary ZIP after hash verification and atomic no-overwrite publication.",
+    "devtool/actions_dispatch.py": "Durable dispatch journal writes remove only an exclusive, local mkstemp file after atomic journal replacement.",
+    "devtool/actions_runs.py": "GitHub log download cleanup removes only the exclusive mkstemp file in the Actions remote-log storage root.",
+    "devtool/actions_unsigned.py": "Unsigned APK publication deletes only an exclusively created destination on failed stream/hash verification; never removes an existing destination.",
+    "devtool/log_retention_worker.py": "Asynchronous log-retention worker removes its own private atomic request temp and consumed request marker after locking and identity check; rotation uses canonical logstore policy.",
     "devtool/android/_standalone.py": "Android toolchain/provider bootstrap cache: global SDK/NDK/Gradle cache installation, digest-checked temp staging, lock cleanup, and explicit provider prune policy; not repository evidence cleanup.",
     "devtool/android/evidence.py": "Android evidence temp staging/write-finalization; no repository GC authority.",
     "devtool/android/execution_snapshot.py": "Android snapshot temp file finalization cleanup; no source/evidence pruning authority.",

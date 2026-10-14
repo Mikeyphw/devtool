@@ -91,7 +91,10 @@ class ImplicitOverlayBundleTests(unittest.TestCase):
 
             self.assertEqual(rc, 0)
             self.assertEqual((repo / "payload.txt").read_text(encoding="utf-8"), "applied")
-            self.assertFalse((repo / ".devtool").exists())
+            # Transaction/RunStore receipts may legitimately create private
+            # repository state.  Payload-supplied state must never be copied.
+            self.assertFalse((repo / ".devtool" / "reports").exists())
+            self.assertFalse((repo / ".devtool" / "tmp").exists())
 
     def test_apply_overlay_bundle_skips_nested_repo_local_devtool_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -111,7 +114,10 @@ class ImplicitOverlayBundleTests(unittest.TestCase):
 
             self.assertEqual(rc, 0)
             self.assertEqual((repo / "payload.txt").read_text(encoding="utf-8"), "applied")
-            self.assertFalse((repo / ".devtool").exists())
+            # Transaction/RunStore receipts may legitimately create private
+            # repository state.  Payload-supplied state must never be copied.
+            self.assertFalse((repo / ".devtool" / "reports").exists())
+            self.assertFalse((repo / ".devtool" / "tmp").exists())
 
 
 if __name__ == "__main__":

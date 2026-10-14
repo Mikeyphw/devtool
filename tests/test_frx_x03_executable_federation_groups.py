@@ -226,7 +226,7 @@ def test_group_execution_uses_existing_frx_coordinator_and_persists_group_lineag
     seen: list[tuple[str, ...]] = []
 
     def reenter(argv: list[str]) -> int:
-        from devtool.invocation_origin import federation_lineage_from_environment
+        from devtool.invocation_origin import federation_lineage_from_environment, trusted_invocation_context
         from devtool.repository_identity import build_repository_identity
 
         seen.append(tuple(argv))
@@ -323,7 +323,7 @@ def test_executable_group_cannot_nest_metadata_only_group(tmp_path: Path) -> Non
 def test_group_identity_survives_environment_transport_and_observability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from devtool.federation_observability import build_federation_observability
     from devtool.federation_transport import build_federation_transport_metadata
-    from devtool.invocation_origin import federation_lineage_from_environment
+    from devtool.invocation_origin import federation_lineage_from_environment, trusted_invocation_context
     from devtool.oci_resilience import producer_identity
     from devtool.repository_identity import build_repository_identity
 
@@ -349,7 +349,9 @@ def test_group_identity_survives_environment_transport_and_observability(tmp_pat
         "DEVTOOL_FEDERATION_REQUESTED_REF": "child::validate",
     }
     with mock.patch.dict(os.environ, env, clear=False):
-        lineage = federation_lineage_from_environment()
+        assert federation_lineage_from_environment() == {}  # ambient variables are not authority
+        with trusted_invocation_context(source="federation", command="build"):
+            lineage = federation_lineage_from_environment()
     assert lineage["federation_group"] == "ready"
 
     identity = build_repository_identity(child, child / ".devtool.toml").as_dict()
