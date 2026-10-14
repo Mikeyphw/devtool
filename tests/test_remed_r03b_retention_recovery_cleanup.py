@@ -343,7 +343,9 @@ def test_ssh_provider_event_and_control_paths_use_remote_worker_evidence(tmp_pat
     from devtool.core.events import EventBus, RunFinished, RunStarted
     from devtool.core.events.listeners import event_to_dict
     from devtool.distributed_execution import ExternalEventIngestor
-    from devtool.distributed_provider_control import dispatch_ssh_provider_control, ssh_provider_event_channel
+    from devtool.distributed_provider_control import (
+        ProviderSessionBinding, dispatch_ssh_provider_control, ssh_provider_event_channel,
+    )
     from devtool.distributed_transport import DelegatedEventReceiver, TransportProtocolCapabilities
 
     link = _ssh_delegation_link()
@@ -361,6 +363,12 @@ def test_ssh_provider_event_and_control_paths_use_remote_worker_evidence(tmp_pat
         event.complete_envelope(sequence=seq)
     journal = "\n".join(json.dumps(event_to_dict(event), sort_keys=True) for event in events) + "\n"
     config = SimpleNamespace(profile="tablet", destination="termux@tablet")
+    binding = ProviderSessionBinding.bind(
+        link, session_id="devtool-child-session", profile=config.profile,
+        destination=config.destination, provider_kind="ssh",
+        provider_evidence_digest=str(link.provider_identity.get("provider_evidence_digest") or ""),
+        attestation_digest=link.attestation_digest,
+    )
     reads: list[tuple[str, str]] = []
 
     def read_remote(_config, *, run_id="", session="", node_id=""):
@@ -368,7 +376,7 @@ def test_ssh_provider_event_and_control_paths_use_remote_worker_evidence(tmp_pat
         return {
             "kind": "ssh-semantic-run-journal", "run_id": "child-run", "child_run_id": "child-run",
             "session": "devtool-child-session", "delegation_id": link.delegation_id,
-            "provider_session_binding_id": "", "journal": journal,
+            "provider_session_binding_id": binding.binding_id, "journal": journal,
         }
 
     cancelled: list[tuple[str, str]] = []

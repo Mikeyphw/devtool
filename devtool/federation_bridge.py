@@ -214,7 +214,7 @@ def _federated_job_result_code(specs: Sequence[Any], results: Sequence[Any]) -> 
         if (getattr(result, "name", None) != getattr(spec, "name", None)
             or getattr(result, "argv", None) != getattr(spec, "argv", None)
             or getattr(result, "skipped", False)
-            or getattr(result, "failure_kind", "")
+            or (getattr(result, "failure_kind", "") and getattr(result, "returncode", None) == 0)
             or getattr(result, "returncode", None) is None
             or isinstance(getattr(result, "returncode", None), bool)
             or not isinstance(getattr(result, "returncode", None), int)):

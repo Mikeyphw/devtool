@@ -1292,6 +1292,13 @@ _devtool() {
                   '--adb-path[explicit ADB executable path]:executable:_files' \
                   '--format[output format]:format:(text json)'
                 ;;
+              env)
+                if [[ ${line[3]} == diff ]]; then
+                  _arguments '--left-action[reference Android environment action]:action:' '--right-action[comparison Android environment action]:action:'
+                else
+                  _values 'environment action' diff
+                fi
+                ;;
               environment)
                 _arguments \
                   '--action[Android environment action view]:action:(build package release test lint instrumentation doctor explain)' \
@@ -1369,7 +1376,7 @@ _devtool() {
                 _arguments '--module[release module lane override]:module:' '--device-tests[release device-test policy]:policy:(disabled when-device-present required)' '--previous-apk[previous APK for upgrade smoke]:file:_files' '--package[application package]:package:' '--activity[launch activity]:activity:' '--evidence-output[immutable release-evidence JSON]:file:_files' '--no-unit-tests[skip unit-test gate]' '--no-lint[skip lint gate]' '--no-install-smoke[skip install smoke]' '--no-upgrade-smoke[skip upgrade smoke]' '--no-verify-signature[skip signature verification]' '--no-verify-certificate-identity[skip expected signer comparison]' '--format[output format]:format:(text json)'
                 ;;
               instrumentation)
-                _arguments '--module[instrumentation module lane override]:module:' '--class[test class]:class:' '--method[test method]:method:' '--annotation[required annotation]:annotation:' '--not-annotation[excluded annotation]:annotation:' '--size[test size]:size:(small medium large)' '--runner-arg[instrumentation runner KEY=VALUE]:argument:' '--skip-build[reuse existing app/test APKs]' '--format[output format]:format:(text json)'
+                _arguments '--module[instrumentation module lane override]:module:' '--class[test class]:class:' '--method[test method]:method:' '--annotation[required annotation]:annotation:' '--not-annotation[excluded annotation]:annotation:' '--size[test size]:size:(small medium large)' '--runner-arg[instrumentation runner KEY=VALUE]:argument:' '--skip-build[reuse existing app/test APKs]' '--format[output format]:format:(text json)' '--retry-failed-attempts[retry count]:count:' '--quarantine[quarantine failing tests]' '--orchestrator-qualification[require orchestration evidence]' '--orchestrator-target[instrumentation orchestrator]:target:' '--ui-automator[UI Automator runner]:runner:' '--cross-app[enable cross-app instrumentation]'
                 ;;
               smoke)
                 _arguments '1:smoke gate:(install upgrade cold-start restart restore-restart process-death signed-artifact)' '--apk[APK/artifact path]:file:_files' '--old-apk[previous APK for upgrade smoke]:file:_files' '--package[application package]:package:' '--activity[activity/component]:activity:' '--expected-cert-sha256[expected signing certificate SHA-256]:digest:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
@@ -1499,7 +1506,7 @@ _devtool() {
           if (( ${#line} < 2 )); then
             _values 'repository pack action' plan create
           else
-            _arguments '-o[output repository pack]:file:_files' '--output[output repository pack]:file:_files' '--mode[repository pack mode]:mode:(worktree committed)' '--compression[repository pack compression]:compression:(tar.gz tar.zst zip)' '--commit[commit/ref to pack]:revision:' '--git-bundle[include a Git bundle]' '--pin[pin repository identity]' '--retention[pack retention policy]:policy:' '--json[emit canonical repository-pack JSON]' '*:repository root:_files -/'
+            _arguments '-o[output repository pack]:file:_files' '--output[output repository pack]:file:_files' '--mode[repository pack mode]:mode:(worktree committed)' '--compression[repository pack compression]:compression:(tar.gz tar.zst zip)' '--commit[commit/ref to pack]:revision:' '--git-bundle[include a Git bundle]' '--pin[pin repository identity]' '--retention[pack retention policy]:policy:' '--older-than-days[prune packs older than this number of days]:days:' '--json[emit canonical repository-pack JSON]' '*:repository root:_files -/'
           fi
           ;;
         signing-identity)
@@ -1515,6 +1522,561 @@ _devtool() {
                 ;;
             esac
           fi
+          ;;
+        actions)
+          local -a current_extension_options
+          case "${(j:/:)line[2,-1]}" in
+            android/aab-check(|/*))
+              current_extension_options=(
+                '--artifact-id[artifact id]:value:'
+                '--auth[auth]:value:'
+                '--expected-sha[expected sha]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            android/aab-import(|/*))
+              current_extension_options=(
+                '--artifact-id[artifact id]:value:'
+                '--auth[auth]:value:'
+                '--download[download]'
+                '--expected-sha[expected sha]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            android/aab-plan(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--ref[ref]:value:'
+              )
+              ;;
+            android/aab-run(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--ref[ref]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            android/aab-sign(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--registry-id[registry id]:value:'
+                '--signing-identity[signing identity]:value:'
+                '--signing-target[signing target]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            android/collect(|/*))
+              current_extension_options=(
+                '--artifact-id[artifact id]:value:'
+                '--auth[auth]:value:'
+                '--download[download]'
+                '--expected-cert-sha256[expected cert sha256]:value:'
+                '--expected-package[expected package]:value:'
+                '--format[format]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--member[member]:value:'
+                '--run-id[run id]:value:'
+                '--variant[variant]:value:'
+              )
+              ;;
+            android/discover(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--project-dir[project dir]:value:'
+              )
+              ;;
+            android/plan(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--expected-package[expected package]:value:'
+                '--format[format]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--module[module]:value:'
+                '--project-dir[project dir]:value:'
+                '--ref[ref]:value:'
+                '--variant[variant]:value:'
+                '--workflow[workflow]:value:'
+              )
+              ;;
+            android/run(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--expected-package[expected package]:value:'
+                '--format[format]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--module[module]:value:'
+                '--project-dir[project dir]:value:'
+                '--ref[ref]:value:'
+                '--variant[variant]:value:'
+                '--workflow[workflow]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            android/unsigned-check(|/*))
+              current_extension_options=(
+                '--artifact-id[artifact id]:value:'
+                '--auth[auth]:value:'
+                '--expected-sha[expected sha]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            android/unsigned-import(|/*))
+              current_extension_options=(
+                '--artifact-id[artifact id]:value:'
+                '--auth[auth]:value:'
+                '--download[download]'
+                '--expected-sha[expected sha]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            android/unsigned-plan(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--ref[ref]:value:'
+              )
+              ;;
+            android/unsigned-run(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--ref[ref]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            android/unsigned-sign(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--registry-id[registry id]:value:'
+                '--signing-identity[signing identity]:value:'
+                '--signing-target[signing target]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            android/verify(|/*))
+              current_extension_options=(
+                '--artifact-id[artifact id]:value:'
+                '--auth[auth]:value:'
+                '--expected-cert-sha256[expected cert sha256]:value:'
+                '--expected-package[expected package]:value:'
+                '--format[format]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--member[member]:value:'
+                '--run-id[run id]:value:'
+                '--variant[variant]:value:'
+              )
+              ;;
+            artifacts(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--request-id[request id]:value:'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            baseline(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+              )
+              ;;
+            cancel(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--request-id[request id]:value:'
+                '--run-id[run id]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            ci/check(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--expected-sha[expected sha]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--languages[languages]:value:'
+                '--run-id[run id]:value:'
+                '--systems[systems]:value:'
+              )
+              ;;
+            ci/collect(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--download[download]'
+                '--expected-sha[expected sha]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--languages[languages]:value:'
+                '--run-id[run id]:value:'
+                '--systems[systems]:value:'
+              )
+              ;;
+            ci/plan(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--languages[languages]:value:'
+                '--ref[ref]:value:'
+                '--systems[systems]:value:'
+              )
+              ;;
+            ci/run(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--languages[languages]:value:'
+                '--ref[ref]:value:'
+                '--systems[systems]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            diagnose(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+              )
+              ;;
+            download(|/*))
+              current_extension_options=(
+                '--artifact-id[artifact id]:value:'
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--request-id[request id]:value:'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            extensions/gitlab-pipelines(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--enable-gitlab[enable gitlab]'
+                '--github-repo[github repo]:value:'
+                '--gitlab-project-id[gitlab project id]:value:'
+                '--json[json]'
+                '--limit[limit]:value:'
+              )
+              ;;
+            extensions/metrics(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--limit[limit]:value:'
+              )
+              ;;
+            extensions/publish(|/*))
+              current_extension_options=(
+                '--allow-unqualified-upload[allow unqualified upload]'
+                '--asset-name[asset name]:value:'
+                '--auth[auth]:value:'
+                '--expected-sha[expected sha]:value:'
+                '--format[format]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--registry-id[registry id]:value:'
+                '--tag[tag]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            extensions/publish-plan(|/*))
+              current_extension_options=(
+                '--asset-name[asset name]:value:'
+                '--auth[auth]:value:'
+                '--expected-sha[expected sha]:value:'
+                '--format[format]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--registry-id[registry id]:value:'
+                '--tag[tag]:value:'
+              )
+              ;;
+            extensions/runners(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--trust-file[trust file]:value:'
+              )
+              ;;
+            jobs(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--request-id[request id]:value:'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            logs(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--request-id[request id]:value:'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            pipeline/cancel(|/*))
+              current_extension_options=(
+                '--json[json]'
+                '--pipeline-id[pipeline id]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            pipeline/plan(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--file[file]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+              )
+              ;;
+            pipeline/resume(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--pipeline-id[pipeline id]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            pipeline/run(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--file[file]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--yes[yes]'
+              )
+              ;;
+            pipeline/status(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--pipeline-id[pipeline id]:value:'
+              )
+              ;;
+            plan(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--input[input]:value:'
+                '--inputs-json[inputs json]:value:'
+                '--json[json]'
+                '--ref[ref]:value:'
+              )
+              ;;
+            qualification/check(|/*))
+              current_extension_options=(
+                '--json[json]'
+                '--require-complete[require complete]'
+              )
+              ;;
+            qualification/report(|/*))
+              current_extension_options=(
+                '--json[json]'
+              )
+              ;;
+            release/local-build(|/*))
+              current_extension_options=(
+                '--application-id[application id]:value:'
+                '--format[format]:value:'
+                '--json[json]'
+                '--minimum-version-code[minimum version code]:value:'
+                '--module[module]:value:'
+                '--project-dir[project dir]:value:'
+                '--signing-identity[signing identity]:value:'
+                '--signing-target[signing target]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            release/local-evidence(|/*))
+              current_extension_options=(
+                '--expected-sha[expected sha]:value:'
+                '--format[format]:value:'
+                '--json[json]'
+                '--registry-id[registry id]:value:'
+                '--signing-identity[signing identity]:value:'
+                '--signing-target[signing target]:value:'
+              )
+              ;;
+            release/local-verify(|/*))
+              current_extension_options=(
+                '--application-id[application id]:value:'
+                '--artifact[artifact]:value:'
+                '--format[format]:value:'
+                '--json[json]'
+                '--minimum-version-code[minimum version code]:value:'
+                '--module[module]:value:'
+                '--project-dir[project dir]:value:'
+                '--signing-identity[signing identity]:value:'
+                '--signing-target[signing target]:value:'
+              )
+              ;;
+            release/readiness(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--policy[policy]:value:'
+                '--ref[ref]:value:'
+                '--signing-identity[signing identity]:value:'
+                '--signing-target[signing target]:value:'
+              )
+              ;;
+            release/setup(|/*))
+              current_extension_options=(
+                '--application-id[application id]:value:'
+                '--auth[auth]:value:'
+                '--format[format]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--minimum-version-code[minimum version code]:value:'
+                '--module[module]:value:'
+                '--policy[policy]:value:'
+                '--project-dir[project dir]:value:'
+                '--ref[ref]:value:'
+                '--rotate-secrets[rotate secrets]'
+                '--signing-identity[signing identity]:value:'
+                '--signing-target[signing target]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            release/verify(|/*))
+              current_extension_options=(
+                '--artifact-id[artifact id]:value:'
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--member[member]:value:'
+                '--policy[policy]:value:'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            rerun(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--failed-only[failed only]'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--request-id[request id]:value:'
+                '--run-id[run id]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            resume(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--request-id[request id]:value:'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            run(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--input[input]:value:'
+                '--inputs-json[inputs json]:value:'
+                '--json[json]'
+                '--ref[ref]:value:'
+                '--yes[yes]'
+              )
+              ;;
+            runs(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--limit[limit]:value:'
+              )
+              ;;
+            status(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+              )
+              ;;
+            verify(|/*))
+              current_extension_options=(
+                '--artifact-id[artifact id]:value:'
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--request-id[request id]:value:'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            view(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+                '--request-id[request id]:value:'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            watch(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--interval[interval]:value:'
+                '--json[json]'
+                '--max-checks[max checks]:value:'
+                '--request-id[request id]:value:'
+                '--run-id[run id]:value:'
+              )
+              ;;
+            workflow(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+              )
+              ;;
+            workflows(|/*))
+              current_extension_options=(
+                '--auth[auth]:value:'
+                '--github-repo[github repo]:value:'
+                '--json[json]'
+              )
+              ;;
+          esac
+          (( ${#current_extension_options} )) && _arguments $current_extension_options
           ;;
         tui)
           _arguments '--page[initial page]:page:(dashboard runs logs diagnostics history targets workers validation artifacts overlays evidence build run log diagnostic worker ssh artifact overlay)' '--artifact[overlay artifact to preflight]:artifact:_devtool_artifact_path' '--once[render once and exit]' '--width[override terminal width]:columns:' '--backend[TUI backend]:backend:(auto textual)' '--require-textual[require Textual (no fallback)]' '--no-tui-fallback[require Textual]' '--explain-backend[print resolved TUI backend selection and exit]'

@@ -73,15 +73,32 @@ def test_dist_r01_candidate_editable_binding_points_at_transaction_root():
     raw_root = os.environ.get("DEVTOOL_TRANSACTION_REPO_ROOT", "").strip()
     if raw_root:
         assert Path(raw_root).expanduser().resolve() == expected
-    dist = metadata.distribution("devtool")
-    raw = dist.read_text("direct_url.json") or ""
-    payload = json.loads(raw) if raw else {}
-    info = payload.get("dir_info") if isinstance(payload, dict) else {}
-    assert isinstance(info, dict) and info.get("editable") is True
-    parsed = urlparse(str(payload.get("url") or ""))
-    assert parsed.scheme == "file"
-    actual = Path(unquote(parsed.path)).resolve()
-    assert actual == expected, (actual, expected)
+    # An editable setuptools checkout may expose *both* its source-tree
+    # devtool.egg-info and the actual installed devtool-*.dist-info.  Python's
+    # metadata.distribution(name) returns the first match, often the egg-info
+    # lacking PEP 610 direct_url.json.  Look at installed distribution receipts
+    # and require a real matching editable direct_url, not that arbitrary first
+    # metadata record.  This still fails closed if the interpreter is stale.
+    import devtool
+    assert Path(devtool.__file__).resolve().is_relative_to(expected)
+    matching = []
+    for dist in metadata.distributions():
+        name = str(dist.metadata.get("Name") or "").lower().replace("_", "-")
+        if name != "devtool":
+            continue
+        raw = dist.read_text("direct_url.json") or ""
+        if not raw:
+            continue
+        payload = json.loads(raw)
+        assert isinstance(payload, dict)
+        info = payload.get("dir_info")
+        parsed = urlparse(str(payload.get("url") or ""))
+        if not isinstance(info, dict) or info.get("editable") is not True or parsed.scheme != "file":
+            continue
+        actual = Path(unquote(parsed.path)).resolve()
+        if actual == expected:
+            matching.append(actual)
+    assert matching, ("No installed editable distribution is bound to the candidate", expected)
 
 
 def test_dist_r01_wrapper_workflow_is_explicit_and_pre_g3():

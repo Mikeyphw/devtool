@@ -84,10 +84,15 @@ def test_external_lane_has_exact_requirements_and_environment_identity() -> None
     qualification = qualify_selection_environment(selection, inventory, probe_versions=False)
     environment = qualification.host["test_environment"]
     assert environment["declared"] is True
-    assert environment["ready"] is True
     assert environment["manager"] == "uv"
-    assert environment["manager_available"] is True
-    assert Path(environment["manager_path"]).is_absolute()
+    # A fresh CI host may not have uv.  A missing manager must remain an
+    # observable qualification failure, not be relabeled as ready.
+    assert isinstance(environment["ready"], bool)
+    assert isinstance(environment["manager_available"], bool)
+    if environment["manager_available"]:
+        assert Path(environment["manager_path"]).is_absolute()
+    else:
+        assert environment["ready"] is False
     assert environment["requirements_lock_exists"] is True
     assert len(environment["requirements_lock_sha256"]) == 64
     assert environment["python_satisfied"] is True
