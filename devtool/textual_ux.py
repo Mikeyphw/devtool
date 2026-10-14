@@ -233,6 +233,46 @@ def artifact_stage_compact_line(state: Mapping[str, Any], *, returncode: int | N
 
 
 
+def horizontal_apply_stage_strip(
+    tracker: "ApplyStageTracker", *, width: int = 80,
+) -> "Text":
+    """One-row, evidence-backed apply status strip for mobile/desktop.
+
+    Uses the tracker outcomes, not a guessed success inferred from the current
+    stage or an elapsed percentage. Narrow viewports abbreviate the *labels*,
+    never the actual statuses. The canonical child still owns lifecycle truth.
+    """
+    from rich.text import Text
+
+    available = max(1, int(width) - 2)
+    variants = (
+        tuple(APPLY_STAGES),
+        ("Rev", "Qual", "Apply", "Test", "Commit", "Done"),
+        ("R", "Q", "A", "V", "C", "F"),
+    )
+    symbols = {"done": "✓", "active": "●", "pending": "○", "failed": "×", "skipped": "–"}
+    styles = {"done": "green", "active": "bold cyan", "pending": "dim", "failed": "bold red", "skipped": "yellow"}
+    chosen = variants[-1]
+    for labels in variants:
+        if len("  ".join(f"{symbols['pending']} {label}" for label in labels)) <= available:
+            chosen = labels
+            break
+    full = "  ".join(f"{symbols['pending']} {label}" for label in chosen)
+    if len(full) > available:
+        current = tracker.visible_current()
+        marker = symbols.get(tracker.outcomes.get(current, "pending"), "○")
+        chosen = ()
+        fallback = f"{marker} {APPLY_STAGES.index(current)+1}/{len(APPLY_STAGES)} {current}"
+        return Text(fallback[:available], style=styles.get(tracker.outcomes.get(current), "dim"))
+    result = Text(no_wrap=True)
+    for i, (stage, label) in enumerate(zip(APPLY_STAGES, chosen)):
+        if i:
+            result.append("  ")
+        outcome = tracker.outcomes.get(stage, "pending")
+        result.append(f"{symbols.get(outcome, '○')} {label}", style=styles.get(outcome, "dim"))
+    return result
+
+
 class ApplyStageTracker:
     """Phone-friendly apply markers backed by observed lifecycle evidence.
 
@@ -342,10 +382,14 @@ class ApplyStageTracker:
                     self._set(stage, "done" if ok else "failed")
                     if not ok:
                         self.current = stage
-        elif event == "phase_started":
+        elif event in {"phase_started", ""}:
+            # A Tasker snapshot can carry the *current* canonical phase but no
+            # event_type. Such snapshots may update the active marker only;
+            # they cannot mark any phase successful. Monotonic activation
+            # ignores older/stale snapshots after a later phase has started.
             self._activate(stage)
-        # For progress events the phase name is descriptive but may represent
-        # a stale phase, so do not advance without an explicit start event.
+        # Other progress events may represent stale phases, so they cannot
+        # grant phase completion or move the active marker.
 
     def finish(self, returncode: int) -> None:
         rc = int(returncode)
@@ -551,6 +595,7 @@ __all__ = [
     "artifact_stage",
     "artifact_stage_compact_line",
     "artifact_stage_line",
+    "horizontal_apply_stage_strip",
     "fit_middle",
     "is_compact_width",
     "is_short_height",

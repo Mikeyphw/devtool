@@ -31,7 +31,7 @@ from .invocation_origin import create_managed_run_handoff
 from .textual_ux import (
     APPLY_STAGES, ApplyStageTracker, ArtifactActivityTracker, TEXTUAL_SHARED_CSS, artifact_display_progress, artifact_stage,
     artifact_review_text, artifact_running_summary, artifact_stage_compact_line,
-    artifact_stage_line, fit_middle, responsive_class_names, status_label,
+    artifact_stage_line, horizontal_apply_stage_strip, fit_middle, responsive_class_names, status_label,
 )
 
 _TRUE = {"1", "true", "yes", "on"}
@@ -522,7 +522,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
         .compact-job #apply-root { padding: 1 2; }
         .compact-job #apply-context { min-height: 3; border-bottom: solid $accent; margin-bottom: 1; }
         .compact-job #apply-review { display: none; }
-        .compact-job #apply-stages { height: 6; min-height: 0; color: $text; }
+        .compact-job #apply-stages { height: 1; min-height: 1; color: $text; }
         .compact-job #apply-stage { color: $accent; text-style: bold; }
         .compact-job #apply-log-toolbar { height: 1; min-height: 1; border-top: none; }
         .compact-job #apply-log-toggle, .compact-job #apply-raw-toggle { display: none; }
@@ -532,22 +532,21 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
         .compact-job.compact #apply-root { padding: 0 1; }
         .compact-job.short #apply-root { padding-top: 0; padding-bottom: 0; }
         .compact-job.short #apply-context { min-height: 2; margin-bottom: 0; }
-        .compact-job.short #apply-stages { height: 2; }
+        .compact-job.short #apply-stages { height: 1; }
         .compact-job.short #apply-activity { display: none; }
         .compact-job.tiny #apply-stages { height: 1; }
         .compact-job.tiny #apply-phase { display: none; }
         .compact-job.tiny #apply-stage { display: none; }
         .compact-job.tiny #apply-log-toolbar { display: none; }
-        #apply-root { height: 1fr; min-height: 0; }
+        #apply-root { width: 100%; height: 1fr; min-height: 0; }
         #apply-context { height: auto; min-height: 3; }
         #apply-status { height: 1; text-style: bold; overflow-x: hidden; overflow-y: hidden; }
         #apply-meta { height: 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
         #apply-review { height: auto; max-height: 8; margin: 0 1; }
-        #apply-stages { display: none; }
-        .compact-job #apply-stages { display: block; }
+        #apply-stages { display: block; height: 1; min-height: 1; padding: 0 1; overflow-x: hidden; overflow-y: hidden; }
         #apply-help { display: none; }
         .compact-job #apply-help { display: block; }
-        #apply-stage { height: 1; padding: 0 1; color: $text-muted; overflow-x: hidden; overflow-y: hidden; }
+        #apply-stage { display: none; }
         #apply-progress-row { height: 1; min-height: 1; padding: 0 1; }
         #apply-progress { width: 1fr; height: 1; margin-right: 1; }
         #apply-progress-meta { width: auto; min-width: 8; height: 1; content-align: right middle; color: $text-muted; }
@@ -615,7 +614,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                     yield Static("Review canonical artifact contract", id="apply-meta")
                 yield Static(artifact_review_text(review), id="apply-review", classes="ux-card")
                 yield Static(artifact_stage_line({}), id="apply-stage")
-                yield Static("\n".join(f"{icons['pending']} {stage}" for stage in APPLY_STAGES), id="apply-stages")
+                yield Static(horizontal_apply_stage_strip(self._stage_tracker), id="apply-stages")
                 with Horizontal(id="apply-progress-row"):
                     yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="apply-progress")
                     yield Static("working", id="apply-progress-meta")
@@ -682,36 +681,10 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             rc = source.returncode
             if rc is not None:
                 self._stage_tracker.finish(rc)
-            current = self._stage_tracker.visible_current()
-            compact = self.screen.has_class("compact") or self.screen.has_class("short")
-            index = APPLY_STAGES.index(current) + 1
-            text = (f"{index}/{len(APPLY_STAGES)} {current}" if self.screen.has_class("tiny")
-                    else f"{current} {index}/{len(APPLY_STAGES)}" if compact
-                    else "  ".join(f"▶ {name}" if name == current else f"· {name}"
-                                   for name in APPLY_STAGES))
             try:
-                self.query_one("#apply-stage", Static).update(text)
-                from rich.text import Text
-                rows = Text()
-                symbols = {"active": icons["active"], "done": icons["done"],
-                           "pending": icons["pending"], "failed": icons["failed"],
-                           "skipped": "−"}
-                colors = {"active": "bold cyan", "done": "green", "pending": "dim",
-                          "failed": "bold red", "skipped": "yellow"}
-                for name in APPLY_STAGES:
-                    value = self._stage_tracker.outcomes[name]
-                    suffix = " · COMPLETE" if name == "Finish" and rc == 0 else (
-                        " · FAILED" if name == "Finish" and rc not in (None, 0, 130)
-                        else " · CANCELLED" if name == "Finish" and rc == 130 else "")
-                    rows.append(f"{symbols[value]} {name}{suffix}", style=colors[value])
-                    if name != APPLY_STAGES[-1]:
-                        rows.append("\n")
-                self.query_one("#apply-stages", Static).update(rows)
-                if self.screen.has_class("tiny"):
-                    self.query_one("#apply-stages", Static).update(text)
-                elif self.screen.has_class("short"):
-                    done = sum(s == "done" for s in self._stage_tracker.outcomes.values())
-                    self.query_one("#apply-stages", Static).update(f"{text}\n{done} confirmed complete")
+                self.query_one("#apply-stages", Static).update(
+                    horizontal_apply_stage_strip(self._stage_tracker, width=self.size.width)
+                )
             except NoMatches:
                 pass
 

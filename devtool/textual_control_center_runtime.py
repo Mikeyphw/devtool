@@ -33,9 +33,9 @@ from .validation_sessions import load_active_session, write_control_request
 from .transactions import list_active_transaction_records, rollback_transaction, resume_transaction_result_publication
 from .xdg import state_dir
 from .textual_ux import (
-    ArtifactActivityTracker, TEXTUAL_SHARED_CSS, artifact_display_progress,
+    ArtifactActivityTracker, ApplyStageTracker, TEXTUAL_SHARED_CSS, artifact_display_progress,
     artifact_review_text, artifact_running_summary, artifact_stage_compact_line,
-    artifact_stage_line, fit_middle, is_compact_width, progress_counter,
+    artifact_stage_line, horizontal_apply_stage_strip, fit_middle, is_compact_width, progress_counter,
     progress_percent, responsive_class_names, status_label,
 )
 from .ui_core.shortcuts import (
@@ -842,6 +842,7 @@ def create_textual_control_center_app(
             self._started_at = 0.0
             self._last_state: dict[str, Any] = {}
             self._activity = ArtifactActivityTracker()
+            self._stage_tracker = ApplyStageTracker()
             self._raw_lines: list[str] = []
 
         def compose(self) -> ComposeResult:
@@ -852,7 +853,7 @@ def create_textual_control_center_app(
                     yield Static(str(review.get("artifact") or review.get("path") or "Artifact"), id="inline-apply-title", classes="ux-title")
                     yield Static("STARTING · canonical LIFE/RUN child", id="inline-apply-meta")
                 yield Static(artifact_review_text(review), id="inline-apply-review", classes="ux-card")
-                yield Static(artifact_stage_line({}), id="inline-apply-stage")
+                yield Static(horizontal_apply_stage_strip(self._stage_tracker), id="inline-apply-stage")
                 with Horizontal(id="inline-apply-progress-row"):
                     yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="inline-apply-progress")
                     yield Static("working", id="inline-apply-progress-meta")
@@ -900,11 +901,11 @@ def create_textual_control_center_app(
 
         def _refresh_stage_line(self) -> None:
             try:
-                if self.has_class("compact") or self.has_class("short"):
-                    text = artifact_stage_compact_line(self._last_state, returncode=self._returncode, tiny=self.has_class("tiny"))
-                else:
-                    text = artifact_stage_line(self._last_state, returncode=self._returncode)
-                self.query_one("#inline-apply-stage", Static).update(text)
+                if self._returncode is not None:
+                    self._stage_tracker.finish(self._returncode)
+                self.query_one("#inline-apply-stage", Static).update(
+                    horizontal_apply_stage_strip(self._stage_tracker, width=self.size.width)
+                )
             except NoMatches:
                 pass
 
@@ -957,6 +958,7 @@ def create_textual_control_center_app(
             if not text:
                 return False
             self._raw_lines.append(text)
+            self._stage_tracker.observe_line(text)
             limit = int(getattr(self.apply_source, "max_log_lines", 1200))
             if len(self._raw_lines) > limit:
                 del self._raw_lines[: len(self._raw_lines) - limit]
@@ -972,6 +974,7 @@ def create_textual_control_center_app(
 
         def _apply_state(self, state: Mapping[str, Any], rc: int | None) -> None:
             self._last_state = dict(state)
+            self._stage_tracker.observe_state(state)
             percent, counter, scope = artifact_display_progress(state, self._activity, returncode=rc)
             status = status_label(state.get("status") or "running")
             meta_scope = "canonical LIFE/RUN" if scope == "overall" else ("validation child" if scope == "validation child" else "canonical LIFE/RUN · progress indeterminate")
@@ -998,6 +1001,7 @@ def create_textual_control_center_app(
         def _poll_apply(self) -> None:
             try:
                 self._drain_source_lines()
+                self._refresh_stage_line()
                 state = self.apply_source.read_state()
                 rc = self.apply_source.returncode
                 if state:
