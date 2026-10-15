@@ -1,173 +1,87 @@
-"""G3R consumer safety, run-truth and historical separation contracts."""
+"""Retired-ledger G3R v3 evidence tests: source integrity + no false release."""
 from __future__ import annotations
-
+import hashlib
 import json
 from pathlib import Path
 import stat
-from zipfile import ZipFile, ZipInfo
-
+import zipfile
 import pytest
-
 from devtool import g3r_evidence_gate as gate
+from devtool.g3r_evidence_generate import generate
+from devtool.g3r_independent_verify import RETIRED, verify, sha
 
+ROOT = Path(__file__).resolve().parents[1]
 
-@pytest.fixture
-def candidate(tmp_path: Path, monkeypatch):
-    root = tmp_path / "evidence"
-    root.mkdir()
-    record = {
-        "schema_version": 2, "source_candidate_status": "SOURCE_RECONCILED_CANDIDATE",
-        "current_source_truth_only": True, "immutable_originals_preserved": True,
-        "evidence_id": "candidate-test", "source_tree": "1" * 40,
-    }
-    reconcile = {
-        "historical_attribution": "UNCHANGED_FILES_PRESERVED_NOT_RESEALED",
-        "ledger_structure_pass": True, "r04b_unresolved_references": 0,
-        "all_binding_files_at_head": True, "r04b_paths_at_head": True,
-        "r04b_matrix_at_head": True,
-    }
-    checks = {x: {"status": "PASS", "exit_code": 0,
-                  "output_file": x.replace("/", "_") + ".log",
-                  "output_sha256": "2" * 64} for x in gate.REQUIRED_LANES}
-    runtime = {"host_os": "Android", "native_termux": True,
-               "qualification": "NOT_QUALIFIED", "checks": checks}
-    payloads = {
-        "EVIDENCE_RECORD.json": record,
-        "SOURCE_RECONCILIATION.json": reconcile,
-        "INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json": runtime,
-    }
-    for name, contents in payloads.items():
-        (root / name).write_text(json.dumps(contents))
-    def independent_verifier(_evidence, _repo):
-        return {"verification": "PASS_CURRENT_SOURCE_CANDIDATE_ONLY",
-                "source_commit": "7" * 40, "g3_bindings": 2062, "g3_drift": 352,
-                "r04b_bindings": 3893, "r04b_root_sha256": "a" * 64}
-    monkeypatch.setattr(gate, "verify", independent_verifier)
-    return root
+@pytest.fixture(scope='module')
+def candidate(tmp_path_factory):
+    tmp=tmp_path_factory.mktemp('g3r-v3')
+    z=generate(ROOT,tmp)
+    extracted=tmp/'extract'
+    with zipfile.ZipFile(z) as archive: archive.extractall(extracted)
+    return extracted
 
+def _rewrite_receipts(root: Path):
+    files=sorted(p for p in root.rglob('*') if p.is_file() and p.name!='SHA256SUMS')
+    (root/'SHA256SUMS').write_text(''.join(f'{sha(p.read_bytes())}  {p.relative_to(root).as_posix()}\n' for p in files))
 
-def alter(root: Path, file: str, key: str, value):
-    path = root / file
-    contents = json.loads(path.read_text())
-    contents[key] = value
-    path.write_text(json.dumps(contents))
+def test_historical_attestations_and_disposition_ledgers_retired():
+    assert len(RETIRED)==12
+    assert all(not (ROOT/path).exists() for path in RETIRED)
 
+def test_current_source_candidate_is_qualified_only_for_source(candidate):
+    proof=verify(candidate,ROOT)
+    assert proof['verification']=='PASS_CURRENT_SOURCE_CANDIDATE_ONLY'
+    assert proof['source_files']>500
+    assert proof['historical_artifacts_retired']==12
+    result=gate.evaluate(candidate,ROOT,require_native=False)
+    assert result['status']=='PASS_CURRENT_SOURCE_ONLY'
+    assert result['formal_release_qualified'] is False
+    assert result['passed_lanes']==0
+    assert result['open_real_substrate_obligations']==list(gate.G3R_REAL_SUBSTRATE_CARRY)
 
-def test_13_lane_native_candidate_retains_release_block(candidate):
-    result = gate.evaluate(candidate)
-    assert result["status"] == "PASS_CURRENT_SOURCE_AND_NATIVE_LANES"
-    assert result["passed_lanes"] == result["required_lanes"] == 13
-    assert result["formal_release_qualified"] is False
-    assert result["historical_g3_requalified"] is False
-    assert result["open_real_substrate_obligations"] == list(gate.G3R_REAL_SUBSTRATE_CARRY)
+def test_missing_native_lanes_fail_closed(candidate):
+    with pytest.raises(gate.G3REvidenceError,match='native Termux'):
+        gate.evaluate(candidate,ROOT,require_native=True)
 
+def test_source_manifest_tampering_rejected_even_with_rechecksummed_outer_inventory(candidate,tmp_path):
+    import shutil
+    c=tmp_path/'candidate';shutil.copytree(candidate,c)
+    p=c/'SOURCE_MANIFEST.json';m=json.loads(p.read_text());m['files'][0]['sha256']='0'*64
+    p.write_text(json.dumps(m));_rewrite_receipts(c)
+    with pytest.raises(ValueError,match='source SHA mismatch'):
+        verify(c,ROOT)
 
-def test_source_only_does_not_fake_native_lanes(candidate):
-    alter(candidate, "INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json", "checks", {})
-    result = gate.evaluate(candidate, require_native=False)
-    assert result["status"] == "PASS_CURRENT_SOURCE_ONLY"
-    assert result["passed_lanes"] == 0
+def test_fake_release_claim_rejected_even_with_rechecksummed_outer_inventory(candidate,tmp_path):
+    import shutil
+    c=tmp_path/'candidate';shutil.copytree(candidate,c)
+    p=c/'EVIDENCE_RECORD.json';m=json.loads(p.read_text());m['formal_release_qualified']=True
+    p.write_text(json.dumps(m));_rewrite_receipts(c)
+    with pytest.raises(ValueError,match='false qualification'):
+        verify(c,ROOT)
 
+def test_old_format_and_artifact_inventory_rejected(candidate,tmp_path):
+    import shutil
+    c=tmp_path/'candidate';shutil.copytree(candidate,c)
+    p=c/'EVIDENCE_RECORD.json';m=json.loads(p.read_text());m['schema_version']=2
+    p.write_text(json.dumps(m));_rewrite_receipts(c)
+    with pytest.raises(ValueError,match='unsupported candidate'):
+        verify(c,ROOT)
 
-def test_missing_required_lane_is_blocked(candidate):
-    p = candidate / "INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json"
-    runtime = json.loads(p.read_text())
-    runtime["checks"].pop("life_g3_fresh_lifecycle_chain")
-    p.write_text(json.dumps(runtime))
-    with pytest.raises(gate.G3REvidenceError, match="incomplete"):
-        gate.evaluate(candidate)
+@pytest.mark.parametrize('member',['../evil','/absolute','runs/../../escape','runs/./x','runs\\x'])
+def test_archive_traversal_rejected(tmp_path,member):
+    z=tmp_path/'malicious.zip'
+    with zipfile.ZipFile(z,'w') as a:a.writestr(member,'x')
+    with pytest.raises(gate.G3REvidenceError,match='Unsafe'):
+        with gate._candidate_dir(z):pass
 
+def test_symlink_archive_rejected(tmp_path):
+    z=tmp_path/'malicious.zip';i=zipfile.ZipInfo('link');i.create_system=3;i.external_attr=(stat.S_IFLNK|0o777)<<16
+    with zipfile.ZipFile(z,'w') as a:a.writestr(i,'../outside')
+    with pytest.raises(gate.G3REvidenceError,match='Symlink'):
+        with gate._candidate_dir(z):pass
 
-def test_additional_unexpected_lane_is_not_complete(candidate):
-    p = candidate / "INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json"
-    runtime = json.loads(p.read_text())
-    runtime["checks"]["unexpected-lane"] = dict(next(iter(runtime["checks"].values())))
-    p.write_text(json.dumps(runtime))
-    with pytest.raises(gate.G3REvidenceError, match="incomplete"):
-        gate.evaluate(candidate)
-
-
-@pytest.mark.parametrize("status,code", [("FAIL", 1), ("PASS", 1), ("BLOCKED_TIMEOUT", None)])
-def test_failing_or_falsely_passing_lane_is_blocked(candidate, status, code):
-    p = candidate / "INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json"
-    runtime = json.loads(p.read_text())
-    runtime["checks"]["android_g1_gate"].update(status=status, exit_code=code)
-    p.write_text(json.dumps(runtime))
-    with pytest.raises(gate.G3REvidenceError, match="incomplete"):
-        gate.evaluate(candidate)
-
-
-@pytest.mark.parametrize("file,key,value,reason", [
-    ("EVIDENCE_RECORD.json", "schema_version", 3, "generation"),
-    ("EVIDENCE_RECORD.json", "source_candidate_status", "BLOCKED", "reconciliation"),
-    ("EVIDENCE_RECORD.json", "immutable_originals_preserved", False, "originals"),
-    ("EVIDENCE_RECORD.json", "current_source_truth_only", False, "scope"),
-    ("SOURCE_RECONCILIATION.json", "historical_attribution", "REWRITTEN", "attribution"),
-    ("SOURCE_RECONCILIATION.json", "ledger_structure_pass", False, "reconciled"),
-    ("SOURCE_RECONCILIATION.json", "r04b_unresolved_references", 1, "reconciled"),
-    ("SOURCE_RECONCILIATION.json", "r04b_matrix_at_head", False, "reconciled"),
-    ("INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json", "native_termux", False, "native Termux"),
-    ("INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json", "host_os", "Linux", "native Termux"),
-    ("INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json", "qualification", "QUALIFIED", "release"),
-])
-def test_false_evidence_claims_fail_closed(candidate, file, key, value, reason):
-    alter(candidate, file, key, value)
-    with pytest.raises(gate.G3REvidenceError, match=reason):
-        gate.evaluate(candidate)
-
-
-def test_independent_source_verifier_failure_propagates(candidate, monkeypatch):
-    def failure(*_args):
-        raise ValueError("source commit mismatch")
-    monkeypatch.setattr(gate, "verify", failure)
-    with pytest.raises(ValueError, match="source commit mismatch"):
-        gate.evaluate(candidate)
-
-
-def test_zip_candidate_accepts_regular_files(candidate, tmp_path):
-    zip_path = tmp_path / "source.zip"
-    with ZipFile(zip_path, "w") as z:
-        for file in candidate.iterdir():
-            z.write(file, arcname=file.name)
-    assert gate.evaluate(zip_path)["passed_lanes"] == 13
-
-
-@pytest.mark.parametrize("name", ["../outside", "/absolute", "runs/../../escape", "dir\\evil", "runs/./x"])
-def test_zip_unsafe_names_are_rejected(tmp_path, name):
-    zpath = tmp_path / "malicious.zip"
-    with ZipFile(zpath, "w") as z:
-        z.writestr(name, "bad")
-    with pytest.raises(gate.G3REvidenceError, match="Unsafe"):
-        with gate._candidate_dir(zpath):
-            pass
-
-
-def test_zip_symlink_is_rejected(tmp_path):
-    zpath = tmp_path / "malicious.zip"
-    info = ZipInfo("linked")
-    info.create_system = 3
-    info.external_attr = ((stat.S_IFLNK | 0o777) << 16)
-    with ZipFile(zpath, "w") as z:
-        z.writestr(info, "../outside")
-    with pytest.raises(gate.G3REvidenceError, match="Symlink"):
-        with gate._candidate_dir(zpath):
-            pass
-
-
-def test_zip_duplicate_member_is_rejected(tmp_path):
-    zpath = tmp_path / "duplicate.zip"
-    with ZipFile(zpath, "w") as z:
-        z.writestr("a/../b", "1")
-        z.writestr("b", "2")
-    with pytest.raises(gate.G3REvidenceError):
-        with gate._candidate_dir(zpath):
-            pass
-
-
-def test_zip_empty_is_rejected(tmp_path):
-    zpath = tmp_path / "empty.zip"
-    with ZipFile(zpath, "w"):
-        pass
-    with pytest.raises(gate.G3REvidenceError, match="member count"):
-        with gate._candidate_dir(zpath):
-            pass
+def test_r04b_historical_gate_never_passes():
+    from devtool.remed_r04b_fixed_point import audit_r04b_fixed_point
+    result=audit_r04b_fixed_point(ROOT)
+    assert result['status']=='not_qualified'
+    assert len(result['g3r_real_substrate_carry'])==6

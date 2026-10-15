@@ -52,24 +52,9 @@ def assess_evidence(root: Path, disposition_files: Mapping[str,str],
             'entries_checked':entries, 'issues':failures, 'issue_count':len(failures)}
 
 def main() -> int:
-    import argparse
-    parser=argparse.ArgumentParser(description='Read-only Android/LIFE G3 pin preflight')
-    parser.add_argument('--repo',type=Path,default=Path.cwd())
-    parser.add_argument('--family',choices=('android','life','both'),default='both')
-    args=parser.parse_args()
-    dispositions={}
-    attestations={}
-    if args.family in ('android','both'):
-        dispositions['android-source']='ANDROID_G3_SOURCE_DISPOSITIONS.json'
-        attestations['android']='ANDROID_G3_FINAL_ATTESTATION.json'
-    if args.family in ('life','both'):
-        dispositions.update({'life-source':'LIFE_G3_SOURCE_DISPOSITIONS.json',
-                             'life-feature':'LIFE_G3_FEATURE_DISPOSITIONS.json',
-                             'life-promise':'LIFE_G3_PROMISE_DISPOSITIONS.json'})
-        attestations['life']='LIFE_G3_FINAL_ATTESTATION.json'
-    result=assess_evidence(args.repo,dispositions,attestations)
-    print(json.dumps(result,sort_keys=True))
-    return 0 if result['status']=='consistent' else 1
+    import sys
+    print("Historical G3 preflight retired; use python -m devtool.g3r_evidence_gate",file=sys.stderr)
+    return 2
 
-if __name__=='__main__':
+if __name__ == '__main__':
     raise SystemExit(main())

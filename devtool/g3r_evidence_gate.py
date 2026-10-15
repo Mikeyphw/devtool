@@ -1,10 +1,4 @@
-"""G3R current-source evidence *consumer*, not a new historical G3 seal.
-
-The candidate's recorded Git commit/tree MUST equal the clean checkout under
-verification.  The independent verifier replays historical-vs-current binding,
-R04B and evidence receipt comparisons.  Successful results only qualify the
-scoped evidence; six real-substrate obligations and formal release remain open.
-"""
+"""G3R v3 exact-source and native evidence consumer, not a release seal."""
 from __future__ import annotations
 
 import argparse
@@ -108,27 +102,19 @@ def _candidate_dir(candidate: Path) -> Iterator[Path]:
 
 
 def evaluate(candidate: Path, repo: Path = ROOT, *, require_native: bool = True) -> dict[str, Any]:
-    """Fail closed, keep immutable historic seals and explicit release limits."""
+    """Verify G3R v3 against clean HEAD and 13 machine-recorded lanes.
+
+    V2 historical candidates are intentionally rejected after Phase A.
+    """
     with _candidate_dir(Path(candidate)) as evidence:
-        independently_verified = verify(evidence, Path(repo))
+        independent = verify(evidence, Path(repo))
         record = _read_json(evidence / "EVIDENCE_RECORD.json")
         runtime = _read_json(evidence / "INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json")
-        reconcile = _read_json(evidence / "SOURCE_RECONCILIATION.json")
-        _require(record.get("schema_version") == 2, "Unsupported candidate generation")
-        _require(record.get("source_candidate_status") == "SOURCE_RECONCILED_CANDIDATE",
-                 "Source reconciliation is blocked")
+        _require(record.get("schema_version") == 3 and record.get("format") == "G3R-CURRENT-SOURCE-V3",
+                 "Unsupported candidate generation (v2 retired)")
         _require(record.get("current_source_truth_only") is True, "Missing candidate scope boundary")
-        _require(record.get("immutable_originals_preserved") is True, "Historical originals not preserved")
-        _require(reconcile.get("historical_attribution") == "UNCHANGED_FILES_PRESERVED_NOT_RESEALED",
-                 "Historical attribution was replaced")
-        _require(reconcile.get("ledger_structure_pass") is True and
-                 reconcile.get("r04b_unresolved_references") == 0 and
-                 reconcile.get("all_binding_files_at_head") is True and
-                 reconcile.get("r04b_paths_at_head") is True and
-                 reconcile.get("r04b_matrix_at_head") is True,
-                 "Required current-source or R04B evidence not reconciled")
-        _require(runtime.get("qualification") == "NOT_QUALIFIED",
-                 "Native subprocess logs cannot declare a release")
+        _require(record.get("formal_release_qualified") is False, "Release qualification may not be asserted")
+        _require(runtime.get("qualification") == "NOT_QUALIFIED", "Native receipts cannot declare release")
         checks = runtime.get("checks")
         _require(isinstance(checks, dict), "Missing execution lane inventory")
         present = frozenset(checks)
@@ -136,31 +122,22 @@ def evaluate(candidate: Path, repo: Path = ROOT, *, require_native: bool = True)
                                if isinstance(v, dict) and v.get("status") == "PASS"
                                and v.get("exit_code") == 0 and isinstance(v.get("output_file"), str)
                                and isinstance(v.get("output_sha256"), str))
-        native_authority = runtime.get("native_termux") is True and runtime.get("host_os") == "Android"
+        native = runtime.get("native_termux") is True and runtime.get("host_os") == "Android"
         complete = present == REQUIRED_LANES and successful == REQUIRED_LANES
         if require_native:
-            _require(native_authority, "Evidence was not executed on native Termux")
+            _require(native, "Evidence was not executed on native Termux")
             _require(complete, f"Native/semantic lanes incomplete: {sorted(REQUIRED_LANES - successful)}")
-        # Do not use the older G3 or R04B historical gate to authorize new evidence.
-        # Historical SHA drift is allowed *only* as a visible, independently
-        # verified historical-vs-current mismatch, never a rewritten history.
         return {
-            "schema_version": 1,
-            "gate": "G3R-CURRENT-SOURCE-EVIDENCE",
-            "status": "PASS_CURRENT_SOURCE_AND_NATIVE_LANES" if native_authority and complete else "PASS_CURRENT_SOURCE_ONLY",
-            "source_commit": independently_verified["source_commit"],
-            "source_tree": record["source_tree"],
-            "candidate_evidence_id": record["evidence_id"],
-            "independent_verification": independently_verified["verification"],
-            "g3_source_bindings": independently_verified["g3_bindings"],
-            "historical_drift_count": independently_verified["g3_drift"],
-            "r04b_bindings": independently_verified["r04b_bindings"],
-            "r04b_root_sha256": independently_verified["r04b_root_sha256"],
-            "native_termux_runs": bool(native_authority),
-            "passed_lanes": len(successful & REQUIRED_LANES),
-            "required_lanes": len(REQUIRED_LANES),
-            "historical_g3_requalified": False,
-            "formal_release_qualified": False,
+            "schema_version": 3, "gate": "G3R-CURRENT-SOURCE-EVIDENCE",
+            "status": "PASS_CURRENT_SOURCE_AND_NATIVE_LANES" if native and complete else "PASS_CURRENT_SOURCE_ONLY",
+            "source_commit": independent["source_commit"], "source_tree": independent["source_tree"],
+            "source_files": independent["source_files"],
+            "source_root_sha256": independent["source_root_sha256"],
+            "independent_verification": independent["verification"],
+            "historical_artifacts_retired": independent["historical_artifacts_retired"],
+            "native_termux_runs": bool(native),
+            "passed_lanes": len(successful & REQUIRED_LANES), "required_lanes": len(REQUIRED_LANES),
+            "historical_g3_requalified": False, "formal_release_qualified": False,
             "open_real_substrate_obligations": list(G3R_REAL_SUBSTRATE_CARRY),
         }
 
