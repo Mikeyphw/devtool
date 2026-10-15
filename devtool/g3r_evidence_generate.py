@@ -49,6 +49,18 @@ def execute(argv: list[str], root: Path, timeout: int, log: Path) -> dict:
         return {"status": "BLOCKED_ERROR", "exit_code": None, "reason": str(exc)}
 
 
+def native_termux_environment() -> bool:
+    """Recognize native Termux Python on Android as well as Linux builds.
+
+    CPython on Android may return ``Android`` from platform.system(), whereas
+    older Termux Python returned ``Linux``. Both must still have the expected
+    Termux installation prefix; neither a generic Android interpreter nor a
+    Linux CI runner is considered native Termux by this check.
+    """
+    return (platform.system() in {"Linux", "Android"}
+            and os.environ.get("PREFIX", "").startswith("/data/data/com.termux/files/usr"))
+
+
 def generate(repo: Path, output_root: Path, *, run_tests: bool = False,
              native_gates: bool = False, timeout: int = 600) -> Path:
     root = repo.resolve(strict=True)
@@ -74,7 +86,7 @@ def generate(repo: Path, output_root: Path, *, run_tests: bool = False,
     if structure["result"] != "PASS_CURRENT_AUTHORITY_STRUCTURE":
         raise ValueError("Required current executable authority is missing")
     dump(out / "COVERAGE.json", structure)
-    native = bool(os.environ.get("PREFIX", "").startswith("/data/data/com.termux/")) and platform.system() == "Linux"
+    native = native_termux_environment()
     checks = {}
     if run_tests:
         for name in sorted(REQUIRED_SEMANTIC):

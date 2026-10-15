@@ -18,22 +18,16 @@ def test_final_seal_tracks_all_post_handoff_roadmap_reports_and_tests() -> None:
     payload = final_seal_report(ROOT)
     assert payload["status"] == "pass", payload
     assert payload["summary"]["checks"] >= 15
-    assert payload["summary"]["roadmap_reports"] >= 19
     assert payload["summary"]["roadmap_test_files"] >= 21
-    check_ids = {item["id"] for item in payload["checks"]}
-    assert "artifacts.archive-formats" in check_ids
-
-    reports = {
-        "HROPS01_COMPLETE_EMBEDDED_HOOK_RUNTIME_REPORT.md",
-        "AOPS02_ANDROID_EXECUTION_DEVICE_FABRIC_REPORT.md",
-        "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
-        "AOPS04_ANDROID_RELEASE_EVIDENCE_FINAL_SEAL_REPORT.md",
-        "PYTEST_REVITALIZATION_REPORT.md",
-        "GRADLE_ANDROID_TASK_OPTIMIZATION_REPORT.md",
-        "ROADMAP_DELIVERY_AUDIT_REPORT.md",
-    }
-    for report in reports:
-        assert (ROOT / report).is_file(), report
+    checks = {item["id"]: item for item in payload["checks"]}
+    assert checks["artifacts.archive-formats"]["status"] == "pass"
+    assert checks["android.operations-roadmap"]["status"] == "pass"
+    assert payload["formal_release_qualified"] is False
+    # Historical Markdown report presence is no longer a qualification gate.
+    # Executable Android release and seal implementations remain mandatory.
+    for rel in ("devtool/final_seal.py", "devtool/android/release.py",
+                "devtool/g3r_evidence_gate.py"):
+        assert (ROOT / rel).is_file(), rel
 
     tests = {
         "tests/test_hrops01_hook_runtime.py",

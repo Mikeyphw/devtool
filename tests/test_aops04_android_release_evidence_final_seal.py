@@ -160,12 +160,17 @@ def test_completion_exposes_release_surfaces() -> None:
         assert action in android_actions
 
 
-def test_aops04_report_and_final_seal_contract_are_present() -> None:
+def test_aops04_release_convergence_has_executable_seal_contract() -> None:
+    from devtool.final_seal import final_seal_report
     root = Path(__file__).resolve().parents[1]
-    assert (root / "AOPS04_ANDROID_RELEASE_EVIDENCE_FINAL_SEAL_REPORT.md").is_file()
+    payload = final_seal_report(root)
+    check = next(item for item in payload["checks"]
+                 if item["id"] == "android.operations-roadmap")
+    assert check["status"] == "pass", check
+    assert payload["formal_release_qualified"] is False
     seal = (root / "devtool/final_seal.py").read_text(encoding="utf-8")
-    assert "android.operations-roadmap" in seal
-    assert "AOPS04_ANDROID_RELEASE_EVIDENCE_FINAL_SEAL_REPORT.md" in seal
+    assert "audit_android_release_convergence" in seal
+    assert "AOPS04_ANDROID_RELEASE_EVIDENCE_FINAL_SEAL_REPORT.md" not in seal
 
 
 def _package_executor(tmp_path: Path, items: list[dict]):
