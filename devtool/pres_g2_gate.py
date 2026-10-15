@@ -21,15 +21,7 @@ from .textual_control_center import (
     TextualControlCenter,
 )
 
-REQUIRED_REPORTS: tuple[str, ...] = (
-    "PRES_G1_TEXTUAL_REPLACEMENT_PROOF_GATE_REPORT.md",
-    "PRES_X04_TEXTUAL_TUI_SUBSTRATE_REPORT.md",
-    "PRES_X05_TEXTUAL_FEATURE_PARITY_REPORT.md",
-    "PRES_X06_TEXTUAL_DEFAULT_REPLACEMENT_REPORT.md",
-    "PRES_X07_TEXTUAL_REPLACEMENT_HARDENING_REPORT.md",
-    "PRES_X08_LIVE_TEXTUAL_CONTROL_CENTER_REPORT.md",
-    "PRES_G2_INTERACTION_RELIABILITY_REMEDIATION_REPORT.md",
-)
+from .source_bound_proofs import (PRES_G2_IDS, SourceProof, pres_source_proofs, proof_digest)
 
 
 @dataclass(frozen=True)
@@ -51,15 +43,21 @@ class PresG2GateReport:
     required_reports: tuple[str, ...]
     present_reports: tuple[str, ...]
     owns_truth: bool = False
+    source_proofs: tuple[SourceProof, ...] = ()
 
     @property
     def missing_reports(self) -> tuple[str, ...]:
-        present = set(self.present_reports)
-        return tuple(name for name in self.required_reports if name not in present)
+        """Retained compatibility field; historical Markdown never gates closure."""
+        return ()
+
+    @property
+    def missing_proofs(self) -> tuple[str, ...]:
+        ids = {proof.id for proof in self.source_proofs if proof.status == "passed"}
+        return tuple(proof_id for proof_id in PRES_G2_IDS if proof_id not in ids)
 
     @property
     def passed(self) -> bool:
-        return not self.missing_reports and all(item.passed for item in self.items)
+        return not self.missing_proofs and all(item.passed for item in self.items)
 
     def as_dict(self) -> dict[str, Any]:
         payload = {
@@ -67,7 +65,11 @@ class PresG2GateReport:
             "gate_id": self.gate_id,
             "passed": self.passed,
             "owns_truth": self.owns_truth,
-            "missing_reports": list(self.missing_reports),
+            "missing_reports": [],
+            "source_proof_schema_version": 1,
+            "source_proofs": [proof.as_dict() for proof in self.source_proofs],
+            "missing_proofs": list(self.missing_proofs),
+            "source_proof_digest": proof_digest(self.source_proofs),
             "items": [item.as_dict() for item in self.items],
         }
         payload["gate_digest"] = sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -75,16 +77,13 @@ class PresG2GateReport:
 
 
 def required_pres_g2_reports() -> tuple[str, ...]:
-    return REQUIRED_REPORTS
-
-
-def _present_reports(repo_root: Path) -> tuple[str, ...]:
-    return tuple(sorted(path.name for path in repo_root.glob("PRES*_REPORT.md")))
+    return ()  # Deprecated API retained for callers; no Markdown dependency.
 
 
 def build_pres_g2_gate(*, repo_root: Path | None = None, present_reports: Iterable[str] | None = None) -> PresG2GateReport:
-    root = repo_root or Path.cwd()
-    reports = tuple(present_reports) if present_reports is not None else _present_reports(root)
+    root = repo_root or Path(__file__).resolve().parents[1]
+    _ = present_reports  # Legacy argument cannot create or bypass executable proof.
+    source_proofs = pres_source_proofs(root, stage="PRES-G2")
 
     center = TextualControlCenter(page="runs")
     center.ingest({"kind": "node", "run_id": "run-b", "node_id": "b", "state": "running"})
@@ -141,12 +140,12 @@ def build_pres_g2_gate(*, repo_root: Path | None = None, present_reports: Iterab
         PresG2ProofItem("collision-free-keymap", collisions_ok, "navigation bindings are unique"),
         PresG2ProofItem("no-guessed-shell-commands", no_shell_commands, "operator snapshot/actions contain typed IDs rather than shell strings"),
     )
-    return PresG2GateReport(1, "PRES-G2", items, REQUIRED_REPORTS, reports, owns_truth=False)
+    return PresG2GateReport(1, "PRES-G2", items, (), (), owns_truth=False, source_proofs=source_proofs)
 
 
 def assert_pres_g2_gate_passes(report: PresG2GateReport) -> None:
-    if report.missing_reports:
-        raise AssertionError(f"PRES-G2 missing report evidence: {', '.join(report.missing_reports)}")
+    if report.missing_proofs or any(p.status != "passed" for p in report.source_proofs):
+        raise AssertionError(f"PRES-G2 missing or failed current-source executable proof: {', '.join(report.missing_proofs)}")
     failed = [item.id for item in report.items if not item.passed]
     if failed:
         raise AssertionError(f"PRES-G2 proof gate failed: {', '.join(failed)}")

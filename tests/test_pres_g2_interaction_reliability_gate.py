@@ -28,11 +28,14 @@ def _tree_digest(root: Path) -> str:
     return h.hexdigest()
 
 
-def test_required_gate_window_reports_are_present() -> None:
+def test_required_gate_window_uses_current_source_proofs() -> None:
     root = Path(__file__).resolve().parents[1]
-    report = build_pres_g2_gate(repo_root=root)
+    report = build_pres_g2_gate(repo_root=root, present_reports=[])
+    assert report.missing_proofs == ()
     assert report.missing_reports == ()
-    assert set(required_pres_g2_reports()) <= {path.name for path in root.glob("PRES*_REPORT.md")}
+    assert len(report.source_proofs) == 10
+    assert {proof.id for proof in report.source_proofs} >= {"PRES-G1", "PRES-X08", "PRES-G2"}
+    assert required_pres_g2_reports() == ()
 
 
 def test_gate_machine_report_passes_every_interaction_reliability_item() -> None:
@@ -112,17 +115,19 @@ def test_terminal_restoration_guard_covers_keyboard_interrupt() -> None:
     assert guard.active is False
 
 
-def test_gate_fails_closed_on_missing_report() -> None:
-    present = tuple(name for name in required_pres_g2_reports() if "X08" not in name)
-    report = build_pres_g2_gate(present_reports=present)
-    with pytest.raises(AssertionError, match="missing report evidence"):
-        assert_pres_g2_gate_passes(report)
+def test_gate_fails_closed_on_missing_source_proof() -> None:
+    from dataclasses import replace
+
+    report = build_pres_g2_gate()
+    broken = replace(report, source_proofs=report.source_proofs[:-1])
+    with pytest.raises(AssertionError, match="missing or failed current-source"):
+        assert_pres_g2_gate_passes(broken)
 
 
 def test_gate_fails_closed_on_failed_proof_item() -> None:
     report = build_pres_g2_gate(repo_root=Path(__file__).resolve().parents[1])
     items = list(report.items)
     items[0] = PresG2ProofItem(items[0].id, False, items[0].evidence, items[0].owner)
-    broken = type(report)(report.schema_version, report.gate_id, tuple(items), report.required_reports, report.present_reports, report.owns_truth)
+    broken = type(report)(report.schema_version, report.gate_id, tuple(items), report.required_reports, report.present_reports, report.owns_truth, report.source_proofs)
     with pytest.raises(AssertionError, match="proof gate failed"):
         assert_pres_g2_gate_passes(broken)
