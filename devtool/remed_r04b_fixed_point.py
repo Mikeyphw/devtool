@@ -91,9 +91,20 @@ def _sha(path: Path) -> str:
 
 
 def _git_value(repo_root: Path, *args: str) -> str:
-    proc = subprocess.run(["git", *args], cwd=repo_root, text=True, capture_output=True, check=False, timeout=20)
-    if proc.returncode != 0:
-        return ""
+    # Snapshot/transaction archives may preserve a foreign UID.  Trust *only*
+    # this caller-selected root for this Git invocation, without modifying the
+    # user's global safe.directory configuration.  A failed lookup is a hard
+    # error: an empty SHA/tree must never enter current-source evidence.
+    root = repo_root.resolve(strict=True)
+    proc = subprocess.run(
+        ["git", "-c", f"safe.directory={root}", *args],
+        cwd=root, text=True, capture_output=True, check=False, timeout=20,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        raise RuntimeError(
+            f"R04B Git authority lookup failed for {args}: "
+            f"{proc.stderr.strip() or 'empty Git response'}"
+        )
     return proc.stdout.strip()
 
 
