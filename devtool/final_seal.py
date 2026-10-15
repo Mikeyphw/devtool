@@ -37,48 +37,6 @@ class SealCheck:
         return asdict(self)
 
 
-_REQUIRED_REPORTS = (
-    "TRUST_BOUNDARY_EMERGENCY_SEAL_REPORT.md",
-    "RELEASE_VERIFIER_FINAL_SEAL_INTEGRITY_REPORT.md",
-    "CLI_CONFIG_WORKSPACE_DISCOVERY_REPORT.md",
-    "EXECUTION_SCHEDULER_CORRECTNESS_REPORT.md",
-    "TRANSACTIONS_ARCHIVES_ROLLBACK_REPORT.md",
-    "ARTIFACT_LIFECYCLE_REGISTRY_REPORT.md",
-    "VALIDATION_TRUTH_SESSION_CHECKPOINT_REPORT.md",
-    "DIAGNOSTICS_REDACTION_REPORTING_REPORT.md",
-    "CORE_RUNTIME_IPC_HOOKS_REPORT.md",
-    "ANDROID_TOOLCHAIN_RESOLUTION_REPORT.md",
-    "ANDROID_DEVICE_SIGNING_RELEASE_GATES_REPORT.md",
-    "ANDROID_LIVE_HUD_RUNSTORE_TRUTH_REPORT.md",
-    "UI_DESKTOP_TRUTH_ACTIONS_REPORT.md",
-    "LANGUAGE_RUNNERS_PACKAGING_INSTALL_REPO_REPORT.md",
-    "MP01_MP02_POLYGLOT_TARGETS_WORKFLOWS_REPORT.md",
-    "MP03_MP04_WORKFLOW_DAG_CROSS_RUNNER_REPORT.md",
-    "MP05_MP06_CROSS_TARGET_WORKSPACE_GROUPS_REPORT.md",
-    "MP07_MP08_AFFECTED_TOOLCHAIN_PREFLIGHT_REPORT.md",
-    "MP09_MP10_SAFE_SCHEDULING_GRAPH_OBSERVABILITY_REPORT.md",
-    "UI01_UI02_SHARED_UI_STATE_ACTION_NAVIGATION_REPORT.md",
-    "UI03_UI04_UI_PREFERENCES_TOKENS_COPY_REPORT.md",
-    "UI05_UI06_CAPABILITIES_RESPONSIVE_PROGRESS_DIAGNOSTICS_REPORT.md",
-    "UI07_UI08_CONFIRMATION_NOTIFICATION_TERMINAL_MIGRATION_REPORT.md",
-    "UI09_UI10_DESKTOP_ANDROID_UI_CORE_MIGRATION_REPORT.md",
-    "UI11_UI12_MACHINE_IPC_COMPLETION_CONFIG_REPORT.md",
-    "FS01_FS02_COMPATIBILITY_DOCUMENTATION_REPORT.md",
-    "HROPS01_COMPLETE_EMBEDDED_HOOK_RUNTIME_REPORT.md",
-    "AOPS02_ANDROID_EXECUTION_DEVICE_FABRIC_REPORT.md",
-    "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
-    "AOPS04_ANDROID_RELEASE_EVIDENCE_FINAL_SEAL_REPORT.md",
-    "PYTEST_REVITALIZATION_REPORT.md",
-    "GRADLE_ANDROID_TASK_OPTIMIZATION_REPORT.md",
-    "ROADMAP_DELIVERY_AUDIT_REPORT.md",
-    "ROADMAP_PROMISE_RECHECK_REPORT.md",
-)
-
-_REQUIRED_TARGET_SEAL_REPORTS = (
-    "REM15_DEVTOOL_TARGET_FINAL_QUALIFICATION_REPORT.md",
-    "android/devtool-live-hud/REM15_ANDROID_HUD_TARGET_FINAL_QUALIFICATION_REPORT.md",
-)
-
 _FINAL_REMEDIATION_COVERAGE = "FINAL_REMEDIATION_COVERAGE.json"
 
 
@@ -335,7 +293,6 @@ def _target_final_seal_errors(repo_root: Path, configured_targets: set[str]) -> 
     errors: list[str] = []
     if configured_targets != expected_targets:
         errors.append(f"configured_target_mismatch: configured={sorted(configured_targets)} expected={sorted(expected_targets)}")
-    errors.extend(_markdown_content_errors(repo_root, _REQUIRED_TARGET_SEAL_REPORTS, min_bytes=160))
     for target in sorted(expected_targets):
         payload = target_seal_report(repo_root, target)
         if payload.get("status") != "pass":
@@ -393,7 +350,7 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
     checks.append(_check(
         "targets.final-seal-overlays",
         not target_errors,
-        "every configured Devtool target has its own passing Overlay 15 final-seal artifact",
+        "configured targets satisfy executable target identity, validation and test contracts",
         target_errors,
     ))
     coverage_errors = _final_remediation_coverage_errors(repo_root, configured_targets)
@@ -434,14 +391,6 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         schema_details,
     ))
 
-    report_errors = _markdown_content_errors(repo_root, _REQUIRED_REPORTS, min_bytes=160)
-    checks.append(_check(
-        "roadmap.reports",
-        not report_errors,
-        "all roadmap implementation reports, including HROPS01, AOPS02-AOPS04, pytest revitalization, Gradle optimization, and delivery audit, are present and content-validated",
-        report_errors,
-    ))
-
     doc_errors = _doc_content_errors(repo_root, _REQUIRED_DOCS)
     checks.append(_check("docs.required", not doc_errors, "canonical release documentation is present and content-validated", doc_errors))
 
@@ -474,11 +423,28 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
     completion_ok = completion_path.is_file() and completion_path.read_text(encoding="utf-8") == ZSH_COMPLETION
     checks.append(_check("completion.synchronized", completion_ok, "generated and packaged zsh completion are synchronized"))
 
-    profile_text = (repo_root / "devtool" / "validation_profiles.py").read_text(encoding="utf-8") if (repo_root / "devtool" / "validation_profiles.py").is_file() else ""
+    # FS03 is a repository contract audit, not a substitute for executing tests,
+    # native device jobs, artifact validation, or release qualification.
+    # Inspect the live profile configuration instead of trusting report prose.
+    try:
+        from .validation_profiles import BUILTIN_PROFILES
+        profile = BUILTIN_PROFILES.get("final-seal", {})
+        policy = profile.get("validation", {}) if isinstance(profile, dict) else {}
+        artifacts = profile.get("artifacts", {}) if isinstance(profile, dict) else {}
+        profile_errors = [
+            name for name, valid in (
+                ("validation.final_seal_contracts", policy.get("final_seal_contracts") is True),
+                ("artifacts.required", artifacts.get("required") is True),
+                ("artifacts.external_verification", artifacts.get("external_verification") == "required"),
+            ) if not valid
+        ]
+    except Exception as exc:
+        profile_errors = [f"profile-import:{type(exc).__name__}:{exc}"]
     checks.append(_check(
         "validation.final-seal-profile",
-        '"final-seal"' in profile_text,
-        "final-seal validation workflow profile is available",
+        not profile_errors,
+        "final-seal profile requires contract checks, artifacts and external verification",
+        profile_errors,
     ))
 
     try:
@@ -523,6 +489,8 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
     failures = [item for item in checks if item.status == "fail"]
     return {
         "schema_version": FINAL_SEAL_SCHEMA_VERSION,
+        "gate_scope": "repository_contracts_only",
+        "formal_release_qualified": False,
         "status": "pass" if not failures else "fail",
         "repo_root": str(repo_root),
         "summary": {
@@ -530,10 +498,8 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
             "passed": len(checks) - len(failures),
             "failed": len(failures),
             "compatibility_entries": len(COMPATIBILITY_ENTRIES),
-            "roadmap_reports": len(_REQUIRED_REPORTS),
-            "roadmap_test_files": len(_REQUIRED_TESTS),
-            "target_final_reports": len(_REQUIRED_TARGET_SEAL_REPORTS),
-            "configured_targets": len(configured_targets),
+                "roadmap_test_files": len(_REQUIRED_TESTS),
+                "configured_targets": len(configured_targets),
         },
         "checks": [item.as_dict() for item in checks],
         "compatibility": compat.get("summary", {}),

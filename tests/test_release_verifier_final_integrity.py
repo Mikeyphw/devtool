@@ -164,17 +164,15 @@ def test_s16_04_final_qualification_report_rejects_stale_existing_content(tmp_pa
         write_report(report, tmp_path / "qualification.json", final=True)
 
 
-def test_s16_02_final_seal_rejects_placeholder_reports_and_empty_tests(tmp_path: Path) -> None:
-    # Build just enough fake repository shape to prove FS03 validates content,
-    # not mere path existence. Every required report/doc/test path exists, but
-    # the files are placeholders or syntactically invalid contracts.
+def test_s16_02_final_seal_rejects_placeholder_docs_and_empty_tests(tmp_path: Path) -> None:
+    # Documents and test contracts are checked for structure; retired
+    # historical milestone reports do not qualify or disqualify releases.
     (tmp_path / ".devtool.toml").write_text('[project]\nrunner="python"\nplatform="server"\n[workspace]\ndefault_target="devtool"\n[targets.devtool]\nrunner="python"\nplatform="server"\nroot="."\n', encoding="utf-8")
     from devtool import final_seal as seal
-    for collection in (seal._REQUIRED_REPORTS, seal._REQUIRED_DOCS):
-        for rel in collection:
-            path = tmp_path / rel
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("# Placeholder\nTODO: fill\n", encoding="utf-8")
+    for rel in seal._REQUIRED_DOCS:
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Placeholder\nTODO: fill\n", encoding="utf-8")
     for rel in seal._REQUIRED_TESTS:
         path = tmp_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,7 +190,7 @@ def test_s16_02_final_seal_rejects_placeholder_reports_and_empty_tests(tmp_path:
     (tmp_path / "docs/FINAL_RELEASE_SEAL.md").write_text("# FS03\nfinal-seal\n", encoding="utf-8")
     payload = final_seal_report(tmp_path)
     failed = {item["id"] for item in payload["checks"] if item["status"] == "fail"}
-    assert "roadmap.reports" in failed
+    assert "roadmap.reports" not in {item["id"] for item in payload["checks"]}
     assert "docs.required" in failed
     assert "tests.roadmap-contracts" in failed
 
