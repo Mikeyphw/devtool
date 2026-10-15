@@ -103,9 +103,23 @@ class IpcSemanticActionTests(unittest.TestCase):
             broker = IpcBroker(path)
             thread = threading.Thread(target=broker.serve_forever, daemon=True)
             thread.start()
-            deadline = time.monotonic() + 2
-            while not path.exists() and time.monotonic() < deadline:
-                time.sleep(0.01)
+            # A bound Unix socket path is not proof that listen() completed.
+            # Wait for an actual connection before publishing; otherwise a
+            # scheduled CI worker can race the broker's bind/listen boundary.
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                self.assertTrue(thread.is_alive(), "IPC broker stopped during startup")
+                probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    probe.settimeout(0.2)
+                    probe.connect(str(path))
+                    break
+                except (OSError, socket.timeout):
+                    time.sleep(0.01)
+                finally:
+                    probe.close()
+            else:
+                self.fail("IPC broker did not accept connections within 5 seconds")
 
             cancelled = threading.Event()
             publisher = IpcPublisher("run-1", socket_path=path, on_cancel=cancelled.set)
