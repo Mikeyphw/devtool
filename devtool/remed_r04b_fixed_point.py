@@ -133,6 +133,16 @@ def _resolve_reference(repo_root: Path, reference: str, *, source_rows: Mapping[
         resolved = _resolve_reference(repo_root, target, source_rows=source_rows, seen=(*seen, ref))
         resolved["alias_target"] = target
         return resolved
+    # Untrusted historical references must never escape the repository, even
+    # when a file exists at the destination of a symlink or an absolute path.
+    def confined_file(raw_path: str) -> tuple[Path | None, str]:
+        if not raw_path or "\x00" in raw_path:
+            return None, "empty-or-invalid"
+        candidate = (repo_root / raw_path).resolve(strict=False)
+        if not candidate.is_relative_to(repo_root.resolve()) or not candidate.is_file():
+            return None, "missing-or-escaped"
+        return candidate, ""
+
     if ref.startswith("source:"):
         raw = ref[len("source:"):]
         match = re.fullmatch(r"([^:#]+):([0-9a-fA-F]{64})", raw)
@@ -150,16 +160,16 @@ def _resolve_reference(repo_root: Path, reference: str, *, source_rows: Mapping[
                 "detail": source_id,
             }
         raw_path = raw.split("#", 1)[0]
-        path = repo_root / raw_path
-        if path.is_file():
+        path, issue = confined_file(raw_path)
+        if path is not None:
             return {"kind": "source-file", "path": raw_path, "sha256": _sha(path), "expected_sha256": "", "resolved": True, "detail": ""}
-        return {"kind": "source-file", "path": raw_path, "sha256": "", "expected_sha256": "", "resolved": False, "detail": "missing"}
+        return {"kind": "source-file", "path": raw_path, "sha256": "", "expected_sha256": "", "resolved": False, "detail": issue}
 
     file_part = ref.split("::", 1)[0] if ref.split("::", 1)[0].endswith(".py") else ref
     if file_part.startswith("file:"):
         file_part = file_part[len("file:"):]
-    path = repo_root / file_part
-    if path.is_file():
+    path, issue = confined_file(file_part)
+    if path is not None:
         return {
             "kind": "pytest-file" if ref != file_part and file_part.endswith(".py") else "file",
             "path": file_part,
@@ -168,7 +178,7 @@ def _resolve_reference(repo_root: Path, reference: str, *, source_rows: Mapping[
             "resolved": True,
             "detail": "",
         }
-    return {"kind": "file", "path": file_part, "sha256": "", "expected_sha256": "", "resolved": False, "detail": "missing"}
+    return {"kind": "file", "path": file_part, "sha256": "", "expected_sha256": "", "resolved": False, "detail": issue}
 
 
 def build_source_evidence_bindings(repo_root: str | Path = ".") -> dict[str, Any]:
