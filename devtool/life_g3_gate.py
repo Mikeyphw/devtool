@@ -52,6 +52,54 @@ def _require(value: bool, message: str) -> None:
         raise LifeG3Error(message)
 
 
+def _require_cleanup_chain_truth(plan: Any, receipt: Any, generated: Path, resource_id: str) -> None:
+    """Qualify the *target* cleanup without pretending retained evidence was deleted.
+
+    A repository-pack publication registers a referenced RUN evidence receipt.
+    The canonical cleanup planner correctly protects that receipt, so the
+    aggregate result is ``partial`` even when its disposable generated output
+    was successfully deleted.  Verify individual actions and postconditions;
+    never normalize or weaken the canonical cleanup receipt.
+    """
+    selected = tuple(plan.selected)
+    protected = tuple(plan.protected)
+    expected_ids = {item.candidate_id for item in plan.candidates}
+    by_id = {item.action_id: item for item in receipt.results}
+    _require(not plan.opaque_actions, "LIFE-G3 fixture unexpectedly required opaque provider cleanup")
+    _require(
+        receipt.plan_id == plan.plan_id
+        and receipt.repository_id == plan.repository_id
+        and len(by_id) == len(receipt.results)
+        and set(by_id) == expected_ids,
+        "LIFE-G3 cleanup receipt identity or action inventory mismatch",
+    )
+    _require(
+        sum(item.resource_id == resource_id and Path(item.path) == generated for item in selected) == 1,
+        "LIFE-G3 disposable output was not uniquely selected for cleanup",
+    )
+    for item in selected:
+        result = by_id[item.candidate_id]
+        _require(
+            result.resource_id == item.resource_id
+            and result.status == "applied"
+            and result.postcondition == "absent"
+            and not Path(item.path).exists(),
+            "LIFE-G3 managed-output cleanup did not remove an authorized selected resource",
+        )
+    for item in protected:
+        result = by_id[item.candidate_id]
+        _require(
+            result.resource_id == item.resource_id
+            and result.status == "protected"
+            and (not item.source_snapshot.get("exists") or Path(item.path).exists()),
+            "LIFE-G3 cleanup failed to preserve referenced evidence",
+        )
+    _require(
+        receipt.status == ("partial" if protected else "applied") and not generated.exists(),
+        "LIFE-G3 aggregate cleanup receipt contradicted individual postconditions",
+    )
+
+
 def _hash(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
@@ -168,7 +216,7 @@ def _run_fresh_lifecycle_chain() -> dict[str, Any]:
         cleanup_plan = compile_cleanup_plan(ownership)
         _require(bool(cleanup_plan.selected), "LIFE-G3 cleanup plan did not select managed output")
         cleanup_receipt = apply_cleanup_plan(cleanup_plan, ownership=ownership, confirm=True)
-        _require(cleanup_receipt.status == "applied" and not generated.exists(), "LIFE-G3 cleanup application failed")
+        _require_cleanup_chain_truth(cleanup_plan, cleanup_receipt, generated, descriptor.resource_id)
         cleanup = cleanup_projection(cleanup_plan.as_dict())
 
         remote = remote_lifecycle_envelope(
