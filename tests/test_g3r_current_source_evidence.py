@@ -55,8 +55,36 @@ def test_current_source_candidate_is_qualified_only_for_source(candidate):
 
 def test_missing_native_lanes_fail_closed(candidate):
     evidence, checkout = candidate
-    with pytest.raises(gate.G3REvidenceError,match='native Termux'):
-        gate.evaluate(evidence,checkout,require_native=True)
+    runtime = json.loads((evidence / 'INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json').read_text())
+    native = runtime['native_termux'] is True and runtime['host_os'] == 'Android'
+    # Source-only candidates generated *on* Termux correctly identify their
+    # native host, but have zero executed lanes. Both environments must fail,
+    # for different reasons; neither can be treated as native G3R proof.
+    expected = 'Native/semantic lanes incomplete' if native else 'native Termux'
+    with pytest.raises(gate.G3REvidenceError, match=expected):
+        gate.evaluate(evidence, checkout, require_native=True)
+
+
+@pytest.mark.parametrize('native', [False, True])
+def test_missing_native_lanes_rejected_with_both_host_dispositions(candidate, tmp_path, native):
+    evidence, checkout = candidate
+    import shutil
+    copy = tmp_path / ('native-candidate' if native else 'hosted-candidate')
+    shutil.copytree(evidence, copy)
+    runtime_path = copy / 'INDEPENDENT_SEMANTIC_AND_NATIVE_RUNS.json'
+    runtime = json.loads(runtime_path.read_text())
+    assert runtime['checks'] == {}  # No semantic or native lanes executed.
+    runtime['native_termux'] = native
+    runtime['host_os'] = 'Android' if native else 'Linux'
+    runtime_path.write_text(json.dumps(runtime, sort_keys=True))
+    _rewrite_receipts(copy)
+    expected = 'Native/semantic lanes incomplete' if native else 'native Termux'
+    with pytest.raises(gate.G3REvidenceError, match=expected):
+        gate.evaluate(copy, checkout, require_native=True)
+    # Source-only verification must never assert full native qualification.
+    scope = gate.evaluate(copy, checkout, require_native=False)
+    assert scope['status'] == 'PASS_CURRENT_SOURCE_ONLY'
+    assert scope['formal_release_qualified'] is False
 
 def test_source_manifest_tampering_rejected_even_with_rechecksummed_outer_inventory(candidate,tmp_path):
     evidence, checkout = candidate
