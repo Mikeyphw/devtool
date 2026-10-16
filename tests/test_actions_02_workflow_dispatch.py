@@ -109,3 +109,23 @@ def test_parser_and_action_baseline():
  assert r.command=='actions' and r.actions_command=='run' and r.yes
  assert 'run' in actions_baseline()['operations']
  assert actions_baseline()['remote_execution'] is False
+
+
+def test_expected_source_mismatch_rejects_before_post_and_before_journaling(tmp_path):
+ from devtool.actions_dispatch import GitHubDispatchPreflightError
+ opener=prepared()
+ with pytest.raises(GitHubDispatchPreflightError, match='no dispatch attempted'):
+  dispatch_workflow(GitHubActionsClient('token',opener=opener),'owner/repo','ci.yml',
+                    'main',{'mode':'debug'},execute=True,state_root=tmp_path,
+                    expected_source_sha='b'*40)
+ assert len(opener.requests)==4 and all(r.get_method()=='GET' for r in opener.requests)
+ assert list(tmp_path.glob('*.json'))==[]
+
+
+def test_expected_source_match_allows_one_source_bound_post(tmp_path):
+ opener=prepared()
+ result=dispatch_workflow(GitHubActionsClient('token',opener=opener),'owner/repo','ci.yml',
+                          'main',{'mode':'debug'},execute=True,state_root=tmp_path,
+                          expected_source_sha='a'*40)
+ assert result['run_id']==3434
+ assert sum(r.get_method()=='POST' for r in opener.requests)==1

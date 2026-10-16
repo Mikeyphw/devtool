@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 from pathlib import Path
 import subprocess
 import sys
@@ -99,3 +100,55 @@ def test_dist_g3_records_successful_pres_g2r_prerequisite() -> None:
         "tests": {"passed": 302, "failed": 0, "skipped": 0},
         "diagnostics": {"warnings": 0, "errors": 0},
     }
+
+
+def test_historical_proof_ignores_markdown_content_but_checks_executable_sources(tmp_path):
+    from devtool.dist_g3_gate import HISTORICAL_SOURCE_TESTS
+    import shutil
+    root = Path.cwd()
+    shutil.copy2(root / 'DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json', tmp_path)
+    for reference in (x for refs in HISTORICAL_SOURCE_TESTS.values() for x in refs):
+        relative=reference.split('::')[0]
+        target=tmp_path/relative
+        target.parent.mkdir(parents=True,exist_ok=True)
+        if not target.exists(): shutil.copy2(root / relative, target)
+    # Historical reports are intentionally absent from the test fixture.
+    proof = audit_historical_substrate(tmp_path)
+    assert proof['schema_version'] == 2
+    assert proof['proof_kind'] == 'source-bound-executable-test-contracts'
+    assert len(proof['executable_proofs']) == 14
+    assert not list(tmp_path.glob('*REPORT.md'))
+    # A missing test node, not a missing report, must block the gate.
+    node = HISTORICAL_SOURCE_TESTS['GIT-FRX'][0]
+    path = tmp_path / node.split('::')[0]
+    path.write_text(path.read_text().replace(node.split('::')[1], 'removed_test', 1))
+    with pytest.raises(RuntimeError, match='proof test node missing'):
+        audit_historical_substrate(tmp_path)
+
+
+def test_historical_proof_rejects_assertion_stripping_and_disposition_drift(tmp_path):
+    import shutil
+    from devtool.dist_g3_gate import HISTORICAL_SOURCE_TESTS
+    root=Path.cwd()
+    crosswalk=tmp_path/'DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json'
+    shutil.copy2(root/crosswalk.name,crosswalk)
+    for reference in (x for refs in HISTORICAL_SOURCE_TESTS.values() for x in refs):
+        relative=reference.split('::')[0]
+        target=tmp_path/relative
+        target.parent.mkdir(parents=True,exist_ok=True)
+        if not target.exists():shutil.copy2(root/relative,target)
+    data=json.loads(crosswalk.read_text())
+    data['rows'][0]['disposition']='UNVERIFIED'
+    crosswalk.write_text(json.dumps(data))
+    with pytest.raises(RuntimeError, match='invalid disposition'):
+        audit_historical_substrate(tmp_path)
+    shutil.copy2(root/crosswalk.name,crosswalk)
+    node=HISTORICAL_SOURCE_TESTS['GIT-FRX'][1]
+    path=tmp_path/node.split('::')[0]
+    # A file that merely contains the name/prose cannot qualify.
+    first=HISTORICAL_SOURCE_TESTS['GIT-FRX'][0].split('::')[1]
+    path.write_text('from devtool.core.events import EventBus\n'
+                    'def '+first+'():\n    pass\n'
+                    'def '+node.split('::')[1]+'():\n    pass\n')
+    with pytest.raises(RuntimeError, match='semantic assertions'):
+        audit_historical_substrate(tmp_path)

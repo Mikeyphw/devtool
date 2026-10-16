@@ -49,7 +49,8 @@ def start(root, monkeypatch, api=None, run_id=1234):
     api=api or FakeApi()
     dispatched=[]
     def fake_dispatch(*a,**kw):
-        dispatched.append(1)
+        if kw.get("execute"):
+            dispatched.append(1)
         return {'pre_dispatch_sha':SHA,'workflow_id':42,'workflow_path':'.github/workflows/'+q.WORKFLOW,
                 'request_id':'c'*32,'run_id':run_id}
     monkeypatch.setattr(q,'dispatch_workflow',fake_dispatch)
@@ -138,7 +139,11 @@ def test_ci24_missing_or_duplicate_artifact_fails(tmp_path,monkeypatch):
 
 def test_ci24_interrupted_dispatch_cannot_repeat(tmp_path,monkeypatch):
     root=fixture_source(tmp_path,monkeypatch)
-    def fail(*a,**k):raise OSError('read timeout after POST')
+    def fail(*a,**k):
+        if k.get('execute'):
+            raise OSError('read timeout after POST')
+        return {'pre_dispatch_sha': SHA, 'workflow_id': 42,
+                'workflow_path': '.github/workflows/' + q.WORKFLOW}
     monkeypatch.setattr(q,'dispatch_workflow',fail)
     with pytest.raises(GitHubActionsError,match='DO NOT RETRY'):
         q.ci24_start(root,client=FakeApi(),slug=SLUG)
@@ -233,3 +238,80 @@ def test_fs03_wrapper_real_auditor_and_no_nested_cli(monkeypatch):
     result = q._fs03_strict_in_process(root)
     assert result['status'] == 'PASS' and result['checks'] >= 16
     assert result['failed'] == 0
+
+
+def test_ci24_preflight_remote_mismatch_never_dispatches_or_poison_receipt(tmp_path, monkeypatch):
+    root = fixture_source(tmp_path, monkeypatch)
+    posts = []
+    def dispatch(*args, **kw):
+        posts.append(kw.get('execute'))
+        return {'pre_dispatch_sha': 'b'*40, 'workflow_id': 42,
+                'workflow_path': '.github/workflows/' + q.WORKFLOW}
+    monkeypatch.setattr(q, 'dispatch_workflow', dispatch)
+    with pytest.raises(GitHubActionsError, match='preflight'):
+        q.ci24_start(root, client=FakeApi(), slug=SLUG)
+    assert posts == [False]  # No POST requested.
+    assert not q._state_path(root, SHA, 'ci24').exists()
+
+
+def test_ci24_second_preflight_source_drift_is_safe_and_auditable(tmp_path, monkeypatch):
+    root = fixture_source(tmp_path, monkeypatch)
+    calls = []
+    def dispatch(*args, **kw):
+        calls.append(kw['execute'])
+        if kw['execute'] and len(calls) == 2:
+            raise q.GitHubDispatchPreflightError('source drift before POST')
+        return {'pre_dispatch_sha': SHA, 'workflow_id': 42,
+                'workflow_path': '.github/workflows/' + q.WORKFLOW,
+                'request_id': 'e'*32, 'run_id': 1234}
+    monkeypatch.setattr(q,'dispatch_workflow',dispatch)
+    with pytest.raises(GitHubActionsError, match='no POST attempted'):
+        q.ci24_start(root, client=FakeApi(), slug=SLUG)
+    record = q._load(root, SHA, 'ci24')
+    assert record['state'] == 'PREFLIGHT_REJECTED' and record['request_id'] is None
+    result = q.ci24_start(root, client=FakeApi(), slug=SLUG)
+    assert result['state'] == 'DISPATCHED_UNOBSERVED'
+    assert q._load(root, SHA, 'ci24')['preflight_failures']
+    assert calls == [False, True, False, True]
+
+
+def test_remote_waiting_is_successful_observation_not_successful_qualification(tmp_path, monkeypatch, capsys):
+    root = fixture_source(tmp_path, monkeypatch)
+    monkeypatch.setattr(q, '_root', lambda: root)
+    monkeypatch.setattr(q, 'ci24_resume', lambda *a, **kw: {
+        'state':'WAITING_REMOTE', 'ci_verified':False, 'source_sha':SHA,
+        'observation_completed':True, 'qualification_complete':False,
+        'verification':{'status':'WAITING_REMOTE','complete':False}})
+    assert q.main(['ci24-resume', '--repo', str(root)]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data['state'] == 'WAITING_REMOTE'
+    assert data['observation_completed'] is True
+    assert data['ci_verified'] is False and data['qualification_complete'] is False
+
+
+def test_seal_stage_progress_and_timing_are_real_and_not_cached(tmp_path, monkeypatch, capsys):
+    root = fixture_source(tmp_path, monkeypatch)
+    monkeypatch.setattr(q, 'ci24_resume', lambda *a, **kw: {'ci_verified':True, 'run_id':42})
+    monkeypatch.setattr(q, 'g3r_verify', lambda *a, **kw: {'status':'PASS_G3R_VERIFIED'})
+    monkeypatch.setattr(q, 'final_seal_report', lambda root: fake_fs03_report(root))
+    result=q.qualify_seal(root)
+    elapsed=result['stage_durations_seconds']
+    assert set(elapsed)=={'ci24','g3r','fs03','total'}
+    assert all(type(x) is float and x >= 0 for x in elapsed.values())
+    err=capsys.readouterr().err
+    for stage in ('ci24','g3r','fs03'):
+        assert f'[QUALIFICATION] {stage}: starting' in err
+        assert f'[QUALIFICATION] {stage}: complete' in err
+    assert result['formal_release_qualified'] is False
+
+
+def test_seal_failed_stage_reports_blocked_and_cannot_claim_pass(tmp_path, monkeypatch, capsys):
+    root=fixture_source(tmp_path,monkeypatch)
+    monkeypatch.setattr(q, 'ci24_resume', lambda *a, **kw: {'ci_verified':True, 'run_id':42})
+    def broken(*a, **kw): raise RuntimeError('tampered native evidence')
+    monkeypatch.setattr(q, 'g3r_verify', broken)
+    with pytest.raises(RuntimeError, match='tampered native evidence'):
+        q.qualify_seal(root)
+    err=capsys.readouterr().err
+    assert '[QUALIFICATION] g3r: blocked' in err
+    assert '[QUALIFICATION] fs03: starting' not in err

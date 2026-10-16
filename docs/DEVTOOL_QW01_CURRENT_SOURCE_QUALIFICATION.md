@@ -51,3 +51,13 @@ a subprocess timeout; it does **not** establish a GitHub outage. Existing CI24 a
 G3R receipts remain usable for the **same** commit but must be reverified by the
 seal. Applying this repair changes the source commit, so do **not** reuse evidence
 from an earlier commit; fresh CI24 and native G3R qualifications are required.
+
+## QW02: phase timing, pending observations and pre-dispatch authority
+
+`qualify-seal` still executes CI24, G3R native evidence, and FS03 independently. It now emits flushed stage start/completion/blocked progress on stderr, and successful machine output includes `stage_durations_seconds` (`ci24`, `g3r`, `fs03`, `total`). **This instruments** the previously observed 850-second Termux delay; it does not yet prove which phase causes it or eliminate verification work.
+
+`ci24-resume` observes an unfinished GitHub run with process exit 0 because the observation itself succeeded, while returning explicit `state=WAITING_REMOTE`, `observation_completed=true`, `qualification_complete=false`, `ci_verified=false`. A returned process exit zero is **not** qualification evidence; the final seal still blocks if CI is pending. Failed, tampered, and mismatched CI evidence retain nonzero errors.
+
+`ci24-start` performs read-only remote SHA/workflow preflight before creating a dispatch receipt. The underlying ACTIONS-02 dispatch rechecks `expected_source_sha` immediately before any POST or dispatch journal. A definitive `GitHubDispatchPreflightError` retains a recoverable `PREFLIGHT_REJECTED` receipt, with source and prior failure history; a transport/POST-ambiguous outcome retains `DISPATCH_OUTCOME_UNKNOWN` and blocks redispatch. There is **no** automatic uncertain-run correlation or repeated dispatch.
+
+After applying QW02 and committing a new source revision, perform **one** CI24 + native G3R current-source qualification sequence and the strict seal. Formal release is still not qualified until the six carried real-substrate obligations are closed.

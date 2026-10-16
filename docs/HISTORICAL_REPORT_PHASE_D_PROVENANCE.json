@@ -1,0 +1,42 @@
+{
+  "external_consumers": "not independently verified",
+  "formal_release_qualified": false,
+  "kind": "historical-report-phase-d-retirement-provenance",
+  "retired": [
+    {
+      "path": "AOPS02_ANDROID_EXECUTION_DEVICE_FABRIC_REPORT.md",
+      "sha256": "1a3c65460bb06cb460f9d72e447e0e4c71aaa16e635b040da3f4717835513231",
+      "size": 3858,
+      "source_commit": "f25196a297d42bc3a2ff36a03aa0411f89fe9d46"
+    },
+    {
+      "path": "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+      "sha256": "dce1e3d629d02319a9a6d2343c03871d33cb845878803cee3ea50c9b536fce11",
+      "size": 4536,
+      "source_commit": "f25196a297d42bc3a2ff36a03aa0411f89fe9d46"
+    },
+    {
+      "path": "HROPS01_COMPLETE_EMBEDDED_HOOK_RUNTIME_REPORT.md",
+      "sha256": "add2cb0a21ccbba53b3086ba141803d233187151f7bb9e9436aec8c099445837",
+      "size": 3652,
+      "source_commit": "f25196a297d42bc3a2ff36a03aa0411f89fe9d46"
+    },
+    {
+      "path": "ROADMAP_DELIVERY_AUDIT_REPORT.md",
+      "sha256": "ee7b229d951886449490d7706a534be1793d943a364b462c50fa6a26a1d2103e",
+      "size": 2711,
+      "source_commit": "f25196a297d42bc3a2ff36a03aa0411f89fe9d46"
+    }
+  ],
+  "schema_version": 1,
+  "source_commit": "f25196a297d42bc3a2ff36a03aa0411f89fe9d46",
+  "source_tree": "196702eb58f9ae390917cc93ffc6f528c4fbeb82",
+  "unresolved_real_substrate_obligations": [
+    "ENV-A06",
+    "ANDROID-A16",
+    "DIST-A01",
+    "DIST-A12",
+    "DIST-A13",
+    "TEST-A11"
+  ]
+}

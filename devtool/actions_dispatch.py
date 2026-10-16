@@ -156,8 +156,16 @@ def _durable_record(path: Path, obj: Mapping[str, Any]) -> None:
         if os.path.exists(name):os.unlink(name)
 
 
+
+
+class GitHubDispatchPreflightError(GitHubActionsError):
+    """Definitive rejection before any non-idempotent dispatch POST."""
+
+
 def dispatch_workflow(client: GitHubActionsClient, slug: str, workflow_id: str, ref: str,
-                      inputs: dict[str,str], *, execute: bool, state_root: Path | None=None) -> dict[str, Any]:
+                       inputs: dict[str,str], *, execute: bool, state_root: Path | None=None,
+                       expected_source_sha: str | None = None) -> dict[str, Any]:
+
     slug = _slug(slug)
     ref = _ref(ref)
     if execute and not client._token:
@@ -182,6 +190,12 @@ def dispatch_workflow(client: GitHubActionsClient, slug: str, workflow_id: str, 
         raise GitHubActionsError("Invalid workflow source encoding") from None
     defs=_parse_workflow_yaml(text)
     _validated_inputs(defs,inputs)
+    # Compare the selected ref with the local source BEFORE writing a POST
+    # journal or sending a non-idempotent request. Never dispatch an older SHA.
+    if expected_source_sha is not None and (
+        not _SHA.fullmatch(str(expected_source_sha)) or sha.lower() != expected_source_sha.lower()
+    ):
+        raise GitHubDispatchPreflightError("Remote workflow ref does not match expected current-source SHA; no dispatch attempted")
     summary={"repository":repo["full_name"],"repository_id":repo["id"],"workflow_id":workflow["id"],
              "workflow_path":path,"ref":ref,"pre_dispatch_sha":sha,"input_names":sorted(inputs),
              "source_binding":"observed-before-dispatch; mutable refs are not locked",

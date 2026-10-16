@@ -14,10 +14,11 @@ import os
 from pathlib import Path
 import re
 import sys
+from time import monotonic
 from typing import Any, Iterator
 from zipfile import ZipFile
 
-from .actions_dispatch import _durable_record, dispatch_workflow
+from .actions_dispatch import _durable_record, dispatch_workflow, GitHubDispatchPreflightError
 from .actions_pipeline import _source, _git
 from .actions_runs import _normalize_run
 from .actions_artifacts import artifact_list, download_artifact, verify_download
@@ -113,24 +114,50 @@ def ci24_start(root: Path, *, client: GitHubActionsClient | None = None,
     head, branch = _identity(root)
     with _lock(root, head, 'ci24'):
         path = _state_path(root, head, 'ci24')
+        previous_failures: list[dict[str, str]] = []
         if path.exists() or path.is_symlink():
-            raise GitHubActionsError('Existing CI24 dispatch receipt for this source; resume or inspect it, NEVER dispatch twice')
+            previous = _load(root, head, 'ci24')
+            # Only an explicitly classified, zero-POST source preflight rejection
+            # is safe to retry. Persist provenance of the earlier rejection.
+            if (previous.get('state') != 'PREFLIGHT_REJECTED'
+                or previous.get('request_id') is not None
+                or previous.get('run_id') is not None):
+                raise GitHubActionsError('Existing CI24 dispatch receipt for this source; resume or inspect it, NEVER dispatch twice')
+            previous_failures = list(previous.get('preflight_failures') or [])
+            previous_failures.append({'reason': str(previous.get('preflight_error') or ''),
+                                      'source_sha': head})
         if client is None or slug is None:
             client, slug = _client(root)
+        # Read-only GitHub and workflow validation first: errors here cannot
+        # have dispatched anything. Avoid poisoning a source with a fake receipt.
+        plan = dispatch_workflow(client, slug, WORKFLOW, branch, {}, execute=False,
+                                 expected_source_sha=head)
+        if (plan.get('pre_dispatch_sha') != head
+            or plan.get('workflow_path') != f'.github/workflows/{WORKFLOW}'
+            or type(plan.get('workflow_id')) is not int):
+            raise GitHubActionsError('CI24 read-only preflight identity mismatch; no dispatch attempted')
         record = {'schema': 1, 'kind': 'ci24', 'repo_root': str(root.resolve()),
                   'source_sha': head, 'branch': branch, 'repository': slug,
-                  'workflow': WORKFLOW, 'state': 'DISPATCH_OUTCOME_UNKNOWN',
-                  'qualified_release': False, 'run_id': None}
-        _save(root, head, 'ci24', record)  # Durable prior to any POST.
+                  'workflow': WORKFLOW, 'workflow_id': plan['workflow_id'],
+                  'state': 'DISPATCH_OUTCOME_UNKNOWN', 'preflight_failures': previous_failures,
+                  'qualified_release': False, 'run_id': None, 'request_id': None}
+        _save(root, head, 'ci24', record)  # Durable before the POST path.
         try:
-            result = dispatch_workflow(client, slug, WORKFLOW, branch, {}, execute=True)
+            result = dispatch_workflow(client, slug, WORKFLOW, branch, {}, execute=True,
+                                       expected_source_sha=head)
             if result.get('pre_dispatch_sha') != head:
-                raise GitHubActionsError('GitHub branch advanced during dispatch preflight')
-            if result.get('workflow_path') != f'.github/workflows/{WORKFLOW}':
-                raise GitHubActionsError('Dispatch workflow path does not match canonical CI24 workflow')
-            record.update(workflow_id=result['workflow_id'], request_id=result.get('request_id'),
+                raise GitHubActionsError('Dispatch result differs from expected source; cannot correlate')
+            if (result.get('workflow_path') != f'.github/workflows/{WORKFLOW}'
+                or result.get('workflow_id') != plan['workflow_id']):
+                raise GitHubActionsError('Dispatch result workflow identity mismatch')
+            record.update(request_id=result.get('request_id'),
                           run_id=result.get('run_id'), run_correlated=bool(result.get('run_id')),
                           state='DISPATCHED_UNOBSERVED')
+        except GitHubDispatchPreflightError as exc:
+            # Only this typed error guarantees that no POST took place.
+            record.update(state='PREFLIGHT_REJECTED', preflight_error=str(exc))
+            _save(root, head, 'ci24', record)
+            raise GitHubActionsError('CI24 pre-dispatch source drift; no POST attempted: ' + str(exc)) from None
         except Exception as exc:
             record['state'] = 'DISPATCH_OUTCOME_UNKNOWN'
             _save(root, head, 'ci24', record)
@@ -252,7 +279,9 @@ def ci24_resume(root: Path, *, explicit_run_id: int | None = None,
                       selected_uncorrelated=not bool(record.get('run_correlated')),
                       verification=outcome)
         _save(root, head, 'ci24', record)
-        return {**_public_ci(record), 'verification': outcome}
+        return {**_public_ci(record), 'verification': outcome,
+                'observation_completed': True, 'qualification_complete': bool(outcome.get('complete')),
+                'qualification_status': ('verified' if outcome.get('complete') else 'pending')}
 
 
 def g3r_native(root: Path) -> dict[str, Any]:
@@ -363,21 +392,44 @@ def _fs03_strict_in_process(root: Path) -> dict[str, Any]:
             'failed': 0, 'schema_version': report['schema_version']}
 
 
+def _qualification_progress(stage: str, event: str, elapsed: float | None = None) -> None:
+    # stderr is consumed by Devtool's live command output. This is observability,
+    # never proof or a substitute for machine receipts.
+    suffix = f' ({elapsed:.3f}s)' if elapsed is not None else ''
+    print(f'[QUALIFICATION] {stage}: {event}{suffix}', file=sys.stderr, flush=True)
+
+
 def qualify_seal(root: Path, *, client: GitHubActionsClient | None = None,
                  slug: str | None = None) -> dict[str, Any]:
-    # Re-run both independent consumers; saved success/status is never authority.
-    ci = ci24_resume(root, client=client, slug=slug)
+    # Every gate still revalidates live evidence. No cached-success shortcut.
+    started = monotonic()
+    durations: dict[str, float] = {}
+    def stage(name: str, operation):
+        began = monotonic()
+        _qualification_progress(name, 'starting')
+        try:
+            result = operation()
+        except Exception:
+            _qualification_progress(name, 'blocked', monotonic() - began)
+            raise
+        durations[name] = round(monotonic() - began, 3)
+        _qualification_progress(name, 'complete', durations[name])
+        return result
+
+    ci = stage('ci24', lambda: ci24_resume(root, client=client, slug=slug))
     if not ci.get('ci_verified'):
         raise GitHubActionsError('CI24 is incomplete; automated seal blocked')
-    native = g3r_verify(root)
+    native = stage('g3r', lambda: g3r_verify(root))
     if native['status'] != 'PASS_G3R_VERIFIED':
         raise GitHubActionsError('G3R native verification blocked')
-    fs03 = _fs03_strict_in_process(root)
+    fs03 = stage('fs03', lambda: _fs03_strict_in_process(root))
     head, _ = _identity(root)
+    durations['total'] = round(monotonic() - started, 3)
     return {'schema':1,'workflow':'SOURCE_BOUND_QUALIFICATION','status':'PASS_AUTOMATED_MILESTONE_ONLY',
             'source_sha':head,'ci24_run_id':ci['run_id'], 'ci24_shards':24,
             'g3r_lanes':13,'fs03_final_seal':'PASS', 'fs03_evidence':fs03,
-            'automated_milestone_verified':True,'formal_release_qualified':False,
+            'stage_durations_seconds':durations, 'automated_milestone_verified':True,
+            'formal_release_qualified':False,
             'open_real_substrate_obligations':list(G3R_REAL_SUBSTRATE_CARRY)}
 
 
@@ -403,8 +455,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == 'qualify-status': output = qualify_status(root)
         else: output = qualify_seal(root)
         print(json.dumps(output, sort_keys=True, indent=2))
-        if args.command == 'ci24-resume' and not output['ci_verified']:
-            return 2
+        # The observation command succeeded even when the *remote qualification*
+        # is pending. Keep ci_verified=false and seal blocked in machine output.
         return 0
     except (GitHubActionsError, OSError, ValueError, RuntimeError) as exc:
         print(f'Qualification workflow blocked: {type(exc).__name__}: {exc}', file=sys.stderr)
