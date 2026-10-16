@@ -1,0 +1,795 @@
+{
+  "items": [
+    {
+      "consumers": [
+        {
+          "line": 50,
+          "path": "tests/test_phase_a_behavioral_continuity.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "ANDROID_X04_ADVANCED_EXECUTION_ADOPTION_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 173,
+          "path": "tests/test_aops04_android_release_evidence_final_seal.py"
+        },
+        {
+          "line": 30,
+          "path": "tests/test_phase_c_report_retirement.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "AOPS04_ANDROID_RELEASE_EVIDENCE_FINAL_SEAL_REPORT.md",
+      "reference_count": 2,
+      "tests": 2
+    },
+    {
+      "consumers": [
+        {
+          "line": 48,
+          "path": "tests/test_ov11_ov12_android_workflow_seal.py"
+        }
+      ],
+      "disposition": "PHASE_E_RETIRED",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "DEVTOOL_OV11_OV12_IMPLEMENTATION_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 177,
+          "path": "tests/test_ov13_ov14_android_desktop_seal.py"
+        }
+      ],
+      "disposition": "PHASE_E_RETIRED",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "DEVTOOL_OV13_OV14_IMPLEMENTATION_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 189,
+          "path": "tests/test_ov15_ov16_release_final_seal.py"
+        },
+        {
+          "line": 199,
+          "path": "tests/test_ov15_ov16_release_final_seal.py"
+        },
+        {
+          "line": 210,
+          "path": "tests/test_ov15_ov16_release_final_seal.py"
+        }
+      ],
+      "disposition": "PHASE_E_RETIRED",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "DEVTOOL_OV15_OV16_FINAL_SEAL_REPORT.md",
+      "reference_count": 3,
+      "tests": 3
+    },
+    {
+      "consumers": [
+        {
+          "line": 53,
+          "path": "tests/test_phase_a_behavioral_continuity.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "DIST_X04_OPERATIONAL_ADOPTION_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 24,
+          "path": "ENV_X02_PROVIDER_PLAN_AMENDMENT_20260928.md"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 1,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "ENV_X02_PYENV_ADDITION_AUDIT_20260928.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 96,
+          "path": "ENV_X03_PROMISE_LEDGER.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "ENV_X03_BOUNDED_PROMISE_AUDIT_20260929.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 33,
+          "path": "tests/test_historical_report_phase_d.py"
+        },
+        {
+          "line": 28,
+          "path": "tests/test_phase_c_report_retirement.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "EXEC_X01_EXECUTION_VALIDATION_FOUNDATION_REPORT.md",
+      "reference_count": 2,
+      "tests": 2
+    },
+    {
+      "consumers": [
+        {
+          "line": 52,
+          "path": "tests/test_phase_a_behavioral_continuity.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "EXEC_X04_POST_CONSUMER_RESEAL_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 54,
+          "path": "tests/test_exo_roadmap_current_reseal.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "EXO_EXECUTION_CONVERGENCE_FINAL_SEAL.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 55,
+          "path": "tests/test_exo_roadmap_current_reseal.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "EXO_ROADMAP_PROMISE_AUDIT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 176,
+          "path": "tests/test_exo_target_local_jobs_gate_seal.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "EXO_TARGET_LOCAL_JOBS_GATE_SEAL_OV14_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [],
+      "disposition": "PRESERVED_PENDING_DYNAMIC_EXTERNAL_REVIEW",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "FRX05_FEDERATED_PLAN_GRAPH_REPORT.md",
+      "reference_count": 0,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 39,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "FRX_X01_TARGET_QUALIFIED_WORKFLOW_IDENTITY_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 40,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "FRX_X02_TARGET_IDENTITY_CONVERGENCE_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 41,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "FRX_X03_EXECUTABLE_FEDERATION_GROUPS_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 42,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "FRX_X04_REAL_REPO_ADOPTION_FINAL_RESEAL_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 904,
+          "path": "README.md"
+        },
+        {
+          "line": 14,
+          "path": "docs/RELEASE_CHECKLIST.md"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 2,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "FS03_FINAL_RELEASE_SEAL_REPORT.md",
+      "reference_count": 2,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 52,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "GIT_FRX08_FRX_Y03_FROZEN_SOURCE_LOCK_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 53,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "GIT_FRX09_PARENT_CHILD_GIT_LINEAGE_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 54,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "GIT_FRX13_TRANSACTIONAL_DIRTY_TREE_PRESERVATION_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 55,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "GIT_FRX14_FEDERATED_CANCELLATION_RECOVERY_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 56,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "GIT_FRX16_GIT_BUNDLE_REMOTE_ATTESTATION_GATE2_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [],
+      "disposition": "PRESERVED_PENDING_DYNAMIC_EXTERNAL_REVIEW",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "GRADLE_ANDROID_TASK_OPTIMIZATION_REPORT.md",
+      "reference_count": 0,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 19,
+          "path": "LIFE_X01_AUDIT_LOOP_PROMISE_LEDGER.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "LIFE_X01_IMMEDIATE_LIFECYCLE_SAFETY_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 54,
+          "path": "tests/test_phase_a_behavioral_continuity.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "LIFE_X04_LIFECYCLE_CONVERGENCE_ADOPTION_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [],
+      "disposition": "PRESERVED_PENDING_DYNAMIC_EXTERNAL_REVIEW",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_G1_TEXTUAL_REPLACEMENT_PROOF_GATE_REPORT.md",
+      "reference_count": 0,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 167,
+          "path": "PRES_REMEDIATION_PROMISE_LEDGER_20261001.json"
+        },
+        {
+          "line": 209,
+          "path": "tests/test_pres_g2r_concrete_runtime_requalification.py"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "PRES_G2R_CONCRETE_RUNTIME_REQUALIFICATION_GATE_REPORT.md",
+      "reference_count": 2,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 55,
+          "path": "tests/test_phase_a_behavioral_continuity.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_G2_INTERACTION_RELIABILITY_MILESTONE_GATE_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [],
+      "disposition": "PRESERVED_PENDING_DYNAMIC_EXTERNAL_REVIEW",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_G2_INTERACTION_RELIABILITY_REMEDIATION_REPORT.md",
+      "reference_count": 0,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 219,
+          "path": "PRES_REMEDIATION_PROMISE_LEDGER_20261001.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "PRES_G3_FINAL_CROSS_SURFACE_PRESENTATION_SEAL_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 378,
+          "path": "tests/test_pres_r01_execution_presentation.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_R01_EXECUTION_PRESENTATION_OWNERSHIP_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 168,
+          "path": "tests/test_pres_r02_textual_control_center_app.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_R02_CONCRETE_TEXTUAL_CONTROL_CENTER_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 68,
+          "path": "tests/test_source_bound_pres_exec_migration.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_X01_PRESENTATION_PROJECTION_FOUNDATION_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [],
+      "disposition": "PHASE_E_RETIRED",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_X02_PRESENTATION_LAYOUT_INTERACTIONS_REPORT.md",
+      "reference_count": 0,
+      "tests": 0
+    },
+    {
+      "consumers": [],
+      "disposition": "PHASE_E_RETIRED",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_X03_CROSS_SURFACE_RENDERING_ADOPTION_REPORT.md",
+      "reference_count": 0,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 33,
+          "path": "tests/test_historical_report_phase_d.py"
+        },
+        {
+          "line": 29,
+          "path": "tests/test_phase_c_report_retirement.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_X04_TEXTUAL_TUI_SUBSTRATE_REPORT.md",
+      "reference_count": 2,
+      "tests": 2
+    },
+    {
+      "consumers": [],
+      "disposition": "PHASE_E_RETIRED",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_X05_TEXTUAL_FEATURE_PARITY_REPORT.md",
+      "reference_count": 0,
+      "tests": 0
+    },
+    {
+      "consumers": [],
+      "disposition": "PHASE_E_RETIRED",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_X06_TEXTUAL_DEFAULT_REPLACEMENT_REPORT.md",
+      "reference_count": 0,
+      "tests": 0
+    },
+    {
+      "consumers": [],
+      "disposition": "PHASE_E_RETIRED",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_X07_TEXTUAL_REPLACEMENT_HARDENING_REPORT.md",
+      "reference_count": 0,
+      "tests": 0
+    },
+    {
+      "consumers": [],
+      "disposition": "PHASE_E_RETIRED",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PRES_X08_LIVE_TEXTUAL_CONTROL_CENTER_REPORT.md",
+      "reference_count": 0,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 386,
+          "path": "CHANGELOG.md"
+        },
+        {
+          "line": 912,
+          "path": "README.md"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 2,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "PYTEST_REVITALIZATION_REPORT.md",
+      "reference_count": 2,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 1558,
+          "path": "FINAL_REMEDIATION_COVERAGE.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "REM15_DEVTOOL_TARGET_FINAL_QUALIFICATION_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 61,
+          "path": "tests/test_remed_r02_whole_scope_audit.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "REMED_R02_WHOLE_SCOPE_FIXED_POINT_AUDIT_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 12,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "SSH01_TRANSPORT_ENVIRONMENT_WORKER_PREPARATION_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 21,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "SSH02_EXECUTION_HISTORY_RECOVERY_CONVERGENCE_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 30,
+          "path": "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json"
+        },
+        {
+          "line": 270,
+          "path": "tests/test_ssh03_lifecycle_hardening_final_qualification.py"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "SSH03_LIFECYCLE_HARDENING_FINAL_QUALIFICATION_REPORT.md",
+      "reference_count": 2,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 20,
+          "path": "TEST_X04_HISTORICAL_EVIDENCE_FIXTURES.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "TEST_G1_ISOLATION_TRUST_GATE_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 28,
+          "path": "TEST_X04_HISTORICAL_EVIDENCE_FIXTURES.json"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 1,
+      "path": "TEST_G2_LANE_SELECTION_AUDIT_GATE_REPORT.md",
+      "reference_count": 1,
+      "tests": 0
+    },
+    {
+      "consumers": [
+        {
+          "line": 51,
+          "path": "tests/test_phase_a_behavioral_continuity.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "TEST_X04_HISTORICAL_REUSE_DISTRIBUTED_UX_CONVERGENCE_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 135,
+          "path": "tests/test_ui09_ui10_desktop_android_ui_core_migration.py"
+        }
+      ],
+      "disposition": "PRESERVED_TEST_CONSUMER",
+      "docs": 0,
+      "executable": 0,
+      "ledgers_or_data": 0,
+      "path": "UI09_UI10_DESKTOP_ANDROID_UI_CORE_MIGRATION_REPORT.md",
+      "reference_count": 1,
+      "tests": 1
+    },
+    {
+      "consumers": [
+        {
+          "line": 241,
+          "path": "docs/DEVTOOL_HUMAN_GUIDE.md"
+        },
+        {
+          "line": 449,
+          "path": "tools/generate_complete_feature_guides.py"
+        }
+      ],
+      "disposition": "PRESERVED_LEDGER_OR_DOCUMENT_DEPENDENCY",
+      "docs": 1,
+      "executable": 1,
+      "ledgers_or_data": 0,
+      "path": "WARNING_SCOPE_ACCOUNTING_REPORT.md",
+      "reference_count": 2,
+      "tests": 0
+    }
+  ],
+  "retained_count": 44,
+  "retired_count": 9,
+  "scanned_reports": 53,
+  "schema_version": 1,
+  "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581",
+  "source_tree": "da6a7cb1a0a760826ad87fdc6f0095d2a4e1e200"
+}

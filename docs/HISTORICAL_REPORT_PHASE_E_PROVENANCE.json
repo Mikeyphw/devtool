@@ -1,0 +1,72 @@
+{
+  "external_consumers": "not independently verified",
+  "formal_release_qualified": false,
+  "kind": "historical-report-phase-e-retirement-provenance",
+  "retired": [
+    {
+      "path": "DEVTOOL_OV11_OV12_IMPLEMENTATION_REPORT.md",
+      "sha256": "4e4ec5e0bbb9b0a1f751512ac4f180ce35979a6ec85c5acbb7bab00cf8f12e06",
+      "size": 3587,
+      "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581"
+    },
+    {
+      "path": "DEVTOOL_OV13_OV14_IMPLEMENTATION_REPORT.md",
+      "sha256": "d0134a13f4e0a2a9cd6ebbe36f8bc5a9b340afde4dcacfecb76a8953f848e7fd",
+      "size": 3571,
+      "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581"
+    },
+    {
+      "path": "DEVTOOL_OV15_OV16_FINAL_SEAL_REPORT.md",
+      "sha256": "92c43c8a7f40ad27f084ef11b4d63e204cbfeeaf47d83f1ac6b94391023bd378",
+      "size": 5942,
+      "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581"
+    },
+    {
+      "path": "PRES_X02_PRESENTATION_LAYOUT_INTERACTIONS_REPORT.md",
+      "sha256": "b5155bea420836f7a77f473bb34245cd864786dbeae42a3a059d2fdfbb1cbc09",
+      "size": 1447,
+      "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581"
+    },
+    {
+      "path": "PRES_X03_CROSS_SURFACE_RENDERING_ADOPTION_REPORT.md",
+      "sha256": "d75e7b8db01fdb0271c591f6f3a3103a97c5d30934116a6d091c8966b337c75a",
+      "size": 1488,
+      "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581"
+    },
+    {
+      "path": "PRES_X05_TEXTUAL_FEATURE_PARITY_REPORT.md",
+      "sha256": "70f466fcefabfbeb3f127748daa25cf31add68d77c5c32ec5b83f8d903a246a1",
+      "size": 1928,
+      "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581"
+    },
+    {
+      "path": "PRES_X06_TEXTUAL_DEFAULT_REPLACEMENT_REPORT.md",
+      "sha256": "9afc931bf2da0dc5b30a68a386712ce879c4243026ee66640200e97d8fac8ffc",
+      "size": 1201,
+      "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581"
+    },
+    {
+      "path": "PRES_X07_TEXTUAL_REPLACEMENT_HARDENING_REPORT.md",
+      "sha256": "c74431debc56d8107405a0ed0c0bf94b45aab2a78ef058e16904a19df2e0694b",
+      "size": 1459,
+      "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581"
+    },
+    {
+      "path": "PRES_X08_LIVE_TEXTUAL_CONTROL_CENTER_REPORT.md",
+      "sha256": "992104da576e5f893a4ca519b5b7c65404d0b1654d9309d47088f3afd74d4ff3",
+      "size": 1467,
+      "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581"
+    }
+  ],
+  "schema_version": 1,
+  "source_commit": "1bb1053f29ba33bf5283244b2badf3f3dccf4581",
+  "source_tree": "da6a7cb1a0a760826ad87fdc6f0095d2a4e1e200",
+  "unresolved_real_substrate_obligations": [
+    "ENV-A06",
+    "ANDROID-A16",
+    "DIST-A01",
+    "DIST-A12",
+    "DIST-A13",
+    "TEST-A11"
+  ]
+}

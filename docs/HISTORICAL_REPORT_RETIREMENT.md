@@ -11,3 +11,7 @@ Removal is conservative, based on path-name references in tracked textual files.
 ## Phase D follow-up (after the verified `f25196a` baseline)
 
 Four additional zero-literal-inbound-reference reports were retired with individual exact-source SHA-256 provenance records. See `docs/HISTORICAL_REPORT_PHASE_D.md` and `docs/HISTORICAL_REPORT_PHASE_D_PROVENANCE.json`. This reduces the previously retained 57 reports to 53; all unresolved external-consumer caveats and six real-substrate obligations remain.
+
+## Phase E follow-up
+
+Nine additional reports retired after migrating retrospective OV proof tests and rechecking the existing PRES G1/G2 executable checks. See `docs/HISTORICAL_REPORT_PHASE_E.md` and the Phase E machine audit/provenance JSON. **44** reports remain, pending consumer-specific review.

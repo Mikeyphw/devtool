@@ -44,11 +44,15 @@ def test_repository_path_repairs_must_be_current_resolver_authorized_actions() -
         assert forbidden not in repair_body
 
 
-def test_implementation_report_matches_validator_evidence() -> None:
-    report = (ROOT / "DEVTOOL_OV11_OV12_IMPLEMENTATION_REPORT.md").read_text(encoding="utf-8")
-    validator = (ROOT / ".devtool-artifact" / "validate-ov11-ov12.sh")
-    # When this file is run from an applied repository, the validator lives in the
-    # overlay artifact metadata.  In a source tree without that directory, the
-    # report contract still checks the published evidence command and result.
-    assert "tests/test_phase31_1_validation_completion.py" in report
-    assert "Result: **120 passed**." in report
+def test_ov11_ov12_current_source_checks_replace_report_proof() -> None:
+    # The old Markdown statement "120 passed" is not executable evidence.
+    # Check the same implementation authority used by our runtime contract tests.
+    resolver = read("RepositoryPathResolver.java")
+    store = read("RepositoryStore.java")
+    assert "findAction" in resolver
+    assert "RepositoryPathResolver.findAction(record, action.actionId)" in store
+    assert "if (authorized == null || !authorized.kind.equals(action.kind)) return null;" in store
+    assert "action = authorized;" in store
+    # Both present and independently executed under the CI24 pytest inventory.
+    regression = ROOT / "tests/test_phase31_1_validation_completion.py"
+    assert regression.is_file() and "def test_" in regression.read_text(encoding="utf-8")
