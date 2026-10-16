@@ -10,6 +10,7 @@ incremental sync plan that must be clean when the phone source did not change.
 """
 
 import os
+import posixpath
 from pathlib import Path
 import shlex
 import shutil
@@ -117,6 +118,31 @@ printf 'state=missing\nstatus=\nactive=0\n'
     raise ValueError(f"SSH qualification tmux phase timed out while state={last or 'unknown'}")
 
 
+def _qualification_return_absolute_root(remote_root: str, *, remote_home: str) -> str:
+    """Convert shell-expanded qualification state paths to literal rsync paths.
+
+    rsync --protect-args does *not* expand a leading '~' or '$HOME' on the
+    remote filesystem. The remote worker's already-probed HOME is the authority.
+    Reject unresolved and traversal-bearing paths instead of guessing a root.
+    """
+    root = str(remote_root or "").strip()
+    home = str(remote_home or "").strip()
+    if any(ch in root for ch in "\x00\r\n") or not root:
+        raise ValueError("Invalid remote qualification return root")
+    if root in {"~", "$HOME"} or root.startswith(("~/", "$HOME/")):
+        if not home.startswith("/") or ".." in home.split("/") or any(ch in home for ch in "\x00\r\n"):
+            raise ValueError("Worker HOME is missing or unsafe for qualification evidence return")
+        suffix = root[2:] if root.startswith("~/") else root[6:] if root.startswith("$HOME/") else ""
+        root = posixpath.join(home, suffix)
+    elif root.startswith("~") or "$HOME" in root:
+        raise ValueError("Unsupported unresolved home expansion in qualification return root")
+    if not root.startswith("/") or ".." in root.split("/"):
+        raise ValueError("Qualification evidence return requires an absolute non-traversing remote path")
+    if any(ch in root for ch in "\x00\r\n"):
+        raise ValueError("Invalid qualification evidence return path")
+    return posixpath.normpath(root)
+
+
 def _retrieve_probe_artifact(
     config: SSHRunnerConfig,
     *,
@@ -124,11 +150,14 @@ def _retrieve_probe_artifact(
     local_root: Path,
     remote_rsync: str,
     nonce: str,
+    remote_home: str = "",
 ) -> dict[str, Any]:
+    # Resolve BEFORE creating the local receipt directory or invoking rsync.
+    absolute_root = _qualification_return_absolute_root(remote_root, remote_home=remote_home)
     local_root.mkdir(parents=True, exist_ok=True)
     argv = build_return_rsync_argv(
         config,
-        remote_root=remote_root,
+        remote_root=absolute_root,
         local_repo_root=local_root,
         patterns=("artifact.txt", "status"),
         remote_rsync=remote_rsync or "rsync",
@@ -346,6 +375,7 @@ def qualify_worker(
             local_root=local_root,
             remote_rsync=worker.tools.get("rsync", "") or "rsync",
             nonce=nonce,
+            remote_home=worker.home,
         )
         return_seconds = time.monotonic() - return_started
         if sync:
