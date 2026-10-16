@@ -207,7 +207,7 @@ def _workspace_backup_paths(repo_root: Path) -> list[str]:
 
         return [
             str(path.relative_to(repo_root))
-            for path in discover_backup_candidates(repo_root)
+            for path in discover_backup_candidates(repo_root, managed_only=True)
             if not any(fnmatch.fnmatch(str(path.relative_to(repo_root)), pattern) for pattern in _ALLOWED_BACKUP_PATTERNS)
         ]
     except Exception as exc:

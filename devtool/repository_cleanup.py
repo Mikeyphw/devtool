@@ -117,7 +117,61 @@ def _candidate_cleanup_safe(path: Path, repo_root: Path, *, is_git: bool, tracke
     # require explicit ignore ownership; outside Git, preserve unknown data.
     return is_git and _path_or_descendant_in(rel, ignored)
 
-def discover_backup_candidates(repo_root: Path) -> list[Path]:
+def _managed_backup_dirs(repo_root: Path) -> list[Path]:
+    """Enumerate only Devtool-owned legacy backup directories for FS03.
+
+    Filename-only .bak/.orig/etc. discoveries use managed=False and are
+    PROTECTED_UNKNOWN in LIFE-X03, so they can never be selected by the
+    cleanup plan. FS03 needs the eligible managed subset, not every heuristic
+    file inside a potentially enormous ignored build/toolchain tree.
+
+    A native find walk avoids millions of Python Path.stat calls on Android
+    shared-storage and Termux trees. Its results still pass through the exact
+    LIFE-X03 ownership planner; no candidate is treated as deletable by name.
+    """
+    root = repo_root.expanduser().resolve()
+    names = [f'{prefix}*' for prefix in _BACKUP_DIR_PREFIXES]
+    group: list[str] = []
+    for name in names:
+        if group:
+            group.append('-o')
+        group.extend(('-name', name))
+    args = [
+        'find', os.fspath(root), '(', '-path', os.fspath(root / '.git'),
+        '-o', '-path', os.fspath(root / '.devtool'), ')', '-prune',
+        '-o', '(', *group, ')', '-print0', '-prune',
+    ]
+    try:
+        scan = subprocess.run(args, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, check=False, timeout=120)
+    except FileNotFoundError:
+        # Portable fallback when GNU find is not installed; keep the same
+        # ownership checks. Never fall back after a failed/partial find scan.
+        found: list[Path] = []
+        def failed(error: OSError) -> None:
+            raise error
+        for current, dirs, _files in os.walk(root, followlinks=False, onerror=failed):
+            if Path(current) == root:
+                dirs[:] = [n for n in dirs if n not in {'.git', '.devtool'}]
+            selected = []
+            for name in dirs:
+                if any(name.startswith(prefix) for prefix in _BACKUP_DIR_PREFIXES):
+                    path = Path(current) / name
+                    if _known_devtool_backup(path):
+                        found.append(path)
+                    selected.append(name)
+            dirs[:] = [name for name in dirs if name not in selected]
+        return sorted(found)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError('Managed backup scan timed out; FS03 cannot certify backup hygiene') from exc
+    if scan.returncode != 0:
+        error = scan.stderr.decode('utf-8', errors='replace')[:500]
+        raise RuntimeError(f'Managed backup scan incomplete (find exit {scan.returncode}): {error}')
+    paths = [Path(os.fsdecode(item)) for item in scan.stdout.split(b'\0') if item]
+    return sorted({path for path in paths if _known_devtool_backup(path)})
+
+
+def discover_backup_candidates(repo_root: Path, *, managed_only: bool = False) -> list[Path]:
     """Discover archival candidates through LIFE-X03 ownership planning.
 
     Backup-shaped names are only discovery hints. Known Devtool backup
@@ -134,23 +188,29 @@ def discover_backup_candidates(repo_root: Path) -> list[Path]:
     )
 
     repo_root = repo_root.expanduser().resolve()
-    discovered: list[Path] = []
-    for current, dirnames, filenames in os.walk(repo_root, topdown=True, followlinks=False):
-        current_path = Path(current)
-        if current_path == repo_root:
-            dirnames[:] = [name for name in dirnames if name not in {".git", ".devtool"}]
-        selected_dirs: list[str] = []
-        for name in list(dirnames):
-            path = current_path / name
-            if _is_backup_candidate(path, repo_root):
-                discovered.append(path)
-                selected_dirs.append(name)
-        if selected_dirs:
-            dirnames[:] = [name for name in dirnames if name not in selected_dirs]
-        for name in filenames:
-            path = current_path / name
-            if _is_backup_candidate(path, repo_root):
-                discovered.append(path)
+    discovered: list[Path] = _managed_backup_dirs(repo_root) if managed_only else []
+    if not managed_only:
+        for current, dirnames, filenames in os.walk(repo_root, topdown=True, followlinks=False):
+            current_path = Path(current)
+            if current_path == repo_root:
+                dirnames[:] = [name for name in dirnames if name not in {".git", ".devtool"}]
+            selected_dirs: list[str] = []
+            for name in list(dirnames):
+                path = current_path / name
+                if _is_backup_candidate(path, repo_root):
+                    discovered.append(path)
+                    selected_dirs.append(name)
+            if selected_dirs:
+                dirnames[:] = [name for name in dirnames if name not in selected_dirs]
+            for name in filenames:
+                path = current_path / name
+                if _is_backup_candidate(path, repo_root):
+                    discovered.append(path)
+    # No explicitly managed backup directory means no selectable resource.
+    # Avoid opening full LIFE/RUN/registry ownership views just to build an
+    # empty plan; they may contain years of artifacts on a Termux device.
+    if managed_only and not discovered:
+        return []
 
     descriptors = []
     by_resource: dict[str, Path] = {}
