@@ -61,3 +61,22 @@ from an earlier commit; fresh CI24 and native G3R qualifications are required.
 `ci24-start` performs read-only remote SHA/workflow preflight before creating a dispatch receipt. The underlying ACTIONS-02 dispatch rechecks `expected_source_sha` immediately before any POST or dispatch journal. A definitive `GitHubDispatchPreflightError` retains a recoverable `PREFLIGHT_REJECTED` receipt, with source and prior failure history; a transport/POST-ambiguous outcome retains `DISPATCH_OUTCOME_UNKNOWN` and blocks redispatch. There is **no** automatic uncertain-run correlation or repeated dispatch.
 
 After applying QW02 and committing a new source revision, perform **one** CI24 + native G3R current-source qualification sequence and the strict seal. Formal release is still not qualified until the six carried real-substrate obligations are closed.
+
+## QW03: bounded live GitHub observation and FS03 sub-check timings
+
+`qualify-seal` continues to verify the current GitHub CI24 execution, the current
+native G3R candidate, and the 16 canonical FS03 contracts. QW03 reduces redundant
+GitHub reads in the CI24 revalidation path: artifact inventory, artifact download,
+and registry verification reuse one independently fetched remote run **within that
+single operation**. The verifier makes a second real GitHub run request *after*
+all archive checks and fails closed if source, workflow, run attempt, completion,
+or conclusion changed. Nothing is cached between commands or across source SHAs.
+
+Progress on stderr now includes `ci24.remote-run`, `ci24.jobs-fetch`,
+`ci24.artifact-list`, `ci24.summary-archive`, `ci24.final-remote` and one
+`fs03.<check-id>` timing per canonical check, in addition to QW02 stage durations.
+No qualification proof is produced by timing/log output itself. A callback error
+blocks FS03. This is a concrete redundant-I/O repair **and** a diagnostic for the
+previous 850-second device run; it is **not** a proven end-to-end native speedup
+until the next real Termux seal reports timings. No network operation, digest
+validation, source manifest traversal or required FS03 check was removed.

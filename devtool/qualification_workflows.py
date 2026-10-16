@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -177,17 +178,61 @@ def _public_ci(record: dict[str, Any]) -> dict[str, Any]:
                             if record['state'] != 'PASS_CI24_VERIFIED' else 'g3r-native and g3r-verify')}
 
 
+
+class _RunScopedClient:
+    """Reuse one observed GitHub run *within a single* CI24 check.
+
+    ACTIONS-04 deliberately rereads the remote run in artifact_list,
+    download_artifact and verify_download. Here the caller already fetched and
+    normalized that run. Sharing that immutable observation avoids redundant
+    network round trips while retaining every ACTIONS-04 identity, digest,
+    registry and archive validation. A fresh remote read after those validations
+    rejects source/attempt/status changes observed during the operation.
+
+    Never persist or share this object between commands or qualification runs.
+    """
+    def __init__(self, delegate: GitHubActionsClient, slug: str, run_id: int,
+                 raw_run: dict[str, Any]) -> None:
+        self._delegate = delegate
+        self._slug = slug.lower()
+        self._run_id = run_id
+        self._raw_run = deepcopy(raw_run)
+
+    def get_run(self, slug: str, run_id: int) -> dict[str, Any]:
+        if slug.lower() != self._slug or run_id != self._run_id:
+            raise GitHubActionsError('CI24 observed-run scope mismatch')
+        return deepcopy(self._raw_run)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+
+def _ci24_assert_same_remote_run(initial: dict[str, Any], final: dict[str, Any]) -> None:
+    identity = ('id', 'head_sha', 'head_branch', 'event', 'workflow_id',
+                'run_attempt', 'status', 'conclusion')
+    if any(initial.get(key) != final.get(key) for key in identity):
+        raise GitHubActionsError('GitHub CI24 run identity/attempt/status changed during verification')
+
+
 def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: dict[str, Any],
                    identity: int) -> dict[str, Any]:
     if type(identity) is not int or identity <= 0:
         raise GitHubActionsError('An explicit positive GitHub run ID is required')
-    run = _normalize_run(client.get_run(slug, identity), slug, identity)
+    phase_started = monotonic()
+    def checkpoint(name: str) -> None:
+        nonlocal phase_started
+        now = monotonic()
+        _qualification_progress('ci24.' + name, 'complete', now - phase_started)
+        phase_started = now
+    raw_run = client.get_run(slug, identity)
+    run = _normalize_run(raw_run, slug, identity)
     # Always rebind to remote source and workflow, even if the dispatch was uncorrelated.
     if run.get('head_sha') != record['source_sha'] or run.get('head_branch') != record['branch']:
         raise GitHubActionsError('GitHub run does not match exact source SHA/branch')
     if (run.get('event') != 'workflow_dispatch' or type(record.get('workflow_id')) is not int
         or run.get('workflow_id') != record['workflow_id']):
         raise GitHubActionsError('GitHub workflow/event identity mismatch')
+    checkpoint('remote-run')
     if run['status'] != 'completed':
         return {'status': 'WAITING_REMOTE', 'run_id': identity, 'complete': False}
     if run['conclusion'] != 'success':
@@ -195,7 +240,11 @@ def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: d
     # Fail closed on re-run ambiguity: the artifacts API can omit run_attempt.
     if run.get('run_attempt') != 1:
         raise GitHubActionsError('Rerun attempt requires an attempt-bound evidence contract; original attempt only')
-    jobs = client.run_attempt_jobs(slug, identity, 1)
+    # The same authenticated observation is bound to all downstream artifact
+    # checks; no bypass of those checks and no cross-invocation success cache.
+    scoped_client = _RunScopedClient(client, slug, identity, raw_run)
+    jobs = scoped_client.run_attempt_jobs(slug, identity, 1)
+    checkpoint('jobs-fetch')
     shards: set[int] = set()
     summary = 0
     for job in jobs:
@@ -213,7 +262,8 @@ def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: d
             raise GitHubActionsError('Unexpected CI matrix job: '+str(job.get('name')))
     if shards != set(range(1, 25)) or summary != 1 or len(jobs) != 25:
         raise GitHubActionsError('CI is missing or duplicating shard/summary jobs')
-    catalog = artifact_list(client, slug, identity)['artifacts']
+    catalog = artifact_list(scoped_client, slug, identity)['artifacts']
+    checkpoint('artifact-list')
     names = [a['name'] for a in catalog]
     if len(catalog) != 25 or set(names) != EXPECTED_ARTIFACTS:
         raise GitHubActionsError('CI24 artifact set does not contain exactly 24 shards and one summary')
@@ -221,12 +271,13 @@ def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: d
         raise GitHubActionsError('CI24 artifact missing authenticated archive SHA256')
     summary_artifact = next(a for a in catalog if a['name'] == 'devtool-full-pytest-summary')
     try:
-        registered = verify_download(client, slug, identity, summary_artifact['id'], root)
+        registered = verify_download(scoped_client, slug, identity, summary_artifact['id'], root)
     except GitHubActionsError as exc:
         if 'no registered download' not in str(exc).lower():
             raise
-        download_artifact(client, slug, identity, summary_artifact['id'], root)
-        registered = verify_download(client, slug, identity, summary_artifact['id'], root)
+        download_artifact(scoped_client, slug, identity, summary_artifact['id'], root)
+        registered = verify_download(scoped_client, slug, identity, summary_artifact['id'], root)
+    checkpoint('summary-archive')
     if not registered.get('archive_verified'):
         raise GitHubActionsError('CI summary archive integrity not proven')
     path = Path(registered['file'])
@@ -246,6 +297,11 @@ def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: d
         data.get('issues') != [], data.get('failed_modules') != [],
     ]):
         raise GitHubActionsError('CI summary is not a complete exact-source 24-shard PASS')
+    # Reobserve the actual GitHub run after all local and remote artifact proofs.
+    # The frozen snapshot is an optimization, NEVER an authority across runs.
+    final_remote = _normalize_run(client.get_run(slug, identity), slug, identity)
+    _ci24_assert_same_remote_run(run, final_remote)
+    checkpoint('final-remote')
     return {'status': 'PASS_CI24_VERIFIED', 'run_id': identity,
             'run_attempt': 1, 'jobs_verified': 25, 'shards_verified': 24,
             'artifact_metadata_verified': 25, 'summary_archives_verified': 1,
@@ -349,8 +405,15 @@ def _fs03_strict_in_process(root: Path) -> dict[str, Any]:
     timeout used to hide the underlying seal output.  This is NOT a cached
     verdict or a weakened substitute for the canonical audit.
     """
+    last_check = monotonic()
+    def on_check(identifier: str) -> None:
+        nonlocal last_check
+        current = monotonic()
+        _qualification_progress('fs03.' + identifier, 'complete', current - last_check)
+        last_check = current
+
     try:
-        report = final_seal_report(root)
+        report = final_seal_report(root, on_check=on_check)
     except Exception as exc:
         raise GitHubActionsError(
             f'FS03 final-seal gate failed to execute: {type(exc).__name__}: {exc}'

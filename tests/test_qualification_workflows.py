@@ -182,7 +182,7 @@ def test_qualification_seal_demands_independent_checks_and_non_release(tmp_path,
     monkeypatch.setattr(q, 'ci24_resume', lambda *a, **k: {'ci_verified': True, 'run_id': 42})
     monkeypatch.setattr(q, 'g3r_verify', lambda *a, **k: {'status': 'PASS_G3R_VERIFIED'})
     calls = []
-    def audit(path):
+    def audit(path, **kwargs):
         calls.append(path)
         return fake_fs03_report(path)
     monkeypatch.setattr(q, 'final_seal_report', audit)
@@ -192,7 +192,7 @@ def test_qualification_seal_demands_independent_checks_and_non_release(tmp_path,
                                      'passed': 16, 'failed': 0, 'schema_version': 1}
     assert proof['automated_milestone_verified'] and proof['formal_release_qualified'] is False
     assert set(proof['open_real_substrate_obligations']) == set(q.G3R_REAL_SUBSTRATE_CARRY)
-    monkeypatch.setattr(q, 'final_seal_report', lambda path: {**fake_fs03_report(path), 'status': 'fail'})
+    monkeypatch.setattr(q, 'final_seal_report', lambda path, **kwargs: {**fake_fs03_report(path), 'status': 'fail'})
     with pytest.raises(GitHubActionsError, match='FS03'): q.qualify_seal(root)
 
 
@@ -223,10 +223,10 @@ def test_fs03_wrapper_fails_closed_on_bad_audit(tmp_path, monkeypatch, mode):
     elif mode == 'not_dict':
         report = None
     if mode == 'exception':
-        def boom(path): raise OSError('audit failure')
+        def boom(path, **kwargs): raise OSError('audit failure')
         monkeypatch.setattr(q, 'final_seal_report', boom)
     else:
-        monkeypatch.setattr(q, 'final_seal_report', lambda path: report)
+        monkeypatch.setattr(q, 'final_seal_report', lambda path, **kwargs: report)
     with pytest.raises(GitHubActionsError, match='FS03'):
         q._fs03_strict_in_process(root)
 
@@ -293,7 +293,7 @@ def test_seal_stage_progress_and_timing_are_real_and_not_cached(tmp_path, monkey
     root = fixture_source(tmp_path, monkeypatch)
     monkeypatch.setattr(q, 'ci24_resume', lambda *a, **kw: {'ci_verified':True, 'run_id':42})
     monkeypatch.setattr(q, 'g3r_verify', lambda *a, **kw: {'status':'PASS_G3R_VERIFIED'})
-    monkeypatch.setattr(q, 'final_seal_report', lambda root: fake_fs03_report(root))
+    monkeypatch.setattr(q, 'final_seal_report', lambda root, **kwargs: fake_fs03_report(root))
     result=q.qualify_seal(root)
     elapsed=result['stage_durations_seconds']
     assert set(elapsed)=={'ci24','g3r','fs03','total'}
@@ -315,3 +315,90 @@ def test_seal_failed_stage_reports_blocked_and_cannot_claim_pass(tmp_path, monke
     err=capsys.readouterr().err
     assert '[QUALIFICATION] g3r: blocked' in err
     assert '[QUALIFICATION] fs03: starting' not in err
+
+class CountingRunApi(FakeApi):
+    def __init__(self):
+        super().__init__()
+        self.remote_gets = 0
+        self.flip_after = None
+
+    def get_run(self, slug, rid):
+        self.remote_gets += 1
+        obj = super().get_run(slug, rid)
+        if self.flip_after is not None and self.remote_gets >= self.flip_after:
+            obj['run_attempt'] = 2
+        return obj
+
+
+def test_ci24_run_snapshot_reuses_identity_inside_artifact_checks(tmp_path, monkeypatch):
+    """One observed run is reused, but the remote is freshly checked at seal end."""
+    root = fixture_source(tmp_path, monkeypatch)
+    api, _, _ = start(root, monkeypatch, api=CountingRunApi())
+    archive = fake_artifacts(monkeypatch, tmp_path)
+    assert archive.is_file()
+    original_list = q.artifact_list
+    original_verify = q.verify_download
+    captured = []
+
+    def check_list(client, slug, run_id):
+        for _ in range(5):
+            observed = client.get_run(slug, run_id)
+            assert observed['head_sha'] == SHA and observed['run_attempt'] == 1
+        captured.append(client)
+        return original_list(client, slug, run_id)
+
+    def check_verify(client, slug, run_id, artifact_id, path):
+        assert client is captured[0]
+        for _ in range(5):
+            assert client.get_run(slug, run_id)['workflow_id'] == 42
+        return original_verify(client, slug, run_id, artifact_id, path)
+
+    monkeypatch.setattr(q, 'artifact_list', check_list)
+    monkeypatch.setattr(q, 'verify_download', check_verify)
+    result = q.ci24_resume(root, client=api, slug=SLUG)
+    assert result['ci_verified'] is True
+    # The remote is read twice, not once (unsafe caching) or 12+ times (slow).
+    assert api.remote_gets == 2
+
+
+def test_ci24_snapshot_fails_closed_on_final_remote_attempt_change(tmp_path, monkeypatch):
+    root = fixture_source(tmp_path, monkeypatch)
+    api, _, _ = start(root, monkeypatch, api=CountingRunApi())
+    fake_artifacts(monkeypatch, tmp_path)
+    api.flip_after = 2
+    with pytest.raises(GitHubActionsError, match='changed during verification'):
+        q.ci24_resume(root, client=api, slug=SLUG)
+    assert q._load(root, SHA, 'ci24')['state'] == 'DISPATCHED_UNOBSERVED'
+
+
+def test_ci24_run_snapshot_is_scoped_and_not_mutable():
+    original = {'id': 123, 'head_sha': SHA, 'repository': {'full_name': SLUG}}
+    client = q._RunScopedClient(FakeApi(), SLUG, 123, original)
+    original['head_sha'] = 'b' * 40
+    result = client.get_run(SLUG, 123)
+    assert result['head_sha'] == SHA
+    result['repository']['full_name'] = 'other/repo'
+    assert client.get_run(SLUG, 123)['repository']['full_name'] == SLUG
+    with pytest.raises(GitHubActionsError, match='scope mismatch'):
+        client.get_run(SLUG, 124)
+    with pytest.raises(GitHubActionsError, match='scope mismatch'):
+        client.get_run('different/repo', 123)
+
+
+def test_fs03_progress_emits_one_receipt_per_actual_check(capsys):
+    root = Path(__file__).resolve().parents[1]
+    result = q._fs03_strict_in_process(root)
+    lines = [line for line in capsys.readouterr().err.splitlines()
+             if line.startswith('[QUALIFICATION] fs03.')]
+    assert result['passed'] == len(lines) == len(q.FS03_REQUIRED_CHECKS)
+    assert all(': complete (' in line and line.endswith('s)') for line in lines)
+
+
+def test_fs03_callback_exception_blocks_not_silently_passes(tmp_path, monkeypatch):
+    root = fixture_source(tmp_path, monkeypatch)
+    def broken(_root, *, on_check):
+        on_check('config.canonical')
+        raise OSError('simulated filesystem stall/error')
+    monkeypatch.setattr(q, 'final_seal_report', broken)
+    with pytest.raises(GitHubActionsError, match='FS03.*failed to execute'):
+        q._fs03_strict_in_process(root)
