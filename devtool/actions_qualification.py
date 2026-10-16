@@ -67,6 +67,23 @@ def _record_hash(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+# Explicit G1 QW02 amendment: safely reject mutable-ref mismatch *before* POST.
+# The immutable G8 matrix/88-row ledger retain their historical G1 source pin.
+_G1_QW02_AMENDMENT_ID = 'G1_CI24_DISPATCH_SOURCE_PREFLIGHT_QW02_20261016'
+_G1_QW02_ANCHORS = {'devtool/actions_dispatch.py': '3bbcfb7155e6f69bb5528bbf41d172793b4e0040595a023d3dd483eb36d91c4c'}
+_G1_QW02_EVIDENCE = {'tests/test_actions_00_01_github_provider.py': 'dde19fa9c0a6166c8915dfe3e02ded2308db718f9272d4b53839038d67f6ed45'}
+
+
+def _g1_qw02_amendment_valid(root: Path) -> bool:
+    for name, expected in {**_G1_QW02_ANCHORS, **_G1_QW02_EVIDENCE}.items():
+        try:
+            if _record_hash(_bounded_file(root, name, max_size=2 * 1024 * 1024)) != expected:
+                return False
+        except GitHubActionsError:
+            return False
+    return True
+
+
 # Explicit post-G8 G4 amendment: original G8 matrix and 88-row historical ledger
 # remain byte-for-byte immutable. Both changed anchors AND both new evidence
 # paths must match before a hotfixed G4 source can be considered consistent.
@@ -170,9 +187,11 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
         raise GitHubActionsError('G8 expected G0-G7 source wave inventory is incomplete')
     source_rows: list[dict[str, Any]] = []
     checked_files: set[str] = set()
+    amended_g1 = _g1_qw02_amendment_valid(root)
     amended_g3 = _g3_textual_amendment_valid(root)
     amended_g4 = _g4_unsigned_jar_amendment_valid(root)
     amendment_records: list[dict[str, Any]] = []
+    g1_amendment_records: list[dict[str, Any]] = []
     for wave in waves:
         contracts = wave.get('source_contracts')
         if not isinstance(contracts, list) or len(contracts) < 2:
@@ -190,7 +209,15 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
                 ok = _record_hash(data) == entry['sha256']
             except GitHubActionsError:
                 ok = False
-            if not ok and wave['id'] == 'G3' and amended_g3 and name == 'devtool/actions_pipeline_textual.py':
+            if not ok and wave['id'] == 'G1' and amended_g1 and name in _G1_QW02_ANCHORS:
+                g1_amendment_records.append({'wave':'G1','path':name,
+                    'status':'VERIFIED_POST_G08_AMENDMENT',
+                    'hotfix_id':_G1_QW02_AMENDMENT_ID,
+                    'original_sha256':entry['sha256'],
+                    'amended_sha256':_G1_QW02_ANCHORS[name]})
+                source_rows.append({'wave':'G1','path':name,
+                    'status':'VERIFIED_POST_G08_AMENDMENT'})
+            elif not ok and wave['id'] == 'G3' and amended_g3 and name == 'devtool/actions_pipeline_textual.py':
                 amendment_records.append({'wave':'G3','path':name,
                     'status':'VERIFIED_POST_G08_AMENDMENT',
                     'hotfix_id':_G3_TEXTUAL_HOTFIX_ID,
@@ -212,7 +239,7 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
                 matching = False
                 source_rows.append({'wave':wave['id'],'path':name,'status':'MISSING_OR_DIFFERENT'})
         source_rows.append({'wave':wave['id'],
-                            'status':('SOURCE_PINS_AMENDED_VERIFIED' if matching and ((wave['id'] == 'G4' and amended_g4) or (wave['id'] == 'G3' and amended_g3))
+                            'status':('SOURCE_PINS_AMENDED_VERIFIED' if matching and ((wave['id'] == 'G4' and amended_g4) or (wave['id'] == 'G3' and amended_g3) or (wave['id'] == 'G1' and amended_g1))
                                       else 'SOURCE_PINS_MATCH' if matching else 'SOURCE_PINS_MISMATCH'),
                             'source_only':True,'live_qualified':False})
     gates = plan.get('gates')
@@ -253,6 +280,7 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
             'source_contract_consistent':source_consistent,
             'source_contracts':source_rows,
             'verified_source_amendments':amendment_records,
+            'verified_g1_dispatch_amendments':g1_amendment_records,
             'original_obligations':{'count':len(obligations),'historical_status_counts':dict(counts),
                                     'preserved_verbatim':True,'source_snapshot_only':True},
             'wave_implementation':[{ 'wave':w['id'],'source_pins_present':

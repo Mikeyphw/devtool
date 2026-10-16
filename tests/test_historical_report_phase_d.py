@@ -16,7 +16,10 @@ def test_retired_phase_d_reports_are_source_bound_and_retrievable():
         assert not (ROOT/item['path']).exists()
         cmd=['git','show', data['source_commit']+':'+item['path']]
         proc=subprocess.run(cmd,cwd=ROOT,capture_output=True,check=False)
-        assert proc.returncode==0, proc.stderr
+        assert proc.returncode==0, (
+            f'Missing Phase D ancestor {data["source_commit"]}:{item["path"]}; '
+            'hosted shard checkout MUST use fetch-depth: 0. '+proc.stderr.decode(errors='replace')
+        )
         assert len(proc.stdout)==item['size']
         assert hashlib.sha256(proc.stdout).hexdigest()==item['sha256']
 
