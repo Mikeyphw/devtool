@@ -35,3 +35,19 @@ DEVTOOL_G3R_CANDIDATE="$HOME/Downloads/candidate-v3-NEW_SHA.zip" ./devtoolw g3r-
 All source mutations produce a new commit and invalidate previous CI24/native evidence automatically. The old evidence is preserved as historical provenance and is not promoted to the new source.
 
 Troubleshooting: `ci24-start` must be invoked **once** for each commit. If GitHub response attribution is uncertain, inspect the existing ACTIONS-02 receipt and GitHub Actions UI; do not retry POST. For CLI-only operations and CI test harnesses, `python3 -m devtool.qualification_workflows <command> --repo <path>` uses the same authority and accepts `--run-id`/`--candidate` for relevant modes. Jobs are handled synchronously by Devtool's existing runner; any missing credentials/network/device capability blocks with nonzero exit status.
+
+## QW01R2: in-process strict FS03 audit
+
+`qualify-seal` uses `devtool.final_seal.final_seal_report` directly in the already-running
+Devtool workflow process. It **no longer launches** a second Devtool CLI in a child
+process. On native Termux, the QW01R1 nested subprocess could stall for 600 seconds
+without output. The same 16 canonical FS03 checks now execute in-process, and the
+wrapper additionally requires correct check identity, unique IDs, required inventory,
+all-PASS statuses, internally consistent counts, source root, canonical gate scope,
+and `formal_release_qualified: false`. Exceptions and incomplete reports fail closed.
+
+The failure code previously labeled `network_timeout` was a generic diagnostic for
+a subprocess timeout; it does **not** establish a GitHub outage. Existing CI24 and
+G3R receipts remain usable for the **same** commit but must be reverified by the
+seal. Applying this repair changes the source commit, so do **not** reuse evidence
+from an earlier commit; fresh CI24 and native G3R qualifications are required.

@@ -162,13 +162,74 @@ def test_native_verifier_rejects_stale_and_false_success(tmp_path,monkeypatch):
     with pytest.raises(GitHubActionsError,match='failed'):q.g3r_verify(root)
 
 
-def test_qualification_seal_demands_independent_checks_and_non_release(tmp_path,monkeypatch):
-    root=fixture_source(tmp_path,monkeypatch)
-    monkeypatch.setattr(q,'ci24_resume',lambda *a,**k:{'ci_verified':True,'run_id':42})
-    monkeypatch.setattr(q,'g3r_verify',lambda *a,**k:{'status':'PASS_G3R_VERIFIED'})
-    monkeypatch.setattr(q.subprocess,'run',lambda *a,**k:type('P',(),{'returncode':0})())
-    proof=q.qualify_seal(root)
+def fake_fs03_report(root):
+    checks = [{'id': name, 'status': 'pass'} for name in sorted(q.FS03_REQUIRED_CHECKS)]
+    return {'schema_version': q.FINAL_SEAL_SCHEMA_VERSION,
+            'gate_scope': 'repository_contracts_only', 'repo_root': str(root.resolve()),
+            'formal_release_qualified': False, 'status': 'pass',
+            'summary': {'checks': len(checks), 'passed': len(checks),
+                        'failed': 0, 'compatibility_entries': 24},
+            'checks': checks}
+
+
+def test_qualification_seal_demands_independent_checks_and_non_release(tmp_path, monkeypatch):
+    root = fixture_source(tmp_path, monkeypatch)
+    monkeypatch.setattr(q, 'ci24_resume', lambda *a, **k: {'ci_verified': True, 'run_id': 42})
+    monkeypatch.setattr(q, 'g3r_verify', lambda *a, **k: {'status': 'PASS_G3R_VERIFIED'})
+    calls = []
+    def audit(path):
+        calls.append(path)
+        return fake_fs03_report(path)
+    monkeypatch.setattr(q, 'final_seal_report', audit)
+    proof = q.qualify_seal(root)
+    assert calls == [root]
+    assert proof['fs03_evidence'] == {'status': 'PASS', 'checks': 16,
+                                     'passed': 16, 'failed': 0, 'schema_version': 1}
     assert proof['automated_milestone_verified'] and proof['formal_release_qualified'] is False
     assert set(proof['open_real_substrate_obligations']) == set(q.G3R_REAL_SUBSTRATE_CARRY)
-    monkeypatch.setattr(q.subprocess,'run',lambda *a,**k:type('P',(),{'returncode':1})())
-    with pytest.raises(GitHubActionsError,match='FS03'):q.qualify_seal(root)
+    monkeypatch.setattr(q, 'final_seal_report', lambda path: {**fake_fs03_report(path), 'status': 'fail'})
+    with pytest.raises(GitHubActionsError, match='FS03'): q.qualify_seal(root)
+
+
+@pytest.mark.parametrize('mode', ('missing', 'duplicate', 'failed', 'false_summary',
+                                  'wrong_root', 'wrong_scope', 'release_flag',
+                                  'wrong_schema', 'not_dict', 'exception'))
+def test_fs03_wrapper_fails_closed_on_bad_audit(tmp_path, monkeypatch, mode):
+    root = fixture_source(tmp_path, monkeypatch)
+    report = fake_fs03_report(root)
+    if mode == 'missing':
+        report['checks'].pop()
+        report['summary']['checks'] -= 1
+        report['summary']['passed'] -= 1
+    elif mode == 'duplicate':
+        report['checks'][0]['id'] = report['checks'][1]['id']
+    elif mode == 'failed':
+        report['checks'][0]['status'] = 'fail'
+    elif mode == 'false_summary':
+        report['summary']['failed'] = 1
+    elif mode == 'wrong_root':
+        report['repo_root'] = '/some/other/repository'
+    elif mode == 'wrong_scope':
+        report['gate_scope'] = 'unverified_release'
+    elif mode == 'release_flag':
+        report['formal_release_qualified'] = True
+    elif mode == 'wrong_schema':
+        report['schema_version'] += 1
+    elif mode == 'not_dict':
+        report = None
+    if mode == 'exception':
+        def boom(path): raise OSError('audit failure')
+        monkeypatch.setattr(q, 'final_seal_report', boom)
+    else:
+        monkeypatch.setattr(q, 'final_seal_report', lambda path: report)
+    with pytest.raises(GitHubActionsError, match='FS03'):
+        q._fs03_strict_in_process(root)
+
+
+def test_fs03_wrapper_real_auditor_and_no_nested_cli(monkeypatch):
+    # This tests actual FS03 behavior, not a mocked status flag; the nested CLI
+    # never runs, so Termux frontend reentrancy cannot stall the wrapper.
+    root = Path(__file__).resolve().parents[1]
+    result = q._fs03_strict_in_process(root)
+    assert result['status'] == 'PASS' and result['checks'] >= 16
+    assert result['failed'] == 0

@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 from typing import Any, Iterator
 from zipfile import ZipFile
@@ -23,6 +22,7 @@ from .actions_pipeline import _source, _git
 from .actions_runs import _normalize_run
 from .actions_artifacts import artifact_list, download_artifact, verify_download
 from .g3r_evidence_gate import evaluate as verify_native
+from .final_seal import final_seal_report, FINAL_SEAL_SCHEMA_VERSION
 from .g3r_evidence_generate import generate as generate_native
 from .github_actions import GitHubActionsClient, GitHubActionsError, resolve_repository, resolve_token
 from .remed_r04b_fixed_point import G3R_REAL_SUBSTRATE_CARRY
@@ -31,6 +31,17 @@ WORKFLOW = 'devtool-full-repository-pytest.yml'
 EXPECTED_JOB = re.compile(r'^Python 3\.13 / shard ([1-9]|1[0-9]|2[0-4])/24$')
 SHA = re.compile(r'^[a-f0-9]{40}$')
 EXPECTED_ARTIFACTS = {f'devtool-full-shard-{n}' for n in range(1, 25)} | {'devtool-full-pytest-summary'}
+# The canonical FS03 contract is kept intact: missing, duplicate, or failed checks
+# block even when a test fixture or future report mistakenly claims status=pass.
+FS03_REQUIRED_CHECKS = frozenset({
+    'config.canonical', 'config.parse', 'workspace.targets',
+    'targets.final-seal-overlays', 'coverage.final-remediation',
+    'compatibility.registry', 'schemas.versioned', 'docs.required',
+    'examples.canonical', 'tests.roadmap-contracts', 'completion.synchronized',
+    'validation.final-seal-profile', 'android.operations-roadmap',
+    'artifacts.archive-formats', 'repository.backup-hygiene',
+    'release.discoverability',
+})
 
 
 def _root() -> Path:
@@ -301,6 +312,57 @@ def qualify_status(root: Path) -> dict[str, Any]:
     return state
 
 
+def _fs03_strict_in_process(root: Path) -> dict[str, Any]:
+    """Execute the same deterministic FS03 auditor used by Devtool's CLI.
+
+    Do not spawn ``python -m devtool`` from inside an active Devtool invoke.
+    Native Termux can stall on nested frontend initialization; a process
+    timeout used to hide the underlying seal output.  This is NOT a cached
+    verdict or a weakened substitute for the canonical audit.
+    """
+    try:
+        report = final_seal_report(root)
+    except Exception as exc:
+        raise GitHubActionsError(
+            f'FS03 final-seal gate failed to execute: {type(exc).__name__}: {exc}'
+        ) from None
+    if not isinstance(report, dict):
+        raise GitHubActionsError('FS03 final-seal returned an invalid report')
+    summary = report.get('summary')
+    checks = report.get('checks')
+    if not isinstance(summary, dict) or not isinstance(checks, list):
+        raise GitHubActionsError('FS03 final-seal returned incomplete report/checks')
+    if any(not isinstance(item, dict) for item in checks):
+        raise GitHubActionsError('FS03 final-seal returned malformed checks')
+    ids = [item.get('id') for item in checks]
+    failures = [str(item.get('id')) for item in checks if item.get('status') != 'pass']
+    valid = (
+        report.get('schema_version') == FINAL_SEAL_SCHEMA_VERSION
+        and report.get('gate_scope') == 'repository_contracts_only'
+        and report.get('repo_root') == str(root.resolve())
+        and report.get('formal_release_qualified') is False
+        and report.get('status') == 'pass'
+        and len(checks) >= len(FS03_REQUIRED_CHECKS)
+        and all(isinstance(ident, str) for ident in ids)
+        and len(ids) == len(set(ids))
+        and FS03_REQUIRED_CHECKS.issubset(set(ids))
+        and not failures
+        and type(summary.get('checks')) is int
+        and summary['checks'] == len(checks)
+        and type(summary.get('passed')) is int
+        and summary['passed'] == len(checks)
+        and type(summary.get('failed')) is int
+        and summary['failed'] == 0
+        and type(summary.get('compatibility_entries')) is int
+        and summary['compatibility_entries'] >= 24
+    )
+    if not valid:
+        details = ','.join(failures[:8]) or 'report identity, check inventory, summary, or scope mismatch'
+        raise GitHubActionsError(f'FS03 final-seal gate failed (strict): {details}')
+    return {'status': 'PASS', 'checks': len(checks), 'passed': len(checks),
+            'failed': 0, 'schema_version': report['schema_version']}
+
+
 def qualify_seal(root: Path, *, client: GitHubActionsClient | None = None,
                  slug: str | None = None) -> dict[str, Any]:
     # Re-run both independent consumers; saved success/status is never authority.
@@ -310,15 +372,11 @@ def qualify_seal(root: Path, *, client: GitHubActionsClient | None = None,
     native = g3r_verify(root)
     if native['status'] != 'PASS_G3R_VERIFIED':
         raise GitHubActionsError('G3R native verification blocked')
-    proc = subprocess.run([sys.executable, '-m', 'devtool', '-r', str(root), '--no-hud',
-                           '--no-clipboard', 'final-seal', '--strict'], cwd=root,
-                          capture_output=True, text=True, timeout=600, check=False)
-    if proc.returncode != 0:
-        raise GitHubActionsError(f'FS03 final-seal gate failed ({proc.returncode}); see Devtool log')
+    fs03 = _fs03_strict_in_process(root)
     head, _ = _identity(root)
     return {'schema':1,'workflow':'SOURCE_BOUND_QUALIFICATION','status':'PASS_AUTOMATED_MILESTONE_ONLY',
             'source_sha':head,'ci24_run_id':ci['run_id'], 'ci24_shards':24,
-            'g3r_lanes':13,'fs03_final_seal':'PASS',
+            'g3r_lanes':13,'fs03_final_seal':'PASS', 'fs03_evidence':fs03,
             'automated_milestone_verified':True,'formal_release_qualified':False,
             'open_real_substrate_obligations':list(G3R_REAL_SUBSTRATE_CARRY)}
 
@@ -348,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == 'ci24-resume' and not output['ci_verified']:
             return 2
         return 0
-    except (GitHubActionsError, OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+    except (GitHubActionsError, OSError, ValueError, RuntimeError) as exc:
         print(f'Qualification workflow blocked: {type(exc).__name__}: {exc}', file=sys.stderr)
         return 2
 
