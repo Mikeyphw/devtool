@@ -213,3 +213,11 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Remediation:** Compare ordered command identities, reject unintended skips in mandatory phases, enforce exact unique producer-defined G3R log identity, reject empty PASS logs and incorrect exit-code types. Preserve historical one-command phase aliases, existing source roots, 24-shard/13-lane evidence, and C02/C03 closure receipts.
 - **Proof:** 104 nearby release/G3R/qualification tests PASS on offline source, plus disposable source-bound apply and native commit check when available; local acceptance `python3 -m devtool.rmp_h0_acceptance`.
 - **Status:** implementation candidate only; B01 and C01 **NOT formally closed**, no release qualification, no historical campaign rerun.
+
+## RMP-H0-B01-C01 formal native bounded consumer closure (2026-10-18)
+
+- **Status:** B01 G3R lane-consumer identity and C01 Android release result-completeness **CLOSED within bounded consumer-security scope** at `3f987899c44809433dcfbb01e450a2b40761a2ab`.
+- Native 47/47 acceptance reused without retest; receipt SHA-256 `b029eef3a03110fa26607f7938cd1ddc260e7aa52489956753a644a025752b02`.
+- Independent disposable 8-case G3R and 6-case Android negative/positive proof SHA-256 `a2d8277e6fad713e58afc766dbed633cb97b6eec8982232b88b8a2770555e4a4`.
+- Original 308 findings otherwise preserved; no historical native G3R, Android, CI24, SSH or RS13 requalification. Six independent audit obligations remain open.
+- This does not establish cryptographic peer attestation, genuine Android execution, or release seal.
