@@ -119,6 +119,7 @@ def aggregate_shards(expected_check_ids:Sequence[str], outcomes:Iterable[ShardOu
     )
     return {
         "complete":complete,
+        "expected_case_ids":list(expected),
         "missing":missing,"duplicate":duplicate,"unexpected":unexpected,
         "invalid_shards":invalid_shards,
         "count_mismatch":bool(count_mismatch or negative_counts),
@@ -129,7 +130,7 @@ def aggregate_shards(expected_check_ids:Sequence[str], outcomes:Iterable[ShardOu
         "attachments":[{"shard_id":o.shard_id,"case_ids":list(o.check_ids),"passed":o.passed,"failed":o.failed,"skipped":o.skipped,"junit":o.junit_path,"log":o.log_path,"profile":o.profile_path} for o in vals],
     }
 
-def _valid_terminal_attachments(attachments: list[Any], counts: Mapping[str, int], expected: int) -> bool:
+def _valid_terminal_attachments(attachments: list[Any], counts: Mapping[str, int], expected: int, expected_ids: list[str]) -> bool:
     """Bind projected completion to each shard's selected cases and outcomes."""
     if not attachments:
         return False
@@ -154,7 +155,10 @@ def _valid_terminal_attachments(attachments: list[Any], counts: Mapping[str, int
         for key, value in zip(counts, values):
             totals[key] += value
         cases.extend(ids)
-    return len(cases) == expected and len(set(cases)) == expected and totals == dict(counts)
+    return (
+        len(cases) == expected and len(set(cases)) == expected
+        and sorted(cases) == sorted(expected_ids) and totals == dict(counts)
+    )
 
 def run_attachment_manifest(run_id:str, selection_id:str, aggregate:Mapping[str,Any])->dict[str,Any]:
     attachments=list(aggregate.get("attachments") or ())
@@ -164,12 +168,19 @@ def run_attachment_manifest(run_id:str, selection_id:str, aggregate:Mapping[str,
     expected=aggregate.get("expected_check_count")
     observed=aggregate.get("observed_check_count")
     valid_expected=type(expected) is int and expected>0
+    expected_ids=aggregate.get("expected_case_ids")
+    valid_inventory=(
+        isinstance(expected_ids,list) and valid_expected
+        and len(expected_ids)==expected
+        and all(isinstance(item,str) and bool(item) for item in expected_ids)
+        and len(set(expected_ids))==expected
+    )
     safe_complete=(
         aggregate.get("complete") is True
-        and numeric_counts and valid_expected
+        and numeric_counts and valid_expected and valid_inventory
         and type(observed) is int and observed==expected
         and sum(counts.values())==expected
-        and _valid_terminal_attachments(attachments,counts,expected)
+        and _valid_terminal_attachments(attachments,counts,expected,expected_ids)
         and not any(aggregate.get(key) for key in ("missing","duplicate","unexpected","invalid_shards","count_mismatch"))
     )
     return {"schema_version":3,"run_id":run_id,"selection_id":selection_id,"complete":safe_complete,"attachments":attachments,"summary":counts}
