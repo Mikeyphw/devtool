@@ -173,3 +173,10 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Correct contract:** `apply.commit.enabled=true`, `strategy=single`, and a nonempty message. The CLI may override with `--no-commit`; fail closed if commit fails or Git identity/policy blocks it.
 - **Change:** Add a fixed-inventory, disposable local C02 acceptance gate and negative parent-symlink/caller tests; require an end-to-end disposable overlay apply that proves the Git HEAD actually moves by one correctly scoped commit.
 - **Status:** Implementation candidate; local tests and disposable apply required; no native Termux/formal RMP closure claim.
+
+## RMP-C02 formal source-bound security closure (2026-10-18)
+
+- Status: **CLOSED at native Termux source-bound cleanup scope**, conditional on the linked local evidence receipt and exact qualified source commit `ec6ed8af8754de490601fe503624702e56c2475c`.
+- Evidence digest: `86b33f7c08f80e6e8bc492f6d233832cdd7e58b6967eb2608cf50bc120380bf6`; both real disposable caller paths passed, plus 67 historical source-pinned local acceptance tests reused without rerun.
+- Original external cleanup vulnerability, hostile same-UID limitations and unrelated RMP/audit/release obligations remain explicitly separated.
+- Closure gate compatibility issue: native Android CPython reports `sys.platform=android`; corrected overly strict Linux-only detection while retaining Termux binary/base-prefix path verification.
