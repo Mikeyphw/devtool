@@ -197,3 +197,11 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - Native seven-case durable ACK, substitution denial and reconnection receipt SHA-256 `f9d6f20fb92e1ae41787df6753ae4a496a3c3501730cc9db67543eea6380f0f5`.
 - No claim of cryptographic peer authentication, hostile same-user process isolation, remote execution requalification or release seal.
 - Native overlay commit includes exactly the C03 closure gate, closure document and this cumulative ledger update.
+
+## UX-NOTIFY-01 — Native Android duplicate alerts and user-global muting (2026-10-18)
+
+- **Evidence:** Devtool apply emitted both a native Termux notification and toast even when the Android Live HUD companion supplied run notifications. Historical `DEVTOOL_HUD_BRIDGE_DIR` checked only partial state and did not suppress the toast. Desktop `notify-send` lacked a global per-output switch.
+- **Affected:** Devtool apply CLI, Termux/chroot notification forwarding, desktop HUD notifications; Android companion event persistence and app-managed notification settings deliberately unchanged.
+- **Remediation:** privilege-passive positive package discovery (`pm path` / `cmd package path`, no `su`), defaults `auto` for independent notification/toast outputs, environment `DEVTOOL_NOTIFICATIONS` and `DEVTOOL_TOASTS`, user-global `[cli.notifications] native_notifications/native_toasts` preferences, explicit `on/off` precedence over auto.
+- **Regression correction:** Original Android notification tests inherited the host's `DEVTOOL_NOTIFICATIONS`, `DEVTOOL_TOASTS`, global configuration, and real package-manager detection state. On Termux the expected mock calls were skipped, producing 2 failures despite the intended policy behavior. The fixtures now bind `auto` explicitly, isolate global config, and mock an absent companion; separate tests retain positive companion detection and `off/on/auto` coverage.
+- **Status:** revised implementation candidate after first native validator failed (114 passed, 2 failed); new native qualification still required.

@@ -265,6 +265,10 @@ def minimal_global_config_template() -> str:
         "auto_hud = \"auto\"",
         "mode = \"desktop\"",
         "",
+        "[cli.notifications]",
+        "native_notifications = \"auto\" # auto (mute when companion installed) | on | off",
+        "native_toasts = \"auto\" # auto | on | off",
+        "",
         "[cli.apply]",
         "validate = true",
         "manifest_check = true",
@@ -501,12 +505,16 @@ def _validate_global_cli_doctor(cli: Any, entries: list[tuple[str, str]]) -> dic
         entries.append(("cli", f"invalid: [cli] must be a table, got {type(cli).__name__}"))
         return {}
     for section_name, section_value in sorted(cli.items()):
-        if section_name in {"output", "hud", "apply", "environment", "validation"}:
+        if section_name in {"output", "hud", "apply", "environment", "validation", "notifications"}:
             if not isinstance(section_value, dict):
                 entries.append((f"cli.{section_name}", f"invalid: [cli.{section_name}] must be a table, got {type(section_value).__name__}"))
                 continue
         elif isinstance(section_value, dict):
             entries.append((f"cli.{section_name}", "unknown CLI preference section"))
+    notification_section = cli.get("notifications", {}) if isinstance(cli.get("notifications", {}), dict) else {}
+    for field in ("native_notifications", "native_toasts"):
+        if field in notification_section and str(notification_section[field]).strip().lower() not in {"auto", "on", "off", "true", "false", "yes", "no", "1", "0"}:
+            entries.append((f"cli.notifications.{field}", "invalid: expected auto/on/off (or boolean)"))
     for section_name, key in sorted(_CLI_BOOL_KEYS):
         section_value = cli.get(section_name, {}) if isinstance(cli.get(section_name, {}), dict) else {}
         if key in section_value and not _doctor_bool_value(section_value.get(key)):
