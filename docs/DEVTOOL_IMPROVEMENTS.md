@@ -180,3 +180,12 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - Evidence digest: `86b33f7c08f80e6e8bc492f6d233832cdd7e58b6967eb2608cf50bc120380bf6`; both real disposable caller paths passed, plus 67 historical source-pinned local acceptance tests reused without rerun.
 - Original external cleanup vulnerability, hostile same-UID limitations and unrelated RMP/audit/release obligations remain explicitly separated.
 - Closure gate compatibility issue: native Android CPython reports `sys.platform=android`; corrected overly strict Linux-only detection while retaining Termux binary/base-prefix path verification.
+
+## RMP-C03 — Bounded asynchronous acknowledgement integrity (2026-10-18)
+
+- **Status:** Source-bound remediation candidate, not a formal H0 closure or release qualification.
+- **Affected:** `devtool/distributed_transport.py`, asynchronous journal forwarder, delegated event receiver, persisted delivery cursor, DIST federation consumers.
+- **Evidence:** Matching-sequence four-field `DeliveryAck` without receiver frame/provenance proof advanced a disposable cursor from zero to one at the actual `AsyncJournalForwarder.pump_once` API. Original risk: `async_ack_cursor_underbinding` from retained V89/V108 RMP history.
+- **Correction:** Require exact frame digest, complete delegated session-context digest, and attestation digest along with delegation, child, event and integer sequence before cursor persistence. Reject coercions and unbound legacy replies; retain valid reconnect/replay.
+- **Proof:** `tests/test_rmp_c03_ack_context.py`, `tests/test_r03_distributed_ack_binding.py`, DIST-X01–X04, DIST-G1–G3. 89 focused tests passed on disposable source snapshot. Native auto-commit application and final C03 closure are independently gated.
+- **Remaining:** Native Termux installation, source-bound JSON acceptance receipt, provider-path receipt qualification, explicit H0 evidence reconciliation and formal closure. C02 formal closure and unrelated qualification state are unchanged.
