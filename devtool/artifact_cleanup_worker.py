@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import stat
 from pathlib import Path
 from typing import Any, Sequence
@@ -84,6 +85,85 @@ def _unlink_owned_source(path: Path, expected: dict[str, Any] | None) -> int:
         os.close(parent_fd)
 
 
+def _validate_persisted_apply_evidence(
+    root: Path, run_id: str, record_id: str, reason: str,
+    requested_sources: dict[str, dict[str, Any]],
+) -> None:
+    """Validate a runner-persisted RUN-V3 record before deleting its sources.
+
+    This prevents unbacked OperationResult metadata from being treated as a
+    completed apply. It is an identity/consistency check, not authorization
+    against another process with the same filesystem privileges.
+    """
+    if not re.fullmatch(r"[0-9a-f]{32}", run_id):
+        raise ValueError("invalid durable apply run identity")
+    if not re.fullmatch(r"artifact-execution:[0-9a-f]{24}", record_id):
+        raise ValueError("invalid durable artifact execution identity")
+    from .core_runtime import private_run_root
+    from .run_store import RunCatalog
+
+    store = private_run_root(root)
+    catalog = RunCatalog.open(store, create=False)
+    record_path = store / run_id / "artifacts" / (record_id.replace(":", "-") + ".json")
+    if record_path.is_symlink() or not record_path.is_file():
+        raise ValueError("durable artifact execution record is unavailable")
+    data_bytes = record_path.read_bytes()
+    if len(data_bytes) > 65536:
+        raise ValueError("durable artifact execution record is oversized")
+    record = json.loads(data_bytes)
+    if not isinstance(record, dict) or record.get("record_id") != record_id or record.get("run_id") != run_id:
+        raise ValueError("durable artifact execution identity mismatch")
+    if record.get("durability") != "durable" or not str(record.get("artifact_id") or "") or not str(record.get("plan_id") or ""):
+        raise ValueError("durable artifact execution record is incomplete")
+    row = catalog.runs.get(run_id)
+    if not isinstance(row, dict) or any((
+        str(row.get(field) or "") != str(record.get(expected) or "")
+        for field, expected in (("artifact_id", "artifact_id"), ("artifact_plan_id", "plan_id"),
+                                ("artifact_qualification_receipt_id", "qualification_receipt_id"))
+    )):
+        raise ValueError("durable run catalog does not attest this artifact execution")
+    status = str(record.get("execution_status") or "")
+    allowed = {"succeeded", "applied-pending-validation"}
+    if reason == "after failed apply":
+        allowed.update({"failed", "rolled-back", "rollback-failed"})
+    if status not in allowed:
+        raise ValueError("durable artifact execution status is not eligible for cleanup")
+    # The catalog seals the attachment digest when the runner saves the record.
+    # A file substituted after the apply is not acceptable evidence.
+    matching = [item for item in catalog.attachments.values()
+                if item.run_id == run_id and item.kind == "artifact-execution-record"
+                and item.path == str(record_path) and item.state != "tombstoned"]
+    if not any(item.sha256 == hashlib.sha256(data_bytes).hexdigest() for item in matching):
+        raise ValueError("durable artifact execution attachment integrity mismatch")
+    # A valid record for *another* apply must not authorize arbitrary deletion.
+    # The runner separately persists source identities as a catalog-attested
+    # attachment; both the list and the inode/stat snapshots must agree.
+    evidence_path = record_path.with_name(record_path.stem + "-sources.json")
+    if evidence_path.is_symlink() or not evidence_path.is_file():
+        raise ValueError("durable consumed-source provenance is unavailable")
+    evidence_bytes = evidence_path.read_bytes()
+    if len(evidence_bytes) > 65536:
+        raise ValueError("durable consumed-source provenance is oversized")
+    source_evidence = json.loads(evidence_bytes)
+    if (not isinstance(source_evidence, dict)
+        or source_evidence.get("schema_version") != 1
+        or source_evidence.get("repository") != str(root)
+        or source_evidence.get("run_id") != run_id
+        or source_evidence.get("artifact_execution_record_id") != record_id):
+        raise ValueError("durable consumed-source provenance identity mismatch")
+    source_rows = source_evidence.get("sources")
+    if not isinstance(source_rows, list) or not source_rows:
+        raise ValueError("durable consumed-source inventory is missing")
+    source_by_path = {row.get("path"): row for row in source_rows if isinstance(row, dict)}
+    if len(source_by_path) != len(source_rows) or source_by_path != requested_sources:
+        raise ValueError("durable consumed-source inventory does not match the requested source")
+    matching_provenance = [item for item in catalog.attachments.values()
+                           if item.run_id == run_id and item.kind == "artifact-apply-source-provenance"
+                           and item.path == str(evidence_path) and item.state != "tombstoned"]
+    if not any(item.sha256 == hashlib.sha256(evidence_bytes).hexdigest() for item in matching_provenance):
+        raise ValueError("durable consumed-source provenance attachment integrity mismatch")
+
+
 def _read_authority(fd: int, *, root: Path, reason: str, run_id: str, paths: Sequence[str]) -> dict[str, dict[str, Any]]:
     if fd < 3:
         raise ValueError("fresh cleanup worker requires parent-issued apply authority")
@@ -104,6 +184,29 @@ def _read_authority(fd: int, *, root: Path, reason: str, run_id: str, paths: Seq
     sources = {row["path"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("path"), str)}
     if len(sources) != len(rows) or sorted(sources) != sorted(str(_literal_path(path)) for path in paths):
         raise ValueError("apply cleanup authority sources differ from requested paths")
+    evidence = payload.get("execution_records")
+    if not isinstance(evidence, list) or not evidence or len(evidence) > 32:
+        raise ValueError("cleanup authority lacks bounded durable execution provenance")
+    covered: list[str] = []
+    inspected: set[tuple[str, str]] = set()
+    for item in evidence:
+        if not isinstance(item, dict) or not isinstance(item.get("sources"), list) or not item["sources"]:
+            raise ValueError("invalid durable execution source mapping")
+        record_run = str(item.get("run_id") or "")
+        record_id = str(item.get("record_id") or "")
+        key = (record_run, record_id)
+        item_sources = item["sources"]
+        if not all(isinstance(source, str) and source in sources for source in item_sources):
+            raise ValueError("durable execution source mapping contains an unrelated path")
+        if key not in inspected:
+            _validate_persisted_apply_evidence(
+                root, record_run, record_id, reason,
+                {source: sources[source] for source in item_sources},
+            )
+            inspected.add(key)
+        covered.extend(item_sources)
+    if sorted(covered) != sorted(sources) or len(covered) != len(set(covered)):
+        raise ValueError("durable execution provenance does not cover exact consumed sources")
     return sources
 
 

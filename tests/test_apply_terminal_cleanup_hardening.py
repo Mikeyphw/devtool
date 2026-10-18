@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests._rmp_c02_durable_fixture import attach_durable_apply_evidence
+
 import argparse
 import subprocess
 from pathlib import Path
@@ -92,6 +94,7 @@ def test_cleanup_subprocess_timeout_is_bounded_and_classified(tmp_path: Path, mo
         metadata={"artifact_path": str(artifact), "delete_artifact_on_success": True},
     )
 
+    attach_durable_apply_evidence(repo, result)
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=kwargs.get("args", args[0] if args else []), timeout=0.01)
 
@@ -122,6 +125,7 @@ def test_cleanup_timeout_after_source_deleted_preserves_apply_success(tmp_path: 
         metadata={"artifact_path": str(artifact), "delete_artifact_on_success": True},
     )
 
+    attach_durable_apply_evidence(repo, result)
     def timeout_after_delete(*args, **kwargs):
         artifact.unlink()
         raise subprocess.TimeoutExpired(cmd=kwargs.get("args", args[0] if args else []), timeout=0.01)

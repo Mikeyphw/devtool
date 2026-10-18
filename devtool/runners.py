@@ -4081,6 +4081,56 @@ def _artifact_execution_status(result: OperationResult) -> str:
     return "succeeded"
 
 
+def _persist_artifact_cleanup_source_provenance(
+    repo_root: Path, result: OperationResult, paths: Sequence[str | Path],
+) -> None:
+    """Bind consumed source identities to an existing durable apply execution.
+
+    The caller must have produced an ArtifactExecutionRecord first.  In the
+    ad-hoc sequential-bundle case the CLI calls this once more with the exact
+    original component sources, after the runner has consumed the bundle.
+    """
+    from .artifact_cleanup_worker import cleanup_source_snapshot
+    from .core_runtime import private_run_root
+    from .run_store import AttachmentDescriptor, RunCatalog
+
+    metadata = dict(result.metadata or {})
+    run_id = str(metadata.get("run_id") or "")
+    record_id = str(metadata.get("artifact_execution_record_id") or "")
+    if not run_id or not record_id or not paths:
+        return
+    canonical_repo = Path(str(metadata.get("transaction_primary_repo_root") or repo_root)).resolve()
+    run_root = private_run_root(canonical_repo)
+    record_path = run_root / run_id / "artifacts" / (record_id.replace(":", "-") + ".json")
+    if not record_path.is_file():
+        raise ValueError("artifact cleanup source evidence requires a durable execution record")
+    snapshots = [cleanup_source_snapshot(path) for path in paths]
+    if len({snapshot["path"] for snapshot in snapshots}) != len(snapshots):
+        raise ValueError("duplicate artifact apply sources cannot be durably authorized")
+    evidence = {
+        "schema_version": 1, "repository": str(canonical_repo),
+        "run_id": run_id, "artifact_execution_record_id": record_id,
+        "sources": snapshots,
+    }
+    evidence_path = record_path.with_name(record_path.stem + "-sources.json")
+    staged = evidence_path.with_suffix(".json.tmp")
+    staged.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(staged, evidence_path)
+    catalog = RunCatalog.open(run_root)
+    # When replacing the temporary ad-hoc bundle's source evidence with its
+    # actual component sources, retire the old attachment descriptor.
+    for attachment_id, attachment in list(catalog.attachments.items()):
+        if attachment.path == str(evidence_path) and attachment.kind == "artifact-apply-source-provenance":
+            del catalog.attachments[attachment_id]
+    attachment = AttachmentDescriptor.from_file(
+        run_id=run_id, path=evidence_path,
+        kind="artifact-apply-source-provenance", media_type="application/json",
+    )
+    ref = catalog.add_attachment(attachment)
+    catalog.save()
+    result.metadata["artifact_cleanup_source_provenance_reference"] = ref.ref_id
+
+
 def _persist_artifact_execution_record(repo_root: Path, plan: object, result: OperationResult) -> None:
     from .artifact_lifecycle import ArtifactExecutionRecord, ResolvedArtifactPlan
     from .core_runtime import private_run_root
@@ -4189,6 +4239,19 @@ def _persist_artifact_execution_record(repo_root: Path, plan: object, result: Op
     result.metadata.setdefault("artifact_execution_attachment_id", execution_attachment.attachment_id)
     result.metadata.setdefault("artifact_execution_reference", execution_ref.ref_id)
     result.metadata.setdefault("run_id", run_id)
+    cleanup_paths = metadata.get("artifact_paths")
+    if not isinstance(cleanup_paths, list) or not cleanup_paths:
+        cleanup_paths = [str(metadata.get("artifact_path") or "")]
+    try:
+        _persist_artifact_cleanup_source_provenance(
+            canonical_repo, result,
+            [str(path) for path in cleanup_paths if isinstance(path, str) and path],
+        )
+    except (OSError, ValueError) as exc:
+        # Record the apply result faithfully. Cleanup then fails closed if no
+        # durable provenance could be written; a post-apply failure must not
+        # fabricate an unsuccessful mutation or silently allow deletion.
+        result.metadata["artifact_cleanup_provenance_error"] = type(exc).__name__ + ": " + str(exc)
 
 
 def apply_overlay(

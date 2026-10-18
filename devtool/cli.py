@@ -10000,6 +10000,15 @@ def _run_sequential_overlays(
                     metadata["artifact_paths"] = [str(path) for path in direct_sources]
                     metadata["artifact_path"] = str(direct_sources[0])
                     result.metadata = metadata
+                    # The runner consumed an ad-hoc temporary bundle, but its
+                    # actual sources are the component archives chosen here.
+                    # Replace the temporary bundle's persisted source evidence
+                    # with those exact consumed component identities.
+                    from .runners import _persist_artifact_cleanup_source_provenance
+                    try:
+                        _persist_artifact_cleanup_source_provenance(config.repo_root, result, direct_sources)
+                    except (OSError, ValueError) as exc:
+                        result.metadata["artifact_cleanup_provenance_error"] = type(exc).__name__ + ": " + str(exc)
         all_results.extend(apply_results)
         raw_sections.append(apply_raw)
         transaction_path = _apply_transaction_path(all_results)
@@ -10608,18 +10617,46 @@ def _delete_original_artifact_after_apply(
         return None
 
     artifact_paths = _apply_artifact_paths(results)
-    if not artifact_paths and artifact:
-        artifact_paths = [str(resolve_artifact_path(item)) for item in _artifact_arg_list(artifact)]
-    if not artifact_paths:
+    if not artifact_paths and not artifact:
         return None
-    # A bare artifact pathname is not authority to delete. Only a concrete
-    # apply operation with a matching consumed source can request cleanup.
+    # Every deleted source must belong to an explicit, unskipped runner apply
+    # result, with a corresponding persisted ArtifactExecutionRecord. Unrelated
+    # operation metadata and a bare CLI filename must never widen that set.
     apply_names = {"apply-overlay", "apply-overlays", "apply-snapshot"}
     applied = [row for row in results if row.name in apply_names and not row.skipped]
-    if not applied or not any(str(row.metadata.get("artifact_path") or "") or row.metadata.get("artifact_paths") for row in applied):
+    execution_records: list[dict[str, object]] = []
+    owned_sources: list[str] = []
+    for row in applied:
+        metadata = row.metadata if isinstance(row.metadata, dict) else {}
+        if not metadata.get("delete_artifact_on_success"):
+            continue
+        raw = metadata.get("artifact_paths")
+        if isinstance(raw, list):
+            sources_for_row = [str(item) for item in raw if isinstance(item, str) and item]
+        else:
+            single = metadata.get("artifact_path")
+            sources_for_row = [str(single)] if isinstance(single, str) and single else []
+        if not sources_for_row or (row.returncode != 0 and not delete_on_failure):
+            continue
+        # No path may be assigned to two different records: that would make
+        # authority ambiguous when applying a bundle.
+        if any(source in owned_sources for source in sources_for_row):
+            return OperationResult(
+                "artifact-cleanup", ["cleanup-life", *artifact_paths], 1, 0.0,
+                "Refused consumed source cleanup: duplicate apply source ownership.", [],
+                failure_kind="artifact_cleanup_authority_missing",
+                metadata={"cleanup_authority": "LIFE", "cleanup_status": "protected"},
+            )
+        owned_sources.extend(sources_for_row)
+        execution_records.append({
+            "run_id": str(metadata.get("run_id") or ""),
+            "record_id": str(metadata.get("artifact_execution_record_id") or ""),
+            "sources": sources_for_row,
+        })
+    if not owned_sources or sorted(owned_sources) != sorted(artifact_paths):
         return OperationResult(
             "artifact-cleanup", ["cleanup-life", *artifact_paths], 1, 0.0,
-            "Refused consumed artifact cleanup: no source-bound apply result.", [],
+            "Refused consumed artifact cleanup: sources lack matching apply execution evidence.", [],
             failure_kind="artifact_cleanup_authority_missing",
             metadata={"cleanup_authority": "LIFE", "cleanup_status": "protected"},
         )
@@ -10674,6 +10711,7 @@ def _delete_original_artifact_after_apply(
         "schema_version": 1, "repository": str(root), "reason": reason,
         "run_id": str(os.environ.get("DEVTOOL_RUN_ID") or ""),
         "apply_completed": True, "sources": sources,
+        "execution_records": execution_records,
     }
     try:
         with _cleanup_tempfile.TemporaryFile(mode="w+b") as authority_stream:

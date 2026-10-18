@@ -1,6 +1,6 @@
 # RMP-01 / C02 — External consumed-source cleanup boundary
 
-Status: **implementation candidate** (not installed; no live Termux/source-HEAD requalification; H0 claim remains open).
+Status: **phase 1 user-reported PASS and committed** on `feature/rmp01-security-remediation` (`8060550`); **phase 2 candidate not yet installed**. H0 claim remains open pending on-device and full-caller qualification. See `docs/RMP_C02_PHASE2_DURABLE_PROVENANCE.md`.
 
 ## Confirmed fault and scope
 
