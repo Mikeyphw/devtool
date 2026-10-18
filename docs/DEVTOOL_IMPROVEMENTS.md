@@ -164,3 +164,12 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Affected:** `devtool/cli.py::_delete_original_artifact_after_apply`, bounded external post-apply source cleanup, LIFE receipt reconciliation, RUN-V3 source provenance.
 - **Remediation:** Treat malformed/missing worker frames as unproven; accept completion only when the exact source-identity-bound LIFE receipt is verified; never replay deletions automatically. Retain ordinary failure semantics for a controlled nonzero worker exit with all source files still present.
 - **Verification:** `tests/test_rmp_c02_worker_exit_recovery.py` plus the existing caller, receipt, worker, artifact, and lifecycle regressions. Fresh native Termux and final audit acceptance remain separate.
+
+
+## RMP-C02 Phase 5 — Native artifact-commit UX and local acceptance (2026-10-18)
+
+- **Finding:** The combined Phase 3+4 overlay validated successfully but did not commit because `.devtool-artifact.json` omitted the native `apply.commit` declaration. This required manual staging and caused preventable user friction.
+- **Affected:** Artifact authors, Devtool overlay CLI, RMP-C02 qualification handoff and all future remediation bundles.
+- **Correct contract:** `apply.commit.enabled=true`, `strategy=single`, and a nonempty message. The CLI may override with `--no-commit`; fail closed if commit fails or Git identity/policy blocks it.
+- **Change:** Add a fixed-inventory, disposable local C02 acceptance gate and negative parent-symlink/caller tests; require an end-to-end disposable overlay apply that proves the Git HEAD actually moves by one correctly scoped commit.
+- **Status:** Implementation candidate; local tests and disposable apply required; no native Termux/formal RMP closure claim.
