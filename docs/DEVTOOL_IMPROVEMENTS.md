@@ -205,3 +205,11 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Remediation:** privilege-passive positive package discovery (`pm path` / `cmd package path`, no `su`), defaults `auto` for independent notification/toast outputs, environment `DEVTOOL_NOTIFICATIONS` and `DEVTOOL_TOASTS`, user-global `[cli.notifications] native_notifications/native_toasts` preferences, explicit `on/off` precedence over auto.
 - **Regression correction:** Original Android notification tests inherited the host's `DEVTOOL_NOTIFICATIONS`, `DEVTOOL_TOASTS`, global configuration, and real package-manager detection state. On Termux the expected mock calls were skipped, producing 2 failures despite the intended policy behavior. The fixtures now bind `auto` explicitly, isolate global config, and mock an absent companion; separate tests retain positive companion detection and `off/on/auto` coverage.
 - **Status:** revised implementation candidate after first native validator failed (114 passed, 2 failed); new native qualification still required.
+
+## RMP-H0-B01-C01 — G3R lane provenance and Android execution completeness (2026-10-18)
+
+- **Evidence:** Existing release gate checked the count of executor results, but could accept duplicated/substituted command results; existing G3R v3 log verifier checked log checksums without binding every log filename to the originating lane, allowing borrowed output to masquerade as another lane.
+- **Affected:** Android release phase-to-command identity and skip semantics; G3R native/semantic lane log references and PASS log completeness.
+- **Remediation:** Compare ordered command identities, reject unintended skips in mandatory phases, enforce exact unique producer-defined G3R log identity, reject empty PASS logs and incorrect exit-code types. Preserve historical one-command phase aliases, existing source roots, 24-shard/13-lane evidence, and C02/C03 closure receipts.
+- **Proof:** 104 nearby release/G3R/qualification tests PASS on offline source, plus disposable source-bound apply and native commit check when available; local acceptance `python3 -m devtool.rmp_h0_acceptance`.
+- **Status:** implementation candidate only; B01 and C01 **NOT formally closed**, no release qualification, no historical campaign rerun.

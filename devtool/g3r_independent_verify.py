@@ -54,6 +54,35 @@ def confined(root: Path, name: str) -> Path:
     return result
 
 
+def expected_lane_log_name(key: str) -> str:
+    """Canonical G3R producer filename, never inferred from receipt claims."""
+    if key in {"android_g1_gate", "android_g2_gate", "life_g3_fresh_lifecycle_chain"}:
+        return f"native-{key}.log"
+    if isinstance(key, str) and key.startswith("tests/test_") and key.endswith(".py"):
+        stem = key.removeprefix("tests/").removesuffix(".py")
+        if stem and all(character.isalnum() or character == "_" for character in stem):
+            return f"semantic-{stem}.log"
+    raise ValueError("unknown G3R execution lane: " + str(key))
+
+
+def validate_lane_log(evidence: Path, key: str, run: dict[str, Any], seen: set[str]) -> None:
+    """Reject copied, missing, empty or cross-lane log provenance."""
+    if "output_file" not in run:
+        check(run.get("status") != "PASS", "passed lane missing log")
+        return
+    filename = run.get("output_file")
+    check(type(filename) is str and filename == expected_lane_log_name(key),
+          "G3R lane log identity mismatch: " + str(key))
+    check(filename not in seen, "G3R duplicate lane log: " + filename)
+    seen.add(filename)
+    content = confined(evidence / "runs", filename).read_bytes()
+    check(run.get("output_sha256") == sha(content), "native/semantic log SHA mismatch: " + key)
+    if run.get("status") == "PASS":
+        check(bool(content.strip()), "G3R passed lane has empty execution log: " + key)
+        check(type(run.get("exit_code")) is int and run["exit_code"] == 0,
+              "G3R passed lane has invalid exit code: " + key)
+
+
 def load(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_bytes())
     check(isinstance(value, dict), "expected evidence object: " + str(path))
@@ -105,17 +134,13 @@ def verify(evidence: Path, repo: Path) -> dict[str, Any]:
     check(runtime.get("schema_version") == 3 and runtime.get("qualification") == "NOT_QUALIFIED", "native evidence false release claim")
     checks = runtime.get("checks")
     check(isinstance(checks, dict), "missing native lane results")
+    seen_lane_logs: set[str] = set()
     for key, run in checks.items():
         check(isinstance(key, str) and isinstance(run, dict), "invalid lane receipt")
         check(run.get("status") in ("PASS", "FAIL", "BLOCKED_TIMEOUT", "BLOCKED_ERROR", "BLOCKED_NOT_NATIVE_TERMUX"), "invalid lane state")
         if run["status"] == "PASS":
-            check(run.get("exit_code") == 0, "false-success lane receipt")
-        if "output_file" in run:
-            check(isinstance(run.get("output_sha256"), str), "missing log digest")
-            check(sha(confined(evidence / "runs", run["output_file"]).read_bytes()) == run["output_sha256"],
-                  "native/semantic log SHA mismatch: " + key)
-        else:
-            check(run["status"] != "PASS", "passed lane missing log")
+            check(type(run.get("exit_code")) is int and run["exit_code"] == 0, "false-success lane receipt")
+        validate_lane_log(evidence, key, run, seen_lane_logs)
     return {"verification": "PASS_CURRENT_SOURCE_CANDIDATE_ONLY", "source_commit": commit,
             "source_tree": tree, "source_files": len(paths), "source_root_sha256": root_digest,
             "historical_artifacts_retired": len(RETIRED), "real_substrate_obligations_open": list(G3R_REAL_SUBSTRATE_CARRY),

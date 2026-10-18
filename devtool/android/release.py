@@ -481,12 +481,37 @@ class AndroidReleaseOrchestrator:
             # result; incomplete/duplicate result streams fail closed before
             # release evidence or qualification consumers see a passed gate.
             incomplete_results = len(phase_results) != len(specs)
-            status = "failed" if failed or incomplete_results or receipt_errors else "passed"
+            # A result count alone cannot prove the planned commands ran:
+            # injected/remote executors could return two copies of command A
+            # and silently omit command B. Keep the historical one-command
+            # phase-name alias, but bind multi-command results positionally.
+            result_identity_error = ""
+            if not incomplete_results:
+                for index, (spec, result) in enumerate(zip(specs, phase_results), start=1):
+                    valid_names = {spec.name}
+                    if len(specs) == 1:
+                        valid_names.add(phase_name)
+                    if result.name not in valid_names:
+                        result_identity_error = (
+                            f"Android release phase {phase_name} result {index} "
+                            f"does not match planned command {spec.name!r}"
+                        )
+                        break
+                    if result.skipped and not dry_run and not (
+                        phase_name == "instrumentation" and options.device_tests == "when-device-present"
+                    ):
+                        result_identity_error = (
+                            f"Android release phase {phase_name} skipped required command {spec.name!r}"
+                        )
+                        break
+            status = "failed" if failed or incomplete_results or receipt_errors or result_identity_error else "passed"
             if incomplete_results:
                 detail = (
                     f"Android release phase {phase_name} returned {len(phase_results)} "
                     f"operation results for {len(specs)} planned commands"
                 )
+            elif result_identity_error:
+                detail = result_identity_error
             elif receipt_errors:
                 detail = "Gradle receipt lineage incomplete: " + "; ".join(receipt_errors)
             elif failed and failed[0].output.strip():
@@ -508,7 +533,7 @@ class AndroidReleaseOrchestrator:
                         required=True,
                         detail="Android package phase produced no valid artifact for the selected release variant",
                     )
-            if (failed or incomplete_results or receipt_errors) and not continue_on_error:
+            if (failed or incomplete_results or receipt_errors or result_identity_error) and not continue_on_error:
                 break
 
         def required_failure_present() -> bool:
