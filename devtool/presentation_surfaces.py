@@ -150,8 +150,10 @@ def status_from_exo(records: Sequence[Mapping[str, Any]], *, surface: Presentati
         )
     # Preserve EXO terminal and nonterminal semantics: absence of a failure
     # event must never be interpreted as proof of success.
-    states = {str(event.status or "unknown").strip().lower() for event in events}
-    if not events:
+    # Truncation affects display only, NEVER terminal truth. A failure after
+    # the visible window must not let a TUI, HUD or machine projection pass.
+    states = {str(record.get("status") or "unknown").strip().lower() for record in records}
+    if not records:
         status = "empty"
     elif states & {"failed", "error"}:
         status = "failed"

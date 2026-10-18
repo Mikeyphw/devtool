@@ -680,6 +680,33 @@ def _metadata_exposes_credential(value: Any, secrets: list[tuple[str, bool]]) ->
     return any(_secret_in_value(rendered, secret, from_spec=from_spec) for secret, from_spec in secrets)
 
 
+def _metadata_uses_inline_credentials(value: Any, *, credential_field: bool = False) -> bool:
+    """Refuse untracked plaintext secrets in nested durable metadata.
+
+    Matching known environment values alone is insufficient: a supplied
+    password may not exist in ``os.environ`` when the plan is serialized.
+    Credential identity fields are allowed only as opaque references.
+    """
+    if isinstance(value, dict):
+        return any(
+            _metadata_uses_inline_credentials(item, credential_field=(
+                credential_field or bool(_DURABLE_SECRET_NAME.search(str(key)))
+            ))
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_metadata_uses_inline_credentials(item, credential_field=credential_field) for item in value)
+    if not credential_field or value is None:
+        return False
+    if not isinstance(value, str):
+        return True
+    # References already used by the validation engine stay resumable.
+    return not (
+        _durable_secret_reference(value)
+        or value.startswith(("vault:", "env:", "file:", "fd:"))
+    )
+
+
 def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
     """Write resumable plan descriptors without persisting live credentials.
 
@@ -719,8 +746,8 @@ def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
     if any(_secret_in_value(candidate, secret, from_spec=direct) for candidate in safe_env.values() for secret, direct in secret_values):
         raise ValidationSessionError("Validation plan environment aliases a credential value.")
     metadata = _json_safe(dict(spec.metadata))
-    if _metadata_exposes_credential(metadata, secret_values):
-        raise ValidationSessionError("Validation plan metadata contains a credential value.")
+    if _metadata_exposes_credential(metadata, secret_values) or _metadata_uses_inline_credentials(metadata):
+        raise ValidationSessionError("Validation plan metadata contains a credential; use an opaque reference.")
     return {
         "name": str(spec.name),
         "argv": argv,

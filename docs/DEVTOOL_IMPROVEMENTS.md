@@ -221,3 +221,12 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - Independent disposable 8-case G3R and 6-case Android negative/positive proof SHA-256 `a2d8277e6fad713e58afc766dbed633cb97b6eec8982232b88b8a2770555e4a4`.
 - Original 308 findings otherwise preserved; no historical native G3R, Android, CI24, SSH or RS13 requalification. Six independent audit obligations remain open.
 - This does not establish cryptographic peer attestation, genuine Android execution, or release seal.
+
+## RMP-H1 — Consolidated privacy, receipt and presentation consumer hardening (2026-10-18)
+
+- **Evidence:** Reproduced four H1 consumer gaps from the H0-closed source: environment-composition identity changes with secret-value SHA, unknown plaintext secrets in nested validation metadata, forged completed TEST shard summaries lacking per-case bindings, and EXO projections hiding a late failure outside the rendered limit. The N01 retained 308 mapping matches the pinned current-source digest but is not independently signed.
+- **Affected:** `devtool/environment_composition.py`, `devtool/validation_sessions.py`, `devtool/test_runtime_optimization.py`, `devtool/presentation_surfaces.py`, their ENV/RUN/TEST/EXO consumers; RMP-N01, N02, C04, C05, C06.
+- **Remediation:** Secret-neutral identity, nested metadata credential references, per-shard/case terminal bindings, untruncated terminal truth, immutable retained inventory crosswalk and executable JSON acceptance runner.
+- **Validation:** Source-bound focused tests and installer-native `apply.commit` with exact scope; local acceptance receipt follows installation, not inferred from offline test results.
+- **Status:** `IMPLEMENTED_PENDING_NATIVE_ACCEPTANCE`. **No H1 family formally closed**. N01 requires authoritative retained roadmap provenance; N02 persistence-reader review, C04 TEST-A11, C05 native HUD, and C06 consumer identity audit remain explicit.
+- **Guardrails:** Preserve all four H0 closure commits, six independent open audit obligations, 308 historic assignments and previously verified external campaigns. `release_qualified=false`. No automatic push or release.

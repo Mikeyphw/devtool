@@ -53,7 +53,10 @@ def _safe_env_identity(values: Mapping[str, str]) -> tuple[tuple[str, str], ...]
     items: list[tuple[str, str]] = []
     for key, value in sorted((str(k), str(v)) for k, v in values.items()):
         if _secret_name(key):
-            items.append((key, "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()))
+            # A deterministic digest of the secret is still a credential oracle:
+            # rotation changes the stable identity and guesses can be hashed
+            # offline. Only key presence is a public semantic capability.
+            items.append((key, "<secret-value-excluded>"))
         else:
             items.append((key, value))
     return tuple(items)
