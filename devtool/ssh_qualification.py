@@ -118,6 +118,24 @@ printf 'state=missing\nstatus=\nactive=0\n'
     raise ValueError(f"SSH qualification tmux phase timed out while state={last or 'unknown'}")
 
 
+def _sync_difference_detail(plan: dict[str, Any], *, limit: int = 6) -> str:
+    """Small, bounded path/code excerpt; keep structured plan unchanged."""
+    changes = plan.get("changes", [])
+    if not isinstance(changes, list):
+        return "(change details unavailable)"
+    items = []
+    for item in changes[:limit]:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "?").replace("\n", " ")[:24]
+        path = str(item.get("path") or "?").replace("\n", " ")[:180]
+        items.append(f"{code} {path}")
+    remaining = max(0, len(changes) - limit)
+    if remaining:
+        items.append(f"... and {remaining} more")
+    return "; ".join(items) or "(no itemized details)"
+
+
 def _qualification_return_absolute_root(remote_root: str, *, remote_home: str) -> str:
     """Convert shell-expanded qualification state paths to literal rsync paths.
 
@@ -354,7 +372,8 @@ def qualify_worker(
             if int(post_build_plan.get("change_count", 0) or 0) != 0:
                 raise ValueError(
                     "SSH qualification project validation left the managed source workspace dirty "
-                    f"({post_build_plan.get('change_count')} pending sync change(s))"
+                    f"({post_build_plan.get('change_count')} pending sync change(s)): "
+                    + _sync_difference_detail(post_build_plan)
                 )
         if validation_twice:
             project_runs.append(_run_project_validation(
@@ -385,7 +404,8 @@ def qualify_worker(
             if int(second_plan.get("change_count", 0) or 0) != 0:
                 raise ValueError(
                     "SSH qualification second incremental sync is not clean; the phone source changed during qualification "
-                    f"or sync exclusions are incomplete ({second_plan.get('change_count')} pending change(s))"
+                    f"or sync exclusions are incomplete ({second_plan.get('change_count')} pending change(s)): "
+                    + _sync_difference_detail(second_plan)
                 )
     finally:
         _cleanup_probe(config, session=session, remote_root=remote_root)
