@@ -210,6 +210,95 @@ def _read_authority(fd: int, *, root: Path, reason: str, run_id: str, paths: Seq
     return sources
 
 
+
+def external_apply_cleanup_plan_id(
+    root: Path, paths: Sequence[Path], *, reason: str,
+    source_snapshots: dict[str, dict[str, Any]],
+) -> str:
+    """A deletion receipt must identify the *specific files*, not only their names.
+
+    Inode/time/parent snapshots are already protected by phase-2 RUN evidence.
+    Include them in the receipt plan so stale receipts for recycled download
+    filenames cannot be used to reconcile a later timed-out cleanup.
+    """
+    repository_id = build_repository_identity(root).fingerprint
+    names = sorted(str(_literal_path(path)) for path in paths)
+    if len(names) != len(set(names)) or any(name not in source_snapshots for name in names):
+        raise ValueError("cleanup plan requires unique authorized source identities")
+    return "cleanup-plan:" + _digest({
+        "repository_id": repository_id,
+        "policy": "life-apply-source-external-source-identity-v2",
+        "sources": [source_snapshots[name] for name in names],
+        "reason": reason,
+    })[:32]
+
+
+def verified_external_cleanup_receipt(
+    root: Path, paths: Sequence[Path], *, reason: str, run_id: str,
+    source_snapshots: dict[str, dict[str, Any]],
+) -> dict[str, str] | None:
+    """Read-only reconciliation of a terminated worker; never repeat unlink.
+
+    A missing file proves only absence, *not* a completed cleanup. Accept a
+    persisted receipt only when it matches the exact consumed-source identity,
+    current repository, terminal actions and (when set) RUN attachment digest.
+    """
+    if not paths or any(_path_is_within(_literal_path(path), root) for path in paths):
+        return None
+    names = sorted(str(_literal_path(path)) for path in paths)
+    try:
+        plan_id = external_apply_cleanup_plan_id(
+            root, paths, reason=reason, source_snapshots=source_snapshots,
+        )
+        repo_id = build_repository_identity(root).fingerprint
+        directory = root / ".devtool" / "private" / "cleanup" / "receipts"
+        if directory.is_symlink() or not directory.is_dir():
+            return None
+        # Non-mutating bounded scan; an unbounded or unavailable inventory is
+        # UNKNOWN, never a successful recovery.
+        paths_to_check = []
+        for index, candidate in enumerate(directory.glob("cleanup-receipt-*.json")):
+            if index >= 4096:
+                return None
+            paths_to_check.append(candidate)
+        catalog = None
+        if run_id:
+            from .core_runtime import private_run_root
+            from .run_store import RunCatalog
+            catalog = RunCatalog.open(private_run_root(root), create=False)
+        for candidate in paths_to_check:
+            if candidate.is_symlink() or not candidate.is_file() or candidate.stat().st_size > 65536:
+                continue
+            raw = candidate.read_bytes()
+            row = json.loads(raw)
+            if not isinstance(row, dict) or row.get("plan_id") != plan_id:
+                continue
+            if (row.get("repository_id") != repo_id or row.get("status") != "applied"
+                or row.get("scope") != "project" or row.get("destination") != "local"
+                or candidate.name != str(row.get("receipt_id", "")).replace(":", "-") + ".json"):
+                continue
+            results = row.get("results")
+            if (not isinstance(results, list) or len(results) != len(names)
+                or sorted(str(item.get("path")) for item in results if isinstance(item, dict)) != names
+                or any(not isinstance(item, dict) or item.get("status") != "applied"
+                       or item.get("postcondition") != "absent" for item in results)):
+                continue
+            if any(_literal_path(path).exists() or _literal_path(path).is_symlink() for path in paths):
+                continue
+            if catalog is not None and not any(
+                item.run_id == run_id and item.kind == "cleanup-receipt"
+                and item.state != "tombstoned" and item.path == str(candidate)
+                and item.sha256 == hashlib.sha256(raw).hexdigest()
+                for item in catalog.attachments.values()
+            ):
+                continue
+            return {"cleanup_receipt_id": str(row["receipt_id"]),
+                    "cleanup_receipt_path": str(candidate), "cleanup_status": "applied"}
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+    return None
+
+
 def _cleanup_external_apply_sources(
     root: Path,
     existing: Sequence[Path],
@@ -230,12 +319,15 @@ def _cleanup_external_apply_sources(
 
     repo_id = build_repository_identity(root).fingerprint
     descriptor_by_path = {str(_canonical(item.path)): item for item in descriptors}
-    plan_id = "cleanup-plan:" + _digest({
-        "repository_id": repo_id,
-        "policy": "life-apply-source-external-bounded-v1",
-        "paths": [str(item) for item in existing],
-        "reason": reason,
-    })[:32]
+    try:
+        snapshots = authorized_sources if authorized_sources is not None else {
+            str(path): cleanup_source_snapshot(path) for path in existing
+        }
+        plan_id = external_apply_cleanup_plan_id(root, existing, reason=reason, source_snapshots=snapshots)
+    except (OSError, ValueError) as exc:
+        return {"returncode": 1, "output": "Refused consumed source cleanup: " + str(exc),
+                "failure_kind": "artifact_cleanup_authority_missing",
+                "metadata": {"cleanup_status": "protected"}}
     rows: list[CleanupActionResult] = []
     reclaimed = 0
     failed = False

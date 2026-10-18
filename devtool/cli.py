@@ -10707,6 +10707,19 @@ def _delete_original_artifact_after_apply(
             failure_kind="artifact_cleanup_authority_missing",
             metadata={"cleanup_authority": "LIFE", "cleanup_status": "protected"},
         )
+    from .artifact_cleanup_worker import verified_external_cleanup_receipt
+    expected_sources = {item["path"]: item for item in sources}
+    external_sources = bool(artifact_paths) and all(
+        not Path(path).is_relative_to(root) for path in artifact_paths
+    )
+    def _verify_worker_receipt() -> dict[str, str] | None:
+        if not external_sources:
+            return None
+        return verified_external_cleanup_receipt(
+            root, [Path(path) for path in artifact_paths], reason=reason,
+            run_id=str(os.environ.get("DEVTOOL_RUN_ID") or ""),
+            source_snapshots=expected_sources,
+        )
     authority = {
         "schema_version": 1, "repository": str(root), "reason": reason,
         "run_id": str(os.environ.get("DEVTOOL_RUN_ID") or ""),
@@ -10725,43 +10738,41 @@ def _delete_original_artifact_after_apply(
                 check=False, timeout=timeout_seconds,
                 pass_fds=(authority_stream.fileno(),),
             )
-    except subprocess.TimeoutExpired as exc:
-        # Cleanup is post-success housekeeping and must never hold the entire
-        # apply indefinitely.  If the worker already removed every source before
-        # timing out while persisting secondary evidence, preserve success;
-        # otherwise fail closed with a classified, bounded cleanup result.
-        remaining = [
-            path for raw in artifact_paths
-            for path in [Path(raw).expanduser().resolve(strict=False)]
-            if path.exists() or path.is_symlink()
-        ]
+    except subprocess.TimeoutExpired:
+        # Do not convert an unreceipted deletion into success. The worker may
+        # have terminated between unlink and receipt persistence. Reconciliation
+        # is strictly read-only: no second worker launch, no blind retry.
+        proof = _verify_worker_receipt()
+        remaining = [path for path in artifact_paths
+                     if Path(path).exists() or Path(path).is_symlink()]
         duration = datetime.now(timezone.utc).timestamp() - start_ts
-        removed_all = not remaining
-        detail = f"Artifact cleanup worker exceeded the {timeout_seconds:.0f}s deadline and was terminated."
-        if removed_all:
-            detail += " Source artifact(s) are already absent; cleanup deletion completed but receipt finalization timed out."
-        else:
-            detail += " Remaining artifact(s): " + ", ".join(str(item) for item in remaining)
+        if proof is not None:
+            return OperationResult(
+                "artifact-cleanup", ["cleanup-life", *artifact_paths], 0, duration,
+                "Cleanup worker timed out, but the exact durable cleanup receipt was verified.", [],
+                metadata={"cleanup_authority": "LIFE", "cleanup_process": "fresh-worker",
+                          "cleanup_worker_timed_out": True, "cleanup_recovered_from_receipt": True,
+                          "cleanup_source_removed": True, **proof},
+            )
         return OperationResult(
-            "artifact-cleanup",
-            ["cleanup-life", *artifact_paths],
-            0 if removed_all else 1,
-            duration,
-            detail,
-            [],
-            failure_kind="" if removed_all else "artifact_cleanup_timeout",
-            metadata={
-                "cleanup_authority": "LIFE",
-                "cleanup_process": "fresh-worker",
-                "cleanup_timeout_seconds": timeout_seconds,
-                "cleanup_worker_timed_out": True,
-                "cleanup_source_removed": removed_all,
-            },
+            "artifact-cleanup", ["cleanup-life", *artifact_paths], 1, duration,
+            "Cleanup worker exceeded the bounded deadline; outcome cannot be proven. "
+            "No source will be deleted again automatically. "
+            + ("Remaining source(s): " + ", ".join(remaining) if remaining
+               else "Sources absent but the matching durable receipt is unavailable."), [],
+            failure_kind="artifact_cleanup_outcome_unknown",
+            metadata={"cleanup_authority": "LIFE", "cleanup_process": "fresh-worker",
+                      "cleanup_timeout_seconds": timeout_seconds,
+                      "cleanup_worker_timed_out": True,
+                      "cleanup_source_removed": not remaining,
+                      "cleanup_status": "outcome-unknown"},
         )
     payload: dict[str, object] | None = None
     try:
-        loaded = json.loads(proc.stdout or "{}")
-        if isinstance(loaded, dict):
+        loaded = json.loads(proc.stdout)
+        if (isinstance(loaded, dict) and type(loaded.get("returncode")) is int
+            and isinstance(loaded.get("output"), str)
+            and isinstance(loaded.get("metadata"), dict)):
             payload = loaded
     except json.JSONDecodeError:
         payload = None
@@ -10769,20 +10780,38 @@ def _delete_original_artifact_after_apply(
     synthetic_argv = ["cleanup-life", *artifact_paths]
     duration = datetime.now(timezone.utc).timestamp() - start_ts
     if payload is None:
+        # An interrupted/killed worker may have unlinked the file immediately
+        # before losing stdout. Treat that as uncertain, just like a timeout:
+        # only the exact receipt can prove success and no retry may occur.
+        proof = _verify_worker_receipt()
+        remaining = [path for path in artifact_paths
+                     if Path(path).exists() or Path(path).is_symlink()]
+        if proof is not None:
+            return OperationResult(
+                "artifact-cleanup", synthetic_argv, 0, duration,
+                "Cleanup worker ended without a structured result; the exact durable cleanup receipt was verified.", [],
+                metadata={"cleanup_authority": "LIFE", "cleanup_process": "fresh-worker",
+                          "cleanup_worker_return_unavailable": True,
+                          "cleanup_recovered_from_receipt": True,
+                          "cleanup_source_removed": True, **proof},
+            )
         detail = (proc.stderr or proc.stdout or "fresh cleanup worker produced no structured result").strip()
+        # A controlled nonzero worker exit with all sources still present is
+        # an ordinary failure, not an interrupted unlink. Signals, exit-zero
+        # protocol violations, and any missing source retain UNKNOWN.
+        ordinary_failure = proc.returncode > 0 and len(remaining) == len(artifact_paths)
         return OperationResult(
-            "artifact-cleanup",
-            synthetic_argv,
-            1,
-            duration,
-            "Failed canonical LIFE cleanup in fresh process.\n" + detail,
-            [],
-            failure_kind="artifact_cleanup_failure",
-            metadata={
-                "cleanup_authority": "LIFE",
-                "cleanup_process": "fresh-worker",
-                "worker_returncode": proc.returncode,
-            },
+            "artifact-cleanup", synthetic_argv, 1, duration,
+            ("Cleanup worker failed without a structured result.\n" if ordinary_failure else
+             "Cleanup worker ended without a structured result; outcome cannot be proven. "
+             "No automatic retry or further deletion is permitted.\n") + detail,
+            [], failure_kind=("artifact_cleanup_failure" if ordinary_failure else
+                              "artifact_cleanup_outcome_unknown"),
+            metadata={"cleanup_authority": "LIFE", "cleanup_process": "fresh-worker",
+                      "worker_returncode": proc.returncode,
+                      "cleanup_worker_return_unavailable": True,
+                      "cleanup_source_removed": not remaining,
+                      "cleanup_status": "failed" if ordinary_failure else "outcome-unknown"},
         )
 
     worker_returncode = int(payload.get("returncode") or 0)
@@ -10801,6 +10830,20 @@ def _delete_original_artifact_after_apply(
         failure_kind = failure_kind or "artifact_cleanup_failure"
         if proc.stderr.strip():
             output = (output + "\n" + proc.stderr.strip()).strip()
+
+    # An external worker that claims success must also have written its own
+    # source-bound LIFE receipt. Do not accept an uncorroborated JSON exit 0.
+    if worker_returncode == 0 and external_sources:
+        proof = _verify_worker_receipt()
+        if proof is None:
+            return OperationResult(
+                "artifact-cleanup", synthetic_argv, 1, duration,
+                "Cleanup worker claimed success without a matching durable LIFE receipt.", [],
+                failure_kind="artifact_cleanup_receipt_unverified",
+                metadata={"cleanup_authority": "LIFE", "cleanup_process": "fresh-worker",
+                          "cleanup_status": "unverified", "worker_returncode": proc.returncode},
+            )
+        normalized_metadata.update(proof)
 
     return OperationResult(
         "artifact-cleanup",
