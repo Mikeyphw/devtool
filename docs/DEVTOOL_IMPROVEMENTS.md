@@ -189,3 +189,11 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Correction:** Require exact frame digest, complete delegated session-context digest, and attestation digest along with delegation, child, event and integer sequence before cursor persistence. Reject coercions and unbound legacy replies; retain valid reconnect/replay.
 - **Proof:** `tests/test_rmp_c03_ack_context.py`, `tests/test_r03_distributed_ack_binding.py`, DIST-X01–X04, DIST-G1–G3. 89 focused tests passed on disposable source snapshot. Native auto-commit application and final C03 closure are independently gated.
 - **Remaining:** Native Termux installation, source-bound JSON acceptance receipt, provider-path receipt qualification, explicit H0 evidence reconciliation and formal closure. C02 formal closure and unrelated qualification state are unchanged.
+
+## RMP-C03 formal native source-bound closure (2026-10-18)
+
+- Status: **CLOSED** within the async acknowledgement cursor-integrity scope on commit `36e7db6f29bc8e6d2fde62c4eb7ab8bc73191e47`.
+- Reused prior **89/89 PASS** C03 acceptance without replay; receipt SHA-256 `a5ad0bb6bbf0012df5d18e820a45f636bd07b8d8b9840d39fd22a83884118bb6`.
+- Native seven-case durable ACK, substitution denial and reconnection receipt SHA-256 `f9d6f20fb92e1ae41787df6753ae4a496a3c3501730cc9db67543eea6380f0f5`.
+- No claim of cryptographic peer authentication, hostile same-user process isolation, remote execution requalification or release seal.
+- Native overlay commit includes exactly the C03 closure gate, closure document and this cumulative ledger update.
