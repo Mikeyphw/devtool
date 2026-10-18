@@ -10612,6 +10612,17 @@ def _delete_original_artifact_after_apply(
         artifact_paths = [str(resolve_artifact_path(item)) for item in _artifact_arg_list(artifact)]
     if not artifact_paths:
         return None
+    # A bare artifact pathname is not authority to delete. Only a concrete
+    # apply operation with a matching consumed source can request cleanup.
+    apply_names = {"apply-overlay", "apply-overlays", "apply-snapshot"}
+    applied = [row for row in results if row.name in apply_names and not row.skipped]
+    if not applied or not any(str(row.metadata.get("artifact_path") or "") or row.metadata.get("artifact_paths") for row in applied):
+        return OperationResult(
+            "artifact-cleanup", ["cleanup-life", *artifact_paths], 1, 0.0,
+            "Refused consumed artifact cleanup: no source-bound apply result.", [],
+            failure_kind="artifact_cleanup_authority_missing",
+            metadata={"cleanup_authority": "LIFE", "cleanup_status": "protected"},
+        )
 
     start_ts = datetime.now(timezone.utc).timestamp()
     reason = "after failed apply" if failed or rolled_back else "after successful apply"
@@ -10645,17 +10656,37 @@ def _delete_original_artifact_after_apply(
         *artifact_paths,
     ]
     timeout_seconds = _artifact_cleanup_timeout_seconds()
+    # The parent issues a bounded, in-memory capability for the exact files
+    # consumed by the completed apply. The worker refuses direct CLI invocation
+    # or a different source identity. The descriptor never appears in argv/logs.
+    from .artifact_cleanup_worker import cleanup_source_snapshot
+    import tempfile as _cleanup_tempfile
     try:
-        proc = subprocess.run(
-            command,
-            cwd=str(root),
-            env=env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-            timeout=timeout_seconds,
+        sources = [cleanup_source_snapshot(path) for path in artifact_paths]
+    except (OSError, ValueError) as exc:
+        return OperationResult(
+            "artifact-cleanup", ["cleanup-life", *artifact_paths], 1, 0.0,
+            "Refused consumed source cleanup: " + str(exc), [],
+            failure_kind="artifact_cleanup_authority_missing",
+            metadata={"cleanup_authority": "LIFE", "cleanup_status": "protected"},
         )
+    authority = {
+        "schema_version": 1, "repository": str(root), "reason": reason,
+        "run_id": str(os.environ.get("DEVTOOL_RUN_ID") or ""),
+        "apply_completed": True, "sources": sources,
+    }
+    try:
+        with _cleanup_tempfile.TemporaryFile(mode="w+b") as authority_stream:
+            authority_stream.write(json.dumps(authority, sort_keys=True).encode("utf-8"))
+            authority_stream.flush()
+            authority_stream.seek(0)
+            proc = subprocess.run(
+                [*command[:9], "--authority-fd", str(authority_stream.fileno()), *command[9:]],
+                cwd=str(root), env=env, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                check=False, timeout=timeout_seconds,
+                pass_fds=(authority_stream.fileno(),),
+            )
     except subprocess.TimeoutExpired as exc:
         # Cleanup is post-success housekeeping and must never hold the entire
         # apply indefinitely.  If the worker already removed every source before

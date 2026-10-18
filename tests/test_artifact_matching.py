@@ -75,7 +75,7 @@ class ArtifactMatchingTests(unittest.TestCase):
             }:
                 self.assertIn(name, cleanup_names)
 
-    def test_apply_overlay_uses_best_variant_and_deletes_whole_family(self) -> None:
+    def test_apply_overlay_deletes_only_consumed_variant(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
@@ -95,12 +95,14 @@ class ArtifactMatchingTests(unittest.TestCase):
 
             self.assertEqual(rc, 0)
             self.assertEqual((root / "chosen.txt").read_text(encoding="utf-8"), "two")
-            self.assertFalse(requested.exists())
-            self.assertFalse(unused.exists())
+            # RMP-C02: selection of one variant does not authorize deletion
+            # of other downloads (which can have unrelated contents).
+            self.assertTrue(requested.exists())
+            self.assertTrue(unused.exists())
             self.assertFalse(chosen.exists())
-            self.assertFalse((root / "artifact.zip.devtool.json").exists())
-            self.assertFalse((root / "artifact_1.zip.devtool.json").exists())
-            self.assertFalse((root / "artifact-2.zip.devtool.json").exists())
+            self.assertTrue((root / "artifact.zip.devtool.json").exists())
+            self.assertTrue((root / "artifact_1.zip.devtool.json").exists())
+            self.assertTrue((root / "artifact-2.zip.devtool.json").exists())
 
 
 if __name__ == "__main__":

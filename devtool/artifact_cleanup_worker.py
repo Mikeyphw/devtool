@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any, Sequence
 
-from .artifacts import artifact_cleanup_paths
 from .repository_identity import build_repository_identity
 from .cleanup_lifecycle import (
     CleanupActionResult,
@@ -36,6 +37,76 @@ def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
 
+def _literal_path(value: str | Path) -> Path:
+    """Keep the exact file name: resolving the leaf follows symlinks to victims."""
+    return Path(os.path.abspath(os.path.expanduser(str(value))))
+
+
+def cleanup_source_snapshot(path: str | Path) -> dict[str, Any]:
+    """Capture the exact consumed source identity; never follow a leaf symlink."""
+    target = _literal_path(path)
+    if target.is_symlink():
+        raise ValueError("source symlink is not an authorized cleanup target")
+    st = target.lstat()
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError("only a regular consumed artifact file may be removed")
+    parent = target.parent.resolve(strict=True)
+    parent_st = parent.stat()
+    return {
+        "path": str(target), "parent": str(parent),
+        "parent_dev": parent_st.st_dev, "parent_ino": parent_st.st_ino,
+        "dev": st.st_dev, "ino": st.st_ino, "size": st.st_size,
+        "mtime_ns": st.st_mtime_ns, "ctime_ns": st.st_ctime_ns,
+    }
+
+
+def _unlink_owned_source(path: Path, expected: dict[str, Any] | None) -> int:
+    """Unlink by an anchored directory fd after revalidating file identity."""
+    current = cleanup_source_snapshot(path)
+    if expected is not None and current != expected:
+        raise ValueError("consumed source identity changed after cleanup authorization")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    parent_fd = os.open(current["parent"], flags)
+    try:
+        pst = os.fstat(parent_fd)
+        if (pst.st_dev, pst.st_ino) != (current["parent_dev"], current["parent_ino"]):
+            raise ValueError("consumed source parent changed before cleanup")
+        st = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("consumed source is not a regular file")
+        if (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns) != (
+            current["dev"], current["ino"], current["size"], current["mtime_ns"], current["ctime_ns"]
+        ):
+            raise ValueError("consumed source identity changed before unlink")
+        os.unlink(path.name, dir_fd=parent_fd)
+        return int(st.st_size)
+    finally:
+        os.close(parent_fd)
+
+
+def _read_authority(fd: int, *, root: Path, reason: str, run_id: str, paths: Sequence[str]) -> dict[str, dict[str, Any]]:
+    if fd < 3:
+        raise ValueError("fresh cleanup worker requires parent-issued apply authority")
+    with os.fdopen(os.dup(fd), "rb") as stream:
+        data = stream.read(65537)
+    if len(data) > 65536:
+        raise ValueError("apply cleanup authority exceeds bounded limit")
+    payload = json.loads(data)
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError("invalid apply cleanup authority")
+    if payload.get("repository") != str(root) or payload.get("reason") != reason or payload.get("run_id") != run_id:
+        raise ValueError("apply cleanup authority context mismatch")
+    if not payload.get("apply_completed"):
+        raise ValueError("apply cleanup authority lacks a terminal apply result")
+    rows = payload.get("sources")
+    if not isinstance(rows, list) or not rows or len(rows) > 32:
+        raise ValueError("apply cleanup authority source count invalid")
+    sources = {row["path"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("path"), str)}
+    if len(sources) != len(rows) or sorted(sources) != sorted(str(_literal_path(path)) for path in paths):
+        raise ValueError("apply cleanup authority sources differ from requested paths")
+    return sources
+
+
 def _cleanup_external_apply_sources(
     root: Path,
     existing: Sequence[Path],
@@ -43,6 +114,7 @@ def _cleanup_external_apply_sources(
     *,
     reason: str,
     run_id: str,
+    authorized_sources: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Delete explicitly-consumed external source artifacts without a global rebuild.
 
@@ -77,9 +149,8 @@ def _cleanup_external_apply_sources(
             failed = True
             continue
         try:
-            size = int(path.lstat().st_size) if (path.exists() or path.is_symlink()) else 0
-            path.unlink(missing_ok=True)
-        except OSError as exc:
+            size = _unlink_owned_source(path, authorized_sources.get(str(path)) if authorized_sources is not None else None)
+        except (OSError, ValueError) as exc:
             rows.append(CleanupActionResult(action_id, resource_id, str(path), "failed", reason=str(exc)))
             failed = True
             continue
@@ -137,15 +208,17 @@ def cleanup_apply_source_artifacts(
     *,
     reason: str,
     run_id: str = "",
+    authorized_sources: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     root = _canonical(repo_root)
     candidates: list[Path] = []
+    # RMP-C02: deleting an artifact family is not the same as deleting the
+    # consumed artifact. Sibling downloads and sidecars require their own
+    # explicit, source-bound apply authorization; do not infer ownership by name.
     for raw_path in artifact_paths:
-        artifact = _canonical(raw_path)
-        for candidate in artifact_cleanup_paths(artifact):
-            resolved = _canonical(candidate)
-            if resolved not in candidates:
-                candidates.append(resolved)
+        literal = _literal_path(raw_path)
+        if literal not in candidates:
+            candidates.append(literal)
 
     existing = [path for path in candidates if path.exists() or path.is_symlink()]
     if not existing:
@@ -178,7 +251,8 @@ def cleanup_apply_source_artifacts(
     ]
     if existing and all(not _path_is_within(candidate, root) for candidate in existing):
         return _cleanup_external_apply_sources(
-            root, existing, descriptors, reason=reason, run_id=run_id
+            root, existing, descriptors, reason=reason, run_id=run_id,
+            authorized_sources=authorized_sources,
         )
 
     ownership = build_cleanup_ownership_view(
@@ -238,6 +312,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--reason", required=True)
     parser.add_argument("--run-id", default="")
+    parser.add_argument("--authority-fd", type=int, default=-1)
     parser.add_argument("artifact", nargs="+")
     return parser
 
@@ -245,11 +320,14 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        root = _canonical(args.repo_root)
+        authority = _read_authority(
+            args.authority_fd, root=root, reason=args.reason,
+            run_id=args.run_id, paths=args.artifact,
+        )
         payload = cleanup_apply_source_artifacts(
-            args.repo_root,
-            args.artifact,
-            reason=args.reason,
-            run_id=args.run_id,
+            root, args.artifact, reason=args.reason, run_id=args.run_id,
+            authorized_sources=authority,
         )
     except BaseException as exc:
         payload = {
