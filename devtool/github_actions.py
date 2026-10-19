@@ -500,6 +500,13 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
                 yes=bool(getattr(args,'yes',False)),
                 allow_unqualified=bool(getattr(args,'allow_unqualified_upload',False)))
         raise GitHubActionsError('Unknown G7 extension operation')
+    if action in ('recent', 'detail', 'ui'):
+        from .actions_workspace import local_recent, local_detail
+        repository = resolve_repository(str(getattr(args,'github_repo','') or ''),local_root)
+        if action == 'detail':
+            return local_detail(local_root, repository,
+                str(getattr(args,'kind','') or ''), str(getattr(args,'identity','') or ''))
+        return local_recent(local_root, repository,limit=int(getattr(args,'limit',20)))
     if action == "baseline":
         return actions_baseline()
     # Purely local signing lane: must not depend on gh auth, GitHub plans,

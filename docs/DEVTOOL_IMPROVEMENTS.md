@@ -308,3 +308,4 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Disposition:** source remediation and local tests only; `release_qualified`
   false, formal H1/H2 closed false. GitHub Actions overlays may proceed after
   native final source acceptance without reopening completed security work.
+

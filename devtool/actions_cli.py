@@ -34,6 +34,24 @@ def run_actions_command(args: Any) -> int:
             print(f"Run: {remote['html_url']}")
         if last.get('source_binding') == 'not-confirmed':
             print('WARNING: run source SHA differs from dispatch receipt', file=sys.stderr)
+    elif command in ('recent', 'detail', 'ui') and not (bool(getattr(args,'json',False)) or bool(getattr(args,'_devtool_json',False))):
+        from .actions_workspace import screen_lines, create_actions_app
+        interactive = command == 'ui' and sys.stdout.isatty() and sys.stdin.isatty() and not os.environ.get('CI')
+        if interactive and os.environ.get('DEVTOOL_JOB_UI','auto')!='plain' and os.environ.get('DEVTOOL_EXECUTION_PRESENTATION','auto')!='plain':
+            try:
+                from .textual_execution_host import textual_available
+                interactive = textual_available()
+            except (ImportError,ValueError):
+                interactive = False
+        else:
+            interactive = False
+        if interactive:
+            create_actions_app(root, payload['repository'],initial=payload).run()
+        else:
+            if command == 'detail':
+                payload = {'repository':payload['item']['repository'],'items':[payload['item']]}
+            content = screen_lines(payload,compact=True)
+            print(content['title']+'\n'+content['rows']+'\n'+content['detail']+'\n'+content['footer'])
     elif bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
         print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
     elif (str(getattr(args, 'actions_command', '')) == 'release'
