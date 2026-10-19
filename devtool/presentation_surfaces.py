@@ -29,7 +29,14 @@ def projection_digest(value: Any) -> str:
 def redact_value(key: str, value: Any) -> Any:
     if _SECRET_RE.search(key):
         return "<redacted>"
-    if isinstance(value, str) and re.search(r"(?i)(bearer\s+[a-z0-9._-]+|token=[^\s]+|password=[^\s]+)", value):
+    # Presentation event details may contain nested dictionaries or lists.
+    # Recursively remove secret-bearing values before machine serialization;
+    # shallow redaction leaves credentials inside otherwise harmless fields.
+    if isinstance(value, Mapping):
+        return {str(k): redact_value(str(k), v) for k, v in sorted(value.items(), key=lambda x: str(x[0]))}
+    if isinstance(value, (list, tuple)):
+        return [redact_value(key, v) for v in value]
+    if isinstance(value, str) and re.search(r"(?i)(bearer\s+[a-z0-9._-]+|(?:token|password|passwd|secret|api[_-]?key)=[^\s]+)", value):
         return "<redacted>"
     return value
 
@@ -256,7 +263,11 @@ def compose_dashboard(*projections: PresentationProjection, surface: Presentatio
         "passed": 20, "succeeded": 20, "reused": 20,
         "empty": 0,
     }
+    # Do not trust a green summary when one of its canonical child events
+    # carries a failure, including events beyond the visible render limit.
     states = [str(p.status or "unknown").strip().lower() for p in projections]
+    states.extend(str(event.status or "unknown").strip().lower()
+                  for projection in projections for event in projection.events)
     states = [s if s in status_order else "unknown" for s in states]
     status = max(states, key=status_order.__getitem__, default="empty")
     return PresentationProjection(

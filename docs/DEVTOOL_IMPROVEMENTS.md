@@ -282,3 +282,29 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Residual:** No claim of cryptographic attestation, real Android HUD test,
   independently authenticated N01 roadmap, remote TEST-A11 gate or formal H1
   closure. Existing release obligations and H0 closure source records preserved.
+
+## RMP final H1/H2 consolidation — source hardening and honest external gates (2026-10-19)
+
+- **Evidence and scope:** H1 Phase 1/2/3 passed 212/119/134 native Termux regressions;
+  Phase 4 remains an independently verifiable source-pinned prerequisite, not a
+  historical requalification. All four H0 closure records remain authoritative
+  at their recorded source commits.
+- **Findings:** N02 presentation JSON redactor applied only shallow handling:
+  nested `api_token`/`password` fields persisted into event detail exports.
+  C05 aggregate dashboard trusted a green projection even if its own unseen
+  event was failed or blocked. C06 env identity sanitized mapping secret keys
+  but missed `TOKEN=value` entries inside nested arrays.
+- **Change:** recursive nested redaction, event-level status truth before UI
+  truncation, and semantic secret exclusion for env array entries. Negative
+  tests cover secret rotation, nonsecret drift, adverse status hiding and
+  nested JSON export paths. Existing Q01 canonical cleanup confinement and
+  historical contract evidence remain protected without broadening deletion.
+- **H2 status:** Q01 source-bound cleanup negatives tested, no claim that all
+  lifecycle callers are formally qualified. Q02 historical 20-probe archive
+  retained verbatim (six original mismatches); the 11 older test contracts are
+  not silently declared fixed or requalified. U01 and six independent real-
+  substrate obligations remain OPEN. N01 lacks a signed authoritative original
+  roadmap; other H1 external-consumer formal acceptance also remains OPEN.
+- **Disposition:** source remediation and local tests only; `release_qualified`
+  false, formal H1/H2 closed false. GitHub Actions overlays may proceed after
+  native final source acceptance without reopening completed security work.

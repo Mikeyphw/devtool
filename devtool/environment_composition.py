@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import stat
@@ -74,6 +75,13 @@ def _secret_safe_structure(value: object) -> object:
                 for key, child in sorted(value.items(), key=lambda item: str(item[0]))}
     if isinstance(value, (list, tuple)):
         return [_secret_safe_structure(item) for item in value]
+    # Provider configuration may encode environment entries as NAME=value
+    # strings inside arrays, rather than mapping keys. Do not hash or
+    # persist the credential side of those entries into semantic identities.
+    if isinstance(value, str):
+        match = re.match(r"^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z_0-9]*)(\s*=).*", value, re.DOTALL)
+        if match and _secret_name(match.group(2)):
+            return f"{match.group(1)}{match.group(2)}{match.group(3)}<secret-value-excluded>"
     return value
 
 
