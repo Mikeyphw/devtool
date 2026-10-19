@@ -332,3 +332,27 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Affected projects:** Devtool as provider; consumer repositories adopting target-local jobs, native workflows and `devtoolw` (e.g. Studyflow, Skybind, Cinderbox-Companion). Project-specific external workflow adoption is not yet claimed.
 - **Fix:** Add `actions adopt`: review-only plan, exact immutable source ref, new workflow generation, native wrapper alias, minimal permissions, pinned GitHub actions, existing Devtool DAG invocation, and evidence-only archival. Refuse unconfigured targets, unknown workflows, mutable refs, dirty worktrees, symlink destinations, and overwrites.
 - **Status:** Source implementation ready for native A03 acceptance. Does not dispatch GitHub, sign/release artifacts, close RMP H1/H2, or certify Android/Go toolchain setup. EXO/runtime evidence remains owned by Devtool's existing graph execution.
+
+
+## ACTIONS-A04 — Source-bound promise audit and generated CI runtime hotfix (2026-10-19)
+
+- **Evidence:** UX01 79/79, A02 90/90, A03 47/47 native source tests; A03 generated `invoke --json` yet canonical `devtool invoke` exposes no `--json` option (real subprocess exit code 2). The same target-local workflow succeeds with global `--machine-file` and emits an EXO-aware runner JSON envelope.
+- **Impact:** All A03-generated GitHub Actions workflows would fail at invocation even when configured target-local jobs were healthy. The A03 acceptance did not exercise generated invocations.
+- **Remediation:** One source-bound A04 overlay changes generated workflow to use `--machine-file` before `invoke`, adds actual CLI/alias tests and full promise audit. Historical ledger appended, not rewritten; no remote dispatch.
+- **Outstanding:** Actual hosted workflow runs, download/verification of evidence artifacts, repository-specific runners and deployments, formal H1/H2 plus release qualification remain OPEN and separately tracked.
+- **Status:** Source fix candidate; only native A04 acceptance can establish qualified local implementation.
+
+- **A04 installer qualification finding:** In a disposable self-update with repository-local RUN-V3, every source validation and Git commit stage passed but cleanup refused: `durable run catalog does not attest this artifact execution`. That is an actual post-commit evidence persistence defect (OPEN), not permission to bypass LIFE cleanup. A complete replay with documented external `DEVTOOL_XDG_DIR` and bytecode writes disabled passed all six apply stages, 32 embedded tests, source cleanup, and final worktree integrity. A04 installer isolates RUN-V3 externally only for its own apply process, retaining an existing configured XDG root. Fixing default repository-local RUN-V3 durability is separate future work; do not claim it closed.
+- **GitHub 404 updated evidence:** `actions diagnose --auth gh` for `Mikeyphw/devtool` succeeded with repository accessible and seven workflows visible, proving the authenticated GitHub CLI and repository-wide Actions discovery work. The prior 404 is still unlocalized to a specific resource or the `auto` credential path.
+
+- **A04 Termux validator remediation (2026-10-19):** Native run `b50b6ec21739438886184db2fdf7b295` failed 3/32 checks because nested CLI fixture subprocesses inherited non-canonical diagnostic `host-android` execution selector from the artifact-validation host. Git rollback verified six paths and preserved failure evidence. Corrected test-only fixture explicitly selects the supported `host` backend and adds a regression injecting `host-android` into both relevant environment variables. The generated Ubuntu Actions YAML is unchanged. Native A04 acceptance remains pending.
+
+- **A04 second native failed validation:** 30 passed / 3 failed, rollback
+  successful. `host` remained an alias for the observed substrate and thus
+  still resolved to `host-android` under sanitized Termux environment.
+  Corrected with independently executable-path-derived native-Termux test
+  substrate, child-local PREFIX restoration, and an explicit negative proof
+  that unsupported Android hosts do not receive an invented Termux identity.
+  Formal native qualification remains open until the replacement passes.
+
+- **A04 third Termux attempt, `64ba8185f62044a7a43d9314ab447977`:** validator 35 passed, one negative-test failure; native rollback verified. The `test_a04_unknown_android_host_must_not_fake_termux` mock changed `sys.executable` but failed to replace the actual Termux `sys.base_prefix`. The fixture legitimately used its independently observed canonical Termux base prefix, invalidating the negative test expectation. Corrected the mock to model both executable **and** base-prefix identity and explicitly demonstrated why leaving the Termux base prefix would qualify. The production substrate router and GitHub workflow remain untouched; native A04 acceptance still pending.

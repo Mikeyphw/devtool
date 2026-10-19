@@ -126,7 +126,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/devtool-venv/bin/python" -m devtool --repo "$GITHUB_WORKSPACE" invoke --target {target} {workflow} --json > "$RUNNER_TEMP/devtool-invoke.json"
+          # invoke has no --json subcommand option. Its global --machine-file
+          # produces the canonical EXO-aware execution envelope even on failure.
+          "$RUNNER_TEMP/devtool-venv/bin/python" -m devtool --repo "$GITHUB_WORKSPACE" --machine-file "$RUNNER_TEMP/devtool-invoke.json" invoke --target {target} {workflow}
       - name: Record pinned plan checksum
         if: always()
         shell: bash

@@ -29,3 +29,10 @@ python3 -m devtool --repo "$PWD" actions adopt --target app --workflow ci --devt
 ```
 
 The wrapper alias then runs the native DAG locally as `./devtoolw ci-app-ci`. The workflow dispatch is a separate, explicitly authorized GitHub action; this generator never dispatches one. Artifacts from remote workflows must still pass ACTIONS-A02's exact-run review/collect checks before use. Neither a successful adoption nor CI status constitutes formal security or release qualification.
+
+## ACTIONS-A04 generated runtime correction
+
+- A03 generated `devtool invoke --json`, which the canonical `invoke` parser rejects (exit 2). This was **not** covered by its successful local adoption acceptance.
+- The generated workflow now invokes `devtool --machine-file ... invoke --target ... WORKFLOW`: this flag belongs to the global Devtool parser and produces a real runner/EXO machine JSON envelope. Workflow execution retains the native exit status, and the existing `if: always()` upload path archives the machine JSON when available.
+- A04 includes real subprocess regressions for plan, preflight, invocation, JSON receipt shape, failure propagation, and the generated wrapper alias. These tests are offline source/runtime tests, **not** a live hosted GitHub Actions or consumer qualification.
+- An Ubuntu runner does not qualify Android SDK/NDK, device instrumentation, Go or desktop toolchains. Such consumer-specific runners remain in the adoption backlog.
