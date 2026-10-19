@@ -20,6 +20,15 @@ def run_actions_command(args: Any) -> int:
             print(encode_observation(observation), flush=True)
     try:
         root = Path(str(getattr(args, "repo", "") or Path.cwd()))
+        if command == 'adopt':
+            from .actions_adoption import adoption_command, AdoptionError
+            try:
+                payload = adoption_command(root, args)
+            except AdoptionError as exc:
+                print(f'ACTIONS_A03_REFUSED: {exc}', file=sys.stderr)
+                return 1
+            print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+            return 0
         payload = (actions_cli(args, root, observation_callback=callback) if streaming
                    else actions_cli(args, root))
     except GitHubActionsError as exc:

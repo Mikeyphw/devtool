@@ -325,3 +325,10 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
   tests. Native source-bound acceptance is recorded separately.
 - **Status:** Implemented, native acceptance pending. Not formal security or
   release qualification. No automatic remote dispatch in acceptance.
+
+
+## ACTIONS-A03 — GitHub Actions repository-adoption authority (2026-10-19)
+- **Evidence:** UX01 native Termux 79/79 at `f8f71cfc`; UX02 native 90/90 at `95ed8f774b5729396a3dae0acb389853e90dd95e`. ACTIONS-A03 adds independently tested source-bound consumer adoption generation.
+- **Affected projects:** Devtool as provider; consumer repositories adopting target-local jobs, native workflows and `devtoolw` (e.g. Studyflow, Skybind, Cinderbox-Companion). Project-specific external workflow adoption is not yet claimed.
+- **Fix:** Add `actions adopt`: review-only plan, exact immutable source ref, new workflow generation, native wrapper alias, minimal permissions, pinned GitHub actions, existing Devtool DAG invocation, and evidence-only archival. Refuse unconfigured targets, unknown workflows, mutable refs, dirty worktrees, symlink destinations, and overwrites.
+- **Status:** Source implementation ready for native A03 acceptance. Does not dispatch GitHub, sign/release artifacts, close RMP H1/H2, or certify Android/Go toolchain setup. EXO/runtime evidence remains owned by Devtool's existing graph execution.

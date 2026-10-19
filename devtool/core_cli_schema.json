@@ -19,6 +19,22 @@
       "aliases": [],
       "canonical_path": [
         "actions",
+        "adopt"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Review or generate pinned target-local GitHub Actions adoption workflow",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.adopt"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
         "android"
       ],
       "metadata": {
@@ -6186,6 +6202,155 @@
   ],
   "kind": "devtool.canonical-cli-schema",
   "options": [
+    {
+      "aliases": [],
+      "canonical": "--target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "adopt_target",
+        "help": "Target with native target-local jobs",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "adopt"
+        ],
+        "required": true
+      },
+      "scope": "actions adopt",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.adopt.adopt_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--workflow",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "adopt_workflow",
+        "help": "Workflow under the target",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "adopt"
+        ],
+        "required": true
+      },
+      "scope": "actions adopt",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.adopt.adopt_workflow",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--devtool-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "devtool_sha",
+        "help": "Immutable Devtool runtime Git SHA",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "adopt"
+        ],
+        "required": true
+      },
+      "scope": "actions adopt",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.adopt.devtool_sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "adopt"
+        ],
+        "required": false
+      },
+      "scope": "actions adopt",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.adopt.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit result as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "adopt"
+        ],
+        "required": false
+      },
+      "scope": "actions adopt",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.adopt.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--verify",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "verify",
+        "help": "Verify already generated adoption files",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "adopt"
+        ],
+        "required": false
+      },
+      "scope": "actions adopt",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.adopt.verify",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Approve local generation of workflow and wrapper alias",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "adopt"
+        ],
+        "required": false
+      },
+      "scope": "actions adopt",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.adopt.yes",
+      "value_kind": "_StoreTrueAction"
+    },
     {
       "aliases": [],
       "canonical": "--artifact-id",
@@ -106781,6 +106946,128 @@
             "mutexes": [],
             "subparsers": {
               "children": [
+                {
+                  "aliases": [],
+                  "help": "Review/generate source-pinned GitHub Actions adoption",
+                  "help_present": true,
+                  "name": "adopt",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "adopt_target",
+                        "group": null,
+                        "help": "Target with native target-local jobs",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--target"
+                        ],
+                        "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "adopt_workflow",
+                        "group": null,
+                        "help": "Workflow under the target",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--workflow"
+                        ],
+                        "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "devtool_sha",
+                        "group": null,
+                        "help": "Immutable Devtool runtime Git SHA",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--devtool-sha"
+                        ],
+                        "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "yes",
+                        "group": null,
+                        "help": "Approve local generation of workflow and wrapper alias",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--yes"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "verify",
+                        "group": null,
+                        "help": "Verify already generated adoption files",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--verify"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit result as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
                 {
                   "aliases": [],
                   "help": "Android builds on GitHub Actions and verified APK/AAB acquisition",
