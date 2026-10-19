@@ -50,7 +50,9 @@ def make(repo, body=None):
     return commit(repo)
 
 
-def remote_preflight(client, slug, workflow, ref, inputs, *, execute):
+def remote_preflight(client, slug, workflow, ref, inputs, *, execute, expected_source_sha=None):
+    if execute:
+        assert expected_source_sha == client.head
     assert slug == SLUG
     assert workflow == 'devtool-android-build.yml'
     return {'pre_dispatch_sha':client.head,'workflow_id':99,

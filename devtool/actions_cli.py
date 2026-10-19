@@ -84,6 +84,12 @@ def run_actions_command(args: Any) -> int:
         print(pipeline_text(payload))
     else:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
+    if command == 'review':
+        state = payload.get('state')
+        if state in ('uncorrelated', 'incomplete'):
+            return 2
+        if state != 'succeeded':
+            return 1
     if command == 'qualification' and str(getattr(args, 'qualification_command', '') or '') == 'check':
         if not payload.get('source_contract_consistent', False):
             return 1

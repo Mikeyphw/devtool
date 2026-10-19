@@ -500,6 +500,21 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
                 yes=bool(getattr(args,'yes',False)),
                 allow_unqualified=bool(getattr(args,'allow_unqualified_upload',False)))
         raise GitHubActionsError('Unknown G7 extension operation')
+    if action in ('review', 'collect'):
+        from .actions_handoff import review_run, collect_verified
+        explicit = str(getattr(args, 'github_repo', '') or '')
+        token, authentication = resolve_token(str(getattr(args, 'auth', 'auto') or 'auto'))
+        client = GitHubActionsClient(token)
+        request = str(getattr(args, 'request_id', '') or '')
+        if not request:
+            raise GitHubActionsError('Specify exact --request-id; no implicit run selection')
+        if action == 'review':
+            return {'authentication': authentication,
+                    **review_run(client, request, repository=explicit)}
+        return {'authentication': authentication,
+                **collect_verified(client, request,
+                     str(getattr(args, 'artifact_name', '') or ''), local_root,
+                     yes=bool(getattr(args, 'yes', False)), repository=explicit)}
     if action in ('recent', 'detail', 'ui'):
         from .actions_workspace import local_recent, local_detail
         repository = resolve_repository(str(getattr(args,'github_repo','') or ''),local_root)

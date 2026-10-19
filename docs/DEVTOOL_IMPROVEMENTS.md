@@ -309,3 +309,19 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
   false, formal H1/H2 closed false. GitHub Actions overlays may proceed after
   native final source acceptance without reopening completed security work.
 
+## ACTIONS-UX02 — Exact remote handoff and pre-POST DAG identity
+
+- **Evidence:** ACTIONS-06 previously checked the remote source SHA *after* a
+  non-idempotent dispatch. UX01 could inspect only local journals; operators
+  otherwise had to compose several low-level run and archive commands.
+- **Affected projects:** Devtool core GitHub Actions provider and consuming
+  Devtool-wrapped repositories (Android/Go/Python/web, as applicable).
+- **Fix:** Compare the frozen source SHA in ACTIONS-06 before the dispatch POST;
+  distinguish definitive preflight failure from uncertain dispatch. Add
+  explicit exact-request `actions review` and `actions collect`, reusing the
+  ACTIONS-03/04 source, attempt, artifact and canonical registry contracts.
+- **Validation:** disposable reviewed-run and archive negative cases,
+  ACTIONS-02/03/04/06 regressions, canonical CLI registry, and Textual UX01
+  tests. Native source-bound acceptance is recorded separately.
+- **Status:** Implemented, native acceptance pending. Not formal security or
+  release qualification. No automatic remote dispatch in acceptance.

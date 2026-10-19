@@ -21,7 +21,7 @@ import uuid
 from typing import Any
 
 from .actions_artifacts import artifact_list, download_artifact, verify_download
-from .actions_dispatch import _durable_record, dispatch_workflow
+from .actions_dispatch import _durable_record, dispatch_workflow, GitHubDispatchPreflightError
 from .actions_runs import _normalize_run, run_id
 from .github_actions import GitHubActionsClient, GitHubActionsError, _slug
 
@@ -238,7 +238,8 @@ def _execute_node(client: GitHubActionsClient, slug: str, root: Path, node: dict
     if kind == 'github-dispatch':
         if _source(root) != head:
             raise GitHubActionsError('Local source changed before remote dispatch')
-        result = dispatch_workflow(client, slug, node['workflow'], node['ref'], node.get('inputs', {}), execute=True)
+        result = dispatch_workflow(client, slug, node['workflow'], node['ref'], node.get('inputs', {}),
+                                   execute=True, expected_source_sha=head)
         # Never dispatch twice if the journal update is lost after an accepted POST.
         if result.get('pre_dispatch_sha', '').lower() != head:
             raise GitHubActionsError('GitHub ref changed during dispatch; outcome needs manual reconciliation')
@@ -299,6 +300,10 @@ def _execute_isolated(client: GitHubActionsClient, slug: str, root: Path,
     private = dict(record)
     try:
         return _execute_node(client, slug, root, node, private, journal, head), private
+    except GitHubDispatchPreflightError as exc:
+        # This is a *definitive* pre-POST refusal, not an ambiguous POST outcome.
+        private['detail'] = str(exc)
+        return 'failure', private
     except GitHubActionsError as exc:
         private['detail'] = str(exc)
         return ('uncertain' if node['kind'] == 'github-dispatch' else 'failure'), private
