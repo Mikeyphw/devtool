@@ -260,3 +260,25 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
   passing tests, and records N01's *unsigned* 308-row retained crosswalk.
   N01, N02, C04, C05 and C06 are **not formally closed**; release qualification
   and the six independent obligations remain open. No older campaign rerun.
+
+## RMP-H1 Phase 4 — Cross-consumer truth and secret-safe identities (2026-10-18)
+
+- **Status:** Code remediated, offline consumer regressions passed; native Phase 4
+  acceptance and individual H1 formal closure still pending.
+- **Affected projects:** Devtool ENV/direnv, EXO/PRES dashboard and Android HUD
+  projection consumers; reused H1 history, including RMP-C05 and RMP-C06.
+- **Evidence:** Post-Phase-3 source audit reproduced `compose_dashboard` masking
+  a blocked/unknown child behind a passing child when the UI projection was
+  truncated. Negative test `test_dashboard_cannot_turn_non_success_into_passed`
+  failed on the baseline. `environment_composition._direnv_probe` hashed raw
+  credential values in `overlay_identity`, and accepted nested status config
+  values in `global_identity`, creating a secret-rotation identity oracle.
+- **Repair:** Aggregate all child statuses before truncation, with failed,
+  blocked/cancelled, running, unknown and skipped never outranked by passing
+  projections. Fingerprint direnv exports using credential-value exclusion;
+  recursively exclude credential-named status-config values while retaining
+  nonsecret semantic differences. Source and negative regressions are in
+  `tests/test_rmp_h1_phase4_cross_consumers.py`.
+- **Residual:** No claim of cryptographic attestation, real Android HUD test,
+  independently authenticated N01 roadmap, remote TEST-A11 gate or formal H1
+  closure. Existing release obligations and H0 closure source records preserved.

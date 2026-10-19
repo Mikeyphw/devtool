@@ -62,6 +62,21 @@ def _safe_env_identity(values: Mapping[str, str]) -> tuple[tuple[str, str], ...]
     return tuple(items)
 
 
+def _secret_safe_structure(value: object) -> object:
+    """Remove credential values from nested identity material, preserving keys.
+
+    This is solely an identity serializer, not a generic output redactor: raw
+    provider data must not be emitted to RUN/EXO logs or receipts by callers.
+    """
+    if isinstance(value, Mapping):
+        return {str(key): "<secret-value-excluded>" if _secret_name(str(key))
+                else _secret_safe_structure(child)
+                for key, child in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, (list, tuple)):
+        return [_secret_safe_structure(item) for item in value]
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderExecutableIdentity:
     name: str
@@ -831,7 +846,7 @@ def _direnv_probe(root: Path, executable: ProviderExecutableIdentity, env: Mappi
         watches = found.get("watch", found.get("watches", [])) if isinstance(found, dict) else []
         watch_identity = _digest(watches) if watches else ""
         config = payload.get("config", {}) if isinstance(payload, dict) else {}
-        if config: global_identity = _digest(config)
+        if config: global_identity = _digest(_secret_safe_structure(config))
     else:
         text = _run_readonly([executable.path, "status"], root=root, env=env)
         low = text.lower()
@@ -844,15 +859,15 @@ def _direnv_probe(root: Path, executable: ProviderExecutableIdentity, env: Mappi
     overlay_identity = ""
     secret_dep = False
     if authorized and requested:
-        # Values exist only in this local variable and are immediately reduced to
-        # an opaque digest; they are never placed in receipts or logs.
+        # The exported values are transient: stable identity must not hash
+        # credential values, even indirectly, or become a rotation oracle.
         exported = _run_readonly([executable.path, "export", "json"], root=root, env=env)
         try: overlay = json.loads(exported) if exported else {}
         except json.JSONDecodeError: overlay = {}
         if isinstance(overlay, dict):
             changed = tuple(sorted(str(k) for k in overlay))
             secret_dep = any(_secret_name(k) for k in changed)
-            overlay_identity = _digest([(str(k), hashlib.sha256(str(v).encode()).hexdigest()) for k,v in sorted(overlay.items())])
+            overlay_identity = _digest(_safe_env_identity(overlay))
             overlay_path = str(overlay.get("PATH", "") or "")
             if overlay_path:
                 found: dict[str,str] = {}
