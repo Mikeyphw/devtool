@@ -160,7 +160,7 @@ def _valid_terminal_attachments(attachments: list[Any], counts: Mapping[str, int
         and sorted(cases) == sorted(expected_ids) and totals == dict(counts)
     )
 
-def run_attachment_manifest(run_id:str, selection_id:str, aggregate:Mapping[str,Any])->dict[str,Any]:
+def run_attachment_manifest(run_id:str, selection_id:str, aggregate:Mapping[str,Any], *, authorized_case_ids:Sequence[str]|None=None)->dict[str,Any]:
     attachments=list(aggregate.get("attachments") or ())
     raw_counts=[aggregate.get(k,0) for k in ("passed","failed","skipped")]
     numeric_counts=all(type(v) is int and v>=0 for v in raw_counts)
@@ -175,8 +175,19 @@ def run_attachment_manifest(run_id:str, selection_id:str, aggregate:Mapping[str,
         and all(isinstance(item,str) and bool(item) for item in expected_ids)
         and len(set(expected_ids))==expected
     )
+    # A mutable aggregate can counterfeit BOTH its attached cases and its
+    # internally claimed expected_case_ids. Real producers should pass the
+    # independently selected inventory from the original selection authority.
+    external_binding=(
+        authorized_case_ids is None
+        or (valid_inventory and isinstance(authorized_case_ids,(list,tuple))
+            and len(authorized_case_ids)==expected
+            and all(isinstance(x,str) and bool(x) for x in authorized_case_ids)
+            and len(set(authorized_case_ids))==expected
+            and set(authorized_case_ids)==set(expected_ids))
+    )
     safe_complete=(
-        aggregate.get("complete") is True
+        external_binding and aggregate.get("complete") is True
         and numeric_counts and valid_expected and valid_inventory
         and type(observed) is int and observed==expected
         and sum(counts.values())==expected

@@ -81,7 +81,7 @@ def end_to_end_proof(repo_root:str|Path='.') -> dict[str,Any]:
         outcomes.append(ShardOutcome(shard.shard_id,shard.check_ids,passed=len(shard.check_ids),junit_path=f'{shard.shard_id}.xml',log_path=f'{shard.shard_id}.log',profile_path=f'{shard.shard_id}.ndjson'))
     agg=aggregate_shards(sel.resolved_check_ids,outcomes)
     if not agg['complete'] or agg['failed']!=0: raise RuntimeError('shard aggregation is incomplete')
-    manifest=run_attachment_manifest('test-g3-local',sel.selection_id,agg)
+    manifest=run_attachment_manifest('test-g3-local',sel.selection_id,agg,authorized_case_ids=sel.resolved_check_ids)
     run_payload=normalize_test_run_payload({'run_id':'test-g3-local','repository':str(root),'operations':[{'operation_id':'selection','name':'TEST-G3 selection','test_result':{'id':'test-g3-selection','suites':[{'id':'suite','name':'TEST-G3','cases':[{'id':cid,'name':cid,'status':'passed'} for cid in sel.resolved_check_ids]}],'artifacts':[],'metadata':{'selection_id':sel.selection_id}}}]})
     if not run_payload or run_payload['summary']['failed']!=0 or run_payload['summary']['total']!=len(sel.resolved_check_ids): raise RuntimeError('RUN test projection mismatch')
     rer=RerTestEvidenceRequest(check_id=sel.resolved_check_ids[0],selection_id=sel.selection_id,input_digest='input',environment_id=qual.qualification_id,output_identity='junit',policy_id='system',freshness_token='fresh',source_run_id='test-g3-local')

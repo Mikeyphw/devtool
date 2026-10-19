@@ -817,7 +817,18 @@ def _session_from_dict(payload: dict[str, Any]) -> ValidationSession:
     values["updated_at"] = str(values.get("updated_at") or values["created_at"])
     values["fingerprints"] = dict(values.get("fingerprints") or {})
     values["revision"] = max(0, _coerce_int(values.get("revision"), 0))
-    for key in ("plan_specs", "required_checkpoint_keys", "plan_drift_details"):
+    # A saved executable plan is security-sensitive. Never downgrade an
+    # explicitly malformed plan to an empty one while reconstructing a session.
+    # Missing plans remain supported for historical non-resumable sessions.
+    if "plan_specs" in values:
+        plans = values["plan_specs"]
+        if not isinstance(plans, list):
+            raise ValidationSessionError("Invalid persisted validation command plan type.")
+        for item in plans:
+            deserialize_spec(item)
+    else:
+        values["plan_specs"] = []
+    for key in ("required_checkpoint_keys", "plan_drift_details"):
         if not isinstance(values.get(key), list):
             values[key] = []
     for key in ("apply_context", "options"):

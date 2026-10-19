@@ -236,3 +236,27 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **N02 — read-side credential validation gap**. Evidence: H1 `serialize_spec()` refused inline credentials, while `deserialize_spec()` reconstructed `CommandSpec` from persisted metadata and `stored_specs()` skipped non-dict entries. A modified saved plan could bypass the write-time guard. Affected: Devtool validation session load/resume. Fix: strict read types, safe re-serialization, and fail-closed stored-plan handling. Status: patched; complete persistence/history audit remains open.
 - **C04 — detached expected-case inventory**. Evidence: `run_attachment_manifest()` verified unique attachment IDs and totals, but without comparing their IDs to the aggregator's original selected set. A count-preserving substituted case could appear complete. Affected: TEST-X03 shard manifest and TEST-G3 consumer. Fix: carry original expected case identities and demand exact matching. Status: patched; remote-run provenance and TEST-A11 remain open.
 - **Provenance/ergonomics**. This consolidated overlay reuses the prior H1 native 212-test receipt by matching its source HEAD, Git tree, lane hashes and guardrails; the supplemental JSON receipt is independent and *not* a formal-closure certificate. Native Devtool `apply.commit` required and validated. Status: implemented, user-device qualification pending.
+
+## RMP-H1 Phase 3 — Session-load and selection authority (2026-10-18)
+
+- **N02 — full session-load plan validation**. Evidence: after Phase 2,
+  `stored_specs()` rejected malformed saved plans, but `_session_from_dict()`
+  silently replaced a malformed non-list `plan_specs` with an empty list and
+  did not verify each list element before status/recovery consumers could
+  handle the session. Affected: native validation session load/recovery.
+  Remediation: distinguish missing historical plans from explicitly malformed
+  plans; validate all present items with `deserialize_spec()` at load time;
+  reject corrupt or secret-bearing entries. Status: source patched; native
+  Phase 3 acceptance pending.
+- **C04 — external test selection binding**. Evidence: a mutable shard aggregate
+  could substitute both the attachment case list and its own expected case IDs,
+  preserving valid totals. Affected: TEST-G3 selection and artifact consumer.
+  Remediation: optional external, independent selected-case inventory passed
+  from TEST-G3's canonical `sel.resolved_check_ids`; mismatch cannot claim
+  completion. Legacy callers without external authority remain unqualified.
+  Status: source patched; remote TEST-A11 obligation open.
+- **Evidence / limitation**. Source-pinned Phase 3 producer verifies the native
+  Phase 2 receipt against the parent Git tree, accepts only 130+ local focused
+  passing tests, and records N01's *unsigned* 308-row retained crosswalk.
+  N01, N02, C04, C05 and C06 are **not formally closed**; release qualification
+  and the six independent obligations remain open. No older campaign rerun.
