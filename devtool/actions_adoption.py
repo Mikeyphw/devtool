@@ -79,6 +79,7 @@ def _selection(root: Path, target: str, workflow: str) -> dict[str, Any]:
     # provision every selected target-local job. Never infer an Android device,
     # root, SSH worker, container engine or release signer from the CI runner.
     use_go = False
+    selected_jobs: list[dict[str, Any]] = []
     for step in t.workflows[workflow].steps:
         if step.kind != 'job' or step.resolution_scope != 'target':
             raise AdoptionError('A09 CI requires direct target-local jobs; nested/external workflows need review')
@@ -102,10 +103,20 @@ def _selection(root: Path, target: str, workflow: str) -> dict[str, Any]:
             raise AdoptionError('A09 CI refuses privileged or device-build command: '+program)
         if program not in ('bash', 'sh', 'python', 'python3', 'go'):
             raise AdoptionError('A09 CI cannot prove host tool availability: '+program)
+        # Toolchain flags are declarations, not a general-purpose host installer.
+        # In particular, never silently admit a JDK/Android/NDK profile through
+        # the Go or Python-shell fallback.
+        toolchain = meta.get('ci_toolchain')
+        if toolchain not in (None, 'go', 'python-shell'):
+            raise AdoptionError('A09 CI host toolchain is unsupported: '+str(toolchain)[:64])
+        if toolchain == 'python-shell' and (program == 'go' or job.runner == 'go'):
+            raise AdoptionError('A09 CI host toolchain declaration conflicts with Go runner')
         # A shell script can call Go internally; a declared go.mod input or an
         # explicit ci_toolchain metadata flag carries the contract, not a guess.
         go_job = (program == 'go' or job.runner == 'go' or
                   meta.get('ci_toolchain') == 'go' or 'go.mod' in job.inputs)
+        if go_job and toolchain == 'python-shell':
+            raise AdoptionError('A09 CI host toolchain declaration conflicts with required Go SDK')
         if go_job:
             if meta.get('read_only') is not True:
                 raise AdoptionError('A09 Go adoption requires explicit read_only job metadata')
@@ -114,8 +125,18 @@ def _selection(root: Path, target: str, workflow: str) -> dict[str, Any]:
                 raise AdoptionError('A09 Go adoption requires a regular, bounded go.mod')
             if not re.search(r'(?m)^go\s+[0-9]+\.[0-9]+(?:\.[0-9]+)?\s*$', mod.read_text('utf-8')):
                 raise AdoptionError('A09 Go adoption requires a valid go directive')
+        selected_jobs.append({
+            'name': key,
+            'runner': job.runner,
+            'program': program,
+            'declared_read_only': meta.get('read_only') is True,
+            'host_toolchain': 'go' if go_job else 'python-shell',
+            'argv_sha256': hashlib.sha256(json.dumps(args, ensure_ascii=True, separators=(',', ':')).encode()).hexdigest(),
+            'inputs_sha256': hashlib.sha256(json.dumps(list(job.inputs or []), ensure_ascii=True, separators=(',', ':')).encode()).hexdigest(),
+        })
         use_go |= go_job
     return {'report': report, 'workflow': wf,
+            'selected_jobs': selected_jobs,
             'target_local_job_count': len(t.jobs),
             'ci_host_profile': 'go' if use_go else 'python-shell'}
 
@@ -264,6 +285,22 @@ def adopt(root: Path, *, target: str, workflow: str, devtool_sha: str,
         raise AdoptionError('Repository devtoolw must be installed and executable (devtool wrapper init)')
     workflow_bytes = _yaml(target, workflow, devtool_sha, selected['ci_host_profile']).encode('utf-8')
     config_bytes = config.read_bytes()
+    consumer_head = _git(root, 'rev-parse', 'HEAD')
+    consumer_tree = _git(root, 'rev-parse', 'HEAD^{tree}')
+    source_clean = not bool(_git(root, 'status', '--porcelain', '--untracked-files=normal'))
+    # Bind an operator's plan to actual consumer source rather than only a
+    # reviewed Devtool runtime SHA. A report is not remote attestation.
+    reviewed_source = {
+        'consumer_commit': consumer_head,
+        'consumer_tree': consumer_tree,
+        'config_sha256': hashlib.sha256(config_bytes).hexdigest(),
+        'wrapper_sha256': hashlib.sha256(wrapper.read_bytes()).hexdigest(),
+        'workflow_sha256': hashlib.sha256(workflow_bytes).hexdigest(),
+        'selected_jobs': selected['selected_jobs'],
+        'ci_host_profile': selected['ci_host_profile'],
+        'devtool_source_sha': devtool_sha,
+    }
+    review_sha = hashlib.sha256(json.dumps(reviewed_source, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     if b'\x00' in config_bytes:
         raise AdoptionError('Repository configuration is invalid')
     name = _wrapper_name(target, workflow)
@@ -281,6 +318,12 @@ def adopt(root: Path, *, target: str, workflow: str, devtool_sha: str,
         'target_local_jobs': selected['workflow']['target_local_job_count'],
         'ci_host_profile': selected['ci_host_profile'], 'device_qualified': False,
         'source_attested': False,
+        'consumer_commit': consumer_head, 'consumer_tree': consumer_tree,
+        'consumer_worktree_clean': source_clean,
+        'review_sha256': review_sha,
+        'selected_jobs': selected['selected_jobs'],
+        'host_prerequisites': ['python3', 'bash', 'sh'] + (['go', 'go.mod'] if selected['ci_host_profile'] == 'go' else []),
+        'host_admission': 'SOURCE_DECLARATION_ONLY_NOT_TOOLCHAIN_EXECUTION',
         'wrapper_command': name, 'wrapper_command_example': f'./devtoolw {name}',
         'writes_performed': False, 'remote_dispatch': False, 'release_qualified': False,
     }
@@ -300,14 +343,18 @@ def adopt(root: Path, *, target: str, workflow: str, devtool_sha: str,
         return result
     if file.exists() or file.is_symlink():
         raise AdoptionError('Workflow already exists; no overwrite')
-    if _git(root, 'status', '--porcelain', '--untracked-files=normal'):
+    if not source_clean:
         raise AdoptionError('Adoption writes require a clean Git worktree')
+    if _git(root, 'rev-parse', 'HEAD') != consumer_head or config.read_bytes() != config_bytes or hashlib.sha256(wrapper.read_bytes()).hexdigest() != reviewed_source['wrapper_sha256']:
+        raise AdoptionError('Adoption source changed after review')
     # Re-validate appended configuration before writing; no second parser authority.
     import tomllib
     try:
         tomllib.loads(updated_config.decode('utf-8'))
     except (ValueError, UnicodeDecodeError) as e:
         raise AdoptionError(f'Generated wrapper entry would invalidate TOML: {e}') from None
+    if _selection(root, target, workflow)['selected_jobs'] != selected['selected_jobs']:
+        raise AdoptionError('Adoption job selection changed after review')
     # Write workflow first and config second; rollback our own workflow on config failure.
     try:
         _atomic(file, workflow_bytes)

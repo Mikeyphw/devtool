@@ -389,3 +389,12 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **G8 G2:** The immutable frozen digest `22b4708e...` matches `7aa0141`; the successor digest `12b60b30...` matches `95ed8f7`. An exact-byte source amendment and independent JSON provenance preserve both identities without editing the historical matrix, weakening `strict_source`, or promoting remote/release gates.
 - **A06/A04/A09:** Preserve current packaged schema, local handoff, host-admission behavior and negative tests. Isolated wheel and source-bound integration smoke are provided; Termux installed-wheel, full self-update and second-consumer hosted CI are not inferred from Linux tests.
 - **R0 index:** `docs/DEVTOOL_IMPROVEMENT_INDEX.json` reconciles superseding issue status without erasing earlier ledger entries. The six external real-substrate obligations and RMP-H1/H2 independent authorities remain open.
+
+
+## DEVTOOL-R02 — Cross-repository A09 source-bound host review (2026-10-20)
+
+- **Baseline:** R01 accepted Termux installation (run `bc397eb35a314149ad34d7223892778a`, commit reported as `70c4f96`); exact post-R01 Git tree is the immutable R02 preflight identity.
+- **Implementation:** Extend the existing A03/A09 adoption generator, never create another CI scheduler. Read-only review now identifies the actual consumer commit/tree, selected jobs and toolchain declarations, argv/input digests, a canonical review hash, and the distinction between source declaration and actual hosted toolchain evidence. Write rechecks source/config/wrapper/selected jobs, refuses dirty source, and preserves atomic rollback. Reject unsupported/contradictory `ci_toolchain` values before generating workflows.
+- **Compatibility:** Historical `python-shell` generated YAML remains byte-identical; Go keeps pinned `setup-go`, `go-version-file`, and no hidden Android/Gradle provider. Existing generated workflows are not silently modified.
+- **Acceptance:** Local focused regression and real Devtool disposable overlay execution must pass, then current-source native Termux A09 review. The real Skybind GitHub hosted consumer **requires separately approved remote adoption/dispatch**. Cinderbox historical native/legacy hosted successes are not proof of automatic PR/push trigger parity.
+- **Release boundary:** `source_attested=false`, `release_qualified=false`, `device_qualified=false`; no external GitHub write, signed artifact, root action, device install, or remote execution by this overlay.

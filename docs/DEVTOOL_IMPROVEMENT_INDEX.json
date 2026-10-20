@@ -417,13 +417,17 @@
       "id": "ACTIONS-A09",
       "historical_status": "MIXED_APPEND_ONLY",
       "source_status": "DONE_SOURCE",
-      "qualification_status": "HOSTED_SECOND_CONSUMER_PENDING",
+      "qualification_status": "R02_LOCAL_ACCEPTANCE_PENDING_HOSTED_CONSUMER",
       "milestone": "R2",
       "affected_paths": [
-        "devtool/actions_adoption.py"
+        "devtool/actions_adoption.py",
+        "devtool/actions_r02_acceptance.py",
+        "tests/test_actions_r02_host_review.py"
       ],
       "evidence": [
-        "docs/DEVTOOL_IMPROVEMENTS.md"
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "docs/actions/ACTIONS_R02_CONSUMER_REVIEW.md",
+        "R01 native apply run bc397eb35a314149ad34d7223892778a"
       ]
     },
     {

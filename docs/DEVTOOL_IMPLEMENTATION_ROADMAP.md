@@ -253,3 +253,15 @@ For each R1–R8 implementation campaign:
 - `docs/DEVTOOL_ACTIONS_WORKSPACE.md`, `docs/DEVTOOL_ACTIONS_EXACT_HANDOFF.md`, and `docs/DEVTOOL_ACTIONS_ADOPTION.md` document the shipped UX01/A02/A03-A04 operations. Their current presence alone does not prove live hosted consumer behavior.
 
 **Scope note:** This roadmap is a planning artifact. No repository source, ledger or remote resource has been changed; no CI, device, worker, signing or release operation has been executed as part of authoring it.
+
+
+## R02 implementation addendum — 2026-10-20
+
+R02 source work is consolidated in `devtool/actions_adoption.py`, the local
+acceptance module `devtool/actions_r02_acceptance.py`, the review matrix in
+`docs/actions/ACTIONS_R02_CONSUMER_REVIEW.md` and R02 regressions. Immutable
+source-bound consumer fingerprints augment A09's existing Go host admission.
+Go host support is declarative until independent remote source/run/attempt
+verification; Cinderbox hosted Android acceptance remains historically scoped.
+No Skybind or Cinderbox files are mutated, no Actions run is dispatched, and
+R02 exit remains pending native Termux and real hosted Go consumer evidence.
