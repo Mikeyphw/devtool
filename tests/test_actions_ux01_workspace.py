@@ -38,6 +38,64 @@ def test_local_discovery_read_only_and_no_false_promotion(tmp_path):
     assert local_detail(root,SLUG,'dispatch',DID,dispatches=d)['item']['id']==DID
     assert local_detail(root,SLUG,'pipeline',PID,pipelines=p)['item']['state']=='waiting'
 
+def test_canonical_accepted_correlated_dispatch_is_visible_and_unqualified(tmp_path):
+    """ACTIONS-02 writes this exact state after GitHub HTTP 200 with a run ID.
+
+    A local history read must not reject its own producer's durable records.
+    """
+    root,d,p=prepare(tmp_path)
+    raw=json.loads((d/(DID+'.json')).read_text())
+    raw.update({'state':'accepted-correlated','run_id':3434,
+                'run_url':'https://github.com/'+SLUG+'/actions/runs/3434'})
+    (d/(DID+'.json')).write_text(json.dumps(raw))
+    report=local_recent(root,SLUG,dispatches=d,pipelines=p)
+    dispatch=[row for row in report['items'] if row['kind']=='dispatch']
+    assert len(dispatch)==1
+    row=dispatch[0]
+    assert row['state']=='accepted-correlated' and row['run_id']==3434
+    assert report['read_only'] and not report['source_attested']
+    assert not row['remote_verified'] and not row['qualified_release']
+    assert local_detail(root,SLUG,'dispatch',DID,dispatches=d)['item']==row
+    shown=screen_lines(report,compact=True,selected=report['items'].index(row))
+    assert '3434' in shown['detail'] and 'NOT RELEASE QUALIFIED' in shown['footer']
+
+
+@pytest.mark.parametrize('run_value', [None,0,-1,True,'not-a-run-id'])
+def test_canonical_correlated_receipt_cannot_claim_missing_or_invalid_run(tmp_path,run_value):
+    root,d,p=prepare(tmp_path)
+    raw=json.loads((d/(DID+'.json')).read_text())
+    raw.update({'state':'accepted-correlated','run_id':run_value})
+    (d/(DID+'.json')).write_text(json.dumps(raw))
+    with pytest.raises(GitHubActionsError):
+        local_recent(root,SLUG,dispatches=d,pipelines=p)
+    with pytest.raises(GitHubActionsError):
+        local_detail(root,SLUG,'dispatch',DID,dispatches=d)
+
+
+def test_textual_real_correlated_dispatch_mounts_without_implicit_network(tmp_path):
+    pytest.importorskip('textual')
+    from textual.widgets import Static
+    root,d,p=prepare(tmp_path)
+    raw=json.loads((d/(DID+'.json')).read_text())
+    raw.update({'state':'accepted-correlated','run_id':3434})
+    (d/(DID+'.json')).write_text(json.dumps(raw))
+    snapshot=local_recent(root,SLUG,dispatches=d,pipelines=p)
+    invoked=[]
+    app=create_actions_app(root,SLUG,initial=snapshot,
+                           review=lambda *_:invoked.append('GET'),
+                           workflows=lambda *_:invoked.append('GET'))
+    async def run():
+        async with app.run_test(size=(40,18)) as pilot:
+            await pilot.pause()
+            assert 'accepted-correl' in str(app.query_one('#rows',Static).render())
+            assert invoked==[]
+            await pilot.press('j');await pilot.pause()
+            assert DID in str(app.query_one('#selected',Static).render())
+            assert '3434' in str(app.query_one('#selected',Static).render())
+            assert invoked==[]
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('bad', ['wrong-repository','symlink','bad-json','unknown-state','missing-sha'])
 def test_corruption_fails_closed(tmp_path,bad):
     root,d,p=prepare(tmp_path)

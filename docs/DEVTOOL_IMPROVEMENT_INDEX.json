@@ -697,8 +697,8 @@
       "category": "Unified Actions Textual review/follow/lineage/collection operator",
       "priority": "P1",
       "historical_status": "R05_PLANNED",
-      "source_status": "R05_SOURCE_CANDIDATE",
-      "qualification_status": "NATIVE_TERMUX_AND_REAL_HOSTED_PENDING",
+      "source_status": "R05_NATIVE_APPLIED_STARTUP_SMOKE_FAILED",
+      "qualification_status": "NATIVE_TEXTUAL_STARTUP_AND_REMOTE_GATES_OPEN",
       "milestone": "R5",
       "affected_paths": [
         "devtool/actions_workspace.py",
@@ -708,12 +708,40 @@
       "evidence": [
         "docs/DEVTOOL_IMPROVEMENTS.md (ACTIONS-R05-OPERATOR-001)",
         "tests/test_actions_r05_operator.py",
-        "Termux R04B source baseline run 7524f3b5b2f54e519036682a0331dd05"
+        "Termux R04B source baseline run 7524f3b5b2f54e519036682a0331dd05",
+        "User-reported R05 install followed by actions ui error: GitHub Actions: Dispatch receipt state is invalid"
       ],
       "open_followups": [
         "NATIVE_R05_TRANSACTION_AND_TEXTUAL_SMOKE",
         "AUTHENTICATED_REAL_GITHUB_GET_OR_ARTIFACT_HANDoFF_AS_EXPLICITLY_AUTHORIZED",
-        "R09_FULL_CAMPAIGN"
+        "R09_FULL_CAMPAIGN",
+        "CANONICAL_DISPATCH_STATE_UI_REPAIR_R05A"
+      ]
+    },
+    {
+      "id": "ACTIONS-R05A-STATE-002",
+      "category": "Actions workspace canonical dispatch receipt producer/consumer parity",
+      "priority": "P1",
+      "historical_status": "R05_NATIVE_UI_STARTUP_FAILURE",
+      "source_status": "R05A_REMEDIATION_CANDIDATE",
+      "qualification_status": "LOCAL_LINUX_TESTED_NATIVE_TERMUX_PENDING",
+      "milestone": "R5",
+      "affected_paths": [
+        "devtool/actions_workspace.py",
+        "tests/test_actions_ux01_workspace.py",
+        "tests/test_actions_03_run_lifecycle.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (ACTIONS-R05A-STATE-002)",
+        "devtool/github_actions.py dispatch returns accepted-correlated for GitHub HTTP 200",
+        "devtool/actions_dispatch.py persists dispatch result state",
+        "User-reported native R05 actions ui error; private offending receipt not inspected",
+        "ACTIONS-03 parser smoke updated to supply mandatory view --request-id; safety requirement unchanged"
+      ],
+      "open_followups": [
+        "NATIVE_TERMUX_R05A_OVERLAY_ACCEPTANCE",
+        "REAL_TERMUX_ACTIONS_UI_SMOKE",
+        "EXTERNAL_HOSTED_RUN_AND_RELEASE_QUALIFICATION"
       ]
     }
   ],

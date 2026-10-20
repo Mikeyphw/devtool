@@ -23,6 +23,7 @@ _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _LIMIT = 50
 _SCAN_LIMIT = 512
 _ALLOWED_DISPATCH = frozenset({'dispatch-outcome-unknown','rejected-by-api','accepted-uncorrelated',
+                               'accepted-correlated',
                                'accepted','correlated','requested','queued','in_progress',
                                'completed','success','failure','cancelled','timed_out'})
 
@@ -63,6 +64,11 @@ def _dispatch_row(identity: str, folder: Path, slug: str) -> dict[str, Any] | No
     if not isinstance(raw_state, str) or raw_state not in _ALLOWED_DISPATCH:
         raise GitHubActionsError('Dispatch receipt state is invalid')
     rid = receipt.get('run_id')
+    # GitHub dispatch returns accepted-correlated only with an exact positive run ID.
+    # UX01 must recognize the canonical producer state, but never invent a run
+    # identity when a receipt is damaged or incomplete.
+    if raw_state == 'accepted-correlated' and rid is None:
+        raise GitHubActionsError('Correlated dispatch receipt lacks exact remote run ID')
     if rid is not None:
         from .actions_runs import run_id
         rid = run_id(rid)

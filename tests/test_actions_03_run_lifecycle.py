@@ -159,7 +159,10 @@ def test_404_diagnostics_distinguish_repository_and_workflow():
 def test_new_cli_commands_and_no_confirmation_no_mutation(monkeypatch):
  parser=build_parser()
  for op in ('runs','view','jobs','watch','resume','cancel','rerun','logs','diagnose'):
-  args=parser.parse_args(['actions',op,'--github-repo',SLUG])
+  # Source-pinned 'view' requires a specific request; smoke must supply it.
+  argv=['actions',op,'--github-repo',SLUG]
+  if op=='view':argv+=['--request-id','f'*32]
+  args=parser.parse_args(argv)
   assert args.actions_command==op
  called=[]
  monkeypatch.setattr('devtool.github_actions.GitHubActionsClient',lambda *a,**kw:called.append(True))
