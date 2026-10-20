@@ -122,6 +122,7 @@ def signed_local_evidence(root: Path, *, registry_id: str, fmt: str = 'apk',
             not _SHA64.fullmatch(str(meta.get('signed_sha256', ''))) or
             digest != signed['sha256'] or digest != meta['signed_sha256']):
         raise GitHubActionsError('G6 signed artifact bytes differ from registry receipt')
+    unsigned_digest_before = _hash(unsigned)
     if identity_id and identity_id != meta.get('signing_identity_id'):
         raise GitHubActionsError('G6 selected LIFE signing identity differs from recorded signer')
     from .actions_local_release import local_verify
@@ -142,7 +143,7 @@ def signed_local_evidence(root: Path, *, registry_id: str, fmt: str = 'apk',
     # Repeat the immutable parent check after independent signature tooling runs.
     parent_again, _ = (imported_apk(root, parent_id) if fmt == 'apk'
                        else imported_aab(root, parent_id))
-    if parent_again != unsigned or _hash(unsigned) != _hash(parent_again):
+    if parent_again != unsigned or _hash(unsigned) != unsigned_digest_before or _hash(parent_again) != unsigned_digest_before:
         raise GitHubActionsError('G6 unsigned parent changed during independent inspection')
     return {'phase': 'ACTIONS-G6', 'operation': 'local-evidence', 'read_only': True,
             'signed_registry_id': registry_id, 'unsigned_registry_id': parent_id,

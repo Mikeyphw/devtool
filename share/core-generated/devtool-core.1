@@ -11,6 +11,9 @@ This manual is generated from the canonical CORE registry and canonical CLI sche
 .B actions
 Read\\-only GitHub Actions provider
 .TP
+.B actions adopt
+Review or generate pinned target\\-local GitHub Actions adoption workflow
+.TP
 .B actions android
 Android builds on GitHub Actions and verified APK/AAB acquisition
 .TP
@@ -83,6 +86,12 @@ G5 polyglot plan
 .B actions ci run
 G5 polyglot run
 .TP
+.B actions collect
+Collect a uniquely named SHA\\-256 archive from verified exact dispatch
+.TP
+.B actions detail
+Inspect exact local dispatch/pipeline identity
+.TP
 .B actions diagnose
 Diagnose GitHub repository identity, access and workflow discovery without mutation
 .TP
@@ -134,6 +143,18 @@ Read local durable pipeline states (no GitHub operations)
 .B actions plan
 Validate workflow ref and inputs without dispatching
 .TP
+.B actions qualification
+G8 Actions qualification
+.TP
+.B actions qualification check
+G8 read\\-only qualification check
+.TP
+.B actions qualification report
+G8 read\\-only qualification report
+.TP
+.B actions recent
+Read\\-only local dispatch and pipeline history
+.TP
 .B actions release
 Independent\\-policy release provenance qualification
 .TP
@@ -161,6 +182,9 @@ Request a new remote workflow attempt (explicit confirmation)
 .B actions resume
 Resume a recorded dispatch by its exact request ID
 .TP
+.B actions review
+Review exact dispatch remote source, attempt and jobs (read\\-only)
+.TP
 .B actions run
 Dispatch workflow only with explicit \\-\\-yes; return run ID if available
 .TP
@@ -169,6 +193,9 @@ List recent remote workflow runs from selected GitHub repository
 .TP
 .B actions status
 Read\\-only GitHub Actions provider
+.TP
+.B actions ui
+Read\\-only Termux Textual GitHub Actions workspace
 .TP
 .B actions verify
 Verify a previously downloaded registered GitHub artifact
@@ -1145,15 +1172,9 @@ Canonical Devtool command.
 .B wrapper verify
 Canonical Devtool command.
 .TP
-.B actions qualification
-G8 Actions qualification
-.TP
-.B actions qualification check
-G8 read\\-only qualification check
-.TP
-.B actions qualification report
-G8 read\\-only qualification report
+.B actions release local\\-handoff
+A08 consented local signed\\-unqualified export/install handoff
 .SH GENERATED CONTRACT
-Registry digest: b04756a4e8d96ebe76377440f1ae36c8c34943a84e7e793ed9ce18753f1ac00b
+Registry digest: 54713081a3cd06cda8df89e3278e7eb7ef1aafec3f30f13d3837a63797eb69de
 .SH SEE ALSO
 devtool(1)

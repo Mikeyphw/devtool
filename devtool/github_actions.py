@@ -451,7 +451,7 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "release local-evidence", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect", "extensions metrics", "extensions runners", "extensions publish-plan", "extensions publish", "extensions gitlab-pipelines", "qualification report", "qualification check"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "release local-evidence", "release local-handoff", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect", "extensions metrics", "extensions runners", "extensions publish-plan", "extensions publish", "extensions gitlab-pipelines", "qualification report", "qualification check"],
         "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)", "android aab-run (explicit --yes only)", "android aab-sign (explicit --yes only)", "ci run (explicit --yes only)"],
         "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
@@ -526,6 +526,23 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
         return actions_baseline()
     # Purely local signing lane: must not depend on gh auth, GitHub plans,
     # branch rulesets, or ACTIONS-08 release qualification side effects.
+    if action == 'release' and str(getattr(args, 'release_command', '') or '') == 'local-handoff':
+        from .actions_private_handoff import private_handoff
+        from .android.signing import AndroidSigningError
+        try:
+            return private_handoff(local_root,
+                registry_id=str(getattr(args,'registry_id','') or ''),
+                fmt=str(getattr(args,'format','apk') or 'apk'),
+                identity_id=str(getattr(args,'signing_identity','') or ''),
+                target=str(getattr(args,'signing_target','android_hud') or 'android_hud'),
+                expected_source_sha=str(getattr(args,'expected_sha','') or ''),
+                operation=str(getattr(args,'operation','') or ''),
+                destination=str(getattr(args,'destination','') or ''),
+                serial=str(getattr(args,'serial','') or ''),
+                allow_unqualified=bool(getattr(args,'allow_unqualified',False)),
+                yes=bool(getattr(args,'yes',False)))
+        except AndroidSigningError:
+            raise GitHubActionsError('A08 LIFE signing certificate inspection failed') from None
     if action == 'release' and str(getattr(args, 'release_command', '') or '') == 'local-evidence':
         from .actions_local_evidence import signed_local_evidence
         from .android.signing import AndroidSigningError

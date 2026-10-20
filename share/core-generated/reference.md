@@ -1,12 +1,13 @@
 # Devtool generated CORE reference
 
-Registry digest: `b04756a4e8d96ebe76377440f1ae36c8c34943a84e7e793ed9ce18753f1ac00b`
+Registry digest: `54713081a3cd06cda8df89e3278e7eb7ef1aafec3f30f13d3837a63797eb69de`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
 ## Commands
 
 - `actions` — Read-only GitHub Actions provider
+- `actions adopt` — Review or generate pinned target-local GitHub Actions adoption workflow
 - `actions android` — Android builds on GitHub Actions and verified APK/AAB acquisition
 - `actions android aab-check` — Inspect source-bound AAB with bundletool (read-only)
 - `actions android aab-import` — Download, verify and register unsigned AAB
@@ -31,6 +32,8 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions ci collect` — G5 polyglot collect
 - `actions ci plan` — G5 polyglot plan
 - `actions ci run` — G5 polyglot run
+- `actions collect` — Collect a uniquely named SHA-256 archive from verified exact dispatch
+- `actions detail` — Inspect exact local dispatch/pipeline identity
 - `actions diagnose` — Diagnose GitHub repository identity, access and workflow discovery without mutation
 - `actions download` — Download, SHA-256 verify and register an unextracted Actions ZIP
 - `actions extensions` — G7 optional provider integrations
@@ -48,6 +51,10 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions pipeline run` — Create durable pipeline journal and execute ready nodes
 - `actions pipeline status` — Read local durable pipeline states (no GitHub operations)
 - `actions plan` — Validate workflow ref and inputs without dispatching
+- `actions qualification` — G8 Actions qualification
+- `actions qualification check` — G8 read-only qualification check
+- `actions qualification report` — G8 read-only qualification report
+- `actions recent` — Read-only local dispatch and pipeline history
 - `actions release` — Independent-policy release provenance qualification
 - `actions release local-build` — Preview or execute local signed release build without Github qualification
 - `actions release local-evidence` — G6 read-only signed APK/AAB provenance and certificate re-verification
@@ -57,9 +64,11 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions release verify` — Read-only package release qualification with signed GitHub provenance
 - `actions rerun` — Request a new remote workflow attempt (explicit confirmation)
 - `actions resume` — Resume a recorded dispatch by its exact request ID
+- `actions review` — Review exact dispatch remote source, attempt and jobs (read-only)
 - `actions run` — Dispatch workflow only with explicit --yes; return run ID if available
 - `actions runs` — List recent remote workflow runs from selected GitHub repository
 - `actions status` — Read-only GitHub Actions provider
+- `actions ui` — Read-only Termux Textual GitHub Actions workspace
 - `actions verify` — Verify a previously downloaded registered GitHub artifact
 - `actions view` — Inspect one remote workflow run
 - `actions watch` — Poll a remote run in the foreground with finite limits (no daemon)
@@ -351,9 +360,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
-- `actions qualification` — G8 Actions qualification
-- `actions qualification check` — G8 read-only qualification check
-- `actions qualification report` — G8 read-only qualification report
+- `actions release local-handoff` — A08 consented local signed-unqualified export/install handoff
 
 ## Configuration documents
 

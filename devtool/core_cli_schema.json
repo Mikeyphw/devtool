@@ -6198,6 +6198,23 @@
       },
       "options": [],
       "stable_id": "cli.command.wrapper.verify"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "release",
+        "local-handoff"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "A08 consented local signed-unqualified export/install handoff",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.release.local_handoff"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -60185,6 +60202,278 @@
       "sensitive": false,
       "stable_id": "cli.option.yes",
       "value_kind": "bool"
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.registry_id",
+      "aliases": [],
+      "canonical": "--registry-id",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreAction",
+      "metadata": {
+        "choices": [],
+        "dest": "registry_id",
+        "help": "Exact registered locally signed artifact (12 hex)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": true
+      }
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.format",
+      "aliases": [],
+      "canonical": "--format",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreAction",
+      "metadata": {
+        "choices": [
+          "apk",
+          "aab"
+        ],
+        "dest": "format",
+        "help": "Local package format",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": false
+      }
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.signing_identity",
+      "aliases": [],
+      "canonical": "--signing-identity",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreAction",
+      "metadata": {
+        "choices": [],
+        "dest": "signing_identity",
+        "help": "Existing registered LIFE signing identity ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": false
+      }
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.signing_target",
+      "aliases": [],
+      "canonical": "--signing-target",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreAction",
+      "metadata": {
+        "choices": [],
+        "dest": "signing_target",
+        "help": "Devtool Android signing target",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": false
+      }
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.json",
+      "aliases": [],
+      "canonical": "--json",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreTrueAction",
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Print machine-readable JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": false
+      }
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.expected_sha",
+      "aliases": [],
+      "canonical": "--expected-sha",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreAction",
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha",
+        "help": "Mandatory independent exact 40-hex source SHA pin",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": true
+      }
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.operation",
+      "aliases": [],
+      "canonical": "--operation",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreAction",
+      "metadata": {
+        "choices": [
+          "export",
+          "install"
+        ],
+        "dest": "operation",
+        "help": "Local handoff: export to a new file, or install APK on explicitly named device",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": true
+      }
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.destination",
+      "aliases": [],
+      "canonical": "--destination",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreAction",
+      "metadata": {
+        "choices": [],
+        "dest": "destination",
+        "help": "Absolute new file path for export; existing files never overwritten",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": false
+      }
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.serial",
+      "aliases": [],
+      "canonical": "--serial",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreAction",
+      "metadata": {
+        "choices": [],
+        "dest": "serial",
+        "help": "Exact adb device serial required for install",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": false
+      }
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.allow_unqualified",
+      "aliases": [],
+      "canonical": "--allow-unqualified",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreTrueAction",
+      "metadata": {
+        "choices": [],
+        "dest": "allow_unqualified",
+        "help": "Explicitly accept signed-but-unqualified artifact for this local action",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": false
+      }
+    },
+    {
+      "stable_id": "cli.option.actions.release.local_handoff.yes",
+      "aliases": [],
+      "canonical": "--yes",
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "config_field_id": null,
+      "value_kind": "_StoreTrueAction",
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Execute local file/device mutation after verification and consent; otherwise preview",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": false
+      }
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "release",
+          "local-handoff"
+        ],
+        "required": false
+      },
+      "scope": "actions release local-handoff",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.local_handoff.help",
+      "value_kind": "_HelpAction"
     }
   ],
   "parser": {
@@ -113393,6 +113682,219 @@
                             "allow_abbrev": true,
                             "defaults": {},
                             "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Read-only preview or explicitly authorized private APK/AAB export and APK install",
+                          "help_present": true,
+                          "name": "local-handoff",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "registry_id",
+                                "group": null,
+                                "help": "Exact registered locally signed artifact (12 hex)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--registry-id"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "apk",
+                                  "aab"
+                                ],
+                                "const": null,
+                                "default": "apk",
+                                "dest": "format",
+                                "group": null,
+                                "help": "Local package format",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--format"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "signing_identity",
+                                "group": null,
+                                "help": "Existing registered LIFE signing identity ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-identity"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android_hud",
+                                "dest": "signing_target",
+                                "group": null,
+                                "help": "Devtool Android signing target",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-target"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Print machine-readable JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_sha",
+                                "group": null,
+                                "help": "Mandatory independent exact 40-hex source SHA pin",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-sha"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "export",
+                                  "install"
+                                ],
+                                "const": null,
+                                "default": null,
+                                "dest": "operation",
+                                "group": null,
+                                "help": "Local handoff: export to a new file, or install APK on explicitly named device",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--operation"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "destination",
+                                "group": null,
+                                "help": "Absolute new file path for export; existing files never overwritten",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--destination"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "serial",
+                                "group": null,
+                                "help": "Exact adb device serial required for install",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--serial"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "allow_unqualified",
+                                "group": null,
+                                "help": "Explicitly accept signed-but-unqualified artifact for this local action",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--allow-unqualified"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Execute local file/device mutation after verification and consent; otherwise preview",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": "A08: LIFE-verified signed-but-unqualified local package handoff; requires separate explicit mutation consent",
                             "epilog": null,
                             "formatter": "HelpFormatter",
                             "groups": [],

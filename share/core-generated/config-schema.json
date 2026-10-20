@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "digest": "fd8824ca245abb5c88977ca4c749eca545f018b029d18167686829e6465acde9",
+  "digest": "9028196b6858cbb7df2bfbb57c36799c6dbbf36672f4a983ceff2e11a46cd3f9",
   "documents": {
     "global": {
       "allow_unknown_top_level": [
@@ -322,50 +322,6 @@
   "kind": "devtool.config-schema",
   "option_config_links": [
     {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.d768f66e"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.8de40fc6"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.801c2a1b"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.330e55a5"
-    },
-    {
-      "config_field_id": "cfg.cli.output.stdout_payload",
-      "option_id": "cli.option.stdout_payload.08f6d7fb.08f6d7fb"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.e386e6f0"
-    },
-    {
-      "config_field_id": "cfg.project.repo_root",
-      "option_id": "cli.option.repo.4a0b0890"
-    },
-    {
-      "config_field_id": "cfg.project.repo_root",
-      "option_id": "cli.option.repo.4a0b0890.a78e8ffd"
-    },
-    {
-      "config_field_id": "cfg.project.repo_root",
-      "option_id": "cli.option.repo.4a0b0890.24716c0c"
-    },
-    {
-      "config_field_id": "cfg.project.repo_root",
-      "option_id": "cli.option.repo.4a0b0890.4a0b0890"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.e41a2abc"
-    },
-    {
       "config_field_id": "cfg.project.config_file",
       "option_id": "cli.option.config"
     },
@@ -382,8 +338,28 @@
       "option_id": "cli.option.repo"
     },
     {
+      "config_field_id": "cfg.project.repo_root",
+      "option_id": "cli.option.repo.4a0b0890"
+    },
+    {
+      "config_field_id": "cfg.project.repo_root",
+      "option_id": "cli.option.repo.4a0b0890.24716c0c"
+    },
+    {
+      "config_field_id": "cfg.project.repo_root",
+      "option_id": "cli.option.repo.4a0b0890.4a0b0890"
+    },
+    {
+      "config_field_id": "cfg.project.repo_root",
+      "option_id": "cli.option.repo.4a0b0890.a78e8ffd"
+    },
+    {
       "config_field_id": "cfg.cli.output.stdout_payload",
       "option_id": "cli.option.stdout_payload"
+    },
+    {
+      "config_field_id": "cfg.cli.output.stdout_payload",
+      "option_id": "cli.option.stdout_payload.08f6d7fb.08f6d7fb"
     },
     {
       "config_field_id": "cfg.workspace.target",
@@ -391,35 +367,7 @@
     },
     {
       "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.3e041f35"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.e1830bd5"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.a60a83e8"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.d00bc328"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.b23e4e52"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.f05f57ac"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.8e80eadd"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.d66910a7"
+      "option_id": "cli.option.target.330e55a5.0f2ee1ce"
     },
     {
       "config_field_id": "cfg.workspace.target",
@@ -427,31 +375,11 @@
     },
     {
       "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.c7e46b65"
+      "option_id": "cli.option.target.330e55a5.27766db2"
     },
     {
       "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.bb1bac7c"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.97e4d1e5"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.466eb0f5"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.c4c8b4f5"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.a5925ad9"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.5157db6f"
+      "option_id": "cli.option.target.330e55a5.330e55a5"
     },
     {
       "config_field_id": "cfg.workspace.target",
@@ -459,11 +387,63 @@
     },
     {
       "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.3e041f35"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.466eb0f5"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.5157db6f"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.801c2a1b"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.8de40fc6"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.8e80eadd"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.97e4d1e5"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.a5925ad9"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.a60a83e8"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.b23e4e52"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.bb1bac7c"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.c4c8b4f5"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.c7e46b65"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
       "option_id": "cli.option.target.330e55a5.ce9409ea"
     },
     {
       "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.0f2ee1ce"
+      "option_id": "cli.option.target.330e55a5.d00bc328"
     },
     {
       "config_field_id": "cfg.workspace.target",
@@ -471,14 +451,34 @@
     },
     {
       "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.f1fa4184"
+      "option_id": "cli.option.target.330e55a5.d66910a7"
     },
     {
       "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target.330e55a5.27766db2"
+      "option_id": "cli.option.target.330e55a5.d768f66e"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.e1830bd5"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.e386e6f0"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.e41a2abc"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.f05f57ac"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target.330e55a5.f1fa4184"
     }
   ],
-  "registry_digest": "b04756a4e8d96ebe76377440f1ae36c8c34943a84e7e793ed9ce18753f1ac00b",
+  "registry_digest": "54713081a3cd06cda8df89e3278e7eb7ef1aafec3f30f13d3837a63797eb69de",
   "registry_schema_version": 1,
   "reserved_namespaces": [
     "devtool",

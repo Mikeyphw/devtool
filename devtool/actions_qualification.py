@@ -131,6 +131,24 @@ def _g3_textual_amendment_valid(root: Path) -> bool:
     return True
 
 
+# A08 source-bound G6 correction: retain frozen G8 matrix and original G6 SHA,
+# but accept precisely the parent-digest race fix with independent new proof.
+# This never qualifies device operation, source attestation, or production release.
+_A08_G6_AMENDMENT_ID = 'A08_PRIVATE_LIFE_HANDOFF_PARENT_DIGEST_20261019'
+_A08_G6_ANCHORS = {'devtool/actions_local_evidence.py': 'ca001d28b44e74723019e526895b277c74c966ef369adb7815a9b7cddce5a8aa'}
+_A08_G6_EVIDENCE = {'tests/test_actions_a08_local_handoff.py': 'acbde0be7c3426d8307c552e963d13e14441bb3d3ae7483f5636f877d6323c28', 'docs/actions/ACTIONS_A08_PRIVATE_HANDOFF.md': '83414a58395e167cc79a74d6b43151a744428f210381ba2c7c29bb16304ab6ee'}
+
+
+def _a08_g6_amendment_valid(root: Path) -> bool:
+    for name, expected in {**_A08_G6_ANCHORS, **_A08_G6_EVIDENCE}.items():
+        try:
+            if _record_hash(_bounded_file(root, name, max_size=2 * 1024 * 1024)) != expected:
+                return False
+        except GitHubActionsError:
+            return False
+    return True
+
+
 def _git_head(root: Path) -> tuple[str, bool | None]:
     try:
         head = subprocess.run(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
@@ -190,6 +208,7 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
     amended_g1 = _g1_qw02_amendment_valid(root)
     amended_g3 = _g3_textual_amendment_valid(root)
     amended_g4 = _g4_unsigned_jar_amendment_valid(root)
+    amended_g6 = _a08_g6_amendment_valid(root)
     amendment_records: list[dict[str, Any]] = []
     g1_amendment_records: list[dict[str, Any]] = []
     for wave in waves:
@@ -217,6 +236,14 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
                     'amended_sha256':_G1_QW02_ANCHORS[name]})
                 source_rows.append({'wave':'G1','path':name,
                     'status':'VERIFIED_POST_G08_AMENDMENT'})
+            elif not ok and wave['id'] == 'G6' and amended_g6 and name in _A08_G6_ANCHORS:
+                amendment_records.append({'wave':'G6','path':name,
+                    'status':'VERIFIED_POST_G08_AMENDMENT',
+                    'hotfix_id':_A08_G6_AMENDMENT_ID,
+                    'original_sha256':entry['sha256'],
+                    'amended_sha256':_A08_G6_ANCHORS[name]})
+                source_rows.append({'wave':'G6','path':name,
+                    'status':'VERIFIED_POST_G08_AMENDMENT'})
             elif not ok and wave['id'] == 'G3' and amended_g3 and name == 'devtool/actions_pipeline_textual.py':
                 amendment_records.append({'wave':'G3','path':name,
                     'status':'VERIFIED_POST_G08_AMENDMENT',
@@ -239,7 +266,7 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
                 matching = False
                 source_rows.append({'wave':wave['id'],'path':name,'status':'MISSING_OR_DIFFERENT'})
         source_rows.append({'wave':wave['id'],
-                            'status':('SOURCE_PINS_AMENDED_VERIFIED' if matching and ((wave['id'] == 'G4' and amended_g4) or (wave['id'] == 'G3' and amended_g3) or (wave['id'] == 'G1' and amended_g1))
+                            'status':('SOURCE_PINS_AMENDED_VERIFIED' if matching and ((wave['id'] == 'G4' and amended_g4) or (wave['id'] == 'G3' and amended_g3) or (wave['id'] == 'G6' and amended_g6) or (wave['id'] == 'G1' and amended_g1))
                                       else 'SOURCE_PINS_MATCH' if matching else 'SOURCE_PINS_MISMATCH'),
                             'source_only':True,'live_qualified':False})
     gates = plan.get('gates')
