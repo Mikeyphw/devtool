@@ -1,0 +1,548 @@
+{
+  "schema_version": 1,
+  "kind": "devtool.improvement-traceability",
+  "generated_on": "2026-10-20",
+  "baseline": {
+    "repository": "Mikeyphw/devtool",
+    "branch": "feature/rmp01-security-remediation",
+    "sha": "6f7b1de146838dca2458eaa35d54cc8dd4445f70",
+    "archive": "devtool-20261020-103541-573598.tar.gz"
+  },
+  "status_model": {
+    "source_status": [
+      "OPEN_CODE",
+      "DONE_SOURCE",
+      "REMEDIATION_CANDIDATE",
+      "PARTIAL_SOURCE",
+      "BLOCKED_EXTERNAL"
+    ],
+    "qualification_status": "Independent evidence; never promoted from a source match"
+  },
+  "formal_release_qualified": false,
+  "issues": [
+    {
+      "id": "DT-001",
+      "category": "Actions typed wrapper",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R5",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-002",
+      "category": "Gradle module detection",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R3",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-003",
+      "category": "Custom Android variant",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R3",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-004",
+      "category": "Config migration doctor",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NOT_REQUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-005",
+      "category": "Protected Gradle flags",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-006",
+      "category": "Unified DAG/EXO/Actions lineage",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R4",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-007",
+      "category": "Dispatch once UX",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R5",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-008",
+      "category": "Overlay upgrade/rebase",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-009",
+      "category": "DAG ASCII/critical path",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NOT_REQUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-010",
+      "category": "Common artifact manifest",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R4",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-011",
+      "category": "Adoption wizard",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NOT_REQUALIFIED",
+      "milestone": "R2",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-012",
+      "category": "Parallelism explanation",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-013",
+      "category": "Pipeline example ignore",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-014",
+      "category": "Overlay ZIP lifecycle",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NOT_REQUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-015",
+      "category": "Termux Actions UX",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R5",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-016",
+      "category": "Repository capabilities",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-017",
+      "category": "Qualification taxonomy",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R4",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-018",
+      "category": "Actionable JSON errors",
+      "priority": "P3",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R5",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-019",
+      "category": "Named DAG planning",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NOT_REQUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-020",
+      "category": "Overlay recovery",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-021",
+      "category": "Config-aware overlays",
+      "priority": "P1",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-022",
+      "category": "Generated state doctor",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "DT-023",
+      "category": "Workflow present vs CI finished",
+      "priority": "P2",
+      "historical_status": "PROPOSED",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R4",
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ]
+    },
+    {
+      "id": "QW-ERG-001",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NOT_REQUALIFIED",
+      "milestone": "R0",
+      "affected_paths": [
+        "devtool/qualification_workflows.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "QW-SRC-002",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NOT_REQUALIFIED",
+      "milestone": "R0",
+      "affected_paths": [
+        "devtool/actions_dispatch.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "QW-PERF-005",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NATIVE_REMEASUREMENT_PENDING",
+      "milestone": "R7",
+      "affected_paths": [
+        "devtool/final_seal.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "RS11-MANAGED-SYNC-FIXED-POINT",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NATIVE_REMEASUREMENT_PENDING",
+      "milestone": "R7",
+      "affected_paths": [
+        "devtool/ssh_workspace.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "ACTIONS-A04-LOCAL-RUN-V3",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "REMEDIATION_CANDIDATE",
+      "qualification_status": "NATIVE_SELF_UPDATE_PENDING",
+      "milestone": "R1",
+      "affected_paths": [
+        "devtool/cli.py",
+        "devtool/run_store.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "ACTIONS-A06",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NATIVE_INSTALLED_WHEEL_PENDING",
+      "milestone": "R1",
+      "affected_paths": [
+        "pyproject.toml",
+        "tests/test_actions_a06_wheel_distribution.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "ACTIONS-A08-G8-G2",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "REMEDIATION_CANDIDATE",
+      "qualification_status": "SOURCE_TEST_PENDING",
+      "milestone": "R1",
+      "affected_paths": [
+        "devtool/actions_qualification.py",
+        "devtool/actions_pipeline.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "ACTIONS-A09",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "HOSTED_SECOND_CONSUMER_PENDING",
+      "milestone": "R2",
+      "affected_paths": [
+        "devtool/actions_adoption.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "SKY-ACTIONS-COLLECT-008",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R3",
+      "affected_paths": [
+        "devtool/actions_android.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "SKY-ACTIONS-APK-META-012",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R3",
+      "affected_paths": [
+        "devtool/actions_android.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "RS08-LIFECYCLE-002",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "OPEN_CODE",
+      "qualification_status": "NOT_QUALIFIED",
+      "milestone": "R7",
+      "affected_paths": [
+        "devtool/ssh_qualification.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "RMP-H1/H2",
+      "historical_status": "MIXED_APPEND_ONLY",
+      "source_status": "PARTIAL_SOURCE",
+      "qualification_status": "EXTERNAL_EVIDENCE_PENDING",
+      "milestone": "R8",
+      "affected_paths": [
+        "docs/RMP_FINAL_HARDENING.md"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "ENV-A06",
+      "historical_status": "OPEN",
+      "source_status": "BLOCKED_EXTERNAL",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "milestone": "R8",
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "ANDROID-A16",
+      "historical_status": "OPEN",
+      "source_status": "BLOCKED_EXTERNAL",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "milestone": "R8",
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "DIST-A01",
+      "historical_status": "OPEN",
+      "source_status": "BLOCKED_EXTERNAL",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "milestone": "R8",
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "DIST-A12",
+      "historical_status": "OPEN",
+      "source_status": "BLOCKED_EXTERNAL",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "milestone": "R8",
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "DIST-A13",
+      "historical_status": "OPEN",
+      "source_status": "BLOCKED_EXTERNAL",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "milestone": "R8",
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "TEST-A11",
+      "historical_status": "OPEN",
+      "source_status": "BLOCKED_EXTERNAL",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "milestone": "R8",
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    }
+  ]
+}

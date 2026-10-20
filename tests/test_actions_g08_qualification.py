@@ -22,7 +22,11 @@ def fixture(tmp_path):
     plan = json.loads((SOURCE / PLAN).read_text())
     paths = {PLAN, plan['original_ledger_path']}
     paths.update(c['path'] for wave in plan['waves'] for c in wave['source_contracts'])
-    paths.update({'docs/actions/ACTIONS_G04_JARSIGNER_UNSIGNED_VERDICT_HOTFIX.md',
+    paths.update({'docs/actions/ACTIONS_G03_R01_FIXTURE_TRANSITION_20261020.json',
+                  'docs/actions/ACTIONS_A08_PRIVATE_HANDOFF.md',
+                  'tests/test_actions_a08_local_handoff.py',
+                  'docs/actions/ACTIONS_G02_SOURCE_TRANSITION_20261020.json',
+                  'docs/actions/ACTIONS_G04_JARSIGNER_UNSIGNED_VERDICT_HOTFIX.md',
                   'tests/test_actions_g04_unsigned_jarsigner_truth.py',
                   'docs/actions/ACTIONS_G03_NARROW_TEXTUAL_FIX.md',
                   'tests/test_actions_g03_compact_narrow.py',

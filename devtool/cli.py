@@ -7761,8 +7761,27 @@ def _finalize_cli_run_instance(args: argparse.Namespace, run_id: str, *, status:
                     row["reuse_source_proof_refs"] = list(source_refs)
         except Exception as attach_exc:
             row["execution_attachment_warning"] = f"{type(attach_exc).__name__}: {attach_exc}"
-        catalog.add_run(row)
-        catalog.save()
+        # An apply runner can persist its artifact execution and LIFE source
+        # attachments while the CLI finalizer is assembling its projection.
+        # A previously opened catalog must not overwrite that later durable
+        # authority with a stale RUN row or attachment inventory.
+        latest = RunCatalog.open(private_run_root(repo))
+        previous = set(latest.attachments)
+        for attachment_id, attachment in catalog.attachments.items():
+            if attachment_id not in previous:
+                latest.attachments[attachment_id] = attachment
+            elif latest.attachments[attachment_id] != attachment:
+                raise ValueError("RUN attachment identity collision during finalization")
+        latest_row = dict(latest.runs.get(run_id, {"run_id": run_id}))
+        # Only the finalizer's lifecycle/projection fields supersede freshly
+        # saved runner fields; a stale snapshot is not a replacement authority.
+        for field in ("status", "exit_code", "finished_at", "execution_attachment_refs",
+                      "execution_projection_dir", "execution_history_path",
+                      "reuse_source_proof_refs", "execution_attachment_warning"):
+            if field in row:
+                latest_row[field] = row[field]
+        latest.add_run(latest_row)
+        latest.save()
     except Exception as exc:
         raise RuntimeError(f"unable to finalize canonical RUN identity {run_id}: {exc}") from exc
 

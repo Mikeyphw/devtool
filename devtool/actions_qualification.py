@@ -84,6 +84,27 @@ def _g1_qw02_amendment_valid(root: Path) -> bool:
     return True
 
 
+# G2 original frozen hash belongs to Git ancestor 7aa0141 (bounded DAG).
+# The accepted post-G8 G2 file is the later pre-POST exact-run DAG change
+# at 95ed8f7. Keep original matrix bytes immutable. Both current code and
+# separate provenance proof must be exact for this transition to be admitted.
+_G2_EXACT_RUN_AMENDMENT_ID = 'G2_EXACT_RUN_SOURCE_HANDOFF_20261020'
+_G2_EXACT_RUN_ANCHORS = {'devtool/actions_pipeline.py': '12b60b3032dc8f1ec3427d8021e40ea4e60be4c71750d2e0b230b41ea97cc0e2'}
+_G2_EXACT_RUN_EVIDENCE = {
+    'docs/actions/ACTIONS_G02_SOURCE_TRANSITION_20261020.json': '076f2a7919a5d3d70053c247491eef0cb6bad4ac692d72d77de50bcace6ffbb8',
+}
+
+
+def _g2_exact_run_amendment_valid(root: Path) -> bool:
+    for name, expected in {**_G2_EXACT_RUN_ANCHORS, **_G2_EXACT_RUN_EVIDENCE}.items():
+        try:
+            if _record_hash(_bounded_file(root, name, max_size=2 * 1024 * 1024)) != expected:
+                return False
+        except GitHubActionsError:
+            return False
+    return True
+
+
 # Explicit post-G8 G4 amendment: original G8 matrix and 88-row historical ledger
 # remain byte-for-byte immutable. Both changed anchors AND both new evidence
 # paths must match before a hotfixed G4 source can be considered consistent.
@@ -120,13 +141,32 @@ _G3_TEXTUAL_HOTFIX_EVIDENCE = {
 }
 
 
+# Preserve historical evidence acceptance while recognizing the exact R01 test
+# fixture whose only purpose is to include current A08 G6 and R01 G2 proofs.
+_G3_R01_FIXTURE_SHA256 = 'da8a9d51592b3b50d96b31281f62c537de0d5ca0652001da5862fa514ec35572'
+_G3_R01_FIXTURE_PROOF = '937d9b34cf59260e04b5d6ebc35316887de4f655acf97330c2e1b08de1e65c58'
+_G3_R01_FIXTURE_PROOF_PATH = 'docs/actions/ACTIONS_G03_R01_FIXTURE_TRANSITION_20261020.json'
+
+
 def _g3_textual_amendment_valid(root: Path) -> bool:
     for name, expected in {**_G3_TEXTUAL_HOTFIX_ANCHORS,
                            **_G3_TEXTUAL_HOTFIX_EVIDENCE}.items():
         try:
-            if _record_hash(_bounded_file(root, name, max_size=2 * 1024 * 1024)) != expected:
+            digest = _record_hash(_bounded_file(root, name, max_size=2 * 1024 * 1024))
+            if digest == expected:
+                continue
+            if name != 'tests/test_actions_g08_g03_amendment.py' or digest != _G3_R01_FIXTURE_SHA256:
                 return False
-        except GitHubActionsError:
+            raw = _bounded_file(root, _G3_R01_FIXTURE_PROOF_PATH, max_size=65536)
+            if _record_hash(raw) != _G3_R01_FIXTURE_PROOF:
+                return False
+            proof = json.loads(raw, object_pairs_hook=_unique)
+            if (proof.get('historical_test_sha256') != expected
+                or proof.get('new_test_sha256') != digest
+                or proof.get('source_only') is not True
+                or proof.get('qualified_release') is not False):
+                return False
+        except (GitHubActionsError, ValueError, KeyError, UnicodeDecodeError):
             return False
     return True
 
@@ -206,11 +246,13 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
     source_rows: list[dict[str, Any]] = []
     checked_files: set[str] = set()
     amended_g1 = _g1_qw02_amendment_valid(root)
+    amended_g2 = _g2_exact_run_amendment_valid(root)
     amended_g3 = _g3_textual_amendment_valid(root)
     amended_g4 = _g4_unsigned_jar_amendment_valid(root)
     amended_g6 = _a08_g6_amendment_valid(root)
     amendment_records: list[dict[str, Any]] = []
     g1_amendment_records: list[dict[str, Any]] = []
+    g2_amendment_records: list[dict[str, Any]] = []
     for wave in waves:
         contracts = wave.get('source_contracts')
         if not isinstance(contracts, list) or len(contracts) < 2:
@@ -235,6 +277,14 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
                     'original_sha256':entry['sha256'],
                     'amended_sha256':_G1_QW02_ANCHORS[name]})
                 source_rows.append({'wave':'G1','path':name,
+                    'status':'VERIFIED_POST_G08_AMENDMENT'})
+            elif not ok and wave['id'] == 'G2' and amended_g2 and name in _G2_EXACT_RUN_ANCHORS:
+                g2_amendment_records.append({'wave':'G2','path':name,
+                    'status':'VERIFIED_POST_G08_AMENDMENT',
+                    'hotfix_id':_G2_EXACT_RUN_AMENDMENT_ID,
+                    'original_sha256':entry['sha256'],
+                    'amended_sha256':_G2_EXACT_RUN_ANCHORS[name]})
+                source_rows.append({'wave':'G2','path':name,
                     'status':'VERIFIED_POST_G08_AMENDMENT'})
             elif not ok and wave['id'] == 'G6' and amended_g6 and name in _A08_G6_ANCHORS:
                 amendment_records.append({'wave':'G6','path':name,
@@ -266,7 +316,7 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
                 matching = False
                 source_rows.append({'wave':wave['id'],'path':name,'status':'MISSING_OR_DIFFERENT'})
         source_rows.append({'wave':wave['id'],
-                            'status':('SOURCE_PINS_AMENDED_VERIFIED' if matching and ((wave['id'] == 'G4' and amended_g4) or (wave['id'] == 'G3' and amended_g3) or (wave['id'] == 'G6' and amended_g6) or (wave['id'] == 'G1' and amended_g1))
+                            'status':('SOURCE_PINS_AMENDED_VERIFIED' if matching and ((wave['id'] == 'G2' and amended_g2) or (wave['id'] == 'G4' and amended_g4) or (wave['id'] == 'G3' and amended_g3) or (wave['id'] == 'G6' and amended_g6) or (wave['id'] == 'G1' and amended_g1))
                                       else 'SOURCE_PINS_MATCH' if matching else 'SOURCE_PINS_MISMATCH'),
                             'source_only':True,'live_qualified':False})
     gates = plan.get('gates')
@@ -307,6 +357,7 @@ def qualification_report(root: Path, *, strict_source: bool = False) -> dict[str
             'source_contract_consistent':source_consistent,
             'source_contracts':source_rows,
             'verified_source_amendments':amendment_records,
+            'verified_g2_source_amendments':g2_amendment_records,
             'verified_g1_dispatch_amendments':g1_amendment_records,
             'original_obligations':{'count':len(obligations),'historical_status_counts':dict(counts),
                                     'preserved_verbatim':True,'source_snapshot_only':True},

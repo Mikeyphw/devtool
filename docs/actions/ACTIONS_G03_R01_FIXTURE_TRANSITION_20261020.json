@@ -1,0 +1,14 @@
+{
+  "context": [
+    "G2 post-G8 amendment evidence",
+    "G6 A08 post-G8 source/evidence additions"
+  ],
+  "file": "tests/test_actions_g08_g03_amendment.py",
+  "historical_test_sha256": "453f24f05251313081228c85dea7ca2b6bcb8b1b750c4266843baa6eb050b96e",
+  "id": "G3_A08_G6_FIXTURE_20261020",
+  "kind": "devtool.actions.g8.g3-fixture-source-transition",
+  "new_test_sha256": "da8a9d51592b3b50d96b31281f62c537de0d5ca0652001da5862fa514ec35572",
+  "qualified_release": false,
+  "schema_version": 1,
+  "source_only": true
+}

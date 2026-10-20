@@ -14,6 +14,11 @@ EXTRA = (
     'tests/test_actions_g08_g03_amendment.py',
     'docs/actions/ACTIONS_G04_JARSIGNER_UNSIGNED_VERDICT_HOTFIX.md',
     'tests/test_actions_g04_unsigned_jarsigner_truth.py',
+    'docs/actions/ACTIONS_G02_SOURCE_TRANSITION_20261020.json',
+    'docs/actions/ACTIONS_A08_PRIVATE_HANDOFF.md',
+    'tests/test_actions_a08_local_handoff.py',
+    'docs/actions/ACTIONS_G03_R01_FIXTURE_TRANSITION_20261020.json',
+
 )
 
 def fixture(tmp_path):
@@ -38,7 +43,7 @@ def test_verified_g3_transition_is_explicit_but_cannot_qualify_release(tmp_path)
     assert got['original_obligations']['count'] == 88
     assert got['pending_required_gate_count'] == 8
     records = got['verified_source_amendments']
-    assert len(records) == 3  # one G3 Textual + two preexisting G4 sources
+    assert len(records) == 4  # G3 + two G4 + current G6 source; G2 reported separately
     g3 = [r for r in records if r['wave'] == 'G3']
     assert len(g3) == 1
     assert g3[0]['path'] == 'devtool/actions_pipeline_textual.py'

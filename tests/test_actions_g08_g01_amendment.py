@@ -15,6 +15,11 @@ EXTRA=(
     'tests/test_actions_g03_compact_narrow.py',
     'docs/actions/ACTIONS_G03_G8_SOURCE_AMENDMENT_20261014.md',
     'tests/test_actions_g08_g03_amendment.py',
+    'docs/actions/ACTIONS_G02_SOURCE_TRANSITION_20261020.json',
+    'docs/actions/ACTIONS_A08_PRIVATE_HANDOFF.md',
+    'tests/test_actions_a08_local_handoff.py',
+    'docs/actions/ACTIONS_G03_R01_FIXTURE_TRANSITION_20261020.json',
+
 )
 
 def fixture(tmp_path):
