@@ -1,0 +1,110 @@
+{
+  "as_of": "2026-10-20",
+  "basis": {
+    "initial_sha": "6f7b1de146838dca2458eaa35d54cc8dd4445f70",
+    "r01_tree": "ea93004437c1f5d7a1c8353aef834b1844ddcc38",
+    "r02_tree": "e6165d2226173d163fae11bdc34eb1ba821ab7f3",
+    "r03_tree": "8f61a2857fddb3435ce20de5eb8a65b46f236ee6",
+    "repository": "Mikeyphw/devtool"
+  },
+  "closure_overlay_validation_status": "NATIVE_REPLACEMENT_PENDING",
+  "independent_gates": {
+    "ANDROID-A16": "BLOCKED_EXTERNAL",
+    "CAMPAIGN_FULL_REGRESSION": "OPEN",
+    "DIST-A01": "BLOCKED_EXTERNAL",
+    "DIST-A12": "BLOCKED_EXTERNAL",
+    "DIST-A13": "BLOCKED_EXTERNAL",
+    "ENV-A06": "BLOCKED_EXTERNAL",
+    "FORMAL_RELEASE": "BLOCKED",
+    "R02_SECOND_CONSUMER_HOSTED_GO": "OPEN",
+    "R03_HOSTED_SOURCE_RUN_ARCHIVE": "OPEN",
+    "R03_INSTALLED_PAIR_ADOPTION": "OPEN",
+    "R03_NATIVE_APPLY_RECEIPT": "OPEN",
+    "R03_REAL_INSTRUMENTATION_APK": "OPEN",
+    "R03_TRUSTED_ANDROID_BROKER_IDENTITY": "OPEN",
+    "RMP_H1_H2": "OPEN",
+    "TEST-A11": "BLOCKED_EXTERNAL"
+  },
+  "kind": "devtool.source-bound-scoped-milestone-closure",
+  "milestones": {
+    "R01": {
+      "accepted_tree": "ea93004437c1f5d7a1c8353aef834b1844ddcc38",
+      "device_qualified": false,
+      "hosted_qualified": false,
+      "observed_evidence": {
+        "fresh_process_life_cleanup_passed": true,
+        "kind": "user-provided-devtool-apply-machine-result",
+        "prior_interrupted_apply_rollback_verified": true,
+        "pytest_passed": 56,
+        "pytest_skipped": 0,
+        "reported_transaction_commit": "70c4f96",
+        "returncode": 0,
+        "run_id": "bc397eb35a314149ad34d7223892778a",
+        "source_paths_verified": 11,
+        "validator_passed": true
+      },
+      "release_qualified": false,
+      "scope_note": "Local Termux overlay, RUN-V3 catalog continuity, G8 G2/G3 source amendments and isolated wheel smoke. Not full hosted CI, device or formal release acceptance.",
+      "scoped_qualification": "CLOSED_LOCAL_TERMUX",
+      "source_implementation": "DONE"
+    },
+    "R02": {
+      "accepted_tree": "e6165d2226173d163fae11bdc34eb1ba821ab7f3",
+      "device_qualified": false,
+      "hosted_qualified": false,
+      "observed_evidence": {
+        "devtool_commit": "6b1823e1e0b282a9aefe9cb1b98578478776ff72",
+        "kind": "user-provided-r02-native-acceptance-json",
+        "producer": "devtool-actions-r02-local-acceptance",
+        "pytest_output_sha256": "9541df69235a38646276607534445b5960b38c74b44d7003005de687edd00e9a",
+        "remote_dispatch": false,
+        "source_attested": false,
+        "tests_passed": 34,
+        "tests_skipped": 0
+      },
+      "release_qualified": false,
+      "scope_note": "Local A09 host admission/review only. Second-consumer hosted Skybind Go run remains separately required.",
+      "scoped_qualification": "CLOSED_LOCAL_TERMUX",
+      "source_implementation": "DONE"
+    },
+    "R03": {
+      "accepted_tree": "8f61a2857fddb3435ce20de5eb8a65b46f236ee6",
+      "device_qualified": false,
+      "hosted_qualified": false,
+      "observed_evidence": {
+        "disposable_commit": "0a6029f",
+        "focused_regressions_passed": 101,
+        "kind": "disposable-tests-and-user-install-report",
+        "native_apply_user_reported": true,
+        "native_log_independently_reviewed": false,
+        "verified_overlay_paths": 15
+      },
+      "release_qualified": false,
+      "scope_note": "Source and disposable transaction passed; Termux R03 apply/validator machine receipt has not been provided. Real aapt/aapt2 APK metadata, hosted source/run/archive, PackageManager device observation and trusted Binder identity remain open.",
+      "scoped_qualification": "SOURCE_VERIFIED_NATIVE_APPLY_REPORTED",
+      "source_implementation": "DONE"
+    }
+  },
+  "never_infer_from_local_tests": [
+    "hosted_qualified",
+    "device_qualified",
+    "release_qualified",
+    "source_attested"
+  ],
+  "schema_version": 1,
+  "validation_attempts": [
+    {
+      "budget_ms": 5000,
+      "failing_test": "tests/test_core_x04_generated_surfaces.py::test_core_generated_surface_build_stays_inside_declared_budget",
+      "observed_ms": 5630.083948000902,
+      "phase": "overlay-validation",
+      "pytest_failed_observed": 1,
+      "pytest_passed_before_failure": 73,
+      "replacement_candidate": "CORE-X04-NATIVE-PERF-001",
+      "result": "FAILED_EARLY",
+      "run_id": "19b01fdc284a46dbab059c8ae7e58090",
+      "scope": "native-termux",
+      "terminal_transaction_status": "UNKNOWN_FROM_PARTIAL_LOG"
+    }
+  ]
+}

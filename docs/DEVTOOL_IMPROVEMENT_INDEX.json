@@ -374,50 +374,53 @@
     {
       "id": "ACTIONS-A04-LOCAL-RUN-V3",
       "historical_status": "MIXED_APPEND_ONLY",
-      "source_status": "REMEDIATION_CANDIDATE",
-      "qualification_status": "NATIVE_SELF_UPDATE_PENDING",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "LOCAL_TERMUX_SCOPED_CLOSED_R01",
       "milestone": "R1",
       "affected_paths": [
         "devtool/cli.py",
         "devtool/run_store.py"
       ],
       "evidence": [
-        "docs/DEVTOOL_IMPROVEMENTS.md"
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
       ]
     },
     {
       "id": "ACTIONS-A06",
       "historical_status": "MIXED_APPEND_ONLY",
       "source_status": "DONE_SOURCE",
-      "qualification_status": "NATIVE_INSTALLED_WHEEL_PENDING",
+      "qualification_status": "LOCAL_TERMUX_WHEEL_SCOPED_CLOSED_R01",
       "milestone": "R1",
       "affected_paths": [
         "pyproject.toml",
         "tests/test_actions_a06_wheel_distribution.py"
       ],
       "evidence": [
-        "docs/DEVTOOL_IMPROVEMENTS.md"
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
       ]
     },
     {
       "id": "ACTIONS-A08-G8-G2",
       "historical_status": "MIXED_APPEND_ONLY",
-      "source_status": "REMEDIATION_CANDIDATE",
-      "qualification_status": "SOURCE_TEST_PENDING",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "LOCAL_TERMUX_G8_TESTED_HOSTED_PENDING",
       "milestone": "R1",
       "affected_paths": [
         "devtool/actions_qualification.py",
         "devtool/actions_pipeline.py"
       ],
       "evidence": [
-        "docs/DEVTOOL_IMPROVEMENTS.md"
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
       ]
     },
     {
       "id": "ACTIONS-A09",
       "historical_status": "MIXED_APPEND_ONLY",
       "source_status": "DONE_SOURCE",
-      "qualification_status": "R02_LOCAL_ACCEPTANCE_PENDING_HOSTED_CONSUMER",
+      "qualification_status": "LOCAL_TERMUX_SCOPED_CLOSED_R02_HOSTED_PENDING",
       "milestone": "R2",
       "affected_paths": [
         "devtool/actions_adoption.py",
@@ -427,14 +430,15 @@
       "evidence": [
         "docs/DEVTOOL_IMPROVEMENTS.md",
         "docs/actions/ACTIONS_R02_CONSUMER_REVIEW.md",
-        "R01 native apply run bc397eb35a314149ad34d7223892778a"
+        "R01 native apply run bc397eb35a314149ad34d7223892778a",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
       ]
     },
     {
       "id": "SKY-ACTIONS-COLLECT-008",
       "historical_status": "MIXED_APPEND_ONLY",
       "source_status": "DONE_SOURCE",
-      "qualification_status": "TERMUX_AND_REAL_APK_PENDING",
+      "qualification_status": "SOURCE_DISPOSABLE_VERIFIED_R03_NATIVE_RECEIPT_PENDING",
       "milestone": "R3",
       "affected_paths": [
         "devtool/actions_android.py",
@@ -444,14 +448,15 @@
       ],
       "evidence": [
         "docs/DEVTOOL_IMPROVEMENTS.md",
-        "tests/test_actions_r03_android_roles.py (source negatives; no live APK)"
+        "tests/test_actions_r03_android_roles.py (source negatives; no live APK)",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
       ]
     },
     {
       "id": "SKY-ACTIONS-APK-META-012",
       "historical_status": "MIXED_APPEND_ONLY",
       "source_status": "DONE_SOURCE",
-      "qualification_status": "TERMUX_AND_REAL_APK_PENDING",
+      "qualification_status": "SOURCE_DISPOSABLE_VERIFIED_R03_NATIVE_RECEIPT_PENDING",
       "milestone": "R3",
       "affected_paths": [
         "devtool/actions_android.py",
@@ -461,7 +466,8 @@
       ],
       "evidence": [
         "docs/DEVTOOL_IMPROVEMENTS.md",
-        "tests/test_actions_r03_android_roles.py (source negatives; no live APK)"
+        "tests/test_actions_r03_android_roles.py (source negatives; no live APK)",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
       ]
     },
     {
@@ -562,11 +568,12 @@
       "priority": "P1",
       "historical_status": "OPEN_UPSTREAM",
       "source_status": "DONE_SOURCE",
-      "qualification_status": "TERMUX_AND_DEVICE_PENDING",
+      "qualification_status": "SOURCE_DISPOSABLE_VERIFIED_R03_NATIVE_RECEIPT_PENDING",
       "milestone": "R3",
       "evidence": [
         "docs/DEVTOOL_IMPROVEMENTS.md (R03 addendum)",
-        "tests/test_actions_r03_android_roles.py"
+        "tests/test_actions_r03_android_roles.py",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
       ]
     },
     {
@@ -575,12 +582,39 @@
       "priority": "P1",
       "historical_status": "OPEN_UPSTREAM",
       "source_status": "DONE_SOURCE",
-      "qualification_status": "TERMUX_AND_DEVICE_PENDING",
+      "qualification_status": "SOURCE_DISPOSABLE_VERIFIED_R03_NATIVE_RECEIPT_PENDING",
       "milestone": "R3",
       "evidence": [
         "docs/DEVTOOL_IMPROVEMENTS.md (R03 addendum)",
-        "tests/test_actions_r03_android_pm_presence.py"
+        "tests/test_actions_r03_android_pm_presence.py",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
+      ]
+    },
+    {
+      "id": "CORE-X04-NATIVE-PERF-001",
+      "category": "Generated CORE help performance on native Termux",
+      "priority": "P1",
+      "historical_status": "NEW_NATIVE_FAILURE",
+      "source_status": "REMEDIATION_CANDIDATE",
+      "qualification_status": "SOURCE_TESTED_NATIVE_PENDING",
+      "milestone": "R03_CLOSURE",
+      "affected_paths": [
+        "devtool/core_surfaces.py",
+        "tests/test_core_x04_generated_surfaces.py"
+      ],
+      "evidence": [
+        "Termux run 19b01fdc284a46dbab059c8ae7e58090: 73 passed / 1 failed at 5630.083948ms vs 5000ms",
+        "docs/DEVTOOL_IMPROVEMENTS.md (CORE-X04-NATIVE-PERF-001)",
+        "tests/test_core_x04_generated_surfaces.py"
       ]
     }
-  ]
+  ],
+  "scoped_milestone_closure": {
+    "evidence_path": "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json",
+    "R01": "CLOSED_LOCAL_TERMUX",
+    "R02": "CLOSED_LOCAL_TERMUX",
+    "R03": "SOURCE_VERIFIED_NATIVE_APPLY_REPORTED",
+    "campaign": "OPEN",
+    "qualification_scope": "per-milestone-only"
+  }
 }

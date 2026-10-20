@@ -283,3 +283,17 @@ then actual Devtool disposable overlay application and native Termux current-sou
 validation. Real APK/`aapt` and hosted source/run/archive acceptance are independent;
 installed-pair adoption, broker identity, DT-002 convention plugins, and DT-003 custom
 variants remain scoped follow-ups. Existing R02 hosted Go consumer remains open.
+
+
+## R01–R03 milestone closure update — 2026-10-20
+
+- R01: `CLOSED_LOCAL_TERMUX` for scoped native overlay, 56 regressions, RUN-V3 recovery, G8 amendment and isolated wheel; no remote/device/release promotion.
+- R02: `CLOSED_LOCAL_TERMUX` for hosted-adoption planning/review and 34 source tests; the independently authenticated second-consumer hosted Go run is still pending.
+- R03: `SOURCE_VERIFIED_NATIVE_APPLY_REPORTED` after 101 source/disposable tests and operator-reported native installation. Native machine receipt and real Android APK/host/device acceptance remain separately pending.
+- The machine-readable ground truth for these statuses is `docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json`. This closure does not grant formal release qualification, does not assume a CI success from local tests and does not retire the independent RMP or six real-substrate gates.
+- Start R04 only after preserving the R03 source identity; R04 must not silently promote the remaining R02/R03 external gates.
+
+
+### Native closure installer timing repair (2026-10-20)
+
+An attempted R01–R03 closure installation failed a pre-existing CORE-X04 5-second generated-surface budget at 5630ms after 73 passing tests. Treat the closure as **NOT ACCEPTED** until the replacement passes on Termux. Retain the original 5000ms budget and optimize the source projection by indexing option rows once; do not bypass tests or modify the independent remote/device/release obligations. A failed transaction must finish and restore a clean post-R03 source before the replacement overlay is attempted.

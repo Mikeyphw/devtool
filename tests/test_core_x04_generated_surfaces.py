@@ -271,3 +271,33 @@ def test_storage_status_classifies_owned_families_and_fails_unknown_state(tmp_pa
     failed = run_storage_status(repo, catalog)
     assert failed["status"] == "fail"
     assert failed["inventory"]["unclassified"][0]["family"] == "mystery-state"
+
+
+def test_generated_help_option_index_preserves_full_canonical_order_and_metadata() -> None:
+    """Indexed projection must agree with a deliberately slow independent oracle."""
+    from devtool.core_surfaces import machine_help_payload
+
+    parser = build_parser()
+    registry = build_adopted_core_registry(parser)
+    payload = machine_help_payload(parser, registry)
+    assert payload["parser_parity"]["missing_count"] == 0
+    assert payload["parser_parity"]["option_missing_count"] == 0
+    assert payload["parser_parity"]["option_extra_count"] == 0
+    for command in payload["commands"]:
+        selected_path = tuple(command["path"])
+        expected = []
+        for option in registry.options:
+            metadata = dict(option.metadata)
+            if tuple(str(x) for x in (metadata.get("path") or ())) != selected_path:
+                continue
+            expected.append({
+                "id": option.stable_id,
+                "dest": str(metadata.get("dest") or ""),
+                "spellings": list(option.all_spellings()),
+                "required": bool(metadata.get("required")),
+                "nargs": metadata.get("nargs"),
+                "choices": list(metadata.get("choices") or ()),
+                "help": "" if metadata.get("hidden") else str(metadata.get("help") or ""),
+                "hidden": bool(metadata.get("hidden")),
+            })
+        assert command["options"] == expected, selected_path

@@ -48,15 +48,19 @@ def _sha(value: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _option_rows(registry: CoreRegistry, path: Sequence[str]) -> list[dict[str, Any]]:
-    """Project command options from the canonical schema, never argparse."""
-    target = tuple(path)
-    rows: list[dict[str, Any]] = []
+def _indexed_option_rows(registry: CoreRegistry) -> dict[tuple[str, ...], list[dict[str, Any]]]:
+    """Index canonical options once, preserving source order and payload bytes.
+
+    The previous projection scanned the complete options registry once for
+    *each* command (quadratic work on a large CLI).  Grouping by canonical
+    path is a pure, invocation-local projection: no cache, no relaxed parity,
+    and no change to hidden/alias/option handling.
+    """
+    grouped: dict[tuple[str, ...], list[dict[str, Any]]] = {}
     for option in registry.options:
         metadata = dict(option.metadata)
-        if tuple(str(x) for x in (metadata.get("path") or ())) != target:
-            continue
-        rows.append({
+        path = tuple(str(x) for x in (metadata.get("path") or ()))
+        grouped.setdefault(path, []).append({
             "id": option.stable_id,
             "dest": str(metadata.get("dest") or ""),
             "spellings": list(option.all_spellings()),
@@ -66,7 +70,7 @@ def _option_rows(registry: CoreRegistry, path: Sequence[str]) -> list[dict[str, 
             "help": "" if metadata.get("hidden") else str(metadata.get("help") or ""),
             "hidden": bool(metadata.get("hidden")),
         })
-    return rows
+    return grouped
 
 
 def _parser_by_paths(parser: argparse.ArgumentParser) -> dict[tuple[str, ...], argparse.ArgumentParser]:
@@ -89,6 +93,7 @@ def machine_help_payload(parser: argparse.ArgumentParser, registry: CoreRegistry
     registry = registry or build_core_registry()
     assert_parser_matches_canonical_registry(parser, registry)
     parser_map = _parser_by_paths(parser)
+    options_by_path = _indexed_option_rows(registry)
     commands: list[dict[str, Any]] = []
     for command in registry.commands:
         command_parser = parser_map.get(command.canonical_path)
@@ -107,7 +112,7 @@ def machine_help_payload(parser: argparse.ArgumentParser, registry: CoreRegistry
                 "summary": summary,
                 "stability": str(metadata.get("stability") or "stable"),
                 "adoption_source": str(metadata.get("adoption_source") or "core-registry"),
-                "options": _option_rows(registry, command.canonical_path),
+                "options": [dict(row) for row in options_by_path.get(command.canonical_path, ())],
             }
         )
     parity = registry.parser_parity(parser)
