@@ -40,7 +40,9 @@ def setup(tmp_path):
 def dispatch_factory(calls, *, barrier=None, error_lane=False):
     from itertools import count
     num=count()
-    def dispatch(client,slug,workflow,ref,inputs,*,execute):
+    def dispatch(client,slug,workflow,ref,inputs,*,execute,expected_source_sha=None):
+        if execute:
+            assert expected_source_sha == client.head
         if not execute:
             return {'pre_dispatch_sha':client.head,'workflow_id':99,
                     'workflow_path':'.github/workflows/devtool-android-build.yml',
@@ -135,7 +137,9 @@ def test_cancel_marks_request_without_remote_job_cancellation(tmp_path,monkeypat
 def test_cancel_during_inflight_dispatch_finishes_dispatch_without_replay(tmp_path,monkeypatch):
     repo,head,api,state=setup(tmp_path)
     began=threading.Event();release=threading.Event();calls=[]
-    def dispatch(client,slug,workflow,ref,inputs,*,execute):
+    def dispatch(client,slug,workflow,ref,inputs,*,execute,expected_source_sha=None):
+        if execute:
+            assert expected_source_sha == client.head
         if not execute:
             return {'pre_dispatch_sha':client.head,'workflow_id':99,
                     'workflow_path':'.github/workflows/devtool-android-build.yml'}
@@ -192,8 +196,10 @@ def test_bounded_parallel_remote_limit_and_local_serialization(tmp_path,monkeypa
     head=commit(repo);api=API(head)
     active=0;maximum=0;count=0;lock=threading.Lock()
     first_batch_ready=threading.Event()
-    def dispatch(client,slug,workflow,ref,inputs,*,execute):
+    def dispatch(client,slug,workflow,ref,inputs,*,execute,expected_source_sha=None):
         nonlocal active,maximum,count
+        if execute:
+            assert expected_source_sha == head
         if not execute:
             return {'pre_dispatch_sha':head,'workflow_id':99,'workflow_path':'.github/workflows/devtool-android-build.yml'}
         with lock:

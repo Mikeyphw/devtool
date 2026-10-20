@@ -614,8 +614,8 @@
       "category": "Cross-system pipeline and artifact evidence projection",
       "priority": "P1",
       "historical_status": "OPEN_UNIFIED_LINEAGE",
-      "source_status": "R04_SOURCE_CANDIDATE",
-      "qualification_status": "SOURCE_REGRESSION_ONLY_NATIVE_AND_HOSTED_PENDING",
+      "source_status": "R04_NATIVE_ACCEPTED_PHASE1",
+      "qualification_status": "NATIVE_88_TESTS_PASS_HOSTED_AND_ARTIFACT_PENDING",
       "milestone": "R4",
       "affected_paths": [
         "devtool/actions_lineage.py",
@@ -625,12 +625,12 @@
       ],
       "evidence": [
         "docs/DEVTOOL_IMPROVEMENTS.md (R04-LINEAGE-001)",
-        "tests/test_actions_r04_lineage.py"
+        "tests/test_actions_r04_lineage.py",
+        "Termux run 078eb17498bf4cbc8b37e697e9c18a5a: 88 passed, 15 paths verified, commit 244d6d7, LIFE cleanup ok"
       ],
       "open_followups": [
-        "EXO_CHILD_RUN_CORRELATION",
-        "AUTHENTICATED_REMOTE_RUN_AND_ARTIFACT",
-        "SOURCE_BOUND_QUALIFICATION_GATES"
+        "R04B_NATIVE_AND_REAL_HOSTED_PROOF",
+        "FORMAL_SOURCE_ARTIFACT_ATTESTATION"
       ]
     },
     {
@@ -666,6 +666,31 @@
         "NATIVE_R04_R1_REAL_LAUNCH_SMOKE",
         "WRAPPER_COLD_IMPORT_PROFILING_IF_GT_60S",
         "TRANSACTION_RECOVERY_VERIFICATION"
+      ]
+    },
+    {
+      "id": "R04-LINEAGE-002",
+      "category": "Canonical native child RUN and opt-in GitHub API lineage",
+      "priority": "P1",
+      "historical_status": "R04_PHASE2_OBLIGATION",
+      "source_status": "R04B_SOURCE_CANDIDATE",
+      "qualification_status": "NATIVE_AND_HOSTED_PENDING",
+      "milestone": "R4",
+      "affected_paths": [
+        "devtool/actions_pipeline.py",
+        "devtool/actions_lineage.py",
+        "devtool/github_actions.py",
+        "devtool/core_cli_schema.json"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R04-LINEAGE-002)",
+        "tests/test_actions_r04b_lineage_authority.py",
+        "Termux R04 foundation run 078eb17498bf4cbc8b37e697e9c18a5a (not phase2 acceptance)"
+      ],
+      "open_followups": [
+        "NATIVE_R04B_TRANSACTION",
+        "AUTHENTICATED_REAL_GITHUB_GET",
+        "ORIGINAL_PRODUCER_ARTIFACT_ATTESTATION"
       ]
     }
   ],

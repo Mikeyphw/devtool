@@ -24,7 +24,7 @@ MAX_REGISTRY = 8 * 1024 * 1024
 MAX_ARTIFACT = 256 * 1024 * 1024
 STATES = frozenset({"NOT_STARTED", "LOCAL_OBSERVED", "PREFLIGHT_BLOCKED",
                      "DISPATCH_UNCERTAIN", "WAITING_REMOTE", "CI_FAILED",
-                     "CI_PASS_UNVERIFIED", "ARCHIVE_NOT_VERIFIED",
+                     "CI_PASS_UNVERIFIED", "CI_PASS_REMOTE_OBSERVED", "ARCHIVE_NOT_VERIFIED",
                      "ARCHIVE_LOCAL_VERIFIED", "UNKNOWN"})
 
 
@@ -118,6 +118,78 @@ def _archive(root: Path, slug: str, sha: str, rid: int | None,
     return result
 
 
+def _exo_child(root: Path, child_id: object) -> dict[str, Any]:
+    if not isinstance(child_id, str) or not HEX32.fullmatch(child_id):
+        raise GitHubActionsError("R04 child RUN identity is malformed")
+    from .core_runtime import private_run_root
+    from .run_store import RunCatalog
+    catalog_dir = private_run_root(root)
+    for part in (catalog_dir, catalog_dir.parent, catalog_dir / 'catalog.json'):
+        if part.is_symlink():
+            raise GitHubActionsError('R04 RUN catalog path is a symlink')
+    try:
+        catalog = RunCatalog.open(catalog_dir, create=False)
+        row = catalog.runs.get(child_id)
+    except (OSError, ValueError, TypeError):
+        raise GitHubActionsError("R04 child RUN catalog unreadable") from None
+    if not isinstance(row, dict) or row.get('run_id') != child_id or row.get('command_id') != 'invoke':
+        raise GitHubActionsError("R04 child RUN identity does not match canonical catalog")
+    success = (row.get('status') == 'succeeded'
+               and type(row.get('exit_code')) is int and row['exit_code'] == 0
+               and isinstance(row.get('finished_at'), str) and bool(row['finished_at']))
+    if not success:
+        raise GitHubActionsError("R04 child RUN has no finalized successful execution")
+    return {'exo_run_id':child_id, 'exo_catalog_verified':True}
+
+
+def _live_runs(client: Any, slug: str, sha: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Explicit GET-only observation, never attestation or release authority."""
+    from .actions_runs import _normalize_run
+    by_key: dict[tuple[int, int], dict[str, Any]] = {}
+    for row in rows:
+        if row['kind'] not in ('github-result', 'github-archive'):
+            continue
+        rid, attempt = row.get('run_id'), row.get('run_attempt')
+        if rid is None:
+            row['live_observation'] = 'UNAVAILABLE_UNCORRELATED'
+            continue
+        # An original dispatch receipt establishes the run ID. An independent
+        # GET can observe its *current* attempt even when no ACTIONS-03 watch
+        # has persisted one. Never write that observation back as a pin.
+        key = (rid, attempt)
+        if key not in by_key:
+            remote = _normalize_run(client.get_run(slug, rid), slug, rid)
+            if (remote.get('repository', '').casefold() != slug.casefold()
+                or remote.get('head_sha', '').lower() != sha
+                or remote.get('event') != 'workflow_dispatch'
+                or type(remote.get('workflow_id')) is not int
+                or type(remote.get('run_attempt')) is not int
+                or remote['run_attempt'] <= 0
+                or (attempt is not None and remote['run_attempt'] != attempt)):
+                raise GitHubActionsError('R04 live GitHub run/source/attempt identity mismatch')
+            by_key[key] = remote
+        remote = by_key[key]
+        # Exact request workflow identity from the pinned dispatch row.
+        wid = row.get('workflow_id')
+        if type(wid) is not int or wid != remote['workflow_id']:
+            raise GitHubActionsError('R04 live GitHub workflow differs from original request')
+        row['live_observation'] = {'status':remote['status'],
+                                   'conclusion':remote['conclusion'],
+                                   'run_attempt':remote['run_attempt'],
+                                   'attempt_locally_pinned':attempt is not None,
+                                   'source_matched':True,
+                                   'scope':'authenticated-api-get-only'}
+        if row['kind'] == 'github-result':
+            if remote['completed'] and remote['conclusion'] == 'success' and row['journal_state'] == 'success':
+                row['state'] = 'CI_PASS_REMOTE_OBSERVED'
+            elif remote['completed'] and remote['conclusion'] != 'success':
+                row['state'] = 'CI_FAILED'
+            else:
+                row['state'] = 'WAITING_REMOTE'
+    return {'observed_runs':len(by_key), 'authentication':'credentialed-read',
+            'authority':'read-only-provider-observation-not-source-attestation'}
+
+
 def _receipt_binding(request: str, slug: str, sha: str, node: dict[str, Any],
                      dispatches: Path | None) -> dict[str, Any]:
     if not HEX32.fullmatch(request):
@@ -161,7 +233,8 @@ def _receipt_binding(request: str, slug: str, sha: str, node: dict[str, Any],
 
 
 def lineage_snapshot(root: Path, slug: str, pipeline_id: str, *,
-                     pipelines: Path | None = None, dispatches: Path | None = None) -> dict[str, Any]:
+                     pipelines: Path | None = None, dispatches: Path | None = None,
+                     live_client: Any | None = None) -> dict[str, Any]:
     """Read canonical journals. Never perform network calls or write state."""
     root = root.resolve()
     slug = _slug(slug)
@@ -197,7 +270,12 @@ def lineage_snapshot(root: Path, slug: str, pipeline_id: str, *,
         if kind in ("local-git", "local-invoke"):
             row["state"] = "LOCAL_OBSERVED" if raw_state == "success" else (
                 "NOT_STARTED" if raw_state == "pending" else "PREFLIGHT_BLOCKED" if raw_state in ("failure", "blocked") else "UNKNOWN")
-            row["note"] = "Local node result only; no EXO identity in ACTIONS-06 journal"
+            if kind == 'local-invoke' and raw.get('exo_run_id') is not None:
+                if raw_state != 'success':
+                    raise GitHubActionsError('R04 child RUN evidence conflicts with pipeline node state')
+                row.update(_exo_child(root, raw['exo_run_id']))
+            else:
+                row['note'] = 'Historical node without stored RUN-V3 child; identity unknown'
         elif kind == "github-dispatch":
             request = raw.get("request_id")
             if request is not None:
@@ -232,7 +310,8 @@ def lineage_snapshot(root: Path, slug: str, pipeline_id: str, *,
                     run_id(raw["run_id"]) != bound["run_id"]):
                     raise GitHubActionsError("R04 remote node run differs from dispatch")
                 row.update({"request_id":bound.get("request_id"),"run_id":bound.get("run_id"),
-                            "run_attempt":bound.get("run_attempt")})
+                            "run_attempt":bound.get("run_attempt"),
+                            "workflow_id":journal["nodes"][preceding[0]].get("workflow_id")})
                 obs = bound.get("remote_observation")
                 if kind == "github-result":
                     row["state"] = ("CI_FAILED" if raw_state in ("failure","blocked","cancelled") else
@@ -254,19 +333,20 @@ def lineage_snapshot(root: Path, slug: str, pipeline_id: str, *,
         if row["state"] not in STATES:
             raise GitHubActionsError("R04 unknown projected state")
         rows.append(row)
-    return {"schema_version":1,"phase":"ACTIONS-R04","pipeline_id":pipeline_id,
+    live = _live_runs(live_client, slug, sha, rows) if live_client is not None else None
+    return {"schema_version":2,"phase":"ACTIONS-R04","pipeline_id":pipeline_id,
             "repository":slug,"source_sha":sha,"source_matches_current":current_head == sha,
             "current_head":current_head,"read_only":True,"remote_dispatch":False,
             "remote_verified":False,"device_qualified":False,"release_qualified":False,
-            "rows":rows,"qualification": {"ci":"not_authenticated_in_offline_projection",
+            "live_observation":live,"rows":rows,"qualification": {"ci":("live_api_observed_not_attested" if live is not None else "not_authenticated_in_offline_projection"),
             "device":"NOT_RUN", "release":"BLOCKED_NOT_QUALIFIED"},
-            "note":"Read-only historical journal projection; remote success and release/device gates require independent canonical verification."}
+            "note":"Read-only source-bound journal and optional live API observations; GitHub API success never qualifies source attestation, device or release."}
 
 
 def lineage_text(view: dict[str, Any], *, width: int = 60) -> str:
     if type(width) is not int or width < 40 or width > 240:
         raise ValueError("R04 line width must be between 40 and 240")
-    lines = ["Actions lineage (local evidence only)",
+    lines = ["Actions lineage (read-only evidence)",
              "Pipeline: " + str(view["pipeline_id"]),
              "Source: " + str(view["source_sha"]),
              "Current source: " + ("matching" if view["source_matches_current"] else "historical/unknown")]
@@ -278,6 +358,10 @@ def lineage_text(view: dict[str, Any], *, width: int = 60) -> str:
         lines.append("-" + start + (label if len(label) <= available else label[:available-1] + "…"))
         if row.get("run_id") is not None:
             lines.append("  Run: " + str(row["run_id"]) + "/" + str(row.get("run_attempt") or "?"))
-    lines.append("CI: UNVERIFIED · device: NOT RUN")
+    if view.get("live_observation"):
+        lines.append("CI API: LIVE OBSERVATION · not attestation")
+    else:
+        lines.append("CI API: OFFLINE · not attestation")
+    lines.append("Device: NOT QUALIFIED")
     lines.append("Release: NOT QUALIFIED")
     return "\n".join(lines)

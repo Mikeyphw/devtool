@@ -3839,6 +3839,23 @@
       "id": "cli.command.actions.lineage",
       "options": [
         {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "GitHub read credential source for --live: auto, env, gh, none",
+          "hidden": false,
+          "id": "cli.option.actions.lineage.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
           "choices": [],
           "dest": "github_repo",
           "help": "Explicit GitHub owner/repository slug",
@@ -3873,6 +3890,18 @@
           "required": false,
           "spellings": [
             "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "live",
+          "help": "Opt in to credentialed read-only GitHub run GET; no mutations or qualification",
+          "hidden": false,
+          "id": "cli.option.actions.lineage.live",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--live"
           ]
         },
         {
@@ -36362,7 +36391,7 @@
       "summary": "A08 consented local signed-unqualified export/install handoff"
     }
   ],
-  "digest": "0f89c35e0abcc4f6e1b1795ee3ee5a0fb69585c6bf88470f7cbf73d7673162cc",
+  "digest": "a1dce4c9615f2efaf0e03e6514e00b6c0cb9e15effca8c6ddf8a84b0d85f7fb3",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -36860,7 +36889,7 @@
     "registry_command_count": 356
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "6657a1e37d9af7b4acb63450648691dd97a46a9e9e9145f85e3e522cf5f76e61",
+  "registry_digest": "34a297cdd0c3cf1357643e25b6ab20650dca03b58444141b8043cda6f080f30c",
   "registry_schema_version": 1,
   "schema_version": 1
 }

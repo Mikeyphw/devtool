@@ -466,7 +466,13 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
     if action == "lineage":
         from .actions_lineage import lineage_snapshot
         repo = resolve_repository(str(getattr(args, "github_repo", "") or ""), local_root)
-        return lineage_snapshot(local_root, repo, str(getattr(args, "pipeline_id", "") or ""))
+        if not bool(getattr(args, 'live', False)):
+            return lineage_snapshot(local_root, repo, str(getattr(args, "pipeline_id", "") or ""))
+        token, _ = resolve_token(str(getattr(args, 'auth', 'auto') or 'auto'))
+        if not token:
+            raise GitHubActionsError('R04 --live requires a credentialed read-only GitHub API session')
+        return lineage_snapshot(local_root, repo, str(getattr(args, "pipeline_id", "") or ""),
+                                live_client=GitHubActionsClient(token))
     if action == 'qualification':
         from .actions_qualification import qualification_report
         command = str(getattr(args, 'qualification_command', '') or '')

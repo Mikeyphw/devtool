@@ -309,3 +309,8 @@ Original closure run `ac0b291eba434cbf8981b5f019c0a10a`: 131 native tests passed
 ### R04 native retry — launcher cold-start test timeout (2026-10-20)
 
 R04 attempt `b8c882f722c34d2a99e50233767312b6` reached 77 passing tests before the pre-existing CORE-X04 wrapper self-test timed out waiting 20 seconds for the source-aware `devtoolw --help` subprocess. This does not demonstrate a parser/source failure, and is not accepted as R04 native qualification. Replace R04 (not stack on top) with the R04-R1 variant based on unchanged `52ad3d2` tree. It separates fast wrapper argv validation from the slower real parser smoke, retains a finite Termux bound and existing independent generated-surface performance limits. Require confirmed fail-closed rollback/clean tree before applying and do not infer LIFE success from prior Linux success.
+
+
+### R04B — Source-bound native EXO and optional hosted observation (2026-10-20)
+
+User-provided R04-R1 Termux installation `078eb17498bf4cbc8b37e697e9c18a5a` completed 88/88 tests, exit 0, commit `244d6d7`, and clean LIFE cleanup. The historical closure cleanup failure remains a distinct recorded failure. New R04B overlay extends R04's existing journal to record a one-use, parent-verified child RUN-V3 ID for fresh `local-invoke` nodes; projection verifies exact finalized child identity and keeps historical gaps unfilled. Credentialed `actions lineage --live` queries exact request-bound GitHub runs via GET only and labels live attempt observations without treating them as persistent pins or artifact/release authorization. Source/disposable validation is separate from pending native-hosted and R09 formal gates. R05 integrated UI should consume these fields without inventing new scheduling or authentication semantics.

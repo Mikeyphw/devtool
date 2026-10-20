@@ -12057,6 +12057,32 @@
     },
     {
       "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "GitHub read credential source for --live: auto, env, gh, none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "lineage"
+        ],
+        "required": false
+      },
+      "scope": "actions lineage",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.lineage.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
       "canonical": "--github-repo",
       "config_field_id": null,
       "metadata": {
@@ -12118,6 +12144,27 @@
       "scope": "actions lineage",
       "sensitive": false,
       "stable_id": "cli.option.actions.lineage.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--live",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "live",
+        "help": "Opt in to credentialed read-only GitHub run GET; no mutations or qualification",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "lineage"
+        ],
+        "required": false
+      },
+      "scope": "actions lineage",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.lineage.live",
       "value_kind": "_StoreTrueAction"
     },
     {
@@ -112260,6 +112307,45 @@
                           "--pipeline-id"
                         ],
                         "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "live",
+                        "group": null,
+                        "help": "Opt in to credentialed read-only GitHub run GET; no mutations or qualification",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--live"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "auto",
+                          "env",
+                          "gh",
+                          "none"
+                        ],
+                        "const": null,
+                        "default": "auto",
+                        "dest": "auth",
+                        "group": null,
+                        "help": "GitHub read credential source for --live: auto, env, gh, none",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false,
                         "type": null
                       }
                     ],
