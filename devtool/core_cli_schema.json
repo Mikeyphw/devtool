@@ -60849,6 +60849,46 @@
       "sensitive": false,
       "stable_id": "cli.option.yes",
       "value_kind": "bool"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ascii",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ascii",
+        "help": "Emit 40-column lossless ASCII dependency and safe-wave plan",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "plan",
+      "sensitive": false,
+      "stable_id": "cli.option.plan.ascii",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--mermaid",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "mermaid",
+        "help": "Emit Mermaid dependency graph; resource waves are not edges",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "plan",
+      "sensitive": false,
+      "stable_id": "cli.option.plan.mermaid",
+      "value_kind": "_StoreTrueAction"
     }
   ],
   "parser": {
@@ -106582,6 +106622,40 @@
                 "nargs": 0,
                 "option_strings": [
                   "--show-commands"
+                ],
+                "required": false,
+                "type": null
+              },
+              {
+                "action": "store_true",
+                "choices": null,
+                "const": true,
+                "default": false,
+                "dest": "ascii",
+                "group": null,
+                "help": "Emit 40-column lossless ASCII dependency and safe-wave plan",
+                "metavar": null,
+                "mutex": null,
+                "nargs": 0,
+                "option_strings": [
+                  "--ascii"
+                ],
+                "required": false,
+                "type": null
+              },
+              {
+                "action": "store_true",
+                "choices": null,
+                "const": true,
+                "default": false,
+                "dest": "mermaid",
+                "group": null,
+                "help": "Emit Mermaid dependency graph; resource waves are not edges",
+                "metavar": null,
+                "mutex": null,
+                "nargs": 0,
+                "option_strings": [
+                  "--mermaid"
                 ],
                 "required": false,
                 "type": null

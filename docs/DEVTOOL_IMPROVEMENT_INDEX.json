@@ -134,7 +134,8 @@
       "milestone": "R6",
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
-        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)",
+        "R06A tests/test_workflow_r06_plan_views.py and devtool/workflow_plan_views.py (source/disposable pending)"
       ]
     },
     {
@@ -168,12 +169,13 @@
       "category": "Parallelism explanation",
       "priority": "P2",
       "historical_status": "PROPOSED",
-      "source_status": "OPEN_CODE",
+      "source_status": "PARTIAL_SOURCE",
       "qualification_status": "NOT_QUALIFIED",
       "milestone": "R6",
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
-        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)",
+        "R06A tests/test_workflow_r06_plan_views.py and devtool/workflow_plan_views.py (source/disposable pending)"
       ]
     },
     {
@@ -264,7 +266,8 @@
       "milestone": "R6",
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
-        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)",
+        "R06A tests/test_workflow_r06_plan_views.py and devtool/workflow_plan_views.py (source/disposable pending)"
       ]
     },
     {
@@ -752,5 +755,19 @@
     "R03": "SOURCE_VERIFIED_NATIVE_APPLY_REPORTED",
     "campaign": "OPEN",
     "qualification_scope": "per-milestone-only"
+  },
+  "r06_incremental_acceptance": {
+    "R06A": {
+      "scope": "DAG plan ASCII/Mermaid/static blockers, canonical existing scheduler",
+      "source_status": "IMPLEMENTED_SOURCE_PENDING_DISPOSABLE",
+      "native_termux": "PENDING",
+      "hosted": "NOT_QUALIFIED",
+      "release": "NOT_QUALIFIED",
+      "remaining": [
+        "DT-008 source-bound overlay recovery",
+        "review-only adoption doctor",
+        "cross-consumer DAG acceptance"
+      ]
+    }
   }
 }

@@ -24317,6 +24317,30 @@
           "spellings": [
             "--target"
           ]
+        },
+        {
+          "choices": [],
+          "dest": "ascii",
+          "help": "Emit 40-column lossless ASCII dependency and safe-wave plan",
+          "hidden": false,
+          "id": "cli.option.plan.ascii",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--ascii"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "mermaid",
+          "help": "Emit Mermaid dependency graph; resource waves are not edges",
+          "hidden": false,
+          "id": "cli.option.plan.mermaid",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--mermaid"
+          ]
         }
       ],
       "path": [
@@ -36391,7 +36415,7 @@
       "summary": "A08 consented local signed-unqualified export/install handoff"
     }
   ],
-  "digest": "a1dce4c9615f2efaf0e03e6514e00b6c0cb9e15effca8c6ddf8a84b0d85f7fb3",
+  "digest": "a0c0295de8b0302caea4626a17acf4d5910e5451f9b059b856add306baced2a0",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -36889,7 +36913,7 @@
     "registry_command_count": 356
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "34a297cdd0c3cf1357643e25b6ab20650dca03b58444141b8043cda6f080f30c",
+  "registry_digest": "04a1faffb7d2994d5e6e6ca3c3fa890cbb8f7e94bdaa824bc6464bdc3a78db2f",
   "registry_schema_version": 1,
   "schema_version": 1
 }

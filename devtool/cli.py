@@ -8458,24 +8458,9 @@ def _preflight(config: ProjectConfig, args: argparse.Namespace) -> int:
 
 
 def _workflow_plan_dot(graph, schedule: WorkflowExecutionPlan | None) -> str:
-    lines = ["digraph devtool_workflow {", '  rankdir="LR";', '  node [shape="box"];']
-    schedule_nodes = schedule.by_key if schedule is not None else {}
-    for node in graph.nodes:
-        scheduled = schedule_nodes.get(node.key)
-        runner = scheduled.runner if scheduled is not None else (node.runner or node.ref.kind)
-        resolution = node.ref.resolution_key or node.ref.name
-        if node.ref.resolution_scope == "target" and resolution:
-            resolution = f"job:{resolution}"
-        label_parts = [node.target, node.label, runner]
-        if resolution and resolution != node.label:
-            label_parts.append(resolution)
-        label = "\n".join(label_parts)
-        lines.append(f'  "{node.key}" [label="{label}"];')
-    for node in graph.nodes:
-        for dependency in node.depends_on:
-            lines.append(f'  "{dependency}" -> "{node.key}";')
-    lines.append("}")
-    return "\n".join(lines)
+    # Keep this compatibility entry point for existing callers and tests.
+    from .workflow_plan_views import render_plan_dot
+    return render_plan_dot(graph, schedule)
 
 
 def _plan_command_entry(index: int, spec: CommandSpec, config: ProjectConfig) -> dict[str, object]:
@@ -8623,8 +8608,26 @@ def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
                 for index, spec in enumerate(specs, 1)
             ],
         }
-        if bool(getattr(args, "dot", False)):
+        from .workflow_plan_views import static_dependency_analysis, render_plan_ascii, render_plan_mermaid
+        payload["analysis"] = static_dependency_analysis(graph, plan)
+        output_flags = {
+            "dot": bool(getattr(args, "dot", False)),
+            "ascii": bool(getattr(args, "ascii", False)),
+            "mermaid": bool(getattr(args, "mermaid", False)),
+            "json": bool(getattr(args, "json", False)),
+        }
+        # Preserve the historical --dot/--json precedence, but reject any new
+        # conflicting format requests instead of silently choosing one.
+        if (output_flags["ascii"] or output_flags["mermaid"]) and sum(output_flags.values()) != 1:
+            raise SystemExit("Choose only one of --ascii, --mermaid, --dot or --json")
+        if output_flags["dot"]:
             print(_workflow_plan_dot(graph, plan))
+            return 0
+        if output_flags["mermaid"]:
+            print(render_plan_mermaid(graph, plan), end="")
+            return 0
+        if output_flags["ascii"]:
+            print(render_plan_ascii(graph, plan), end="")
             return 0
         if bool(getattr(args, "json", False)):
             print(json.dumps(payload, indent=2, ensure_ascii=False))

@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `34a297cdd0c3cf1357643e25b6ab20650dca03b58444141b8043cda6f080f30c`
+Registry digest: `04a1faffb7d2994d5e6e6ca3c3fa890cbb8f7e94bdaa824bc6464bdc3a78db2f`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 

@@ -324,3 +324,8 @@ Native R04B acceptance from run `7524f3b5b2f54e519036682a0331dd05`: 113/113 test
 ### R05A — Native Actions UI startup producer/consumer state repair (2026-10-20)
 
 User reports successful R05 installation but `devtool actions ui` fails during offline workspace inventory with `Dispatch receipt state is invalid`. The R05 workspace allowlist omitted the canonical `accepted-correlated` state emitted by the existing GitHub 200/`workflow_run_id` dispatch writer; this source mismatch can make a legitimate history unusable. R05A adds the exact state and fail-closed correlated run-ID validation, with real Textual 40-column startup and existing corrupt-receipt refusal tests. Native Termux `actions ui` acceptance is still required, and user private receipts have not been examined. Preserve R05 local-only vs separately authorized remote/hosted and release qualification boundaries. R06 follows once native R05A usability is checked.
+
+
+### R06A — Named DAG projection and static scheduler explanation (source candidate 2026-10-20)
+
+User confirmed R05A fixed `devtool actions ui` startup on actual Termux. The R05A source tree is `31aff2b28ff0eb78c7b8a6fcb82fd2ad67ebab4b` (disposable HEAD `bd179267`); exact native R05A validator/cleanup report was not provided. R06A extends *existing* `devtool plan` via `--ascii` and `--mermaid`, preserves DOT and JSON, and adds bounded static blockers and longest dependency-hop path. The scheduler remains the sole source of reservation-safe waves. R06A is a **partial R06 deliverable**; adoption doctor, transactional plan/recover and cross-consumer contracts remain planned (R06B/C), not closed. Native Termux acceptance is separately required.
