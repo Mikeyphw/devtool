@@ -507,3 +507,28 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 ### R06B regression boundary: pre-existing OV06 rebase cleanup fixture failure
 
 - During R06B validation in this Linux environment, `tests/test_arch_ov06_07_overlay_plugins_json.py::test_apply_overlay_rebase_applies_stale_inventory` failed because the disposable rebase file disappeared before LIFE cleanup; `artifact_cleanup_authority_missing` was reported. The exact same test was separately run against the **unmodified R06A** source and failed the same way. This is a reproduced *pre-existing* baseline failure, not evidence R06B altered the apply/rebase logic. Preserve the regression as OPEN_DIAGNOSIS rather than silently declaring the broader suite passed. The R06B acceptance selection does not include this known-baseline failing test; still require full native qualification later.
+
+
+## R06C-FRX-DAG-CONTRACT-003 — Child-owned producer→consumer graph evidence (2026-10-20)
+
+- **Source status:** IMPLEMENTED_SOURCE; user reports applying R06B, but has not
+  provided its native machine receipt. R06C native acceptance is independently PENDING.
+- **Underlying gap:** FRX05 and FRX-Y08 already resolve real cross-repository
+  child-owned public contracts, DAG dependencies, typed artifact inputs, capability
+  edges and frozen Git source identities. Operators lacked a compact standalone
+  producer→consumer contract view and an explicit opt-in strict frozen-lock gate.
+- **Change:** Add `devtool federation dag-contract [WORKFLOW|--group G] [--json]
+  [--require-frozen]`, an immutable projection of existing FRX planner identities,
+  dependencies, source-lock digests and artifact declarations. The digest is a
+  source-based fingerprint, NOT a remote attestation. No new scheduler, execution,
+  Git mutation, automatic freeze, network, data migration or receiver configuration.
+- **Rejection and safety:** Refuse invalid or ambiguous subject, missing public
+  child identity, duplicate repository, mismatched frozen subject or any exact
+  source/graph drift when `--require-frozen` is present. Maintain original FRX
+  ownership and artifact byte verification as independently authoritative.
+- **Acceptance:** `tests/test_federation_r06c_dag_contract.py`, FRX05/Y04/Y06/Y08,
+  full canonical CLI/help/manpage/completion parity, source-bound Devtool overlay
+  transaction and LIFE cleanup, then native Termux verification.
+- **Open:** Real Devtool→Skybind/Cinderbox/BKX/chrootctl/Studyflow consumer source
+  configuration adoption, typed artifact transfer receipts, hosted and device
+  provenance, R06D specific rollback-failed recovery, all existing RMP/FS03 gates.

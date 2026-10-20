@@ -2929,6 +2929,27 @@
       "aliases": [
         [
           "fed",
+          "dag-contract"
+        ]
+      ],
+      "canonical_path": [
+        "federation",
+        "dag-contract"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "federation",
+        "stability": "stable",
+        "summary": "Read-only child-owned producer/consumer DAG and source-lock evidence",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.federation.dag_contract"
+    },
+    {
+      "aliases": [
+        [
+          "fed",
           "diff"
         ]
       ],
@@ -33796,6 +33817,92 @@
       "scope": "federation conformance",
       "sensitive": false,
       "stable_id": "cli.option.ipc-server.help.426df761",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--group",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "group",
+        "help": "Executable federation group",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "federation",
+          "dag-contract"
+        ],
+        "required": false
+      },
+      "scope": "federation dag-contract",
+      "sensitive": false,
+      "stable_id": "cli.option.federation.dag_contract.group",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Machine-readable producer/consumer contract",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "federation",
+          "dag-contract"
+        ],
+        "required": false
+      },
+      "scope": "federation dag-contract",
+      "sensitive": false,
+      "stable_id": "cli.option.federation.dag_contract.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--require-frozen",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "require_frozen",
+        "help": "Require a matching persisted strict-local federation source lock",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "federation",
+          "dag-contract"
+        ],
+        "required": false
+      },
+      "scope": "federation dag-contract",
+      "sensitive": false,
+      "stable_id": "cli.option.federation.dag_contract.require_frozen",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "federation",
+          "dag-contract"
+        ],
+        "required": false
+      },
+      "scope": "federation dag-contract",
+      "sensitive": false,
+      "stable_id": "cli.option.federation.dag_contract.help",
       "value_kind": "_HelpAction"
     },
     {
@@ -94117,6 +94224,92 @@
                 },
                 {
                   "aliases": [],
+                  "help": "Read-only cross-repository producer/consumer DAG contract",
+                  "help_present": true,
+                  "name": "dag-contract",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "workflow",
+                        "group": null,
+                        "help": "Federation workflow name",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": "?",
+                        "option_strings": [],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "group",
+                        "group": null,
+                        "help": "Executable federation group from [federation.groups]",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--group"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit the machine-readable federated plan graph",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "require_frozen",
+                        "group": null,
+                        "help": "Require a matching persisted strict-local federation source lock",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--require-frozen"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
                   "help": "Build a deterministic planning-only cross-repository workflow/group DAG",
                   "help_present": true,
                   "name": "plan",
@@ -114549,7 +114742,7 @@
                         },
                         {
                           "aliases": [],
-                          "help": "Verify offline signed\u2192unsigned registry lineage and LIFE identity without release promotion",
+                          "help": "Verify offline signed→unsigned registry lineage and LIFE identity without release promotion",
                           "help_present": true,
                           "name": "local-evidence",
                           "parser": {

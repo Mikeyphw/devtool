@@ -18515,6 +18515,74 @@
       "aliases": [
         [
           "fed",
+          "dag-contract"
+        ]
+      ],
+      "domain": "federation",
+      "id": "cli.command.federation.dag_contract",
+      "options": [
+        {
+          "choices": [],
+          "dest": "group",
+          "help": "Executable federation group",
+          "hidden": false,
+          "id": "cli.option.federation.dag_contract.group",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--group"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Machine-readable producer/consumer contract",
+          "hidden": false,
+          "id": "cli.option.federation.dag_contract.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "require_frozen",
+          "help": "Require a matching persisted strict-local federation source lock",
+          "hidden": false,
+          "id": "cli.option.federation.dag_contract.require_frozen",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--require-frozen"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.federation.dag_contract.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "federation",
+        "dag-contract"
+      ],
+      "stability": "stable",
+      "summary": "Read-only child-owned producer/consumer DAG and source-lock evidence"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [
+        [
+          "fed",
           "diff"
         ]
       ],
@@ -36505,7 +36573,7 @@
       "summary": ""
     }
   ],
-  "digest": "3715d804cf549aeed2f26dcb9c8d5a2e00b94b7e80c09b9b3445e809597c676c",
+  "digest": "c4622d8fb1f22da621aa9a01f2373027253b1f07e6c34ccc4ec443123515018e",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -36698,6 +36766,7 @@
       "fed bootstrap",
       "fed capabilities",
       "fed conformance",
+      "fed dag-contract",
       "fed diff",
       "fed doctor",
       "fed exec",
@@ -36735,6 +36804,7 @@
       "federation bootstrap",
       "federation capabilities",
       "federation conformance",
+      "federation dag-contract",
       "federation diff",
       "federation doctor",
       "federation exec",
@@ -37001,11 +37071,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 483,
-    "registry_command_count": 358
+    "parser_command_count": 485,
+    "registry_command_count": 359
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "7bda0eb6feacd97c122cd244a4c0651ccfc5abceb990fba13b093ebb81483e1f",
+  "registry_digest": "b6b83ffbdc1cf2b2b6676ae713c5bfe8af0e25ee993e6650de8ac102984efefc",
   "registry_schema_version": 1,
   "schema_version": 1
 }

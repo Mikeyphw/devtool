@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `7bda0eb6feacd97c122cd244a4c0651ccfc5abceb990fba13b093ebb81483e1f`
+Registry digest: `b6b83ffbdc1cf2b2b6676ae713c5bfe8af0e25ee993e6650de8ac102984efefc`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -179,6 +179,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `federation bootstrap`
 - `federation capabilities`
 - `federation conformance`
+- `federation dag-contract` — Read-only child-owned producer/consumer DAG and source-lock evidence
 - `federation diff`
 - `federation doctor`
 - `federation exec`

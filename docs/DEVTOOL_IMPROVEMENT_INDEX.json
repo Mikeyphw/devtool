@@ -761,6 +761,31 @@
         "tests/test_r06b_adoption_overlay_plan.py",
         "docs/DEVTOOL_IMPROVEMENTS.md"
       ]
+    },
+    {
+      "id": "R06C-FRX-DAG-CONTRACT-003",
+      "category": "FRX child-owned producer to consumer DAG contract evidence",
+      "priority": "P1",
+      "historical_status": "R06C_PLANNED",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NATIVE_TERMUX_AND_REAL_CONSUMER_PENDING",
+      "milestone": "R6",
+      "affected_paths": [
+        "devtool/federation_dag_contract.py",
+        "devtool/cli.py",
+        "devtool/core_cli_schema.json"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R06C-FRX-DAG-CONTRACT-003)",
+        "tests/test_federation_r06c_dag_contract.py",
+        "docs/actions/DEVTOOL_R06C_PRODUCER_CONSUMER_CONTRACT.md"
+      ],
+      "open_followups": [
+        "NATIVE_R06C_ACCEPTANCE",
+        "REAL_CONSUMER_SOURCE_CONTRACTS",
+        "PRODUCER_CONSUMER_RUN_AND_ARTIFACT_QUALIFICATION",
+        "R06D_ROLLBACK_FAILED_RECOVERY"
+      ]
     }
   ],
   "scoped_milestone_closure": {
@@ -783,6 +808,13 @@
         "review-only adoption doctor",
         "cross-consumer DAG acceptance"
       ]
+    },
+    "R06C": {
+      "scope": "Read-only FRX producer/consumer contract projection and strict-local frozen source-lock gate",
+      "source_status": "DONE_SOURCE",
+      "native_termux": "PENDING",
+      "real_consumers": "NOT_QUALIFIED",
+      "release": "NOT_QUALIFIED"
     }
   }
 }

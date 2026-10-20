@@ -334,3 +334,18 @@ User confirmed R05A fixed `devtool actions ui` startup on actual Termux. The R05
 ### R06B — Read-only adoption doctor and overlay lifecycle readiness (2026-10-20)
 
 Source candidate built atop R06A tree `bffe4de8744e83872d61c557cdc30f44dd040ebd`. `actions adoption-doctor` uses existing A03/A09 eligibility, with per-workflow blockers and zero configuration/remote writes; `overlay plan` composes canonical preimage validation, conflicts, GIT-FRX patch equivalence (or bounded full-inventory file hashes for legacy overlays), and Git cleanliness without a duplicate apply/rollback engine. Also fixes undefined `sha256_file` in the add-existing conflict detector, including symlink safety. R06B source and disposable tests do not establish native/hosted qualification. Native Termux R06A was reported applied without its full machine receipt. R06C producer/consumer contracts and transaction-specific recovery remain open. Preserve DT-008 as PARTIAL_SOURCE, not fully closed.
+
+
+### R06C — Read-only producer/consumer FRX DAG contracts (2026-10-20)
+
+An additive `federation dag-contract` projection now surfaces the actual FRX
+child-owned producer/consumer nodes and cross-repository dependency edges,
+including typed artifact intent and exact local source-lock equivalence.
+It reuses the existing FRX planner, capability graph, Git owner and lock
+comparison, preserves the existing EXO scheduler, and performs no mutations.
+`--require-frozen` is opt-in and requires a matching prior strict-local lock;
+no remote/source attestation is inferred. Synthetic local multi-repository
+regression tests and real-consumer configuration review remain distinct.
+R06D rollback-failed transaction recovery and all hosted/device/release
+qualification remain OPEN. The user reported R06B applied without its detailed
+Termux receipt; native R06C acceptance is pending.

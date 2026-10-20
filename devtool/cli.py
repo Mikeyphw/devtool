@@ -119,6 +119,7 @@ from .federation_gate import build_federation_gate1_report, federation_gate1_as_
 from .federation_gate2 import build_federation_gate2_report, federation_gate2_as_dict, render_federation_gate2
 from .federation_final_seal import build_federation_final_seal_report, federation_final_seal_as_dict, render_federation_final_seal
 from .federation_plan import FederationPlanError, build_federated_plan, build_federated_group_plan
+from .federation_dag_contract import FederationDAGContractError
 from .federation_lock import FederationSourceLockError
 from .federation_sync import FederationSyncError
 from .federation_capabilities import FederationCapabilityError, build_capability_graph
@@ -11576,6 +11577,26 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append((f"reason.{index}", str(reason.get("reason") or reason.get("kind") or "")))
                 render_status_table(rows)
             return 0 if payload.get("affected") else 1
+        if action == "dag-contract":
+            from .federation_dag_contract import (
+                FederationDAGContractError, project_dag_contract, render_dag_contract_ascii,
+            )
+            workflow_name = str(getattr(args, "workflow", "") or "").strip()
+            group_name = str(getattr(args, "group", "") or "").strip()
+            if bool(workflow_name) == bool(group_name):
+                raise FederationDAGContractError(
+                    "dag-contract requires exactly one workflow name or --group <name>"
+                )
+            graph = (build_federated_group_plan(config, group_name)
+                     if group_name else build_federated_plan(config, workflow_name))
+            payload = project_dag_contract(
+                config, graph, require_frozen=bool(getattr(args, "require_frozen", False))
+            )
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(render_dag_contract_ascii(payload), end="")
+            return 0
         if action == "plan":
             workflow_name = str(getattr(args, "workflow", "") or "").strip()
             group_name = str(getattr(args, "group", "") or "").strip()
@@ -11971,7 +11992,7 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append(("job", str(payload.get("job_reference"))))
                 render_status_table(rows)
             return code
-    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError, FederationResumeError, FederationSyncError, FederationIntegrationError) as exc:
+    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError, FederationDAGContractError, FederationResumeError, FederationSyncError, FederationIntegrationError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 
