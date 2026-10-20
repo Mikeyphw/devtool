@@ -433,27 +433,35 @@
     {
       "id": "SKY-ACTIONS-COLLECT-008",
       "historical_status": "MIXED_APPEND_ONLY",
-      "source_status": "OPEN_CODE",
-      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "TERMUX_AND_REAL_APK_PENDING",
       "milestone": "R3",
       "affected_paths": [
-        "devtool/actions_android.py"
+        "devtool/actions_android.py",
+        "devtool/github_actions.py",
+        "devtool/core_cli_schema.json",
+        "devtool/actions_release.py"
       ],
       "evidence": [
-        "docs/DEVTOOL_IMPROVEMENTS.md"
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "tests/test_actions_r03_android_roles.py (source negatives; no live APK)"
       ]
     },
     {
       "id": "SKY-ACTIONS-APK-META-012",
       "historical_status": "MIXED_APPEND_ONLY",
-      "source_status": "OPEN_CODE",
-      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "TERMUX_AND_REAL_APK_PENDING",
       "milestone": "R3",
       "affected_paths": [
-        "devtool/actions_android.py"
+        "devtool/actions_android.py",
+        "devtool/github_actions.py",
+        "devtool/core_cli_schema.json",
+        "devtool/actions_release.py"
       ],
       "evidence": [
-        "docs/DEVTOOL_IMPROVEMENTS.md"
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "tests/test_actions_r03_android_roles.py (source negatives; no live APK)"
       ]
     },
     {
@@ -546,6 +554,32 @@
       "affected_paths": [],
       "evidence": [
         "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "SKY-ACTIONS-APK-META-013",
+      "category": "Compiled instrumentation manifest inspection",
+      "priority": "P1",
+      "historical_status": "OPEN_UPSTREAM",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "TERMUX_AND_DEVICE_PENDING",
+      "milestone": "R3",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R03 addendum)",
+        "tests/test_actions_r03_android_roles.py"
+      ]
+    },
+    {
+      "id": "SKY-B1C-PM-014",
+      "category": "Android PackageManager confirmed-absence classifier",
+      "priority": "P1",
+      "historical_status": "OPEN_UPSTREAM",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "TERMUX_AND_DEVICE_PENDING",
+      "milestone": "R3",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R03 addendum)",
+        "tests/test_actions_r03_android_pm_presence.py"
       ]
     }
   ]

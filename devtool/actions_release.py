@@ -144,7 +144,9 @@ def release_verify(client: GitHubActionsClient, slug: str, root: Path, *, run_id
     checked = android_collect(client, slug, root, run_id=run_id, artifact_id=artifact_id,
                               fmt=policy['format'], variant='release',
                               expected_package=policy['application_id'], expected_cert=policy['signer_sha256'],
-                              member=member, materialize=False)
+                              member=member, materialize=False, workflow=policy['workflow'],
+                              expected_source_sha=policy['source_sha'],
+                              expected_run_attempt=remote['run_attempt'])
     pkg = checked['android']
     if pkg.get('debug_signing') is not False:
         raise GitHubActionsError('Release package signing identity cannot be Android Debug or unknown')

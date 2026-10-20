@@ -265,3 +265,21 @@ Go host support is declarative until independent remote source/run/attempt
 verification; Cinderbox hosted Android acceptance remains historically scoped.
 No Skybind or Cinderbox files are mutated, no Actions run is dispatched, and
 R02 exit remains pending native Termux and real hosted Go consumer evidence.
+
+## R03 implementation addendum — 2026-10-20
+
+The R03 source-bound provider repair adds native Android instrumentation APK metadata
+inspection and selected custom GitHub workflow verification without introducing a
+parallel archive registry, CI scheduler, broker identity oracle or release policy.
+Explicit test APK and target package pins plus a real compiled manifest check
+replace the earlier one-off Skybind H3/H4 format workaround. The default
+`devtool-android-build.yml` collection retains its historical CLI behavior;
+a custom workflow additionally requires independent source SHA and attempt pins.
+The separate read-only ADB PackageManager observer distinguishes true absence
+from errors using a second exact-user query but does not qualify device identity.
+
+**Acceptance:** focused source and canonical generated-surface regressions,
+then actual Devtool disposable overlay application and native Termux current-source
+validation. Real APK/`aapt` and hosted source/run/archive acceptance are independent;
+installed-pair adoption, broker identity, DT-002 convention plugins, and DT-003 custom
+variants remain scoped follow-ups. Existing R02 hosted Go consumer remains open.

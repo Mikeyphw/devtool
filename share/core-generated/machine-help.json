@@ -672,6 +672,21 @@
       "id": "cli.command.actions.android.collect",
       "options": [
         {
+          "choices": [
+            "application",
+            "instrumentation"
+          ],
+          "dest": "apk_role",
+          "help": "Explicit Android APK role; test APKs require target and test package pins",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.apk_role",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--apk-role"
+          ]
+        },
+        {
           "choices": [],
           "dest": "artifact_id",
           "help": "Exact GitHub Actions artifact ID",
@@ -734,6 +749,42 @@
           "required": false,
           "spellings": [
             "--expected-package"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_run_attempt",
+          "help": "Expected GitHub run attempt (required for custom workflow)",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.expected_run_attempt",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-run-attempt"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_source_sha",
+          "help": "Expected exact 40-hex GitHub source commit (required for custom workflow)",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.expected_source_sha",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-source-sha"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_target_package",
+          "help": "Expected application package targeted by instrumentation APK",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.expected_target_package",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-target-package"
           ]
         },
         {
@@ -825,6 +876,18 @@
           "required": false,
           "spellings": [
             "--variant"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "workflow",
+          "help": "Exact authenticated GitHub Android workflow YAML name/path",
+          "hidden": false,
+          "id": "cli.option.actions.android.collect.workflow",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--workflow"
           ]
         }
       ],
@@ -1767,6 +1830,21 @@
       "id": "cli.command.actions.android.verify",
       "options": [
         {
+          "choices": [
+            "application",
+            "instrumentation"
+          ],
+          "dest": "apk_role",
+          "help": "Explicit Android APK role; test APKs require target and test package pins",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.apk_role",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--apk-role"
+          ]
+        },
+        {
           "choices": [],
           "dest": "artifact_id",
           "help": "Exact GitHub Actions artifact ID",
@@ -1817,6 +1895,42 @@
           "required": false,
           "spellings": [
             "--expected-package"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_run_attempt",
+          "help": "Expected GitHub run attempt (required for custom workflow)",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.expected_run_attempt",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-run-attempt"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_source_sha",
+          "help": "Expected exact 40-hex GitHub source commit (required for custom workflow)",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.expected_source_sha",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-source-sha"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_target_package",
+          "help": "Expected application package targeted by instrumentation APK",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.expected_target_package",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-target-package"
           ]
         },
         {
@@ -1908,6 +2022,18 @@
           "required": false,
           "spellings": [
             "--variant"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "workflow",
+          "help": "Exact authenticated GitHub Android workflow YAML name/path",
+          "hidden": false,
+          "id": "cli.option.actions.android.verify.workflow",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--workflow"
           ]
         }
       ],
@@ -36014,14 +36140,38 @@
       "options": [
         {
           "choices": [],
-          "dest": "registry_id",
-          "help": "Exact registered locally signed artifact (12 hex)",
+          "dest": "allow_unqualified",
+          "help": "Explicitly accept signed-but-unqualified artifact for this local action",
           "hidden": false,
-          "id": "cli.option.actions.release.local_handoff.registry_id",
+          "id": "cli.option.actions.release.local_handoff.allow_unqualified",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--allow-unqualified"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "destination",
+          "help": "Absolute new file path for export; existing files never overwritten",
+          "hidden": false,
+          "id": "cli.option.actions.release.local_handoff.destination",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--destination"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_sha",
+          "help": "Mandatory independent exact 40-hex source SHA pin",
+          "hidden": false,
+          "id": "cli.option.actions.release.local_handoff.expected_sha",
           "nargs": null,
           "required": true,
           "spellings": [
-            "--registry-id"
+            "--expected-sha"
           ]
         },
         {
@@ -36037,6 +36187,70 @@
           "required": false,
           "spellings": [
             "--format"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.release.local_handoff.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Print machine-readable JSON",
+          "hidden": false,
+          "id": "cli.option.actions.release.local_handoff.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [
+            "export",
+            "install"
+          ],
+          "dest": "operation",
+          "help": "Local handoff: export to a new file, or install APK on explicitly named device",
+          "hidden": false,
+          "id": "cli.option.actions.release.local_handoff.operation",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--operation"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "registry_id",
+          "help": "Exact registered locally signed artifact (12 hex)",
+          "hidden": false,
+          "id": "cli.option.actions.release.local_handoff.registry_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--registry-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "serial",
+          "help": "Exact adb device serial required for install",
+          "hidden": false,
+          "id": "cli.option.actions.release.local_handoff.serial",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--serial"
           ]
         },
         {
@@ -36065,81 +36279,6 @@
         },
         {
           "choices": [],
-          "dest": "json",
-          "help": "Print machine-readable JSON",
-          "hidden": false,
-          "id": "cli.option.actions.release.local_handoff.json",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "expected_sha",
-          "help": "Mandatory independent exact 40-hex source SHA pin",
-          "hidden": false,
-          "id": "cli.option.actions.release.local_handoff.expected_sha",
-          "nargs": null,
-          "required": true,
-          "spellings": [
-            "--expected-sha"
-          ]
-        },
-        {
-          "choices": [
-            "export",
-            "install"
-          ],
-          "dest": "operation",
-          "help": "Local handoff: export to a new file, or install APK on explicitly named device",
-          "hidden": false,
-          "id": "cli.option.actions.release.local_handoff.operation",
-          "nargs": null,
-          "required": true,
-          "spellings": [
-            "--operation"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "destination",
-          "help": "Absolute new file path for export; existing files never overwritten",
-          "hidden": false,
-          "id": "cli.option.actions.release.local_handoff.destination",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--destination"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "serial",
-          "help": "Exact adb device serial required for install",
-          "hidden": false,
-          "id": "cli.option.actions.release.local_handoff.serial",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--serial"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "allow_unqualified",
-          "help": "Explicitly accept signed-but-unqualified artifact for this local action",
-          "hidden": false,
-          "id": "cli.option.actions.release.local_handoff.allow_unqualified",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--allow-unqualified"
-          ]
-        },
-        {
-          "choices": [],
           "dest": "yes",
           "help": "Execute local file/device mutation after verification and consent; otherwise preview",
           "hidden": false,
@@ -36148,19 +36287,6 @@
           "required": false,
           "spellings": [
             "--yes"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.actions.release.local_handoff.help",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
           ]
         }
       ],
@@ -36173,7 +36299,7 @@
       "summary": "A08 consented local signed-unqualified export/install handoff"
     }
   ],
-  "digest": "ca3bb245b61fe6621f4a8692fa134a3b070da662b487cb1ba3bc18d4bea92363",
+  "digest": "a81143f1cd32543cf02bb8baee5de00bf3ea2d44e8f557c8fcdaf341c6945a1d",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -36670,7 +36796,7 @@
     "registry_command_count": 355
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "54713081a3cd06cda8df89e3278e7eb7ef1aafec3f30f13d3837a63797eb69de",
+  "registry_digest": "b1c9b523ea57361b7fd36194aec3f506dee9bae5834c0c4b5cd2896b23f005f6",
   "registry_schema_version": 1,
   "schema_version": 1
 }

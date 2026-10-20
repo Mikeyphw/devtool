@@ -756,7 +756,12 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
                                    variant=str(args.variant),expected_package=str(args.expected_package or ""),
                                    expected_cert=str(args.expected_cert_sha256 or ""),
                                    member=str(args.member or ""), download=bool(getattr(args,"download",False)),
-                                   materialize=sub=="collect")
+                                   materialize=sub=="collect",
+                                   workflow=str(getattr(args,"workflow","devtool-android-build.yml") or "devtool-android-build.yml"),
+                                   expected_source_sha=str(getattr(args,"expected_source_sha","") or ""),
+                                   expected_run_attempt=int(getattr(args,"expected_run_attempt",0) or 0),
+                                   apk_role=str(getattr(args,"apk_role","application") or "application"),
+                                   expected_target_package=str(getattr(args,"expected_target_package","") or ""))
         raise GitHubActionsError("Unsupported Android Actions subcommand")
     if action == "status":
         repo = client.repository(slug)
