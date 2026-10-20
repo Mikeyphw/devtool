@@ -619,6 +619,22 @@
       "aliases": [],
       "canonical_path": [
         "actions",
+        "lineage"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Offline read-only Actions pipeline/run/artifact evidence lineage; never qualification",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.lineage"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
         "logs"
       ],
       "metadata": {
@@ -12037,6 +12053,92 @@
       "scope": "actions jobs",
       "sensitive": false,
       "stable_id": "cli.option.actions.jobs.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "lineage"
+        ],
+        "required": false
+      },
+      "scope": "actions lineage",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.lineage.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "lineage"
+        ],
+        "required": false
+      },
+      "scope": "actions lineage",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.lineage.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions lineage as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "lineage"
+        ],
+        "required": false
+      },
+      "scope": "actions lineage",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.lineage.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--pipeline-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "pipeline_id",
+        "help": "Exact local ACTIONS-06 pipeline ID (required)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "lineage"
+        ],
+        "required": true
+      },
+      "scope": "actions lineage",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.lineage.pipeline_id",
       "value_kind": "_StoreAction"
     },
     {
@@ -112103,6 +112205,77 @@
                   }
                 },
                 {
+                  "name": "lineage",
+                  "aliases": [],
+                  "help": "R04 read-only source/run/artifact lineage (offline; no remote qualification)",
+                  "help_present": true,
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub owner/repository slug",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit Actions lineage as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "pipeline_id",
+                        "group": null,
+                        "help": "Exact local ACTIONS-06 pipeline ID (required)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--pipeline-id"
+                        ],
+                        "required": true,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
                   "aliases": [],
                   "help": "Download remote workflow run logs as a bounded unextracted ZIP to private state",
                   "help_present": true,
@@ -113969,7 +114142,7 @@
                         },
                         {
                           "aliases": [],
-                          "help": "Verify offline signed\u2192unsigned registry lineage and LIFE identity without release promotion",
+                          "help": "Verify offline signed→unsigned registry lineage and LIFE identity without release promotion",
                           "help_present": true,
                           "name": "local-evidence",
                           "parser": {

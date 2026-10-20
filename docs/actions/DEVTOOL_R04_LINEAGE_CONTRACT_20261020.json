@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "kind": "devtool.actions-r04.offline-projection",
+  "baseline_commit": "52ad3d2b8269155570394357b8181b23b02bac64",
+  "baseline_tree": "1e82f63a30742b5c31055be9f13ab72df286ce4f",
+  "read_only": true,
+  "no_remote_dispatch": true,
+  "no_new_journal": true,
+  "no_automatic_retry": true,
+  "source_attested": false,
+  "hosted_qualified": false,
+  "device_qualified": false,
+  "release_qualified": false,
+  "exposes": [
+    "repository",
+    "source_sha",
+    "pipeline_id",
+    "node_kind_state",
+    "request_id_if_persisted",
+    "remote_run_attempt_if_observed",
+    "local_artifact_digest_if_rehashed"
+  ],
+  "never_infer": [
+    "exo_run_id",
+    "remote_authentication",
+    "device_attestation",
+    "signer_proof",
+    "release_seal"
+  ],
+  "validated_tests": [
+    "tests/test_actions_r04_lineage.py",
+    "tests/test_actions_06_pipeline_dag.py",
+    "tests/test_core_x04_generated_surfaces.py"
+  ],
+  "independent_remaining": [
+    "EXO_CHILD_RUN_CORRELATION",
+    "AUTHENTICATED_REMOTE_REVIEW",
+    "EXTERNAL_DEVICE_RELEASE_SUBSTRATES",
+    "RMP_H1_H2"
+  ],
+  "historical_failed_cleanup_run": "ac0b291eba434cbf8981b5f019c0a10a"
+}

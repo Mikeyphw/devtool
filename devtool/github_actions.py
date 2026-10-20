@@ -463,6 +463,10 @@ def actions_baseline() -> dict[str, Any]:
 
 def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None) -> dict[str, Any]:
     action = str(getattr(args, "actions_command", "") or "")
+    if action == "lineage":
+        from .actions_lineage import lineage_snapshot
+        repo = resolve_repository(str(getattr(args, "github_repo", "") or ""), local_root)
+        return lineage_snapshot(local_root, repo, str(getattr(args, "pipeline_id", "") or ""))
     if action == 'qualification':
         from .actions_qualification import qualification_report
         command = str(getattr(args, 'qualification_command', '') or '')

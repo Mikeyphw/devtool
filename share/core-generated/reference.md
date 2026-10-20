@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `b1c9b523ea57361b7fd36194aec3f506dee9bae5834c0c4b5cd2896b23f005f6`
+Registry digest: `6657a1e37d9af7b4acb63450648691dd97a46a9e9e9145f85e3e522cf5f76e61`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -43,6 +43,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions extensions publish-plan` — G7 optional publish-plan
 - `actions extensions runners` — G7 optional runners
 - `actions jobs` — Inspect run and job/step states
+- `actions lineage` — Offline read-only Actions pipeline/run/artifact evidence lineage; never qualification
 - `actions logs` — Download remote workflow run logs as a bounded unextracted ZIP to private state
 - `actions pipeline` — Cross-boundary local/remote DAG with frozen source and durable resume
 - `actions pipeline cancel` — Request safe, durable pipeline cancellation without cancelling remote jobs

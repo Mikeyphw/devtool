@@ -61,6 +61,9 @@ def run_actions_command(args: Any) -> int:
                 payload = {'repository':payload['item']['repository'],'items':[payload['item']]}
             content = screen_lines(payload,compact=True)
             print(content['title']+'\n'+content['rows']+'\n'+content['detail']+'\n'+content['footer'])
+    elif command == 'lineage':
+        from .actions_lineage import lineage_text
+        print(lineage_text(payload, width=60))
     elif bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
         print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
     elif (str(getattr(args, 'actions_command', '')) == 'release'

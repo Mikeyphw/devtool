@@ -595,8 +595,8 @@
       "category": "Generated CORE help performance on native Termux",
       "priority": "P1",
       "historical_status": "NEW_NATIVE_FAILURE",
-      "source_status": "REMEDIATION_CANDIDATE",
-      "qualification_status": "SOURCE_TESTED_NATIVE_PENDING",
+      "source_status": "REMEDIATION_COMMITTED",
+      "qualification_status": "NATIVE_131_TESTS_PASS_TRANSACTION_CLEANUP_FAILED",
       "milestone": "R03_CLOSURE",
       "affected_paths": [
         "devtool/core_surfaces.py",
@@ -605,7 +605,67 @@
       "evidence": [
         "Termux run 19b01fdc284a46dbab059c8ae7e58090: 73 passed / 1 failed at 5630.083948ms vs 5000ms",
         "docs/DEVTOOL_IMPROVEMENTS.md (CORE-X04-NATIVE-PERF-001)",
+        "tests/test_core_x04_generated_surfaces.py",
+        "Termux run ac0b291eba434cbf8981b5f019c0a10a: all 131 tests passed, closure commit 52ad3d2, LIFE cleanup failure"
+      ]
+    },
+    {
+      "id": "R04-LINEAGE-001",
+      "category": "Cross-system pipeline and artifact evidence projection",
+      "priority": "P1",
+      "historical_status": "OPEN_UNIFIED_LINEAGE",
+      "source_status": "R04_SOURCE_CANDIDATE",
+      "qualification_status": "SOURCE_REGRESSION_ONLY_NATIVE_AND_HOSTED_PENDING",
+      "milestone": "R4",
+      "affected_paths": [
+        "devtool/actions_lineage.py",
+        "devtool/actions_cli.py",
+        "devtool/github_actions.py",
+        "devtool/core_cli_schema.json"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R04-LINEAGE-001)",
+        "tests/test_actions_r04_lineage.py"
+      ],
+      "open_followups": [
+        "EXO_CHILD_RUN_CORRELATION",
+        "AUTHENTICATED_REMOTE_RUN_AND_ARTIFACT",
+        "SOURCE_BOUND_QUALIFICATION_GATES"
+      ]
+    },
+    {
+      "id": "LIFE-CLEANUP-CTIME-20261020",
+      "category": "Historical post-commit LIFE cleanup failure",
+      "priority": "P1",
+      "historical_status": "OBSERVED_NATIVE_FAILURE",
+      "source_status": "DIAGNOSED_UNMODIFIED",
+      "qualification_status": "HISTORICAL_FAILURE_PRESERVED",
+      "milestone": "R4",
+      "evidence": [
+        "Termux run ac0b291eba434cbf8981b5f019c0a10a: 131 passed; cleanup failure",
+        "Read-only diagnostics: ctime_ns-only change in source snapshot",
+        "docs/DEVTOOL_IMPROVEMENTS.md (LIFE-CLEANUP-CTIME-20261020)"
+      ]
+    },
+    {
+      "id": "CORE-X04-R04-TERMUX-COLDSTART-001",
+      "category": "Native source-aware CLI launcher smoke timeout",
+      "priority": "P1",
+      "historical_status": "OBSERVED_NATIVE_R04_TEST_FAILURE",
+      "source_status": "R04_R1_REPLACEMENT_CANDIDATE",
+      "qualification_status": "NATIVE_RETRY_PENDING",
+      "milestone": "R4",
+      "affected_paths": [
         "tests/test_core_x04_generated_surfaces.py"
+      ],
+      "evidence": [
+        "Termux run b8c882f722c34d2a99e50233767312b6: 77 passed, 1 failed (devtoolw --help timed out at 20s)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (CORE-X04-R04-TERMUX-COLDSTART-001)"
+      ],
+      "open_followups": [
+        "NATIVE_R04_R1_REAL_LAUNCH_SMOKE",
+        "WRAPPER_COLD_IMPORT_PROFILING_IF_GT_60S",
+        "TRANSACTION_RECOVERY_VERIFICATION"
       ]
     }
   ],

@@ -297,3 +297,15 @@ variants remain scoped follow-ups. Existing R02 hosted Go consumer remains open.
 ### Native closure installer timing repair (2026-10-20)
 
 An attempted R01–R03 closure installation failed a pre-existing CORE-X04 5-second generated-surface budget at 5630ms after 73 passing tests. Treat the closure as **NOT ACCEPTED** until the replacement passes on Termux. Retain the original 5000ms budget and optimize the source projection by indexing option rows once; do not bypass tests or modify the independent remote/device/release obligations. A failed transaction must finish and restore a clean post-R03 source before the replacement overlay is attempted.
+
+
+### R04 — Offline evidence-lineage foundation (candidate source, 2026-10-20)
+
+The source-bound R04 overlay adds `devtool actions lineage --pipeline-id` with plain-text and machine JSON, projecting canonical local ACTIONS-06 pipeline journal + ACTIONS-02 dispatch receipt and optional local artifact-registry hash/ZIP proof. Explicit unknown and pending states remain when remote API authority, exact EXO child identity, or device/release receipts are unavailable. Source-only regression and disposable installation are NOT equivalent to native acceptance. **R04 full closure remains OPEN** until second-phase EXO correlation and independently authenticated run/attempt/artifact verification pass. R05 can use this projection after current-commit Termux acceptance; no background scheduler or new journal was introduced.
+
+Original closure run `ac0b291eba434cbf8981b5f019c0a10a`: 131 native tests passed, commit `52ad3d2` and seven-path verification succeeded, but LIFE artifact cleanup failed. Preserve that historical failure and avoid speculative cleanup changes; R04's own fresh transaction will provide evidence of whether it recurs. Do not mark the closure transaction passed merely because its source was committed.
+
+
+### R04 native retry — launcher cold-start test timeout (2026-10-20)
+
+R04 attempt `b8c882f722c34d2a99e50233767312b6` reached 77 passing tests before the pre-existing CORE-X04 wrapper self-test timed out waiting 20 seconds for the source-aware `devtoolw --help` subprocess. This does not demonstrate a parser/source failure, and is not accepted as R04 native qualification. Replace R04 (not stack on top) with the R04-R1 variant based on unchanged `52ad3d2` tree. It separates fast wrapper argv validation from the slower real parser smoke, retains a finite Termux bound and existing independent generated-surface performance limits. Require confirmed fail-closed rollback/clean tree before applying and do not infer LIFE success from prior Linux success.
