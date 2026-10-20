@@ -15430,6 +15430,24 @@ def _main_after_parse(
     if args.command == "overlay":
         repo = Path(args.repo or Path.cwd()).resolve()
         action = str(getattr(args, "overlay_command", "") or "")
+        if action == "plan":
+            from .overlay.planning import overlay_plan
+            try:
+                payload = overlay_plan(repo, args.artifact)
+            except (OSError, RuntimeError, ValueError, KeyError) as exc:
+                payload = {'read_only': True, 'decision': 'refuse', 'error': str(exc)[:240]}
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+            else:
+                render_status_table([
+                    ('decision', payload.get('decision', 'refuse')),
+                    ('integrity', 'pass' if payload.get('integrity_ok') else 'not established'),
+                    ('source', 'compatible' if payload.get('source_compatible') else 'not compatible'),
+                    ('already_applied', payload.get('patch_equivalence', {}).get('status', 'unknown')),
+                    ('worktree', 'clean' if payload.get('git_worktree_clean') else 'not clean'),
+                ])
+                console.print(payload.get('next_step') or payload.get('error') or 'Inspection failed')
+            return 0 if payload.get('decision') in ('candidate_only', 'already_present') else 2
         if action == "check":
             result = check_overlay(
                 repo,

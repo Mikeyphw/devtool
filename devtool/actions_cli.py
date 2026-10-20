@@ -20,6 +20,15 @@ def run_actions_command(args: Any) -> int:
             print(encode_observation(observation), flush=True)
     try:
         root = Path(str(getattr(args, "repo", "") or Path.cwd()))
+        if command == 'adoption-doctor':
+            from .actions_adoption import adoption_doctor, AdoptionError
+            try:
+                payload = adoption_doctor(root, target=str(getattr(args, 'adopt_target', '') or ''))
+            except AdoptionError as exc:
+                print(f'ACTIONS_R06B_REVIEW_REFUSED: {exc}', file=sys.stderr)
+                return 1
+            print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+            return 0
         if command == 'adopt':
             from .actions_adoption import adoption_command, AdoptionError
             try:

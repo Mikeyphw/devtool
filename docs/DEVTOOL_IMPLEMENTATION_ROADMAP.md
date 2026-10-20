@@ -329,3 +329,8 @@ User reports successful R05 installation but `devtool actions ui` fails during o
 ### R06A — Named DAG projection and static scheduler explanation (source candidate 2026-10-20)
 
 User confirmed R05A fixed `devtool actions ui` startup on actual Termux. The R05A source tree is `31aff2b28ff0eb78c7b8a6fcb82fd2ad67ebab4b` (disposable HEAD `bd179267`); exact native R05A validator/cleanup report was not provided. R06A extends *existing* `devtool plan` via `--ascii` and `--mermaid`, preserves DOT and JSON, and adds bounded static blockers and longest dependency-hop path. The scheduler remains the sole source of reservation-safe waves. R06A is a **partial R06 deliverable**; adoption doctor, transactional plan/recover and cross-consumer contracts remain planned (R06B/C), not closed. Native Termux acceptance is separately required.
+
+
+### R06B — Read-only adoption doctor and overlay lifecycle readiness (2026-10-20)
+
+Source candidate built atop R06A tree `bffe4de8744e83872d61c557cdc30f44dd040ebd`. `actions adoption-doctor` uses existing A03/A09 eligibility, with per-workflow blockers and zero configuration/remote writes; `overlay plan` composes canonical preimage validation, conflicts, GIT-FRX patch equivalence (or bounded full-inventory file hashes for legacy overlays), and Git cleanliness without a duplicate apply/rollback engine. Also fixes undefined `sha256_file` in the add-existing conflict detector, including symlink safety. R06B source and disposable tests do not establish native/hosted qualification. Native Termux R06A was reported applied without its full machine receipt. R06C producer/consumer contracts and transaction-specific recovery remain open. Preserve DT-008 as PARTIAL_SOURCE, not fully closed.

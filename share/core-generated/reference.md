@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `04a1faffb7d2994d5e6e6ca3c3fa890cbb8f7e94bdaa824bc6464bdc3a78db2f`
+Registry digest: `7bda0eb6feacd97c122cd244a4c0651ccfc5abceb990fba13b093ebb81483e1f`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -8,6 +8,7 @@ This file is generated from the CORE command/config registry and the canonical C
 
 - `actions` — Read-only GitHub Actions provider
 - `actions adopt` — Review or generate pinned target-local GitHub Actions adoption workflow
+- `actions adoption-doctor` — Review A09 host eligibility for configured workflows without changing files
 - `actions android` — Android builds on GitHub Actions and verified APK/AAB acquisition
 - `actions android aab-check` — Inspect source-bound AAB with bundletool (read-only)
 - `actions android aab-import` — Download, verify and register unsigned AAB
@@ -59,6 +60,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions release` — Independent-policy release provenance qualification
 - `actions release local-build` — Preview or execute local signed release build without Github qualification
 - `actions release local-evidence` — G6 read-only signed APK/AAB provenance and certificate re-verification
+- `actions release local-handoff` — A08 consented local signed-unqualified export/install handoff
 - `actions release local-verify` — Verify local package manifest and pinned LIFE signing certificate
 - `actions release readiness` — Check protected ref, signing secret names and private policy
 - `actions release setup` — Minimum allowed release versionCode
@@ -267,6 +269,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `oci workspace`
 - `overlay`
 - `overlay check`
+- `overlay plan` — Review overlay source, patch presence, and safe lifecycle next step (read-only)
 - `overlay rebase`
 - `overlay status`
 - `package`
@@ -361,7 +364,6 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
-- `actions release local-handoff` — A08 consented local signed-unqualified export/install handoff
 
 ## Configuration documents
 

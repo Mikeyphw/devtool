@@ -116,8 +116,8 @@
       "category": "Overlay upgrade/rebase",
       "priority": "P1",
       "historical_status": "PROPOSED",
-      "source_status": "OPEN_CODE",
-      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "PARTIAL_SOURCE",
+      "qualification_status": "NOT_REQUALIFIED",
       "milestone": "R6",
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
@@ -745,6 +745,21 @@
         "NATIVE_TERMUX_R05A_OVERLAY_ACCEPTANCE",
         "REAL_TERMUX_ACTIONS_UI_SMOKE",
         "EXTERNAL_HOSTED_RUN_AND_RELEASE_QUALIFICATION"
+      ]
+    },
+    {
+      "id": "R06B-ADOPTION-OVERLAY-002",
+      "category": "Review-only Devtool Actions adoption/overlay planning",
+      "priority": "P1",
+      "historical_status": "R06B_SOURCE_CANDIDATE",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NATIVE_TERMUX_PENDING",
+      "milestone": "R6",
+      "evidence": [
+        "devtool/actions_adoption.py::adoption_doctor",
+        "devtool/overlay/planning.py::overlay_plan",
+        "tests/test_r06b_adoption_overlay_plan.py",
+        "docs/DEVTOOL_IMPROVEMENTS.md"
       ]
     }
   ],

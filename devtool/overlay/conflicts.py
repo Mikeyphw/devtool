@@ -34,12 +34,12 @@ def detect_inventory_conflicts(repo_root: Path, manifest: dict[str, Any]) -> lis
         target = repo_root / Path(path)
         expected = str(entry.get("source_sha256") or "").strip().lower()
         if action == "add":
-            if target.exists() and policy == "fail":
-                actual = sha256_file(target) if target.is_file() else "<directory>"
+            if (target.exists() or target.is_symlink()) and policy == "fail":
+                actual = path_source_sha256(target) if (target.is_file() or target.is_symlink()) else "<directory>"
                 conflicts.append(OverlayConflict(
                     path, "add-existing", action, "<missing>", actual,
                     "Overlay declares an add but the target already exists.",
-                    rebaseable=target.is_file(),
+                    rebaseable=target.is_file() and not target.is_symlink(),
                 ))
             continue
         if not (target.exists() or target.is_symlink()) or (not target.is_file() and not target.is_symlink()):

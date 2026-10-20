@@ -368,6 +368,87 @@ def adopt(root: Path, *, target: str, workflow: str, devtool_sha: str,
     return result
 
 
+
+def adoption_doctor(root: Path, *, target: str = "") -> dict[str, Any]:
+    """Read-only A09 host-admission inventory; never generate or verify remote evidence.
+
+    A ready entry means only that existing A03/A09 *local eligibility* is
+    satisfied.  It is not a statement about installed CI, hosting, or release.
+    """
+    root = root.resolve()
+    if target:
+        _safe_slug(target, role='Target')
+    if not root.is_dir() or _git(root, 'rev-parse', '--is-inside-work-tree') != 'true':
+        raise AdoptionError('Adoption doctor requires a Git repository')
+    config = _inside_repo(root, '.devtool.toml')
+    wrapper = _inside_repo(root, 'devtoolw')
+    if not config.is_file() or not wrapper.is_file() or not os.access(wrapper, os.X_OK):
+        raise AdoptionError('Adoption doctor requires .devtool.toml and an executable devtoolw')
+    try:
+        cfg = load_wrapper_project_config(str(root), None)
+    except (ValueError, SystemExit) as exc:
+        raise AdoptionError(f'Cannot read Devtool project contract: {str(exc)[:160]}') from None
+    if target and target not in cfg.targets:
+        raise AdoptionError('Selected target is not configured')
+    clean = not bool(_git(root, 'status', '--porcelain', '--untracked-files=normal'))
+    observations: list[dict[str, Any]] = []
+    for target_name, t in sorted(cfg.targets.items()):
+        if target and target != target_name:
+            continue
+        for workflow_name in sorted(t.workflows):
+            entry: dict[str, Any] = {
+                'target': target_name, 'workflow': workflow_name,
+                'status': 'blocked', 'blockers': [],
+                'host_profile': None, 'selected_jobs': [],
+                'workflow_path': f'.github/workflows/devtool-{target_name}-{workflow_name}.yml',
+            }
+            try:
+                _safe_slug(target_name, role='Target')
+                _safe_slug(workflow_name, role='Workflow')
+                selection = _selection(root, target_name, workflow_name)
+                entry['host_profile'] = selection['ci_host_profile']
+                entry['selected_jobs'] = selection['selected_jobs']
+                entry['status'] = 'locally_eligible'
+            except (AdoptionError, ValueError) as exc:
+                entry['blockers'].append(str(exc)[:180])
+            # Never construct an unchecked path from an invalid workflow name.
+            if not _IDENT.fullmatch(target_name) or not _IDENT.fullmatch(workflow_name):
+                observations.append(entry)
+                continue
+            # Existing files must be reviewed, never overwritten by adoption.
+            try:
+                path = _inside_repo(root, entry['workflow_path'])
+            except AdoptionError as exc:
+                entry['status'] = 'review_required'
+                entry['blockers'].append(str(exc)[:180])
+                observations.append(entry)
+                continue
+            alias = _wrapper_name(target_name, workflow_name) if entry['status'] == 'locally_eligible' else ''
+            if path.exists() or path.is_symlink():
+                entry['status'] = 'review_required'
+                entry['blockers'].append('Workflow destination exists; use explicit adoption verification')
+            if alias and f'[wrapper.commands.{alias}]'.encode() in config.read_bytes():
+                entry['status'] = 'review_required'
+                entry['blockers'].append('Wrapper alias exists; use explicit adoption verification')
+            if not clean and entry['status'] == 'locally_eligible':
+                entry['status'] = 'review_required'
+                entry['blockers'].append('Git worktree is not clean; adoption writes are forbidden')
+            observations.append(entry)
+    counts = {status: sum(item['status'] == status for item in observations)
+              for status in ('locally_eligible', 'review_required', 'blocked')}
+    return {
+        'schema_version': 1, 'producer': 'devtool-actions-r06b-adoption-doctor',
+        'read_only': True, 'remote_checked': False, 'source_attested': False,
+        'hosted_qualified': False, 'device_qualified': False,
+        'release_qualified': False,
+        'consumer_commit': _git(root, 'rev-parse', 'HEAD'),
+        'consumer_tree': _git(root, 'rev-parse', 'HEAD^{tree}'),
+        'consumer_worktree_clean': clean,
+        'selected_target': target, 'counts': counts, 'workflows': observations,
+        'qualification': 'LOCAL_REVIEW_ONLY',
+        'next_step': 'Use devtool actions adopt --target TARGET --workflow WORKFLOW --devtool-sha FULL_SHA for exact source-bound review.',
+    }
+
 def adoption_command(root: Path, args: Any) -> dict[str, Any]:
     return adopt(root,
                  target=str(getattr(args, 'adopt_target', '') or ''),
