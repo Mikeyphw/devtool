@@ -629,7 +629,7 @@
         "Termux run 078eb17498bf4cbc8b37e697e9c18a5a: 88 passed, 15 paths verified, commit 244d6d7, LIFE cleanup ok"
       ],
       "open_followups": [
-        "R04B_NATIVE_AND_REAL_HOSTED_PROOF",
+        "AUTHENTICATED_REAL_GITHUB_GET",
         "FORMAL_SOURCE_ARTIFACT_ATTESTATION"
       ]
     },
@@ -652,20 +652,19 @@
       "category": "Native source-aware CLI launcher smoke timeout",
       "priority": "P1",
       "historical_status": "OBSERVED_NATIVE_R04_TEST_FAILURE",
-      "source_status": "R04_R1_REPLACEMENT_CANDIDATE",
-      "qualification_status": "NATIVE_RETRY_PENDING",
+      "source_status": "R04_R1_NATIVE_ACCEPTED",
+      "qualification_status": "NATIVE_88_TESTS_PASS_RETEST",
       "milestone": "R4",
       "affected_paths": [
         "tests/test_core_x04_generated_surfaces.py"
       ],
       "evidence": [
         "Termux run b8c882f722c34d2a99e50233767312b6: 77 passed, 1 failed (devtoolw --help timed out at 20s)",
-        "docs/DEVTOOL_IMPROVEMENTS.md (CORE-X04-R04-TERMUX-COLDSTART-001)"
+        "docs/DEVTOOL_IMPROVEMENTS.md (CORE-X04-R04-TERMUX-COLDSTART-001)",
+        "Termux replacement R04-R1 run 078eb17498bf4cbc8b37e697e9c18a5a: 88 passed, LIFE cleanup ok"
       ],
       "open_followups": [
-        "NATIVE_R04_R1_REAL_LAUNCH_SMOKE",
-        "WRAPPER_COLD_IMPORT_PROFILING_IF_GT_60S",
-        "TRANSACTION_RECOVERY_VERIFICATION"
+        "FULL_COLD_START_PROFILE_ONLY_IF_NEW_TIMEOUT"
       ]
     },
     {
@@ -673,8 +672,8 @@
       "category": "Canonical native child RUN and opt-in GitHub API lineage",
       "priority": "P1",
       "historical_status": "R04_PHASE2_OBLIGATION",
-      "source_status": "R04B_SOURCE_CANDIDATE",
-      "qualification_status": "NATIVE_AND_HOSTED_PENDING",
+      "source_status": "R04B_NATIVE_ACCEPTED",
+      "qualification_status": "NATIVE_113_TESTS_PASS_HOSTED_PENDING",
       "milestone": "R4",
       "affected_paths": [
         "devtool/actions_pipeline.py",
@@ -685,12 +684,36 @@
       "evidence": [
         "docs/DEVTOOL_IMPROVEMENTS.md (R04-LINEAGE-002)",
         "tests/test_actions_r04b_lineage_authority.py",
-        "Termux R04 foundation run 078eb17498bf4cbc8b37e697e9c18a5a (not phase2 acceptance)"
+        "Termux R04 foundation run 078eb17498bf4cbc8b37e697e9c18a5a (not phase2 acceptance)",
+        "Termux R04B run 7524f3b5b2f54e519036682a0331dd05: 113 passed, 0 skipped, commit f4d5532, 16 paths verified, LIFE cleanup ok"
       ],
       "open_followups": [
-        "NATIVE_R04B_TRANSACTION",
         "AUTHENTICATED_REAL_GITHUB_GET",
         "ORIGINAL_PRODUCER_ARTIFACT_ATTESTATION"
+      ]
+    },
+    {
+      "id": "ACTIONS-R05-OPERATOR-001",
+      "category": "Unified Actions Textual review/follow/lineage/collection operator",
+      "priority": "P1",
+      "historical_status": "R05_PLANNED",
+      "source_status": "R05_SOURCE_CANDIDATE",
+      "qualification_status": "NATIVE_TERMUX_AND_REAL_HOSTED_PENDING",
+      "milestone": "R5",
+      "affected_paths": [
+        "devtool/actions_workspace.py",
+        "devtool/actions_operator.py",
+        "tests/test_actions_r05_operator.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (ACTIONS-R05-OPERATOR-001)",
+        "tests/test_actions_r05_operator.py",
+        "Termux R04B source baseline run 7524f3b5b2f54e519036682a0331dd05"
+      ],
+      "open_followups": [
+        "NATIVE_R05_TRANSACTION_AND_TEXTUAL_SMOKE",
+        "AUTHENTICATED_REAL_GITHUB_GET_OR_ARTIFACT_HANDoFF_AS_EXPLICITLY_AUTHORIZED",
+        "R09_FULL_CAMPAIGN"
       ]
     }
   ],
