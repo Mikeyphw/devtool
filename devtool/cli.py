@@ -13521,6 +13521,49 @@ def _main_after_parse(
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
 
+    if args.command == "transaction":
+        from .historical_transactions import (
+            inspect_historical_transaction, retire_historical_transaction,
+            unretire_historical_transaction, HistoricalRetirementError,
+        )
+        repo = resolve_repository_root(
+            str(getattr(args, "repo", "") or ""), str(getattr(args, "config", "") or "")
+        )
+        action = str(getattr(args, "transaction_command", "") or "")
+        txid = str(getattr(args, "transaction_id", "") or "")
+        try:
+            if action == "inspect":
+                result = inspect_historical_transaction(repo, txid)
+            elif action == "retire":
+                if not bool(getattr(args, "preserve_current", False)):
+                    raise HistoricalRetirementError("--preserve-current is required; ordinary abandonment may integrate worktrees")
+                if not bool(getattr(args, "yes", False)) or bool(getattr(args, "dry_run", False)):
+                    result = inspect_historical_transaction(repo, txid)
+                else:
+                    result = retire_historical_transaction(repo, txid)
+            elif action == "unretire":
+                if not bool(getattr(args, "yes", False)):
+                    raise HistoricalRetirementError("unretire requires explicit --yes")
+                result = unretire_historical_transaction(repo, txid)
+            else:
+                raise HistoricalRetirementError("Unknown transaction operation")
+        except (HistoricalRetirementError, OSError, RuntimeError, ValueError) as exc:
+            result = {"ok": False, "eligible": False, "transaction_id": txid,
+                      "classification": "blocked", "reason": str(exc),
+                      "rollback_verified": False, "release_qualified": False}
+        if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+            print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
+        else:
+            print(f"transaction {action}: {result.get('state', result.get('classification', '-'))}")
+            print(f"  id: {txid}")
+            if result.get("reason") or result.get("blockers"):
+                print(f"  blocker: {result.get('reason') or '; '.join(result.get('blockers', []))}")
+            if action == "retire" and not bool(getattr(args, "yes", False)) and result.get("eligible"):
+                print(f"  next: devtool -r {repo} transaction retire {txid} --preserve-current --yes")
+            if result.get("escrow"):
+                print(f"  escrow: {result['escrow']}")
+        return 0 if result.get("ok") or (action in {"inspect", "retire"} and result.get("eligible")) else 2
+
     if args.command == "git":
         # Git state must honor Git's own nearest-repository boundary. In
         # particular, an unenrolled nested Git checkout must not borrow an

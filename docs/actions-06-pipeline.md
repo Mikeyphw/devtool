@@ -9,13 +9,13 @@ ACTIONS-04 SHA-256-verified artifact registry. No background process runs.
 
 ```sh
 cd "$HOME/Code/devtool"
-mkdir -p .devtool
-cp docs/templates/actions-pipeline-live-hud.json .devtool/actions-pipeline.json
-git add .devtool/actions-pipeline.json && git commit -m 'ci: define Live HUD cross-boundary pipeline'
+mkdir -p docs/ci
+cp docs/templates/actions-pipeline-live-hud.json docs/ci/actions-pipeline.json
+git add docs/ci/actions-pipeline.json && git commit -m 'ci: define Live HUD cross-boundary pipeline'
 git push origin main
 
-devtool -r "$PWD" actions pipeline plan --file .devtool/actions-pipeline.json --json
-devtool -r "$PWD" actions pipeline run --file .devtool/actions-pipeline.json --yes --json
+devtool -r "$PWD" actions pipeline plan --file docs/ci/actions-pipeline.json --json
+devtool -r "$PWD" actions pipeline run --file docs/ci/actions-pipeline.json --yes --json
 ```
 
 Copy the 32-character `pipeline_id` from the response; **do not dispatch again**.

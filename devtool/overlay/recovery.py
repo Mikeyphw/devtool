@@ -95,7 +95,18 @@ def _one(repo: Path, tx_path: Path, tx: dict[str, Any]) -> dict[str, Any]:
         blockers.append("missing persisted rollback checkpoint")
     classification = "live_owner" if live else "blocked" if blockers else "retry_preflight_clear"
     # Only the canonical existing rollback command may make recovery decisions.
+    historical_review = {"eligible": False, "command": ""}
+    if status == "rollback-failed" and identity:
+        from ..historical_transactions import inspect_historical_transaction
+        historical = inspect_historical_transaction(repo, identity)
+        historical_review = {
+            "eligible": bool(historical.get("eligible")),
+            "classification": str(historical.get("classification") or "blocked"),
+            "command": (f"devtool -r {repo} transaction inspect {identity} --json"
+                        if historical.get("eligible") else ""),
+        }
     return {
+        "historical_retirement_review": historical_review,
         "transaction_id": identity, "status": status, "phase": phase.get("phase") or "unknown",
         "owner_live": live, "affected_paths": len(entries),
         "checkpoint_paths": len(phase.get("checkpoint_paths") or []),
@@ -195,4 +206,4 @@ def overlay_recovery_plan(repo_root: Path, *, transaction: str = "", limit: int 
             "safe_to_auto_recover": False, "safe_to_delete_artifact": False,
             "decision": disposition, "active_transactions": rows,
             "marker_issues": issues, "life": life,
-            "next_step": "Review exact durable checkpoints and source identity. Only the existing explicit rollback command may retry; never delete retained LIFE artifacts based on this plan."}
+            "next_step": "Review exact durable checkpoints and source identity. Only existing explicit rollback may retry; for ahead-of-HEAD preflight-only rollback failures use `devtool transaction inspect FULL_ID` before considering marker-only retirement. Never auto-retire or delete retained LIFE artifacts."}

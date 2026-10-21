@@ -603,3 +603,25 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Correction:** R01's historical fixture now reads its immutable Git-tree objects from the accepted `70c4f96` commit; R03 verifies the exact original accepted R03 Git tree `8f61a285...` blobs while confirming the current working files match current HEAD. R03 index checks preserve required historic issues while allowing subsequent appended ones; the adversarial erasure case deletes a *protected* issue. The CORE-X04 historical failure remains an accepted negative historical observation, never rewritten to success. The original G8 and R01–R03 witness files are not modified.
 - **Qualification:** Local source regression passes do not imply original signed provenance or current hosted source attestation. R09's independent external matrix remains open.
 - **Final R09 hardening:** Historical R01/R03 tests resolve immutable accepted **Git tree IDs** (not incidental disposable/native commit hashes), so identical qualified contents remain testable on Termux. Source and local-native `pass` require zero skipped tests; absent Textual coverage cannot silently claim complete acceptance.
+
+
+## NEXT-00 and NEXT-01 source work — 2026-10-21
+
+- **DT-056 / NEXT-00 — Candidate:** Reconciled all DT-001–DT-056 in the
+  canonical machine traceability index. Historical R01 and R08/R09 rows are
+  retained without retroactive evidence promotion.
+- **DT-013 / NEXT-00 — Candidate:** pipeline example uses tracked
+  `docs/ci/actions-pipeline.json`, verified by a disposable Git fixture.
+- **DT-014 / NEXT-00 — Already supported:** existing CLI
+  `--keep-artifact` suppresses normal post-success source ZIP cleanup. Failure
+  preserves the input; repeat/retry requires `--keep-artifact` on successful
+  execution. Do not add a redundant `--keep-input` synonym.
+- **DT-028 / NEXT-00 — Candidate:** `python -m devtool.bootstrap_doctor`
+  runs in a standard-library parent with isolated child import, full traceback
+  and cause categorization, without an automatic source mutation.
+- **DT-020 / DT-029 / DT-030 / NEXT-01 — Candidate:** added strict inspect,
+  explicit retire escrow, reversible unretire for superseded preflight-only
+  rollback failures. Existing normal rollback/abandon integration unchanged.
+  Native Termux and actual MMRL historical journal authority remain pending.
+- **Acceptance status:** no independent native/hosted/device/security/release
+  closure implied by local source or disposable tests.

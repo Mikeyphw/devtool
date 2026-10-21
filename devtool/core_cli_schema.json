@@ -6300,6 +6300,69 @@
       },
       "options": [],
       "stable_id": "cli.command.wrapper.verify"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "transaction"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "transaction",
+        "stability": "experimental",
+        "summary": "Historical marker operations (no Git checkout rollback or integration)",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.transaction"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "transaction",
+        "inspect"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "transaction",
+        "stability": "experimental",
+        "summary": "Inspect historical retirement predicates without side effects",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.transaction.inspect"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "transaction",
+        "retire"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "transaction",
+        "stability": "experimental",
+        "summary": "Explicitly escrow historical active markers, preserving checkout",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.transaction.retire"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "transaction",
+        "unretire"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "transaction",
+        "stability": "experimental",
+        "summary": "Restore matching escrowed active markers",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.transaction.unretire"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -61239,6 +61302,244 @@
       "sensitive": false,
       "stable_id": "cli.option.ipc-server.help.aea0e981",
       "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "-h"
+      ],
+      "canonical": "--help",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction"
+        ],
+        "required": false
+      },
+      "scope": "transaction",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "-h"
+      ],
+      "canonical": "--help",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction",
+          "inspect"
+        ],
+        "required": false
+      },
+      "scope": "transaction inspect",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.inspect.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "JSON result",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction",
+          "inspect"
+        ],
+        "required": false
+      },
+      "scope": "transaction inspect",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.inspect.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--dry-run",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "dry_run",
+        "help": "Preview only (default unless --yes)",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction",
+          "retire"
+        ],
+        "required": false
+      },
+      "scope": "transaction retire",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.retire.dry_run",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "-h"
+      ],
+      "canonical": "--help",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction",
+          "retire"
+        ],
+        "required": false
+      },
+      "scope": "transaction retire",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.retire.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "JSON result",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction",
+          "retire"
+        ],
+        "required": false
+      },
+      "scope": "transaction retire",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.retire.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--preserve-current",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "preserve_current",
+        "help": "Explicitly preserve HEAD, index, worktree and backups",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction",
+          "retire"
+        ],
+        "required": false
+      },
+      "scope": "transaction retire",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.retire.preserve_current",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Approve marker escrow after current-source checks",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction",
+          "retire"
+        ],
+        "required": false
+      },
+      "scope": "transaction retire",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.retire.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "-h"
+      ],
+      "canonical": "--help",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction",
+          "unretire"
+        ],
+        "required": false
+      },
+      "scope": "transaction unretire",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.unretire.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "JSON result",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction",
+          "unretire"
+        ],
+        "required": false
+      },
+      "scope": "transaction unretire",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.unretire.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly approve marker restoration",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "transaction",
+          "unretire"
+        ],
+        "required": false
+      },
+      "scope": "transaction unretire",
+      "sensitive": false,
+      "stable_id": "cli.option.transaction.unretire.yes",
+      "value_kind": "_StoreTrueAction"
     }
   ],
   "parser": {
@@ -112939,10 +113240,10 @@
                   }
                 },
                 {
-                  "name": "lineage",
                   "aliases": [],
                   "help": "R04 read-only source/run/artifact lineage (offline; no remote qualification)",
                   "help_present": true,
+                  "name": "lineage",
                   "parser": {
                     "actions": [
                       {
@@ -116557,6 +116858,257 @@
                 }
               ],
               "dest": "actions_command",
+              "group": null,
+              "help": null,
+              "metavar": null,
+              "required": true
+            },
+            "usage": null
+          }
+        },
+        {
+          "aliases": [],
+          "help": "Inspect or explicitly escrow historic failed transaction markers",
+          "help_present": true,
+          "name": "transaction",
+          "parser": {
+            "actions": [],
+            "add_help": true,
+            "allow_abbrev": false,
+            "defaults": {},
+            "description": null,
+            "epilog": null,
+            "formatter": "HelpFormatter",
+            "groups": [],
+            "mutexes": [],
+            "subparsers": {
+              "children": [
+                {
+                  "aliases": [],
+                  "help": "Read-only historical transaction retirement eligibility",
+                  "help_present": true,
+                  "name": "inspect",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "transaction_id",
+                        "group": null,
+                        "help": "Exact transaction ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [],
+                        "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "JSON result",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": false,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Escrow verified historic active markers; never roll back",
+                  "help_present": true,
+                  "name": "retire",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "transaction_id",
+                        "group": null,
+                        "help": "Exact transaction ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [],
+                        "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "preserve_current",
+                        "group": null,
+                        "help": "Explicitly preserve HEAD, index, worktree and backups",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--preserve-current"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "dry_run",
+                        "group": null,
+                        "help": "Preview only (default unless --yes)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--dry-run"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "yes",
+                        "group": null,
+                        "help": "Approve marker escrow after current-source checks",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--yes"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "JSON result",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": false,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Restore exact escrowed active markers, without checkout mutation",
+                  "help_present": true,
+                  "name": "unretire",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "transaction_id",
+                        "group": null,
+                        "help": "Exact transaction ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [],
+                        "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "yes",
+                        "group": null,
+                        "help": "Explicitly approve marker restoration",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--yes"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "JSON result",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": false,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                }
+              ],
+              "dest": "transaction_command",
               "group": null,
               "help": null,
               "metavar": null,

@@ -429,3 +429,20 @@ focused pytest result nor dispatches hosted CI or touches Android by default.
 The baseline is the user-provided R08 tree `82edc9467365060832415027994edef9b16590a7`
 with 103 native local security regressions. Formal security and six original
 substrate obligations remain separately open until independent acceptance.
+
+
+## NEXT-00 / NEXT-01 — Post-R09 extension (2026-10-21; source candidate)
+
+Existing R0–R9 milestones remain historically as recorded. The **NEXT**
+implementation sequence follows `docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md`.
+The canonical DT index now preserves its original R01 source baseline and
+records DT-001–DT-056 with additive current-source assessments; independent
+R09/consumer/device/release qualification is **not** implied.
+
+NEXT-00 fixes the tracked pipeline-manifest example, documents the existing
+`--keep-artifact` behavior and adds dependency-light bootstrap import diagnosis.
+NEXT-01 adds a separate, explicit `transaction inspect/retire/unretire` marker
+escrow. It **does not** run rollback, abandon, isolated worktree integration,
+Git reset/update-ref, cleanup, or release promotion. Retirement accepts only
+clean, advanced-HEAD, all-pending, failed-preflight historical transactions,
+with exact journals, owners, marker and backup checks.
