@@ -37402,9 +37402,71 @@
       ],
       "stability": "stable",
       "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "adoption",
+      "id": "cli.command.adopt-batch",
+      "options": [
+        {
+          "choices": [],
+          "dest": "state_dir",
+          "help": "External durable batch-journal directory",
+          "hidden": false,
+          "id": "cli.option.adopt-batch.state_dir",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--state-dir"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Explicitly permit per-repo adoption commits",
+          "hidden": false,
+          "id": "cli.option.adopt-batch.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit a stable JSON receipt",
+          "hidden": false,
+          "id": "cli.option.adopt-batch.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.adopt-batch.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--help",
+            "-h"
+          ]
+        }
+      ],
+      "path": [
+        "adopt-batch"
+      ],
+      "stability": "experimental",
+      "summary": "Multi-repo source-lock preview, per-repo apply and explicit partial recovery"
     }
   ],
-  "digest": "adb8a86f3d1d976cc308a2b631e264544a7132fb20e75d1bf0f6172a44da354d",
+  "digest": "ae6ab45cf2ee6630550a42ee25d99436f9d8f02fc9115b2dbc05be4a7be98b01",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -37483,6 +37545,7 @@
       "actions watch",
       "actions workflow",
       "actions workflows",
+      "adopt-batch",
       "aff",
       "affected",
       "ai-prompt",
@@ -37916,11 +37979,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 499,
-    "registry_command_count": 373
+    "parser_command_count": 500,
+    "registry_command_count": 374
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "bcabf1b8480d75f802db0dd12882c522bc91acc9affe02af43a9ef1524032dc1",
+  "registry_digest": "3855d62351f29ab6e098f69e5887bdd41d881752b844d729823f4d7e346963e2",
   "registry_schema_version": 1,
   "schema_version": 1
 }

@@ -1,6 +1,7 @@
 # Generated from the CORE-X04 command registry.
 complete -c devtool -f
 complete -c devtool -n '__fish_use_subcommand' -a 'actions'
+complete -c devtool -n '__fish_use_subcommand' -a 'adopt-batch'
 complete -c devtool -n '__fish_use_subcommand' -a 'affected'
 complete -c devtool -n '__fish_use_subcommand' -a 'ai-prompt'
 complete -c devtool -n '__fish_use_subcommand' -a 'android'

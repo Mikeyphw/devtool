@@ -6505,6 +6505,21 @@
       },
       "options": [],
       "stable_id": "cli.command.wrapper.verify"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "adopt-batch"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "adoption",
+        "stability": "experimental",
+        "summary": "Multi-repo source-lock preview, per-repo apply and explicit partial recovery",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.adopt-batch"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -62474,6 +62489,88 @@
       "scope": "wrapper verify",
       "sensitive": false,
       "stable_id": "cli.option.ipc-server.help.aea0e981",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--state-dir",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "state_dir",
+        "help": "External durable batch-journal directory",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "adopt-batch"
+        ],
+        "required": false
+      },
+      "scope": "adopt-batch",
+      "sensitive": false,
+      "stable_id": "cli.option.adopt-batch.state_dir",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly permit per-repo adoption commits",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "adopt-batch"
+        ],
+        "required": false
+      },
+      "scope": "adopt-batch",
+      "sensitive": false,
+      "stable_id": "cli.option.adopt-batch.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit a stable JSON receipt",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "adopt-batch"
+        ],
+        "required": false
+      },
+      "scope": "adopt-batch",
+      "sensitive": false,
+      "stable_id": "cli.option.adopt-batch.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "-h"
+      ],
+      "canonical": "--help",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "adopt-batch"
+        ],
+        "required": false
+      },
+      "scope": "adopt-batch",
+      "sensitive": false,
+      "stable_id": "cli.option.adopt-batch.help",
       "value_kind": "_HelpAction"
     }
   ],
@@ -118764,6 +118861,112 @@
               "metavar": null,
               "required": true
             },
+            "usage": null
+          }
+        },
+        {
+          "aliases": [],
+          "help": "Prepare and resume a source-locked multi-repository adoption",
+          "help_present": true,
+          "name": "adopt-batch",
+          "parser": {
+            "actions": [
+              {
+                "action": "store",
+                "choices": [
+                  "plan",
+                  "apply",
+                  "resume",
+                  "status"
+                ],
+                "const": null,
+                "default": null,
+                "dest": "batch_operation",
+                "group": null,
+                "help": "Operation (plan, apply, resume, status)",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [],
+                "required": true,
+                "type": null
+              },
+              {
+                "action": "store",
+                "choices": null,
+                "const": null,
+                "default": null,
+                "dest": "batch_manifest",
+                "group": null,
+                "help": "Absolute path to source-lock JSON manifest",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [],
+                "required": true,
+                "type": null
+              },
+              {
+                "action": "store",
+                "choices": null,
+                "const": null,
+                "default": null,
+                "dest": "state_dir",
+                "group": null,
+                "help": "External durable batch-journal directory",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [
+                  "--state-dir"
+                ],
+                "required": false,
+                "type": null
+              },
+              {
+                "action": "store_true",
+                "choices": null,
+                "const": true,
+                "default": false,
+                "dest": "yes",
+                "group": null,
+                "help": "Explicitly permit per-repo adoption commits",
+                "metavar": null,
+                "mutex": null,
+                "nargs": 0,
+                "option_strings": [
+                  "--yes"
+                ],
+                "required": false,
+                "type": null
+              },
+              {
+                "action": "store_true",
+                "choices": null,
+                "const": true,
+                "default": false,
+                "dest": "json",
+                "group": null,
+                "help": "Emit a stable JSON receipt",
+                "metavar": null,
+                "mutex": null,
+                "nargs": 0,
+                "option_strings": [
+                  "--json"
+                ],
+                "required": false,
+                "type": null
+              }
+            ],
+            "add_help": true,
+            "allow_abbrev": true,
+            "defaults": {},
+            "description": "Source-locked multi-repository adoption; commits are per checkout, never globally atomic",
+            "epilog": null,
+            "formatter": "HelpFormatter",
+            "groups": [],
+            "mutexes": [],
+            "subparsers": null,
             "usage": null
           }
         }

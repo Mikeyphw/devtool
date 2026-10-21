@@ -1,41 +1,41 @@
 {
-  "bundle_digest": "5cf76f38e5f3fe300a485ac3e3241a9ed9b0211c21ead4b40caf475363916724",
-  "digest": "3ed2626a7ad58431f3445ffcea34183a231df9e5613783ebd0f565d423b1eede",
+  "bundle_digest": "fe5a7b56ef4f3ea5ce8a176a2f78c03e1d39467621f50147b6f9f70d32653462",
+  "digest": "4f7c5eacc5c4828f51df3af01b30f6a6afb5df4c0abd20a0a69a903dbb88cf94",
   "files": {
     "completion.bash": {
-      "sha256": "3efb6e55b8a374ac3bf39f81428eb220ee148e8074be78fd0b415e4626f3a7f1",
-      "size": 1241
+      "sha256": "9c0161f025517158975f8f8d93d4eeecf6e60915da4980105c132d1be14bb5bb",
+      "size": 1253
     },
     "completion.fish": {
-      "sha256": "17909f4f400913cea79084c6b453057a4fe5bc8824c520a8e6c35eb6f8bd6ed7",
-      "size": 5811
+      "sha256": "3d865f2daf47c3ed27fa88ab0a02508e213504bc038b8b7013f31aea5fe4e939",
+      "size": 5875
     },
     "completion.zsh": {
-      "sha256": "96b8f404ee6cf739ac77ac56f454a74ab220314fb22889643ba502e2d6b126f9",
-      "size": 1234
+      "sha256": "b25efd837eba40f3922f16a8664df501661c06b5d4dc85ba300204d8e78b5ae9",
+      "size": 1246
     },
     "config-schema.json": {
-      "sha256": "84e8550ab8372eaaeaa822de7b153b96dbe667f02385ebf372274bdfb5a18026",
+      "sha256": "e178bee5dd94cb53b6bebe5160d232732afbff623f08496768ecf7d60e949ead",
       "size": 12664
     },
     "devtool-core.1": {
-      "sha256": "5ae6d10b703d314791d798ed69e430f6ec8f32db2e44fbbf3c111e9d50332c60",
-      "size": 23709
+      "sha256": "3d82d01b686c6de6e2672b447da45659b2c8efa2bbdeb8ee2a5c5967b32c3443",
+      "size": 23813
     },
     "machine-help.json": {
-      "sha256": "7e1797932d9e4d66dc342cafe15588a64471de5af6d816d0505c1a7acc03119f",
-      "size": 1030442
+      "sha256": "e2deae618b4cd7f9fbb4b3bd6153781ed22f396204e76adec3dfb1e88e9247ba",
+      "size": 1032092
     },
     "ownership.json": {
       "sha256": "0f6469a88323b5956aaaac21ae8d133d93c6bfc8423fc12c3695a0cc4f6e39c6",
       "size": 558
     },
     "reference.md": {
-      "sha256": "55171e2bbf7a222830fc5af4808bc902191474a3bff064e8cbc5200a515f4923",
-      "size": 13518
+      "sha256": "12cd01ee271bc70c6e85dc71992e105b7e2ec50eb35c41a209d188635db6b604",
+      "size": 13615
     }
   },
   "kind": "devtool.core-generated-surface-manifest",
-  "registry_digest": "bcabf1b8480d75f802db0dd12882c522bc91acc9affe02af43a9ef1524032dc1",
+  "registry_digest": "3855d62351f29ab6e098f69e5887bdd41d881752b844d729823f4d7e346963e2",
   "schema_version": 1
 }

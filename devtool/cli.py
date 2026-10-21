@@ -13484,6 +13484,22 @@ def _main_after_parse(
     _normalize_live_progress_args(args)
     if args.command == "wrapper":
         return _handle_wrapper_command(args)
+    if args.command == "adopt-batch":
+        from .adoption_batch import plan as adoption_plan, apply as adoption_apply, AdoptionBlocked
+        manifest = Path(str(args.batch_manifest)).expanduser()
+        state_dir = Path(str(getattr(args, 'state_dir', '') or '')).expanduser() if getattr(args,'state_dir',None) else Path.home()/'.local/state/devtool/adoption-batches'
+        try:
+            if str(args.batch_operation) in {"apply", "resume"}:
+                payload = adoption_apply(manifest, state_dir, yes=bool(getattr(args,'yes',False)))
+            else:
+                payload = adoption_plan(manifest, state_dir)
+        except (AdoptionBlocked, OSError, ValueError, RuntimeError) as exc:
+            payload = {"schema":"devtool.multi-repo-adoption.v1", "ok":False,
+                       "overall":"BLOCKED", "reason":str(exc),
+                       "cross_repository_atomic":False, "formal_release_qualified":False}
+        print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+        return 0 if payload.get('ok',payload.get('safe_to_apply',False)) else 2
+
     ssh_rc = _maybe_delegate_ssh(raw_argv, args)
     if ssh_rc is not None:
         return ssh_rc

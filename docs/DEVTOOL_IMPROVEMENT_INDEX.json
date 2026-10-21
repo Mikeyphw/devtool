@@ -93,7 +93,10 @@
         "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
         "source_status_at_baseline": "PARTIAL_SOURCE",
-        "target_milestone": "NEXT-05"
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PREEXISTING_PARTIAL_OR_OPEN",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
       },
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
@@ -191,7 +194,10 @@
         "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
         "source_status_at_baseline": "PARTIAL_SOURCE",
-        "target_milestone": "NEXT-05"
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PREEXISTING_PARTIAL_OR_OPEN",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
       },
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
@@ -268,7 +274,10 @@
         "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
         "source_status_at_baseline": "PARTIAL_SOURCE",
-        "target_milestone": "NEXT-05"
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PREEXISTING_PARTIAL_OR_OPEN",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
       },
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
@@ -503,7 +512,10 @@
         "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
         "source_status_at_baseline": "PARTIAL_SOURCE",
-        "target_milestone": "NEXT-05"
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PREEXISTING_PARTIAL_OR_OPEN",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
       },
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
@@ -1188,7 +1200,10 @@
         "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
         "source_status_at_baseline": "OPEN_CODE",
-        "target_milestone": "NEXT-05"
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PARTIAL_SOURCE_IMPLEMENTED",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
       },
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
@@ -1209,7 +1224,10 @@
         "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
         "source_status_at_baseline": "PARTIAL_SOURCE",
-        "target_milestone": "NEXT-05"
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PARTIAL_SOURCE_IMPLEMENTED",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
       },
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
@@ -1230,7 +1248,10 @@
         "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
         "source_status_at_baseline": "OPEN_CODE",
-        "target_milestone": "NEXT-05"
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PARTIAL_SOURCE_IMPLEMENTED",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
       },
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
@@ -1251,7 +1272,10 @@
         "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
         "source_status_at_baseline": "OPEN_CODE",
-        "target_milestone": "NEXT-05"
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PARTIAL_SOURCE_IMPLEMENTED",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
       },
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
@@ -1371,7 +1395,10 @@
         "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
         "source_status_at_baseline": "PARTIAL_SOURCE",
-        "target_milestone": "NEXT-05"
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PREEXISTING_PARTIAL_OR_OPEN",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
       },
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
@@ -1425,7 +1452,10 @@
         "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
         "source_status_at_baseline": "OPEN_CODE",
-        "target_milestone": "NEXT-05"
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PARTIAL_SOURCE_IMPLEMENTED",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
       },
       "evidence": [
         "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
@@ -2077,5 +2107,12 @@
       "PARTIAL_SOURCE",
       "BLOCKED_EXTERNAL"
     ]
+  },
+  "next05_incremental_acceptance": {
+    "source_baseline_git_tree": "96a857b791d8caf5050c4d82e2d873b34b579179",
+    "status": "SOURCE_CANDIDATE",
+    "formal_release_qualified": false,
+    "actual_six_consumer_integration": "NOT_RUN",
+    "documentation": "docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md"
   }
 }
