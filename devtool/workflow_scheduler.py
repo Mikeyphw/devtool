@@ -8,10 +8,11 @@ calculates conservative repository read/write scopes, and only overlaps nodes
 when dependencies, scopes, and shared-resource limits all permit it.
 """
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 import threading
+import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from .core.execution_contract import RunId
@@ -153,6 +154,12 @@ class WorkflowExecutionPlan:
     reservation_paths: tuple[str, ...]
     reservation_paths_known: bool
     notes: tuple[str, ...] = ()
+    # Populated by the live scheduler. Static waves remain a conservative
+    # presentation artifact; they do not describe actual execution barriers.
+    actual_start_order: tuple[str, ...] = ()
+    actual_finish_order: tuple[str, ...] = ()
+    node_outcomes: tuple[tuple[str, str], ...] = ()
+    resource_wait_reasons: tuple[tuple[str, str], ...] = ()
 
     @property
     def by_key(self) -> dict[str, WorkflowScheduleNode]:
@@ -176,6 +183,14 @@ class WorkflowExecutionPlan:
                 "paths": list(self.reservation_paths),
             },
             "waves": [wave.as_dict() for wave in self.waves],
+            "static_waves": [wave.as_dict() for wave in self.waves],
+            "runtime_scheduling": {
+                "mode": "dependency-ready" if self.actual_finish_order else "not-executed",
+                "actual_start_order": list(self.actual_start_order),
+                "actual_finish_order": list(self.actual_finish_order),
+                "node_outcomes": dict(self.node_outcomes),
+                "resource_wait_reasons": dict(self.resource_wait_reasons),
+            },
             "nodes": [node.as_dict() for node in self.nodes],
             "notes": list(self.notes),
         }
@@ -746,11 +761,12 @@ def run_workflow_specs(
     parallel_requested: bool | None = None,
     max_parallel_nodes: int = 0,
 ) -> tuple[list[OperationResult], str, WorkflowExecutionPlan | None]:
-    """Execute workflow specs using safe dependency/scope-aware waves.
+    """Execute workflow specs with resource-safe dependency-ready admission.
 
-    Sequential execution delegates unchanged to ``runners.run_specs``. Parallel
-    execution runs each workflow node atomically (its command parts remain
-    sequential) and never starts a node until all dependency states are known.
+    Planning still exposes conservative static waves. When parallelism is
+    requested, execution admits safe ready nodes after *each* predecessor
+    completes, rather than waiting on unrelated siblings from the same wave.
+    A node's command parts remain sequential and a single reservation unit.
     """
     from .runners import _publish_workflow_plan_events, run_specs
 
@@ -801,7 +817,7 @@ def run_workflow_specs(
                     result.metadata["workflow_temporary_output_hashes"] = retained
             cleanup_owned_temp(root_path, identity)
 
-    if plan is None or not plan.parallel_effective:
+    if plan is None or not plan.parallel_requested or len(plan.nodes) < 2 or dry_run:
         try:
             results, raw = run_specs(
             config,
@@ -848,7 +864,12 @@ def run_workflow_specs(
             for spec in specs
         ])
 
-    def execute_node(key: str) -> tuple[str, list[OperationResult], str]:
+    def execute_node(
+        key: str,
+        initial_statuses: dict[str, str],
+        initial_fail_fast: bool = False,
+        initial_cancelled: bool = False,
+    ) -> tuple[str, list[OperationResult], str]:
         local_specs = node_specs[key]
         sink = _NodeProgressProxy(tasker_progress, progress_lock) if tasker_progress is not None else None
         # Shared final log writes are serialized after workers finish. Per-node
@@ -878,9 +899,9 @@ def run_workflow_specs(
                 supervisor_probe=supervisor_probe,
                 heartbeat_callback=locked_heartbeat if heartbeat_callback is not None else None,
                 progress_callback=locked_progress if progress_callback is not None else None,
-                workflow_initial_statuses=dict(statuses),
-                workflow_initial_fail_fast=fail_fast,
-                workflow_initial_cancelled=cancelled,
+                workflow_initial_statuses=initial_statuses,
+                workflow_initial_fail_fast=initial_fail_fast,
+                workflow_initial_cancelled=initial_cancelled,
                 event_run_id=workflow_run_id,
                 publish_workflow_plan=False,
             )
@@ -922,29 +943,157 @@ def run_workflow_specs(
             )
             return key, [result], message
 
-    try:
-        for wave in plan.waves:
-            keys = list(wave.nodes)
-            if len(keys) == 1:
-                key, local_results, local_raw = execute_node(keys[0])
-                results_by_node[key] = local_results
-                raw_by_node[key] = local_raw
-            else:
-                with ThreadPoolExecutor(max_workers=min(plan.max_parallel_nodes, len(keys)), thread_name_prefix="devtool-workflow") as executor:
-                    futures = {executor.submit(execute_node, key): key for key in keys}
-                    for future in as_completed(futures):
-                        key, local_results, local_raw = future.result()
-                        results_by_node[key] = local_results
-                        raw_by_node[key] = local_raw
-            for key in keys:
-                statuses[key] = _node_terminal_state(results_by_node.get(key, ()))
-            if any(state == "cancelled" for state in statuses.values()):
-                cancelled = True
-            if not continue_on_error and any(state == "failed" for state in statuses.values()):
-                fail_fast = True
+    # One executor for the entire DAG, not one executor per static wave.
+    # Positions follow the graph's stable topological expansion. A later node
+    # cannot overtake an eligible earlier node merely because another worker
+    # finished first; incompatible reservations always retain the earlier
+    # node's priority.
+    node_order = tuple(node.key for node in plan.nodes)
+    pending = set(node_order)
+    active: dict[Any, str] = {}
+    active_keys: set[str] = set()
+    actual_starts: list[str] = []
+    actual_finishes: list[str] = []
+    wait_reasons: dict[str, str] = {}
+    monotonic_starts: dict[str, float] = {}
+    completed_statuses: dict[str, str] = {}
 
+    def finish(key: str, local_results: list[OperationResult], local_raw: str) -> None:
+        nonlocal fail_fast, cancelled
+        results_by_node[key] = local_results
+        raw_by_node[key] = local_raw
+        state = _node_terminal_state(local_results)
+        statuses[key] = state
+        completed_statuses[key] = state
+        actual_finishes.append(key)
+        if key in monotonic_starts:
+            elapsed = max(0., time.monotonic() - monotonic_starts[key])
+            for result in local_results:
+                result.metadata["workflow_scheduler_node_elapsed_seconds"] = elapsed
+        for result in local_results:
+            result.metadata["workflow_scheduler_terminal_order"] = len(actual_finishes)
+        if state == "cancelled":
+            cancelled = True
+        if state == "failed" and not continue_on_error:
+            fail_fast = True
+
+    def external_cancelled() -> bool:
+        if tasker_progress is None:
+            return False
+        try:
+            return bool(tasker_progress.cancel_requested())
+        except Exception:
+            return False
+
+    def harvest_completions(done: Iterable[Any]) -> None:
+        """Record already-terminal workers *before* the next admission pass.
+
+        A wait(FIRST_COMPLETED) snapshot can report B first while A fails
+        before the scheduler loops again. Prefer processing every completion
+        already visible to the scheduler over launching newly ready successors.
+        """
+        for future in sorted(done, key=lambda item: node_order.index(active[item])):
+            key = active.pop(future)
+            active_keys.remove(key)
+            try:
+                _, local_results, local_raw = future.result()
+            except BaseException as exc:
+                # execute_node already handles worker exceptions;
+                # this path guards Future/Executor infrastructure.
+                metadata = {**node_specs[key][0].metadata,
+                            "workflow_node_state": "failed",
+                            "workflow_worker_exception": type(exc).__name__}
+                local_raw = f"Workflow future failed: {type(exc).__name__}: {exc}"
+                local_results = [OperationResult(
+                    name=f"workflow:{key}", argv=[], returncode=1,
+                    duration_seconds=0.0, output=local_raw, issues=[],
+                    failure_kind="workflow_worker_exception", metadata=metadata)]
+            finish(key, local_results, local_raw)
+
+    try:
+        with ThreadPoolExecutor(max_workers=plan.max_parallel_nodes, thread_name_prefix="devtool-workflow") as executor:
+            while pending or active:
+                # Harvest everything that is already done before evaluating
+                # newly ready nodes. This is especially important for fail-fast
+                # when one completion was omitted from a prior wait snapshot.
+                already_done = tuple(future for future in active if future.done())
+                if already_done:
+                    harvest_completions(already_done)
+                    continue
+                if external_cancelled():
+                    cancelled = True
+                admitted = False
+                # Blocked/skipped nodes still go through the existing runner's
+                # synthetic result/event path. No subprocess is launched.
+                for key in node_order:
+                    if key not in pending:
+                        continue
+                    # A worker might have become terminal during this scan.
+                    # Drain it first rather than admitting a successor using
+                    # an already-stale dependency/fail-fast snapshot.
+                    if any(future.done() for future in active):
+                        break
+                    node = node_by_key[key]
+                    if any(dep not in completed_statuses for dep in node.depends_on):
+                        continue
+                    blocked_deps = [dep for dep in node.depends_on if completed_statuses[dep] != "passed"]
+                    if blocked_deps or cancelled or fail_fast:
+                        initial = dict(completed_statuses)
+                        pending.remove(key)
+                        # The native runner prioritizes dependency blocking over
+                        # fail-fast and cancellation (cancellation takes precedence).
+                        _, local_results, local_raw = execute_node(key, initial, fail_fast, cancelled)
+                        finish(key, local_results, local_raw)
+                        admitted = True
+                        continue
+                    if len(active) >= plan.max_parallel_nodes:
+                        wait_reasons[key] = "all worker slots occupied"
+                        continue
+                    running = [node_by_key[entry] for entry in node_order if entry in active_keys]
+                    if not _resource_allowed(running, node,
+                                             max_gradle=plan.max_gradle_nodes,
+                                             max_dotnet=plan.max_dotnet_nodes):
+                        wait_reasons[key] = "resource class capacity/exclusivity"
+                        continue
+                    conflict = next((reason for other in running
+                                     if (reason := scheduling_conflict(other, node))), "")
+                    if conflict:
+                        wait_reasons[key] = conflict
+                        continue
+                    # Unknown write sets are serialized by scheduling_conflict,
+                    # including an unknown writer launched first.
+                    pending.remove(key)
+                    initial = dict(completed_statuses)
+                    monotonic_starts[key] = time.monotonic()
+                    admitted_index = len(actual_starts) + 1
+                    actual_starts.append(key)
+                    for spec in node_specs[key]:
+                        spec.metadata["workflow_scheduler_admission_order"] = admitted_index
+                        spec.metadata["workflow_scheduler_admission_mode"] = "dependency-ready"
+                    future = executor.submit(execute_node, key, initial, False, False)
+                    active[future] = key
+                    active_keys.add(key)
+                    admitted = True
+                if active:
+                    # Revisit the queue after *each* completion (or short cancel
+                    # poll); never wait for a whole precomputed wave.
+                    done, _ = wait(tuple(active), timeout=0.1 if tasker_progress is not None else None,
+                                   return_when=FIRST_COMPLETED)
+                    harvest_completions(done)
+                elif pending and not admitted:
+                    # A valid topo graph always has a root or a completed
+                    # dependency; this is an explicit invariant, not a spin.
+                    raise WorkflowScheduleError("Ready queue stalled with pending workflow nodes")
     finally:
         _cleanup_tmp(results_by_node)
+
+    plan = replace(
+        plan,
+        actual_start_order=tuple(actual_starts),
+        actual_finish_order=tuple(actual_finishes),
+        node_outcomes=tuple((key, statuses[key]) for key in node_order if key in statuses),
+        resource_wait_reasons=tuple((key, wait_reasons[key]) for key in node_order if key in wait_reasons),
+    )
 
     ordered_results: list[OperationResult] = []
     ordered_raw: list[str] = []
