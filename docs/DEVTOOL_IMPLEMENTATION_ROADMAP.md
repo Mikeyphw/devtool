@@ -446,3 +446,8 @@ escrow. It **does not** run rollback, abandon, isolated worktree integration,
 Git reset/update-ref, cleanup, or release promotion. Retirement accepts only
 clean, advanced-HEAD, all-pending, failed-preflight historical transactions,
 with exact journals, owners, marker and backup checks.
+
+
+### NEXT-02 typed-evidence source candidate (2026-10-21)
+
+See `docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md` for the versioned record, per-domain no-promotion rules, read-only artifact verification, report normalizers, R04/R06C lineage bridge, and A09 declarative host admission. This is source implementation only; R09 native/hosted/device/consumer/security and formal release remain independently pending. Next-phase work must build provider attestation rather than treating any user-provided JSON as trusted production authority.

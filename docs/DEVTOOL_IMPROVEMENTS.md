@@ -625,3 +625,13 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
   Native Termux and actual MMRL historical journal authority remain pending.
 - **Acceptance status:** no independent native/hosted/device/security/release
   closure implied by local source or disposable tests.
+
+## 2026-10-21 — NEXT-02 typed evidence source candidate
+
+**DT-006, DT-010, DT-017, DT-023, DT-051, DT-052 and DT-054:** Implemented a conservative shared *source-level* evidence/host-admission kernel, without promoting the historical proposal labels to externally validated.
+
+- **Source:** `devtool/evidence_kernel.py`, `devtool/evidence_lineage.py`, `devtool/artifact_evidence.py`, existing `actions_adoption.py`, canonical CLI schema and generated surfaces.
+- **Contracts:** versioned typed per-domain source/run/attempt/test/artifact claims; shape/identity validation; no implicit `PASS` trust; genuine test report normalization (JUnit/pytest, TRX, Go, Cargo, JS JUnit); no-write registry rehash and exact source/run/attempt join; host refusal for OS/architecture/privilege/signing/device/toolchain; R04 EXO/Actions + R06C federation read-only join.
+- **Tests:** focused NEXT-02 falsification test module and A03/A09 parser/generated CLI regressions, with separate native/hosted/consumer/device/authority evidence intentionally NOT_RUN.
+- **Remaining work:** real hosted producer attestation, comprehensive language-specific artifact verification (NEXT-03/04/07/08), in-owner EXO report ingestion and independently collected R09 formal release evidence. The file digest is **not** a signature. See `docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md`.
+- **Status:** source implementation candidate; only local tests described by the included delivery receipt, no user-device installation claim.

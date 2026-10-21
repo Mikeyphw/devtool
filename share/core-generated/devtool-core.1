@@ -370,6 +370,12 @@ Canonical Devtool command.
 .B artifact verify
 Canonical Devtool command.
 .TP
+.B artifacts
+Read\\-only artifact integrity (does not update registry)
+.TP
+.B artifacts verify
+Rehash an existing registry record and inspect producer identity
+.TP
 .B audit
 Canonical Devtool command.
 .TP
@@ -520,6 +526,15 @@ Canonical Devtool command.
 .B doctor
 Canonical Devtool command.
 Aliases: dr
+.TP
+.B evidence
+Typed evidence and report validation (read\\-only)
+.TP
+.B evidence normalize
+Parse an actual test report without claiming hosted authority
+.TP
+.B evidence validate
+Check version, exact identity and untrusted reported gates
 .TP
 .B federation
 Canonical Devtool command.
@@ -1073,6 +1088,18 @@ Canonical Devtool command.
 Canonical Devtool command.
 Aliases: t
 .TP
+.B transaction
+Historical marker operations (no Git checkout rollback or integration)
+.TP
+.B transaction inspect
+Inspect historical retirement predicates without side effects
+.TP
+.B transaction retire
+Explicitly escrow historical active markers, preserving checkout
+.TP
+.B transaction unretire
+Restore matching escrowed active markers
+.TP
 .B tui
 Canonical Devtool command.
 .TP
@@ -1191,6 +1218,6 @@ Canonical Devtool command.
 .B wrapper verify
 Canonical Devtool command.
 .SH GENERATED CONTRACT
-Registry digest: 61ec80305824121ba8225f260d6933b27e92488a941477d5ea70f0d68ca4ed07
+Registry digest: 53af1c1c1c0a33ffb3631dbac46b79f4cc7b5ea9d97b5bec0377a3fd81a8f24d
 .SH SEE ALSO
 devtool(1)

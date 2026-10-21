@@ -10281,534 +10281,6 @@
         },
         {
           "choices": [],
-          "dest": "cancel_pause",
-          "help": "For validate pause, cancel a pending pause request",
-          "hidden": false,
-          "id": "cli.option.validation-pause.cancel_pause.550795b2",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--cancel"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "changed",
-          "help": "Select tests related to changed files during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.changed.316a86bc",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--changed"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "failed",
-          "help": "Rerun tests that failed in the previous structured run during validation",
-          "hidden": false,
-          "id": "cli.option.rollback.failed.11f07d8d",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--failed"
-          ]
-        },
-        {
-          "choices": [
-            "pause",
-            "rollback",
-            "keep",
-            "prompt"
-          ],
-          "dest": "failure_action",
-          "help": "Action after a sequential validation failure; pause preserves the tree and rollback point",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.failure_action.3250787d",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--failure-action"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_filter",
-          "help": "Framework-native test filter used during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.test_filter.72cba02c",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--filter"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "gradle_heap_mb",
-          "help": "Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.gradle_heap_mb.de2726c0",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--gradle-heap-mb"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_ids",
-          "help": "Select an exact framework test ID during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.test_ids.b2e7fa6e",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--id"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "instrumented",
-          "help": "Run Android instrumentation tests during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.instrumented.141002bd",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--instrumented"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "Emit a stable validation-control JSON response",
-          "hidden": false,
-          "id": "cli.option.preflight.json.40461920",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "keep_changes",
-          "help": "When aborting through `validate abort`, keep the applied repository changes",
-          "hidden": false,
-          "id": "cli.option.validation-abort.keep_changes.7cae7d16",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--keep-changes"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_low_priority",
-          "help": "Run validation commands at low scheduler priority",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_low_priority.b50c91d5",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--low-priority"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "machine_file",
-          "help": "Also write the validation-control JSON envelope to this file",
-          "hidden": false,
-          "id": "cli.option.machine_file.e002cadc.020783ef",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--machine-file"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_infrastructure_retries",
-          "help": "Automatically retry environment/tooling interruptions this many times per phase",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_infrastructure_retries.3f0b0994",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-infrastructure-retries"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_phases",
-          "help": "Maximum phase boundaries to cross in this invocation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_phases.7d3dbf9a",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-phases"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_runtime",
-          "help": "Stop before the next phase after this runtime budget, such as 15m or 1h",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_runtime.7d90e881",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-runtime"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_workers",
-          "help": "Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_workers.393d5a10",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-workers"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "memory_guard_mb",
-          "help": "Override the validation free-memory guard for this invocation; 0 disables it and explicit CLI value wins over phase defaults",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.memory_guard_mb.70b6a86a",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--memory-guard-mb"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_methods",
-          "help": "Select a test method during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.instrumentation.instrumentation_methods.01300564",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--method"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_next",
-          "help": "Run only the next pending phase (the default for `validate continue`)",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_next.3a737448",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--next"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_build_cache",
-          "help": "Disable the Gradle build cache for validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_build_cache.5019b28d.23e067b6",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-build-cache"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_daemon",
-          "help": "Disable the Gradle daemon during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_daemon.5b63a4b6.d96acf53",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-daemon"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_parallel",
-          "help": "Disable Gradle parallel execution for validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_parallel.bdc778b7.454c8628",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-parallel"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "workflow_parallel",
-          "help": "Force workflow DAG nodes to execute sequentially",
-          "hidden": false,
-          "id": "cli.option.invoke.workflow_parallel.01b4fd1e.04d3e7f4",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-workflow-parallel"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_low_priority",
-          "help": "Do not lower validation process priority",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_low_priority.1ebfcb18.e1c1b2a0",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--normal-priority"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_paths",
-          "help": "Select tests below a source path or package during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.git.rerere.record.rerere_paths.17cd9c64",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--path"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "pause_after",
-          "help": "Pause after this phase (alias for --through)",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.pause_after.2c62b7d3",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--pause-after"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "phase_only",
-          "help": "Run only one named pending phase without automatically including prerequisites",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.phase_only.8a58df4c",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--phase-only"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_workflow_profile",
-          "help": "Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile)",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_workflow_profile.b1045a6a",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--profile"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "pytest_args",
-          "help": "Pass one structured argument directly to pytest; repeatable (for example --pytest-arg=--maxfail=1).",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.pytest_args.2152feb6",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--pytest-arg"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "pytest_tests",
-          "help": "Run exactly this pytest file/node ID; repeatable. Suppresses default/affected pytest targets unless --pytest-include-defaults is set.",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.pytest_tests.197eaa59",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--pytest-test"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "reason",
-          "help": "",
-          "hidden": true,
-          "id": "cli.option.validation-accept-plan-change.reason.7ed6fb57",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--reason"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "require_charging",
-          "help": "Pause before a phase unless the Android device is charging",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.require_charging.197a1722",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--require-charging"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "require_complete",
-          "help": "Return a failure code when validation pauses incomplete",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.require_complete.1f5252e0",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--require-complete"
-          ]
-        },
-        {
-          "choices": [
-            "next",
-            "through",
-            "selected",
-            "remaining"
-          ],
-          "dest": "validation_run_scope",
-          "help": "Stable validation run scope",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_run_scope.185d8429",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--scope"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "select",
-          "help": "Select tests by type, suite, tag, class, or name during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.select.47ee3329",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--select"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "sequential",
-          "help": "Use a persistent Android/Gradle validation session",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.sequential.2dd5957b",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--sequential"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "skip_test",
-          "help": "Skip test during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.skip_test.05ca95c0",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--skip-test"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "stop_above_temperature",
-          "help": "Pause before a phase when device temperature exceeds this value",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.stop_above_temperature.0b353538",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--stop-above-temperature"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "stop_gradle_after_phase",
-          "help": "Stop Gradle daemons after each completed phase",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.stop_gradle_after_phase.1a18c602",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--stop-gradle-after-phase"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "tag",
-          "help": "Include tests with this tag/trait/annotation during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.oci.gate1.oci_tag.7c5105b2",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--tag"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_task",
-          "help": "Exclusive native validation unit list; repeatable. Android/Gradle values are Gradle tasks; Python/Node/Rust/etc. values are supported validation actions such as test, lint, build, package-check, or Python test targets.",
-          "hidden": false,
-          "id": "cli.option.ssh.qualify.ssh_qualify_tasks.0cc0b36a",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--task",
-            "--test-task"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "workflow_parallel",
-          "help": "Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe",
-          "hidden": false,
-          "id": "cli.option.invoke.workflow_parallel.583f2297",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--workflow-parallel"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.ipc-server.help.237ce011",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        },
-        {
-          "choices": [],
           "dest": "reset_all",
           "help": "",
           "hidden": true,
@@ -10865,6 +10337,30 @@
           "required": false,
           "spellings": [
             "--build-cache"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "cancel_pause",
+          "help": "For validate pause, cancel a pending pause request",
+          "hidden": false,
+          "id": "cli.option.validation-pause.cancel_pause.550795b2",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--cancel"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "changed",
+          "help": "Select tests related to changed files during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.changed.316a86bc",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--changed"
           ]
         },
         {
@@ -11032,6 +10528,47 @@
         },
         {
           "choices": [],
+          "dest": "failed",
+          "help": "Rerun tests that failed in the previous structured run during validation",
+          "hidden": false,
+          "id": "cli.option.rollback.failed.11f07d8d",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--failed"
+          ]
+        },
+        {
+          "choices": [
+            "pause",
+            "rollback",
+            "keep",
+            "prompt"
+          ],
+          "dest": "failure_action",
+          "help": "Action after a sequential validation failure; pause preserves the tree and rollback point",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.failure_action.3250787d",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--failure-action"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "test_filter",
+          "help": "Framework-native test filter used during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.test_filter.72cba02c",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--filter"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "fixup_target",
           "help": "Create a fixup! commit targeting REV (defaults to HEAD in fixup mode)",
           "hidden": false,
@@ -11070,6 +10607,18 @@
         },
         {
           "choices": [],
+          "dest": "gradle_heap_mb",
+          "help": "Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.gradle_heap_mb.de2726c0",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--gradle-heap-mb"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "gradle_metaspace_mb",
           "help": "Override the Gradle validation max metaspace; 0 disables Devtool's explicit MaxMetaspaceSize cap",
           "hidden": false,
@@ -11079,6 +10628,18 @@
           "spellings": [
             "--gradle-metaspace-mb",
             "--metaspace-guard-mb"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "test_ids",
+          "help": "Select an exact framework test ID during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.test_ids.b2e7fa6e",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--id"
           ]
         },
         {
@@ -11103,6 +10664,18 @@
           "required": false,
           "spellings": [
             "--ignore-checksum"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "instrumented",
+          "help": "Run Android instrumentation tests during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.instrumented.141002bd",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--instrumented"
           ]
         },
         {
@@ -11134,6 +10707,18 @@
         },
         {
           "choices": [],
+          "dest": "json",
+          "help": "Emit a stable validation-control JSON response",
+          "hidden": false,
+          "id": "cli.option.preflight.json.40461920",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "keep_artifact",
           "help": "Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)",
           "hidden": false,
@@ -11146,6 +10731,18 @@
         },
         {
           "choices": [],
+          "dest": "keep_changes",
+          "help": "When aborting through `validate abort`, keep the applied repository changes",
+          "hidden": false,
+          "id": "cli.option.validation-abort.keep_changes.7cae7d16",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--keep-changes"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "keep_gradle_daemon",
           "help": "Keep Gradle daemons available between phase invocations",
           "hidden": false,
@@ -11154,6 +10751,18 @@
           "required": false,
           "spellings": [
             "--keep-gradle-daemon"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_low_priority",
+          "help": "Run validation commands at low scheduler priority",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_low_priority.b50c91d5",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--low-priority"
           ]
         },
         {
@@ -11173,6 +10782,42 @@
         },
         {
           "choices": [],
+          "dest": "machine_file",
+          "help": "Also write the validation-control JSON envelope to this file",
+          "hidden": false,
+          "id": "cli.option.machine_file.e002cadc.020783ef",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--machine-file"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_infrastructure_retries",
+          "help": "Automatically retry environment/tooling interruptions this many times per phase",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_infrastructure_retries.3f0b0994",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-infrastructure-retries"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_phases",
+          "help": "Maximum phase boundaries to cross in this invocation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_phases.7d3dbf9a",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-phases"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "max_resource_retries",
           "help": "Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available",
           "hidden": false,
@@ -11181,6 +10826,66 @@
           "required": false,
           "spellings": [
             "--max-resource-retries"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_runtime",
+          "help": "Stop before the next phase after this runtime budget, such as 15m or 1h",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_runtime.7d90e881",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-runtime"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_workers",
+          "help": "Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_workers.393d5a10",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-workers"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "memory_guard_mb",
+          "help": "Override the validation free-memory guard for this invocation; 0 disables it and explicit CLI value wins over phase defaults",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.memory_guard_mb.70b6a86a",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--memory-guard-mb"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "test_methods",
+          "help": "Select a test method during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.instrumentation.instrumentation_methods.01300564",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--method"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_next",
+          "help": "Run only the next pending phase (the default for `validate continue`)",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_next.3a737448",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--next"
           ]
         },
         {
@@ -11221,6 +10926,18 @@
         },
         {
           "choices": [],
+          "dest": "validation_build_cache",
+          "help": "Disable the Gradle build cache for validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_build_cache.5019b28d.23e067b6",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-build-cache"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "no_commit",
           "help": "Disable a commit requested by the artifact manifest; alias for --commit-mode none",
           "hidden": false,
@@ -11229,6 +10946,18 @@
           "required": false,
           "spellings": [
             "--no-commit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_daemon",
+          "help": "Disable the Gradle daemon during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_daemon.5b63a4b6.d96acf53",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-daemon"
           ]
         },
         {
@@ -11257,6 +10986,18 @@
         },
         {
           "choices": [],
+          "dest": "validation_parallel",
+          "help": "Disable Gradle parallel execution for validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_parallel.bdc778b7.454c8628",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-parallel"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "no_rollback_on_failure",
           "help": "Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity",
           "hidden": false,
@@ -11281,6 +11022,30 @@
         },
         {
           "choices": [],
+          "dest": "workflow_parallel",
+          "help": "Force workflow DAG nodes to execute sequentially",
+          "hidden": false,
+          "id": "cli.option.invoke.workflow_parallel.01b4fd1e.04d3e7f4",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-workflow-parallel"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_low_priority",
+          "help": "Do not lower validation process priority",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_low_priority.1ebfcb18.e1c1b2a0",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--normal-priority"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "validation_parallel",
           "help": "Enable Gradle parallel execution for validation",
           "hidden": false,
@@ -11293,6 +11058,30 @@
         },
         {
           "choices": [],
+          "dest": "test_paths",
+          "help": "Select tests below a source path or package during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.git.rerere.record.rerere_paths.17cd9c64",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--path"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pause_after",
+          "help": "Pause after this phase (alias for --through)",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.pause_after.2c62b7d3",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--pause-after"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "phase",
           "help": "Run a named phase and every still-pending prerequisite; repeat with --scope selected",
           "hidden": false,
@@ -11301,6 +11090,18 @@
           "required": false,
           "spellings": [
             "--phase"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "phase_only",
+          "help": "Run only one named pending phase without automatically including prerequisites",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.phase_only.8a58df4c",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--phase-only"
           ]
         },
         {
@@ -11325,6 +11126,30 @@
           "required": false,
           "spellings": [
             "--preview"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_workflow_profile",
+          "help": "Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile)",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_workflow_profile.b1045a6a",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--profile"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pytest_args",
+          "help": "Pass one structured argument directly to pytest; repeatable (for example --pytest-arg=--maxfail=1).",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.pytest_args.2152feb6",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--pytest-arg"
           ]
         },
         {
@@ -11365,6 +11190,30 @@
         },
         {
           "choices": [],
+          "dest": "pytest_tests",
+          "help": "Run exactly this pytest file/node ID; repeatable. Suppresses default/affected pytest targets unless --pytest-include-defaults is set.",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.pytest_tests.197eaa59",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--pytest-test"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "reason",
+          "help": "",
+          "hidden": true,
+          "id": "cli.option.validation-accept-plan-change.reason.7ed6fb57",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--reason"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "rebase",
           "help": "Rebase a single overlay inventory against the current repository before applying",
           "hidden": false,
@@ -11373,6 +11222,30 @@
           "required": false,
           "spellings": [
             "--rebase"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "require_charging",
+          "help": "Pause before a phase unless the Android device is charging",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.require_charging.197a1722",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--require-charging"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "require_complete",
+          "help": "Return a failure code when validation pauses incomplete",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.require_complete.1f5252e0",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--require-complete"
           ]
         },
         {
@@ -11464,6 +11337,47 @@
           ]
         },
         {
+          "choices": [
+            "next",
+            "through",
+            "selected",
+            "remaining"
+          ],
+          "dest": "validation_run_scope",
+          "help": "Stable validation run scope",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_run_scope.185d8429",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--scope"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "select",
+          "help": "Select tests by type, suite, tag, class, or name during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.select.47ee3329",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--select"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "sequential",
+          "help": "Use a persistent Android/Gradle validation session",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.sequential.2dd5957b",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--sequential"
+          ]
+        },
+        {
           "choices": [],
           "dest": "session",
           "help": "Specific validation session ID",
@@ -11517,6 +11431,18 @@
         },
         {
           "choices": [],
+          "dest": "skip_test",
+          "help": "Skip test during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.skip_test.05ca95c0",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--skip-test"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "static_validate",
           "help": "Apply artifact and run only artifact/static validation scripts without Gradle validation phases",
           "hidden": false,
@@ -11525,6 +11451,18 @@
           "required": false,
           "spellings": [
             "--static-validate"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "stop_above_temperature",
+          "help": "Pause before a phase when device temperature exceeds this value",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.stop_above_temperature.0b353538",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--stop-above-temperature"
           ]
         },
         {
@@ -11549,6 +11487,43 @@
           "required": false,
           "spellings": [
             "--stop-below-disk-mb"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "stop_gradle_after_phase",
+          "help": "Stop Gradle daemons after each completed phase",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.stop_gradle_after_phase.1a18c602",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--stop-gradle-after-phase"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "tag",
+          "help": "Include tests with this tag/trait/annotation during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.oci.gate1.oci_tag.7c5105b2",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--tag"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "test_task",
+          "help": "Exclusive native validation unit list; repeatable. Android/Gradle values are Gradle tasks; Python/Node/Rust/etc. values are supported validation actions such as test, lint, build, package-check, or Python test targets.",
+          "hidden": false,
+          "id": "cli.option.ssh.qualify.ssh_qualify_tasks.0cc0b36a",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--task",
+            "--test-task"
           ]
         },
         {
@@ -11610,6 +11585,31 @@
           "spellings": [
             "--workflow-max-workers"
           ]
+        },
+        {
+          "choices": [],
+          "dest": "workflow_parallel",
+          "help": "Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe",
+          "hidden": false,
+          "id": "cli.option.invoke.workflow_parallel.583f2297",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--workflow-parallel"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.ipc-server.help.237ce011",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
         }
       ],
       "path": [
@@ -11658,6 +11658,30 @@
         },
         {
           "choices": [],
+          "dest": "reset_all",
+          "help": "",
+          "hidden": true,
+          "id": "cli.option.validation-reset.reset_all.1ffe2765",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--all"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "allow_merge_amend",
+          "help": "Allow amending a merge commit (refused by default)",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.allow_merge_amend.201da0fc",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--allow-merge-amend"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "allow_published_rewrite",
           "help": "Allow amending HEAD when reachable from a protected upstream/remote ref; never pushes",
           "hidden": false,
@@ -11666,6 +11690,30 @@
           "required": false,
           "spellings": [
             "--allow-published-rewrite"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "amend",
+          "help": "Safely amend HEAD after apply; alias for --commit-mode amend",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.amend.b4100917",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--amend"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_build_cache",
+          "help": "Enable the Gradle build cache for validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_build_cache.8b1c6aa5",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--build-cache"
           ]
         },
         {
@@ -11702,6 +11750,19 @@
           "required": false,
           "spellings": [
             "--changed-from"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "test_classes",
+          "help": "Select a test class during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.instrumentation.instrumentation_classes.5968d818",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--class",
+            "--tests"
           ]
         },
         {
@@ -11747,6 +11808,30 @@
         },
         {
           "choices": [],
+          "dest": "cpu_limit",
+          "help": "Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.cpu_limit.10bb2803",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--cpu-limit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_daemon",
+          "help": "Allow the Gradle daemon during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_daemon.64bbf9ef",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--daemon"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "defer_validate",
           "help": "Apply now, preserve rollback state, and create a resumable validation session without running a phase",
           "hidden": false,
@@ -11759,6 +11844,18 @@
         },
         {
           "choices": [],
+          "dest": "delete_artifact_on_failure",
+          "help": "Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.delete_artifact_on_failure.3a3ce80c",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--delete-artifact-on-failure"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "diff",
           "help": "Show a repo-relative unified diff of artifact changes",
           "hidden": false,
@@ -11767,6 +11864,43 @@
           "required": false,
           "spellings": [
             "--diff"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "event_limit",
+          "help": "Maximum event records to return",
+          "hidden": false,
+          "id": "cli.option.validation-status.event_limit.8229afe6",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--event-limit",
+            "--limit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "events",
+          "help": "Include durable events in validation status JSON",
+          "hidden": false,
+          "id": "cli.option.validation-status.events.559ffc35",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--events"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "exclude_tag",
+          "help": "Exclude tests with this tag/trait/annotation during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.exclude_tag.1341a1af",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--exclude-tag"
           ]
         },
         {
@@ -11862,6 +11996,19 @@
         },
         {
           "choices": [],
+          "dest": "gradle_metaspace_mb",
+          "help": "Override the Gradle validation max metaspace; 0 disables Devtool's explicit MaxMetaspaceSize cap",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.gradle_metaspace_mb.c25e15c0",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--gradle-metaspace-mb",
+            "--metaspace-guard-mb"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "test_ids",
           "help": "Select an exact framework test ID during validation; repeatable",
           "hidden": false,
@@ -11870,6 +12017,18 @@
           "required": false,
           "spellings": [
             "--id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "if_revision",
+          "help": "Apply the control request only when the session revision matches",
+          "hidden": false,
+          "id": "cli.option.validation-accept-plan-change.if_revision.a6f54acb",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--if-revision"
           ]
         },
         {
@@ -11894,621 +12053,6 @@
           "required": false,
           "spellings": [
             "--instrumented"
-          ]
-        },
-        {
-          "choices": [
-            "pretty",
-            "compact"
-          ],
-          "dest": "machine",
-          "help": "Machine response formatting; implies --json",
-          "hidden": false,
-          "id": "cli.option.validation-accept-plan-change.machine.27160fe4",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--machine"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "machine_file",
-          "help": "Also write the validation-control JSON envelope to this file",
-          "hidden": false,
-          "id": "cli.option.machine_file.e002cadc.4d832f62",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--machine-file"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_infrastructure_retries",
-          "help": "Automatically retry environment/tooling interruptions this many times per phase",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_infrastructure_retries.15f34fb4",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-infrastructure-retries"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_resource_retries",
-          "help": "Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_resource_retries.0b9f3f3d",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-resource-retries"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_runtime",
-          "help": "Stop before the next phase after this runtime budget, such as 15m or 1h",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_runtime.77263ad0",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-runtime"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_workers",
-          "help": "Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_workers.0499f4e6",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-workers"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "no_apply_notification",
-          "help": "Do not show the final apply notification/toast",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.no_apply_notification.69422365",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-apply-notification"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "no_auto_retry",
-          "help": "Disable automatic infrastructure and resource retries for this session",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.no_auto_retry.a8a48b70",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-auto-retry"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "no_commit",
-          "help": "Disable a commit requested by the artifact manifest; alias for --commit-mode none",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.no_commit.1a7b266a",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-commit"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_daemon",
-          "help": "Disable the Gradle daemon during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_daemon.5b63a4b6.08e41804",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-daemon"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "no_manifest_check",
-          "help": "Disable devtool artifact manifest validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.no_manifest_check.02f72a70",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-manifest-check"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "disable_metaspace_guard",
-          "help": "Do not set an explicit Gradle MaxMetaspaceSize for this validation invocation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.disable_metaspace_guard.5fc4130b",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-metaspace-guard"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_parallel",
-          "help": "Disable Gradle parallel execution for validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_parallel.bdc778b7.1ad2d89e",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-parallel"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "no_rollback_on_failure",
-          "help": "Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.no_rollback_on_failure.1b9cec6a",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-rollback-on-failure"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "workflow_parallel",
-          "help": "Force workflow DAG nodes to execute sequentially",
-          "hidden": false,
-          "id": "cli.option.invoke.workflow_parallel.01b4fd1e.393ba08f",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-workflow-parallel"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_low_priority",
-          "help": "Do not lower validation process priority",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_low_priority.1ebfcb18.dae093ca",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--normal-priority"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "phase",
-          "help": "Run a named phase and every still-pending prerequisite; repeat with --scope selected",
-          "hidden": false,
-          "id": "cli.option.validation-reset.phase.3434606a",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--phase"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "phase_only",
-          "help": "Run only one named pending phase without automatically including prerequisites",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.phase_only.75815cec",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--phase-only"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "preserve_dirty",
-          "help": "Explicitly request transactional preservation/restoration of staged, unstaged, untracked, symlink, mode, and index state",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.preserve_dirty.6cfa6162",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--preserve-dirty"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_workflow_profile",
-          "help": "Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile)",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_workflow_profile.23723cd1",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--profile"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "pytest_args",
-          "help": "Pass one structured argument directly to pytest; repeatable (for example --pytest-arg=--maxfail=1).",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.pytest_args.17428558",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--pytest-arg"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "pytest_k",
-          "help": "Apply a pytest -k expression in addition to explicit pytest tests/selectors.",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.pytest_k.19076d2f",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--pytest-k"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "rebase",
-          "help": "Rebase a single overlay inventory against the current repository before applying",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.rebase.07b4be51",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--rebase"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "reset_author",
-          "help": "With amend mode, reset commit author to the current Git identity",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.reset_author.24b002d5",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--reset-author"
-          ]
-        },
-        {
-          "choices": [
-            "automatic",
-            "android-low-power",
-            "standard"
-          ],
-          "dest": "validation_resource_profile",
-          "help": "Validation resource profile",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_resource_profile.0533288f",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--resource-profile"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "restart_session",
-          "help": "Replace an existing non-transactional validation session",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.restart_session.1411f93c",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--restart-session"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "retry_failed",
-          "help": "Retry the cached failed phase and every dependent phase",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.retry_failed.ab23e78f",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--retry-failed"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "rollback",
-          "help": "For validate abort, explicitly roll back the attached transaction",
-          "hidden": false,
-          "id": "cli.option.validation-abort.rollback.78fe4b97",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--rollback"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "select",
-          "help": "Select tests by type, suite, tag, class, or name during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.select.43348593",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--select"
-          ]
-        },
-        {
-          "choices": [
-            "off",
-            "if-configured",
-            "required"
-          ],
-          "dest": "signing",
-          "help": "Git SSH signing policy for the result commit; default comes from [git].signing",
-          "hidden": false,
-          "id": "cli.option.git.campaign.seal.signing.2582e5a1",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--signing"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "skip_restore",
-          "help": "Skip restore during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.skip_restore.05e351a2",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--skip-restore"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "skip_test",
-          "help": "Skip test during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.skip_test.d9d9bbde",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--skip-test"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "static_validate",
-          "help": "Apply artifact and run only artifact/static validation scripts without Gradle validation phases",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.static_validate.0e95348b",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--static-validate"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_profile",
-          "help": "Saved test profile used by artifact validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.test_profile.8d15a158",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--test-profile"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "workflow_max_workers",
-          "help": "Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default",
-          "hidden": false,
-          "id": "cli.option.invoke.workflow_max_workers.ca8679f2",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--workflow-max-workers"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "workflow_parallel",
-          "help": "Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe",
-          "hidden": false,
-          "id": "cli.option.invoke.workflow_parallel.8516cfcf",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--workflow-parallel"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.ipc-server.help.0a49d1be",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "reset_all",
-          "help": "",
-          "hidden": true,
-          "id": "cli.option.validation-reset.reset_all.1ffe2765",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--all"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "allow_merge_amend",
-          "help": "Allow amending a merge commit (refused by default)",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.allow_merge_amend.201da0fc",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--allow-merge-amend"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "amend",
-          "help": "Safely amend HEAD after apply; alias for --commit-mode amend",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.amend.b4100917",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--amend"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_build_cache",
-          "help": "Enable the Gradle build cache for validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_build_cache.8b1c6aa5",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--build-cache"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_classes",
-          "help": "Select a test class during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.instrumentation.instrumentation_classes.5968d818",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--class",
-            "--tests"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "cpu_limit",
-          "help": "Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.cpu_limit.10bb2803",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--cpu-limit"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_daemon",
-          "help": "Allow the Gradle daemon during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_daemon.64bbf9ef",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--daemon"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "delete_artifact_on_failure",
-          "help": "Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.delete_artifact_on_failure.3a3ce80c",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--delete-artifact-on-failure"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "event_limit",
-          "help": "Maximum event records to return",
-          "hidden": false,
-          "id": "cli.option.validation-status.event_limit.8229afe6",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--event-limit",
-            "--limit"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "events",
-          "help": "Include durable events in validation status JSON",
-          "hidden": false,
-          "id": "cli.option.validation-status.events.559ffc35",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--events"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "exclude_tag",
-          "help": "Exclude tests with this tag/trait/annotation during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.exclude_tag.1341a1af",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--exclude-tag"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "gradle_metaspace_mb",
-          "help": "Override the Gradle validation max metaspace; 0 disables Devtool's explicit MaxMetaspaceSize cap",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.gradle_metaspace_mb.c25e15c0",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--gradle-metaspace-mb",
-            "--metaspace-guard-mb"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "if_revision",
-          "help": "Apply the control request only when the session revision matches",
-          "hidden": false,
-          "id": "cli.option.validation-accept-plan-change.if_revision.a6f54acb",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--if-revision"
           ]
         },
         {
@@ -12599,6 +12143,45 @@
           ]
         },
         {
+          "choices": [
+            "pretty",
+            "compact"
+          ],
+          "dest": "machine",
+          "help": "Machine response formatting; implies --json",
+          "hidden": false,
+          "id": "cli.option.validation-accept-plan-change.machine.27160fe4",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--machine"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "machine_file",
+          "help": "Also write the validation-control JSON envelope to this file",
+          "hidden": false,
+          "id": "cli.option.machine_file.e002cadc.4d832f62",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--machine-file"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_infrastructure_retries",
+          "help": "Automatically retry environment/tooling interruptions this many times per phase",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_infrastructure_retries.15f34fb4",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-infrastructure-retries"
+          ]
+        },
+        {
           "choices": [],
           "dest": "max_phases",
           "help": "Maximum phase boundaries to cross in this invocation",
@@ -12608,6 +12191,42 @@
           "required": false,
           "spellings": [
             "--max-phases"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_resource_retries",
+          "help": "Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_resource_retries.0b9f3f3d",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-resource-retries"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_runtime",
+          "help": "Stop before the next phase after this runtime budget, such as 15m or 1h",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_runtime.77263ad0",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-runtime"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_workers",
+          "help": "Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_workers.0499f4e6",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-workers"
           ]
         },
         {
@@ -12648,6 +12267,18 @@
         },
         {
           "choices": [],
+          "dest": "no_apply_notification",
+          "help": "Do not show the final apply notification/toast",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.no_apply_notification.69422365",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-apply-notification"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "no_artifact_script",
           "help": "Skip embedded artifact validation scripts while keeping built-in validation",
           "hidden": false,
@@ -12656,6 +12287,18 @@
           "required": false,
           "spellings": [
             "--no-artifact-script"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "no_auto_retry",
+          "help": "Disable automatic infrastructure and resource retries for this session",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.no_auto_retry.a8a48b70",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-auto-retry"
           ]
         },
         {
@@ -12672,6 +12315,78 @@
         },
         {
           "choices": [],
+          "dest": "no_commit",
+          "help": "Disable a commit requested by the artifact manifest; alias for --commit-mode none",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.no_commit.1a7b266a",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-commit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_daemon",
+          "help": "Disable the Gradle daemon during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_daemon.5b63a4b6.08e41804",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-daemon"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "no_manifest_check",
+          "help": "Disable devtool artifact manifest validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.no_manifest_check.02f72a70",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-manifest-check"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "disable_metaspace_guard",
+          "help": "Do not set an explicit Gradle MaxMetaspaceSize for this validation invocation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.disable_metaspace_guard.5fc4130b",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-metaspace-guard"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_parallel",
+          "help": "Disable Gradle parallel execution for validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_parallel.bdc778b7.1ad2d89e",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-parallel"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "no_rollback_on_failure",
+          "help": "Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.no_rollback_on_failure.1b9cec6a",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-rollback-on-failure"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "no_validate",
           "help": "Disable validation requested or required by the artifact manifest",
           "hidden": false,
@@ -12680,6 +12395,30 @@
           "required": false,
           "spellings": [
             "--no-validate"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "workflow_parallel",
+          "help": "Force workflow DAG nodes to execute sequentially",
+          "hidden": false,
+          "id": "cli.option.invoke.workflow_parallel.01b4fd1e.393ba08f",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-workflow-parallel"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_low_priority",
+          "help": "Do not lower validation process priority",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_low_priority.1ebfcb18.dae093ca",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--normal-priority"
           ]
         },
         {
@@ -12720,6 +12459,42 @@
         },
         {
           "choices": [],
+          "dest": "phase",
+          "help": "Run a named phase and every still-pending prerequisite; repeat with --scope selected",
+          "hidden": false,
+          "id": "cli.option.validation-reset.phase.3434606a",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--phase"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "phase_only",
+          "help": "Run only one named pending phase without automatically including prerequisites",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.phase_only.75815cec",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--phase-only"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "preserve_dirty",
+          "help": "Explicitly request transactional preservation/restoration of staged, unstaged, untracked, symlink, mode, and index state",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.preserve_dirty.6cfa6162",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--preserve-dirty"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "preview",
           "help": "Preview archive changes without applying",
           "hidden": false,
@@ -12732,6 +12507,30 @@
         },
         {
           "choices": [],
+          "dest": "validation_workflow_profile",
+          "help": "Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile)",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_workflow_profile.23723cd1",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--profile"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pytest_args",
+          "help": "Pass one structured argument directly to pytest; repeatable (for example --pytest-arg=--maxfail=1).",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.pytest_args.17428558",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--pytest-arg"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "pytest_include_defaults",
           "help": "Keep configured/affected default pytest targets in addition to explicit --pytest-test selectors.",
           "hidden": false,
@@ -12740,6 +12539,18 @@
           "required": false,
           "spellings": [
             "--pytest-include-defaults"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pytest_k",
+          "help": "Apply a pytest -k expression in addition to explicit pytest tests/selectors.",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.pytest_k.19076d2f",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--pytest-k"
           ]
         },
         {
@@ -12780,6 +12591,18 @@
         },
         {
           "choices": [],
+          "dest": "rebase",
+          "help": "Rebase a single overlay inventory against the current repository before applying",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.rebase.07b4be51",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--rebase"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "require_charging",
           "help": "Pause before a phase unless the Android device is charging",
           "hidden": false,
@@ -12804,6 +12627,46 @@
         },
         {
           "choices": [],
+          "dest": "reset_author",
+          "help": "With amend mode, reset commit author to the current Git identity",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.reset_author.24b002d5",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--reset-author"
+          ]
+        },
+        {
+          "choices": [
+            "automatic",
+            "android-low-power",
+            "standard"
+          ],
+          "dest": "validation_resource_profile",
+          "help": "Validation resource profile",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_resource_profile.0533288f",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--resource-profile"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "restart_session",
+          "help": "Replace an existing non-transactional validation session",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.restart_session.1411f93c",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--restart-session"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "resume",
           "help": "Resume the active validation session",
           "hidden": false,
@@ -12812,6 +12675,30 @@
           "required": false,
           "spellings": [
             "--resume"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "retry_failed",
+          "help": "Retry the cached failed phase and every dependent phase",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.retry_failed.ab23e78f",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--retry-failed"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "rollback",
+          "help": "For validate abort, explicitly roll back the attached transaction",
+          "hidden": false,
+          "id": "cli.option.validation-abort.rollback.78fe4b97",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--rollback"
           ]
         },
         {
@@ -12845,6 +12732,18 @@
         },
         {
           "choices": [],
+          "dest": "select",
+          "help": "Select tests by type, suite, tag, class, or name during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.select.43348593",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--select"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "sequential",
           "help": "Use a persistent Android/Gradle validation session",
           "hidden": false,
@@ -12868,6 +12767,22 @@
           ]
         },
         {
+          "choices": [
+            "off",
+            "if-configured",
+            "required"
+          ],
+          "dest": "signing",
+          "help": "Git SSH signing policy for the result commit; default comes from [git].signing",
+          "hidden": false,
+          "id": "cli.option.git.campaign.seal.signing.2582e5a1",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--signing"
+          ]
+        },
+        {
           "choices": [],
           "dest": "skip_build",
           "help": "Skip build during validation",
@@ -12877,6 +12792,42 @@
           "required": false,
           "spellings": [
             "--skip-build"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "skip_restore",
+          "help": "Skip restore during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.skip_restore.05e351a2",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--skip-restore"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "skip_test",
+          "help": "Skip test during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.skip_test.d9d9bbde",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--skip-test"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "static_validate",
+          "help": "Apply artifact and run only artifact/static validation scripts without Gradle validation phases",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.static_validate.0e95348b",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--static-validate"
           ]
         },
         {
@@ -12954,6 +12905,18 @@
         },
         {
           "choices": [],
+          "dest": "test_profile",
+          "help": "Saved test profile used by artifact validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.test_profile.8d15a158",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--test-profile"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "through",
           "help": "Run pending phases through this phase",
           "hidden": false,
@@ -12986,6 +12949,43 @@
           "required": false,
           "spellings": [
             "--validate-only"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "workflow_max_workers",
+          "help": "Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default",
+          "hidden": false,
+          "id": "cli.option.invoke.workflow_max_workers.ca8679f2",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--workflow-max-workers"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "workflow_parallel",
+          "help": "Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe",
+          "hidden": false,
+          "id": "cli.option.invoke.workflow_parallel.8516cfcf",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--workflow-parallel"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.ipc-server.help.0a49d1be",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
           ]
         }
       ],
@@ -13083,6 +13083,42 @@
         },
         {
           "choices": [],
+          "dest": "validation_build_cache",
+          "help": "Enable the Gradle build cache for validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_build_cache.c329174a",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--build-cache"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "cancel_pause",
+          "help": "For validate pause, cancel a pending pause request",
+          "hidden": false,
+          "id": "cli.option.validation-pause.cancel_pause.1bcc39b1",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--cancel"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "changed",
+          "help": "Select tests related to changed files during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.changed.d9cdf596",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--changed"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "changed_from",
           "help": "Git base for --changed during validation",
           "hidden": false,
@@ -13104,6 +13140,18 @@
           "spellings": [
             "--class",
             "--tests"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "commit",
+          "help": "Commit with this message after apply and optional validation",
+          "hidden": false,
+          "id": "cli.option.repo-pack.create.commit.a8f81d1d",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--commit"
           ]
         },
         {
@@ -13137,6 +13185,18 @@
         },
         {
           "choices": [],
+          "dest": "cpu_limit",
+          "help": "Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.cpu_limit.3cf80b54",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--cpu-limit"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "validation_daemon",
           "help": "Allow the Gradle daemon during validation",
           "hidden": false,
@@ -13161,6 +13221,18 @@
         },
         {
           "choices": [],
+          "dest": "delete_artifact_on_failure",
+          "help": "Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.delete_artifact_on_failure.152dfd12",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--delete-artifact-on-failure"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "diff",
           "help": "Show a repo-relative unified diff of artifact changes",
           "hidden": false,
@@ -13169,6 +13241,55 @@
           "required": false,
           "spellings": [
             "--diff"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "event_limit",
+          "help": "Maximum event records to return",
+          "hidden": false,
+          "id": "cli.option.validation-status.event_limit.06cb091b",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--event-limit",
+            "--limit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "events",
+          "help": "Include durable events in validation status JSON",
+          "hidden": false,
+          "id": "cli.option.validation-status.events.60fcc456",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--events"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "exclude_tag",
+          "help": "Exclude tests with this tag/trait/annotation during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.exclude_tag.526b7045",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--exclude-tag"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "failed",
+          "help": "Rerun tests that failed in the previous structured run during validation",
+          "hidden": false,
+          "id": "cli.option.rollback.failed.35a6f9a6",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--failed"
           ]
         },
         {
@@ -13227,642 +13348,6 @@
         },
         {
           "choices": [],
-          "dest": "gradle_heap_mb",
-          "help": "Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.gradle_heap_mb.31c91c42",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--gradle-heap-mb"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "ignore_checksum",
-          "help": "Skip SHA-256 checksum validation while retaining all other artifact manifest checks",
-          "hidden": false,
-          "id": "cli.option.overlay.check.ignore_checksum.8e7647ff",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--ignore-checksum"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "instrumented",
-          "help": "Run Android instrumentation tests during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.instrumented.103e0c2e",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--instrumented"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "interactive",
-          "help": "Show preview and ask before applying",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.interactive.41af8764",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--interactive"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "json",
-          "help": "Emit a stable validation-control JSON response",
-          "hidden": false,
-          "id": "cli.option.preflight.json.003bb1b7",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--json"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "keep_artifact",
-          "help": "Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.keep_artifact.787a8b8e",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--keep-artifact"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "keep_changes",
-          "help": "When aborting through `validate abort`, keep the applied repository changes",
-          "hidden": false,
-          "id": "cli.option.validation-abort.keep_changes.87e653d3",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--keep-changes"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_low_priority",
-          "help": "Run validation commands at low scheduler priority",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_low_priority.0d800da8",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--low-priority"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_phases",
-          "help": "Maximum phase boundaries to cross in this invocation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_phases.65e51f80",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-phases"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_resource_retries",
-          "help": "Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_resource_retries.d5de3a01",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-resource-retries"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "max_runtime",
-          "help": "Stop before the next phase after this runtime budget, such as 15m or 1h",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.max_runtime.ba2aae9f",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--max-runtime"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "memory_guard_mb",
-          "help": "Override the validation free-memory guard for this invocation; 0 disables it and explicit CLI value wins over phase defaults",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.memory_guard_mb.0790411f",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--memory-guard-mb"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_methods",
-          "help": "Select a test method during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.instrumentation.instrumentation_methods.5a9e8784",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--method"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_build_cache",
-          "help": "Disable the Gradle build cache for validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_build_cache.5019b28d.5019b28d",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-build-cache"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "no_commit",
-          "help": "Disable a commit requested by the artifact manifest; alias for --commit-mode none",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.no_commit.d7b43513",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-commit"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_daemon",
-          "help": "Disable the Gradle daemon during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_daemon.5b63a4b6.5b63a4b6",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-daemon"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "no_manifest_check",
-          "help": "Disable devtool artifact manifest validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.no_manifest_check.2809b9fb",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-manifest-check"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "no_rollback_on_failure",
-          "help": "Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.no_rollback_on_failure.523a6f92",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-rollback-on-failure"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "no_validate",
-          "help": "Disable validation requested or required by the artifact manifest",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.no_validate.ec69370b",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--no-validate"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_low_priority",
-          "help": "Do not lower validation process priority",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_low_priority.1ebfcb18.1ebfcb18",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--normal-priority"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_paths",
-          "help": "Select tests below a source path or package during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.git.rerere.record.rerere_paths.04fc632d",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--path"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "pause_after",
-          "help": "Pause after this phase (alias for --through)",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.pause_after.32554778",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--pause-after"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "phase",
-          "help": "Run a named phase and every still-pending prerequisite; repeat with --scope selected",
-          "hidden": false,
-          "id": "cli.option.validation-reset.phase.965d4488",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--phase"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "phase_only",
-          "help": "Run only one named pending phase without automatically including prerequisites",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.phase_only.188e250f",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--phase-only"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "preview",
-          "help": "Preview archive changes without applying",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.preview.02178591",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--preview"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "pytest_k",
-          "help": "Apply a pytest -k expression in addition to explicit pytest tests/selectors.",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.pytest_k.87838794",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--pytest-k"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "pytest_tests",
-          "help": "Run exactly this pytest file/node ID; repeatable. Suppresses default/affected pytest targets unless --pytest-include-defaults is set.",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.pytest_tests.40fe004b",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--pytest-test"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "reason",
-          "help": "",
-          "hidden": true,
-          "id": "cli.option.validation-accept-plan-change.reason.b9479cdc",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--reason"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "restart_session",
-          "help": "Replace an existing non-transactional validation session",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.restart_session.14ab4e03",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--restart-session"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "rollback",
-          "help": "For validate abort, explicitly roll back the attached transaction",
-          "hidden": false,
-          "id": "cli.option.validation-abort.rollback.1f9a633a",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--rollback"
-          ]
-        },
-        {
-          "choices": [
-            "next",
-            "through",
-            "selected",
-            "remaining"
-          ],
-          "dest": "validation_run_scope",
-          "help": "Stable validation run scope",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_run_scope.4e38aca7",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--scope"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "select",
-          "help": "Select tests by type, suite, tag, class, or name during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.select.5f9f0659",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--select"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "sequential",
-          "help": "Use a persistent Android/Gradle validation session",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.sequential.8889d69a",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--sequential"
-          ]
-        },
-        {
-          "choices": [
-            "off",
-            "if-configured",
-            "required"
-          ],
-          "dest": "signing",
-          "help": "Git SSH signing policy for the result commit; default comes from [git].signing",
-          "hidden": false,
-          "id": "cli.option.git.campaign.seal.signing.91020625",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--signing"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "skip_restore",
-          "help": "Skip restore during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.skip_restore.07873ffc",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--skip-restore"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "skip_test",
-          "help": "Skip test during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.skip_test.5245a56c",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--skip-test"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "stop_above_temperature",
-          "help": "Pause before a phase when device temperature exceeds this value",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.stop_above_temperature.24da36b4",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--stop-above-temperature"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "tag",
-          "help": "Include tests with this tag/trait/annotation during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.oci.gate1.oci_tag.5494d671",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--tag"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_task",
-          "help": "Exclusive native validation unit list; repeatable. Android/Gradle values are Gradle tasks; Python/Node/Rust/etc. values are supported validation actions such as test, lint, build, package-check, or Python test targets.",
-          "hidden": false,
-          "id": "cli.option.ssh.qualify.ssh_qualify_tasks.4ebcc301",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--task",
-            "--test-task"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "test_profile",
-          "help": "Saved test profile used by artifact validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.test_profile.4653ea36",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--test-profile"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "workflow_max_workers",
-          "help": "Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default",
-          "hidden": false,
-          "id": "cli.option.invoke.workflow_max_workers.bfb9d98c",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--workflow-max-workers"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "help",
-          "help": "show this help message and exit",
-          "hidden": false,
-          "id": "cli.option.ipc-server.help.11d9400f",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "-h",
-            "--help"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "validation_build_cache",
-          "help": "Enable the Gradle build cache for validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.validation_build_cache.c329174a",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--build-cache"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "cancel_pause",
-          "help": "For validate pause, cancel a pending pause request",
-          "hidden": false,
-          "id": "cli.option.validation-pause.cancel_pause.1bcc39b1",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--cancel"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "changed",
-          "help": "Select tests related to changed files during validation",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.changed.d9cdf596",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--changed"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "commit",
-          "help": "Commit with this message after apply and optional validation",
-          "hidden": false,
-          "id": "cli.option.repo-pack.create.commit.a8f81d1d",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--commit"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "cpu_limit",
-          "help": "Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.cpu_limit.3cf80b54",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--cpu-limit"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "delete_artifact_on_failure",
-          "help": "Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.delete_artifact_on_failure.152dfd12",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--delete-artifact-on-failure"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "event_limit",
-          "help": "Maximum event records to return",
-          "hidden": false,
-          "id": "cli.option.validation-status.event_limit.06cb091b",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--event-limit",
-            "--limit"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "events",
-          "help": "Include durable events in validation status JSON",
-          "hidden": false,
-          "id": "cli.option.validation-status.events.60fcc456",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--events"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "exclude_tag",
-          "help": "Exclude tests with this tag/trait/annotation during validation; repeatable",
-          "hidden": false,
-          "id": "cli.option.apply.snapshot.exclude_tag.526b7045",
-          "nargs": null,
-          "required": false,
-          "spellings": [
-            "--exclude-tag"
-          ]
-        },
-        {
-          "choices": [],
-          "dest": "failed",
-          "help": "Rerun tests that failed in the previous structured run during validation",
-          "hidden": false,
-          "id": "cli.option.rollback.failed.35a6f9a6",
-          "nargs": 0,
-          "required": false,
-          "spellings": [
-            "--failed"
-          ]
-        },
-        {
-          "choices": [],
           "dest": "from_phase",
           "help": "Start this invocation at a named phase",
           "hidden": false,
@@ -13872,6 +13357,18 @@
           "spellings": [
             "--from-phase",
             "--from"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "gradle_heap_mb",
+          "help": "Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.gradle_heap_mb.31c91c42",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--gradle-heap-mb"
           ]
         },
         {
@@ -13912,6 +13409,42 @@
           ]
         },
         {
+          "choices": [],
+          "dest": "ignore_checksum",
+          "help": "Skip SHA-256 checksum validation while retaining all other artifact manifest checks",
+          "hidden": false,
+          "id": "cli.option.overlay.check.ignore_checksum.8e7647ff",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--ignore-checksum"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "instrumented",
+          "help": "Run Android instrumentation tests during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.instrumented.103e0c2e",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--instrumented"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "interactive",
+          "help": "Show preview and ask before applying",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.interactive.41af8764",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--interactive"
+          ]
+        },
+        {
           "choices": [
             "worktree",
             "direct"
@@ -13928,6 +13461,42 @@
         },
         {
           "choices": [],
+          "dest": "json",
+          "help": "Emit a stable validation-control JSON response",
+          "hidden": false,
+          "id": "cli.option.preflight.json.003bb1b7",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "keep_artifact",
+          "help": "Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.keep_artifact.787a8b8e",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--keep-artifact"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "keep_changes",
+          "help": "When aborting through `validate abort`, keep the applied repository changes",
+          "hidden": false,
+          "id": "cli.option.validation-abort.keep_changes.87e653d3",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--keep-changes"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "keep_gradle_daemon",
           "help": "Keep Gradle daemons available between phase invocations",
           "hidden": false,
@@ -13936,6 +13505,18 @@
           "required": false,
           "spellings": [
             "--keep-gradle-daemon"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_low_priority",
+          "help": "Run validation commands at low scheduler priority",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_low_priority.0d800da8",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--low-priority"
           ]
         },
         {
@@ -13979,6 +13560,42 @@
         },
         {
           "choices": [],
+          "dest": "max_phases",
+          "help": "Maximum phase boundaries to cross in this invocation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_phases.65e51f80",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-phases"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_resource_retries",
+          "help": "Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_resource_retries.d5de3a01",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-resource-retries"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_runtime",
+          "help": "Stop before the next phase after this runtime budget, such as 15m or 1h",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.max_runtime.ba2aae9f",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-runtime"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "max_workers",
           "help": "Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits",
           "hidden": false,
@@ -13987,6 +13604,30 @@
           "required": false,
           "spellings": [
             "--max-workers"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "memory_guard_mb",
+          "help": "Override the validation free-memory guard for this invocation; 0 disables it and explicit CLI value wins over phase defaults",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.memory_guard_mb.0790411f",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--memory-guard-mb"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "test_methods",
+          "help": "Select a test method during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.instrumentation.instrumentation_methods.5a9e8784",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--method"
           ]
         },
         {
@@ -14039,6 +13680,54 @@
         },
         {
           "choices": [],
+          "dest": "validation_build_cache",
+          "help": "Disable the Gradle build cache for validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_build_cache.5019b28d.5019b28d",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-build-cache"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "no_commit",
+          "help": "Disable a commit requested by the artifact manifest; alias for --commit-mode none",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.no_commit.d7b43513",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-commit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_daemon",
+          "help": "Disable the Gradle daemon during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_daemon.5b63a4b6.5b63a4b6",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-daemon"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "no_manifest_check",
+          "help": "Disable devtool artifact manifest validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.no_manifest_check.2809b9fb",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-manifest-check"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "disable_metaspace_guard",
           "help": "Do not set an explicit Gradle MaxMetaspaceSize for this validation invocation",
           "hidden": false,
@@ -14063,6 +13752,30 @@
         },
         {
           "choices": [],
+          "dest": "no_rollback_on_failure",
+          "help": "Keep successfully applied changes when post-apply validation or commands fail; atomic extraction/preflight failures still roll back for repository integrity",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.no_rollback_on_failure.523a6f92",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-rollback-on-failure"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "no_validate",
+          "help": "Disable validation requested or required by the artifact manifest",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.no_validate.ec69370b",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--no-validate"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "workflow_parallel",
           "help": "Force workflow DAG nodes to execute sequentially",
           "hidden": false,
@@ -14071,6 +13784,18 @@
           "required": false,
           "spellings": [
             "--no-workflow-parallel"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "validation_low_priority",
+          "help": "Do not lower validation process priority",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_low_priority.1ebfcb18.1ebfcb18",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--normal-priority"
           ]
         },
         {
@@ -14087,6 +13812,54 @@
         },
         {
           "choices": [],
+          "dest": "test_paths",
+          "help": "Select tests below a source path or package during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.git.rerere.record.rerere_paths.04fc632d",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--path"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pause_after",
+          "help": "Pause after this phase (alias for --through)",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.pause_after.32554778",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--pause-after"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "phase",
+          "help": "Run a named phase and every still-pending prerequisite; repeat with --scope selected",
+          "hidden": false,
+          "id": "cli.option.validation-reset.phase.965d4488",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--phase"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "phase_only",
+          "help": "Run only one named pending phase without automatically including prerequisites",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.phase_only.188e250f",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--phase-only"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "preserve_dirty",
           "help": "Explicitly request transactional preservation/restoration of staged, unstaged, untracked, symlink, mode, and index state",
           "hidden": false,
@@ -14095,6 +13868,18 @@
           "required": false,
           "spellings": [
             "--preserve-dirty"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "preview",
+          "help": "Preview archive changes without applying",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.preview.02178591",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--preview"
           ]
         },
         {
@@ -14135,6 +13920,18 @@
         },
         {
           "choices": [],
+          "dest": "pytest_k",
+          "help": "Apply a pytest -k expression in addition to explicit pytest tests/selectors.",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.pytest_k.87838794",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--pytest-k"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "pytest_markers",
           "help": "Add a pytest -m marker expression; repeatable expressions are combined with AND.",
           "hidden": false,
@@ -14143,6 +13940,30 @@
           "required": false,
           "spellings": [
             "--pytest-marker"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pytest_tests",
+          "help": "Run exactly this pytest file/node ID; repeatable. Suppresses default/affected pytest targets unless --pytest-include-defaults is set.",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.pytest_tests.40fe004b",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--pytest-test"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "reason",
+          "help": "",
+          "hidden": true,
+          "id": "cli.option.validation-accept-plan-change.reason.b9479cdc",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--reason"
           ]
         },
         {
@@ -14211,6 +14032,18 @@
         },
         {
           "choices": [],
+          "dest": "restart_session",
+          "help": "Replace an existing non-transactional validation session",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.restart_session.14ab4e03",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--restart-session"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "resume",
           "help": "Resume the active validation session",
           "hidden": false,
@@ -14235,6 +14068,18 @@
         },
         {
           "choices": [],
+          "dest": "rollback",
+          "help": "For validate abort, explicitly roll back the attached transaction",
+          "hidden": false,
+          "id": "cli.option.validation-abort.rollback.1f9a633a",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--rollback"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "rollback_on_failure",
           "help": "Immediately roll back an attached apply transaction when a validation phase fails",
           "hidden": false,
@@ -14243,6 +14088,47 @@
           "required": false,
           "spellings": [
             "--rollback-on-failure"
+          ]
+        },
+        {
+          "choices": [
+            "next",
+            "through",
+            "selected",
+            "remaining"
+          ],
+          "dest": "validation_run_scope",
+          "help": "Stable validation run scope",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.validation_run_scope.4e38aca7",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--scope"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "select",
+          "help": "Select tests by type, suite, tag, class, or name during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.select.5f9f0659",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--select"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "sequential",
+          "help": "Use a persistent Android/Gradle validation session",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.sequential.8889d69a",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--sequential"
           ]
         },
         {
@@ -14255,6 +14141,22 @@
           "required": false,
           "spellings": [
             "--session"
+          ]
+        },
+        {
+          "choices": [
+            "off",
+            "if-configured",
+            "required"
+          ],
+          "dest": "signing",
+          "help": "Git SSH signing policy for the result commit; default comes from [git].signing",
+          "hidden": false,
+          "id": "cli.option.git.campaign.seal.signing.91020625",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--signing"
           ]
         },
         {
@@ -14271,6 +14173,30 @@
         },
         {
           "choices": [],
+          "dest": "skip_restore",
+          "help": "Skip restore during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.skip_restore.07873ffc",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--skip-restore"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "skip_test",
+          "help": "Skip test during validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.skip_test.5245a56c",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--skip-test"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "static_validate",
           "help": "Apply artifact and run only artifact/static validation scripts without Gradle validation phases",
           "hidden": false,
@@ -14279,6 +14205,18 @@
           "required": false,
           "spellings": [
             "--static-validate"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "stop_above_temperature",
+          "help": "Pause before a phase when device temperature exceeds this value",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.stop_above_temperature.24da36b4",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--stop-above-temperature"
           ]
         },
         {
@@ -14319,6 +14257,43 @@
         },
         {
           "choices": [],
+          "dest": "tag",
+          "help": "Include tests with this tag/trait/annotation during validation; repeatable",
+          "hidden": false,
+          "id": "cli.option.oci.gate1.oci_tag.5494d671",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--tag"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "test_task",
+          "help": "Exclusive native validation unit list; repeatable. Android/Gradle values are Gradle tasks; Python/Node/Rust/etc. values are supported validation actions such as test, lint, build, package-check, or Python test targets.",
+          "hidden": false,
+          "id": "cli.option.ssh.qualify.ssh_qualify_tasks.4ebcc301",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--task",
+            "--test-task"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "test_profile",
+          "help": "Saved test profile used by artifact validation",
+          "hidden": false,
+          "id": "cli.option.apply.snapshot.test_profile.4653ea36",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--test-profile"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "through",
           "help": "Run pending phases through this phase",
           "hidden": false,
@@ -14355,6 +14330,18 @@
         },
         {
           "choices": [],
+          "dest": "workflow_max_workers",
+          "help": "Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default",
+          "hidden": false,
+          "id": "cli.option.invoke.workflow_max_workers.bfb9d98c",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--workflow-max-workers"
+          ]
+        },
+        {
+          "choices": [],
           "dest": "workflow_parallel",
           "help": "Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe",
           "hidden": false,
@@ -14363,6 +14350,19 @@
           "required": false,
           "spellings": [
             "--workflow-parallel"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.ipc-server.help.11d9400f",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
           ]
         }
       ],
@@ -14588,6 +14588,119 @@
       ],
       "stability": "stable",
       "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "artifacts",
+      "id": "cli.command.artifacts",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.artifacts.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "artifacts"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only artifact integrity (does not update registry)"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "artifacts",
+      "id": "cli.command.artifacts.verify",
+      "options": [
+        {
+          "choices": [],
+          "dest": "attempt",
+          "help": "Expected remote run attempt",
+          "hidden": false,
+          "id": "cli.option.artifacts.verify.attempt",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--attempt"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "commit",
+          "help": "Expected remote commit",
+          "hidden": false,
+          "id": "cli.option.artifacts.verify.commit",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--commit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit JSON",
+          "hidden": false,
+          "id": "cli.option.artifacts.verify.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "repository",
+          "help": "Expected remote repository",
+          "hidden": false,
+          "id": "cli.option.artifacts.verify.repository",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--repository"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Expected remote run",
+          "hidden": false,
+          "id": "cli.option.artifacts.verify.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.artifacts.verify.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "artifacts",
+        "verify"
+      ],
+      "stability": "experimental",
+      "summary": "Rehash an existing registry record and inspect producer identity"
     },
     {
       "adoption_source": "core-registry",
@@ -18079,6 +18192,158 @@
       ],
       "stability": "stable",
       "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "evidence",
+      "id": "cli.command.evidence",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.evidence.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "evidence"
+      ],
+      "stability": "experimental",
+      "summary": "Typed evidence and report validation (read-only)"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "evidence",
+      "id": "cli.command.evidence.normalize",
+      "options": [
+        {
+          "choices": [],
+          "dest": "format",
+          "help": "junit, pytest-junit, trx, go-json, cargo-json, js-junit",
+          "hidden": false,
+          "id": "cli.option.evidence.normalize.format",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--format"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit JSON",
+          "hidden": false,
+          "id": "cli.option.evidence.normalize.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.evidence.normalize.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "evidence",
+        "normalize"
+      ],
+      "stability": "experimental",
+      "summary": "Parse an actual test report without claiming hosted authority"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "evidence",
+      "id": "cli.command.evidence.validate",
+      "options": [
+        {
+          "choices": [],
+          "dest": "attempt",
+          "help": "Expected run attempt",
+          "hidden": false,
+          "id": "cli.option.evidence.validate.attempt",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--attempt"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "commit",
+          "help": "Expected exact source commit",
+          "hidden": false,
+          "id": "cli.option.evidence.validate.commit",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--commit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit JSON",
+          "hidden": false,
+          "id": "cli.option.evidence.validate.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Expected GitHub run ID",
+          "hidden": false,
+          "id": "cli.option.evidence.validate.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.evidence.validate.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "evidence",
+        "validate"
+      ],
+      "stability": "experimental",
+      "summary": "Check version, exact identity and untrusted reported gates"
     },
     {
       "adoption_source": "core-registry",
@@ -31837,6 +32102,197 @@
     {
       "adoption_source": "core-registry",
       "aliases": [],
+      "domain": "transaction",
+      "id": "cli.command.transaction",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.transaction.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--help",
+            "-h"
+          ]
+        }
+      ],
+      "path": [
+        "transaction"
+      ],
+      "stability": "experimental",
+      "summary": "Historical marker operations (no Git checkout rollback or integration)"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "transaction",
+      "id": "cli.command.transaction.inspect",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.transaction.inspect.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--help",
+            "-h"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "JSON result",
+          "hidden": false,
+          "id": "cli.option.transaction.inspect.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "transaction",
+        "inspect"
+      ],
+      "stability": "experimental",
+      "summary": "Inspect historical retirement predicates without side effects"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "transaction",
+      "id": "cli.command.transaction.retire",
+      "options": [
+        {
+          "choices": [],
+          "dest": "dry_run",
+          "help": "Preview only (default unless --yes)",
+          "hidden": false,
+          "id": "cli.option.transaction.retire.dry_run",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--dry-run"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.transaction.retire.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--help",
+            "-h"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "JSON result",
+          "hidden": false,
+          "id": "cli.option.transaction.retire.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "preserve_current",
+          "help": "Explicitly preserve HEAD, index, worktree and backups",
+          "hidden": false,
+          "id": "cli.option.transaction.retire.preserve_current",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--preserve-current"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Approve marker escrow after current-source checks",
+          "hidden": false,
+          "id": "cli.option.transaction.retire.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        }
+      ],
+      "path": [
+        "transaction",
+        "retire"
+      ],
+      "stability": "experimental",
+      "summary": "Explicitly escrow historical active markers, preserving checkout"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "transaction",
+      "id": "cli.command.transaction.unretire",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.transaction.unretire.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--help",
+            "-h"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "JSON result",
+          "hidden": false,
+          "id": "cli.option.transaction.unretire.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Explicitly approve marker restoration",
+          "hidden": false,
+          "id": "cli.option.transaction.unretire.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        }
+      ],
+      "path": [
+        "transaction",
+        "unretire"
+      ],
+      "stability": "experimental",
+      "summary": "Restore matching escrowed active markers"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
       "domain": "tui",
       "id": "cli.command.tui",
       "options": [
@@ -36636,7 +37092,7 @@
       "summary": ""
     }
   ],
-  "digest": "b40b75b765d3ec1cb495fdae1ea099289c83e8fd3a74ee01ff3c332141ff3ae0",
+  "digest": "ed9796ba87b6d0bac955b3cc2fcbba2ec82ae37bd1c012f5d8712bf17c94b0c3",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -36767,6 +37223,8 @@
       "artifact prune",
       "artifact show",
       "artifact verify",
+      "artifacts",
+      "artifacts verify",
       "as",
       "audit",
       "audit delta",
@@ -36822,6 +37280,9 @@
       "detect",
       "doctor",
       "dr",
+      "evidence",
+      "evidence normalize",
+      "evidence validate",
       "fed",
       "fed affected",
       "fed artifacts",
@@ -37074,6 +37535,10 @@
       "test",
       "tg",
       "tlj",
+      "transaction",
+      "transaction inspect",
+      "transaction retire",
+      "transaction unretire",
       "tui",
       "ui-contract",
       "uic",
@@ -37135,11 +37600,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 486,
-    "registry_command_count": 360
+    "parser_command_count": 495,
+    "registry_command_count": 369
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "61ec80305824121ba8225f260d6933b27e92488a941477d5ea70f0d68ca4ed07",
+  "registry_digest": "53af1c1c1c0a33ffb3631dbac46b79f4cc7b5ea9d97b5bec0377a3fd81a8f24d",
   "registry_schema_version": 1,
   "schema_version": 1
 }

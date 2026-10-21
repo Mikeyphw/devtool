@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `61ec80305824121ba8225f260d6933b27e92488a941477d5ea70f0d68ca4ed07`
+Registry digest: `53af1c1c1c0a33ffb3631dbac46b79f4cc7b5ea9d97b5bec0377a3fd81a8f24d`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -124,6 +124,8 @@ This file is generated from the CORE command/config registry and the canonical C
 - `artifact list`
 - `artifact prune`
 - `artifact verify`
+- `artifacts` — Read-only artifact integrity (does not update registry)
+- `artifacts verify` — Rehash an existing registry record and inspect producer identity
 - `audit`
 - `audit delta`
 - `audit record`
@@ -172,6 +174,9 @@ This file is generated from the CORE command/config registry and the canonical C
 - `delivery plan`
 - `detect`
 - `doctor`
+- `evidence` — Typed evidence and report validation (read-only)
+- `evidence normalize` — Parse an actual test report without claiming hosted authority
+- `evidence validate` — Check version, exact identity and untrusted reported gates
 - `federation`
 - `federation affected`
 - `federation artifacts`
@@ -333,6 +338,10 @@ This file is generated from the CORE command/config registry and the canonical C
 - `termux explain`
 - `termux packages`
 - `test`
+- `transaction` — Historical marker operations (no Git checkout rollback or integration)
+- `transaction inspect` — Inspect historical retirement predicates without side effects
+- `transaction retire` — Explicitly escrow historical active markers, preserving checkout
+- `transaction unretire` — Restore matching escrowed active markers
 - `tui`
 - `ui-contract`
 - `validate`

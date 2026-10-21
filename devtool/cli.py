@@ -13521,6 +13521,41 @@ def _main_after_parse(
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
 
+    if args.command in ("evidence", "artifacts"):
+        # NEXT-02 reads only: no execution, registry writes, trust promotion or
+        # external provider calls are performed by these CLI projections.
+        from .evidence_kernel import (EvidenceError, validate_evidence, normalize_test_report)
+        from .artifact_evidence import (ArtifactEvidenceError, typed_artifact_verify)
+        command = str(getattr(args, "command", ""))
+        action = str(getattr(args, "evidence_command" if command == "evidence" else "artifacts_command", ""))
+        try:
+            if command == "evidence" and action == "validate":
+                file = Path(str(args.receipt))
+                if file.is_symlink() or not file.is_file() or file.stat().st_size > 16 * 1024 * 1024:
+                    raise EvidenceError("evidence file missing, symlink or oversized")
+                payload = json.loads(file.read_text(encoding="utf-8"))
+                expected = {}
+                if getattr(args, "commit", None): expected["source.commit"] = str(args.commit)
+                if getattr(args, "run_id", None) is not None: expected["execution.run_id"] = args.run_id
+                if getattr(args, "attempt", None) is not None: expected["execution.attempt"] = args.attempt
+                result = validate_evidence(payload, expected=expected)
+            elif command == "evidence" and action == "normalize":
+                result = normalize_test_report(Path(str(args.report)), str(args.format))
+            elif command == "artifacts" and action == "verify":
+                repo = resolve_repository_root(str(getattr(args, "repo", "") or ""), str(getattr(args, "config", "") or ""))
+                result = typed_artifact_verify(repo, str(args.selector),
+                    repository=str(getattr(args, "repository", "") or ""),
+                    commit=str(getattr(args, "commit", "") or ""),
+                    run_id=getattr(args, "run_id", None), attempt=getattr(args, "attempt", None))
+            else:
+                raise EvidenceError("unsupported read-only evidence operation")
+        except (EvidenceError, ArtifactEvidenceError, OSError, UnicodeError, ValueError, TypeError) as exc:
+            result = {"schema_version": 1, "ok": False, "state": "BLOCKED",
+                      "reason": str(exc), "trusted_producer_verified": False,
+                      "formal_release_qualified": False}
+        print(json.dumps(result, sort_keys=True, indent=2, ensure_ascii=False))
+        return 2 if result.get("ok") is False else 0
+
     if args.command == "transaction":
         from .historical_transactions import (
             inspect_historical_transaction, retire_historical_transaction,

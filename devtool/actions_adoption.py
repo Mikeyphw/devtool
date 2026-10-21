@@ -94,6 +94,13 @@ def _selection(root: Path, target: str, workflow: str) -> dict[str, Any]:
                 meta.get('release_signed') is True or
                 meta.get('device_qualification') is True):
             raise AdoptionError('A09 CI refuses device, root, signer or unsupported runner jobs')
+        # NEXT-02: shared explicit OS/architecture/device/signing admission.
+        # Host declaration does not override A09's existing argv/toolchain checks.
+        from .evidence_kernel import host_eligibility
+        eligibility = host_eligibility(meta, runner=job.runner, host_os='linux',
+            host_arch='x86_64', toolchains=('go', 'python-shell'))
+        if not eligibility['eligible']:
+            raise AdoptionError('NEXT-02 host admission blocked '+key+': '+ '; '.join(eligibility['reasons']))
         args = list(job.command or [])
         if not args:
             raise AdoptionError('A09 CI requires an argv-based job, not an opaque shell/action')

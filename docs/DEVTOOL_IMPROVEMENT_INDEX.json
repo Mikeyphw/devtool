@@ -150,6 +150,16 @@
         "target_milestone": "NEXT-02",
         "provisional_historical_description": false,
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md"
+      },
+      "next02_source_candidate": {
+        "phase": "NEXT-02",
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "native_accepted": false,
+        "hosted_accepted": false,
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "formal_release_qualified": false
       }
     },
     {
@@ -239,6 +249,16 @@
         "target_milestone": "NEXT-02",
         "provisional_historical_description": false,
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md"
+      },
+      "next02_source_candidate": {
+        "phase": "NEXT-02",
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "native_accepted": false,
+        "hosted_accepted": false,
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "formal_release_qualified": false
       }
     },
     {
@@ -396,6 +416,16 @@
         "target_milestone": "NEXT-02",
         "provisional_historical_description": false,
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md"
+      },
+      "next02_source_candidate": {
+        "phase": "NEXT-02",
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "native_accepted": false,
+        "hosted_accepted": false,
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "formal_release_qualified": false
       }
     },
     {
@@ -530,6 +560,16 @@
         "target_milestone": "NEXT-02",
         "provisional_historical_description": false,
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md"
+      },
+      "next02_source_candidate": {
+        "phase": "NEXT-02",
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "native_accepted": false,
+        "hosted_accepted": false,
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "formal_release_qualified": false
       }
     },
     {
@@ -1730,6 +1770,16 @@
         "target_milestone": "NEXT-02",
         "provisional_historical_description": false,
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md"
+      },
+      "next02_source_candidate": {
+        "phase": "NEXT-02",
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "native_accepted": false,
+        "hosted_accepted": false,
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "formal_release_qualified": false
       }
     },
     {
@@ -1751,6 +1801,16 @@
         "target_milestone": "NEXT-02",
         "provisional_historical_description": false,
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md"
+      },
+      "next02_source_candidate": {
+        "phase": "NEXT-02",
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "native_accepted": false,
+        "hosted_accepted": false,
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "formal_release_qualified": false
       }
     },
     {
@@ -1793,6 +1853,16 @@
         "target_milestone": "NEXT-02",
         "provisional_historical_description": false,
         "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md"
+      },
+      "next02_source_candidate": {
+        "phase": "NEXT-02",
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "native_accepted": false,
+        "hosted_accepted": false,
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "formal_release_qualified": false
       }
     },
     {
@@ -1939,5 +2009,25 @@
     "hosted_qualified": false,
     "device_qualified": false,
     "source_changes_qualified": false
+  },
+  "next02_incremental_acceptance": {
+    "phase": "NEXT-02",
+    "kind": "source_candidate",
+    "affected_ids": [
+      "DT-006",
+      "DT-010",
+      "DT-017",
+      "DT-023",
+      "DT-051",
+      "DT-052",
+      "DT-054"
+    ],
+    "source_tests": "tests/test_next02_evidence_kernel.py",
+    "authority": "none beyond disposable source tests",
+    "native_pass": false,
+    "hosted_pass": false,
+    "consumer_pass": false,
+    "device_pass": false,
+    "formal_release_qualified": false
   }
 }
