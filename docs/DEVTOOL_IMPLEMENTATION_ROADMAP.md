@@ -451,3 +451,9 @@ with exact journals, owners, marker and backup checks.
 ### NEXT-02 typed-evidence source candidate (2026-10-21)
 
 See `docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md` for the versioned record, per-domain no-promotion rules, read-only artifact verification, report normalizers, R04/R06C lineage bridge, and A09 declarative host admission. This is source implementation only; R09 native/hosted/device/consumer/security and formal release remain independently pending. Next-phase work must build provider attestation rather than treating any user-provided JSON as trusted production authority.
+
+## NEXT-03 — Allowlisted Actions providers and bounded DAG export (2026-10-21; source candidate)
+
+Implemented two independent reviewed provider adapters (`go` and `python-shell`) behind one versioned, non-discovering registry, with read-only `actions provider-plan`/`provider-doctor` and explicit `actions provider-export --yes`. The native named workflow is the sole execution/scheduling authority: one pinned hosted job invokes it once and records source/run/attempt evidence. NEXT-02 host admission and strict argv/lockfile review reject unsafe or unprovisioned nodes. Source/lock/graph SHA-256 checks are revalidated by the pinned runtime before execution; the GitHub workflow independently checks checkout HEAD against its triggering event SHA. Cache and changed-target skipping are conservatively disabled. Canonical CLI schema and generated surfaces are updated.
+
+**Scope limit:** one reviewed `ubuntu-24.04/x86_64` host cell, not general arbitrary per-node remote `needs`/multi-host export. Language-specific Go distributions and Python wheels/lock-enforcement are NEXT-04. Actual provider consumers, authenticated GitHub run/attempt/test/output verification, native Termux and R09 external authorities are NOT RUN. See `docs/DEVTOOL_NEXT03_LANGUAGE_PROVIDERS.md` and the cumulative NEXT-03 ledger entry.

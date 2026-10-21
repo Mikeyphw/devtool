@@ -149,6 +149,15 @@ Read local durable pipeline states (no GitHub operations)
 .B actions plan
 Validate workflow ref and inputs without dispatching
 .TP
+.B actions provider\\-doctor
+Inspect allowlisted hosted language providers per workflow
+.TP
+.B actions provider\\-export
+Review, write or verify source\\-bound provider\\-hosted workflow
+.TP
+.B actions provider\\-plan
+Review exact source\\-bound native DAG provider plan (never dispatches)
+.TP
 .B actions qualification
 G8 Actions qualification
 .TP
@@ -1218,6 +1227,6 @@ Canonical Devtool command.
 .B wrapper verify
 Canonical Devtool command.
 .SH GENERATED CONTRACT
-Registry digest: 53af1c1c1c0a33ffb3631dbac46b79f4cc7b5ea9d97b5bec0377a3fd81a8f24d
+Registry digest: eceb5ae8dc404ba710b5627a4d5dd788d82653a26a20bd6eea9e81e9ec0b95a1
 .SH SEE ALSO
 devtool(1)

@@ -29,6 +29,29 @@ def run_actions_command(args: Any) -> int:
                 return 1
             print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
             return 0
+        if command in ('provider-plan', 'provider-export', 'provider-doctor'):
+            from .actions_language_providers import (provider_plan, provider_export,
+                                                     provider_doctor, ProviderError, AdoptionError)
+            try:
+                selected = str(getattr(args, 'adopt_target', '') or '')
+                if command == 'provider-doctor':
+                    payload = provider_doctor(root, target=selected)
+                else:
+                    named = str(getattr(args, 'adopt_workflow', '') or '')
+                    sha = str(getattr(args, 'devtool_sha', '') or '')
+                    if command == 'provider-plan':
+                        payload = provider_plan(root, target=selected, workflow=named,
+                            devtool_sha=sha,
+                            expect_plan_sha=str(getattr(args,'expect_plan_sha','') or ''))
+                    else:
+                        payload = provider_export(root, target=selected, workflow=named,
+                            devtool_sha=sha, write=bool(getattr(args,'yes',False)),
+                            verify=bool(getattr(args,'verify',False)))
+            except (ProviderError, AdoptionError, ValueError) as exc:
+                print(f'ACTIONS_NEXT03_PROVIDER_REFUSED: {exc}', file=sys.stderr)
+                return 1
+            print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+            return 0
         if command == 'adopt':
             from .actions_adoption import adoption_command, AdoptionError
             try:

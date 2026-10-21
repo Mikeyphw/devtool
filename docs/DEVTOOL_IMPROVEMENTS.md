@@ -635,3 +635,12 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Tests:** focused NEXT-02 falsification test module and A03/A09 parser/generated CLI regressions, with separate native/hosted/consumer/device/authority evidence intentionally NOT_RUN.
 - **Remaining work:** real hosted producer attestation, comprehensive language-specific artifact verification (NEXT-03/04/07/08), in-owner EXO report ingestion and independently collected R09 formal release evidence. The file digest is **not** a signature. See `docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md`.
 - **Status:** source implementation candidate; only local tests described by the included delivery receipt, no user-device installation claim.
+
+## 2026-10-21 — NEXT-03 hosted provider framework candidate
+
+- **DT-041 (P0, partial):** Introduced `devtool/actions_language_providers.py` versioned allowlisted provider protocol and two independent adapters (`go`, `python-shell`), with strict static argv, host/toolchain, tracked source/lockfile admission. Does not grant arbitrary third-party/dynamic plugin execution.
+- **DT-035 / DT-053 (partial):** Added source-bound single-hosted-job DAG export (`actions provider-plan/export`) using existing native DAG invocation and NEXT-02 admission. Generation includes bounded matrix, checksum revalidation and provenance-only artifacts. General DAG-node-to-GitHub-needs, selective CI, secure lock-aware caches and cross-host jobs remain open.
+- **DT-042 (partial):** G5 fixture lane unchanged; no independent real-project Go/Python hosted consumer acceptance is claimed from this synthetic source qualification. Requires actual consumers and authenticated GitHub run/attempt/artifact.
+- **DT-055 (partial):** `actions provider-doctor` surfaces per-workflow provider eligibility and blockers without mutating source or asserting host toolchain presence.
+- **Evidence:** `tests/test_next03_language_providers.py` and existing NEXT-02/A03/A09/G5/core surfaces regressions; source-bound overlay acceptance receipt required before status can advance to disposable verified. **Native/hosted/consumer/device/security/release** authority remains separately pending.
+- **Files:** `devtool/actions_language_providers.py`, `devtool/actions_cli.py`, `devtool/core_cli_schema.json`, `share/core-generated/*`, `docs/DEVTOOL_NEXT03_LANGUAGE_PROVIDERS.md`, associated tests and roadmap/ledger changes. No CI dispatch or release publication performed.

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "digest": "e8a032c1037d52eea7fd94e81babb20f8c1b2e45c1ae27c77fecd492c4a700be",
+  "digest": "24b1326d5794e72545fcf6fd375af6b33fa226f9fd8410942d04039d7dc3b4a2",
   "documents": {
     "global": {
       "allow_unknown_top_level": [
@@ -322,30 +322,6 @@
   "kind": "devtool.config-schema",
   "option_config_links": [
     {
-      "config_field_id": "cfg.project.config_file",
-      "option_id": "cli.option.config"
-    },
-    {
-      "config_field_id": "cfg.cli.output.copy",
-      "option_id": "cli.option.copy"
-    },
-    {
-      "config_field_id": "cfg.cli.environment.execution_environment",
-      "option_id": "cli.option.execution_environment"
-    },
-    {
-      "config_field_id": "cfg.project.repo_root",
-      "option_id": "cli.option.repo"
-    },
-    {
-      "config_field_id": "cfg.cli.output.stdout_payload",
-      "option_id": "cli.option.stdout_payload"
-    },
-    {
-      "config_field_id": "cfg.workspace.target",
-      "option_id": "cli.option.target"
-    },
-    {
       "config_field_id": "cfg.workspace.target",
       "option_id": "cli.option.target.330e55a5.d768f66e"
     },
@@ -388,6 +364,30 @@
     {
       "config_field_id": "cfg.workspace.target",
       "option_id": "cli.option.target.330e55a5.e41a2abc"
+    },
+    {
+      "config_field_id": "cfg.project.config_file",
+      "option_id": "cli.option.config"
+    },
+    {
+      "config_field_id": "cfg.cli.output.copy",
+      "option_id": "cli.option.copy"
+    },
+    {
+      "config_field_id": "cfg.cli.environment.execution_environment",
+      "option_id": "cli.option.execution_environment"
+    },
+    {
+      "config_field_id": "cfg.project.repo_root",
+      "option_id": "cli.option.repo"
+    },
+    {
+      "config_field_id": "cfg.cli.output.stdout_payload",
+      "option_id": "cli.option.stdout_payload"
+    },
+    {
+      "config_field_id": "cfg.workspace.target",
+      "option_id": "cli.option.target"
     },
     {
       "config_field_id": "cfg.workspace.target",
@@ -478,7 +478,7 @@
       "option_id": "cli.option.target.330e55a5.27766db2"
     }
   ],
-  "registry_digest": "53af1c1c1c0a33ffb3631dbac46b79f4cc7b5ea9d97b5bec0377a3fd81a8f24d",
+  "registry_digest": "eceb5ae8dc404ba710b5627a4d5dd788d82653a26a20bd6eea9e81e9ec0b95a1",
   "registry_schema_version": 1,
   "reserved_namespaces": [
     "devtool",
