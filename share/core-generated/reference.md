@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `3855d62351f29ab6e098f69e5887bdd41d881752b844d729823f4d7e346963e2`
+Registry digest: `1e183222fba18d4de0684a695e3046b1efcb2803d09ba31e83e5e3b7663a3bf5`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -380,6 +380,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper update`
 - `wrapper verify`
 - `adopt-batch` — Multi-repo source-lock preview, per-repo apply and explicit partial recovery
+- `migration` — Git-locked extraction inventory, durable generated-data escrow and two-commit recovery
 
 ## Configuration documents
 

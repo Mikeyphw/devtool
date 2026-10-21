@@ -37464,9 +37464,71 @@
       ],
       "stability": "experimental",
       "summary": "Multi-repo source-lock preview, per-repo apply and explicit partial recovery"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "migration",
+      "id": "cli.command.migration",
+      "options": [
+        {
+          "choices": [],
+          "dest": "state_dir",
+          "help": "External durable backup and journal directory",
+          "hidden": false,
+          "id": "cli.option.migration.state_dir",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--state-dir"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Explicitly allow preparation or per-repository commits",
+          "hidden": false,
+          "id": "cli.option.migration.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit JSON report",
+          "hidden": false,
+          "id": "cli.option.migration.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.migration.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--help",
+            "-h"
+          ]
+        }
+      ],
+      "path": [
+        "migration"
+      ],
+      "stability": "experimental",
+      "summary": "Git-locked extraction inventory, durable generated-data escrow and two-commit recovery"
     }
   ],
-  "digest": "ae6ab45cf2ee6630550a42ee25d99436f9d8f02fc9115b2dbc05be4a7be98b01",
+  "digest": "01bb8dbf54de39f77a00e27a6378f190afb98078d0c0e403acf4adf5eb985128",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -37798,6 +37860,7 @@
       "menu v",
       "menu validate",
       "menu validation",
+      "migration",
       "oci",
       "oci bootstrap",
       "oci build",
@@ -37979,11 +38042,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 500,
-    "registry_command_count": 374
+    "parser_command_count": 501,
+    "registry_command_count": 375
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "3855d62351f29ab6e098f69e5887bdd41d881752b844d729823f4d7e346963e2",
+  "registry_digest": "1e183222fba18d4de0684a695e3046b1efcb2803d09ba31e83e5e3b7663a3bf5",
   "registry_schema_version": 1,
   "schema_version": 1
 }

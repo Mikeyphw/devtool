@@ -6520,6 +6520,21 @@
       },
       "options": [],
       "stable_id": "cli.command.adopt-batch"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "migration"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "migration",
+        "stability": "experimental",
+        "summary": "Git-locked extraction inventory, durable generated-data escrow and two-commit recovery",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.migration"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -62571,6 +62586,88 @@
       "scope": "adopt-batch",
       "sensitive": false,
       "stable_id": "cli.option.adopt-batch.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--state-dir",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "state_dir",
+        "help": "External durable backup and journal directory",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "migration"
+        ],
+        "required": false
+      },
+      "scope": "migration",
+      "sensitive": false,
+      "stable_id": "cli.option.migration.state_dir",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly allow preparation or per-repository commits",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "migration"
+        ],
+        "required": false
+      },
+      "scope": "migration",
+      "sensitive": false,
+      "stable_id": "cli.option.migration.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit JSON report",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "migration"
+        ],
+        "required": false
+      },
+      "scope": "migration",
+      "sensitive": false,
+      "stable_id": "cli.option.migration.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "-h"
+      ],
+      "canonical": "--help",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "migration"
+        ],
+        "required": false
+      },
+      "scope": "migration",
+      "sensitive": false,
+      "stable_id": "cli.option.migration.help",
       "value_kind": "_HelpAction"
     }
   ],
@@ -118962,6 +119059,113 @@
             "allow_abbrev": true,
             "defaults": {},
             "description": "Source-locked multi-repository adoption; commits are per checkout, never globally atomic",
+            "epilog": null,
+            "formatter": "HelpFormatter",
+            "groups": [],
+            "mutexes": [],
+            "subparsers": null,
+            "usage": null
+          }
+        },
+        {
+          "aliases": [],
+          "help": "Review or execute a source-locked two-repository extraction",
+          "help_present": true,
+          "name": "migration",
+          "parser": {
+            "actions": [
+              {
+                "action": "store",
+                "choices": [
+                  "plan",
+                  "prepare",
+                  "execute",
+                  "resume",
+                  "status"
+                ],
+                "const": null,
+                "default": null,
+                "dest": "migration_operation",
+                "group": null,
+                "help": "Extraction operation",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [],
+                "required": true,
+                "type": null
+              },
+              {
+                "action": "store",
+                "choices": null,
+                "const": null,
+                "default": null,
+                "dest": "migration_manifest",
+                "group": null,
+                "help": "Absolute reviewed extraction manifest",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [],
+                "required": true,
+                "type": null
+              },
+              {
+                "action": "store",
+                "choices": null,
+                "const": null,
+                "default": null,
+                "dest": "state_dir",
+                "group": null,
+                "help": "External durable backup and journal directory",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [
+                  "--state-dir"
+                ],
+                "required": false,
+                "type": null
+              },
+              {
+                "action": "store_true",
+                "choices": null,
+                "const": true,
+                "default": false,
+                "dest": "yes",
+                "group": null,
+                "help": "Explicitly allow preparation or per-repository commits",
+                "metavar": null,
+                "mutex": null,
+                "nargs": 0,
+                "option_strings": [
+                  "--yes"
+                ],
+                "required": false,
+                "type": null
+              },
+              {
+                "action": "store_true",
+                "choices": null,
+                "const": true,
+                "default": false,
+                "dest": "json",
+                "group": null,
+                "help": "Emit JSON report",
+                "metavar": null,
+                "mutex": null,
+                "nargs": 0,
+                "option_strings": [
+                  "--json"
+                ],
+                "required": false,
+                "type": null
+              }
+            ],
+            "add_help": true,
+            "allow_abbrev": true,
+            "defaults": {},
+            "description": "Safe two-Git-checkout transfer with generated output backup; never a cross-repo atomic commit",
             "epilog": null,
             "formatter": "HelpFormatter",
             "groups": [],

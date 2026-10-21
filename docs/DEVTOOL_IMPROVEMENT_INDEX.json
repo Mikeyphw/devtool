@@ -1527,8 +1527,14 @@
       "id": "DT-037",
       "milestone": "NEXT-06",
       "priority": "UNSPECIFIED",
-      "qualification_status": "NOT_REQUALIFIED",
-      "source_status": "OPEN_CODE"
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "PARTIAL_SOURCE",
+      "next06_source_candidate": {
+        "status": "PARTIAL_SOURCE",
+        "evidence": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
+        "real_xbsctl_consumer": "NOT_RUN",
+        "release_qualified": false
+      }
     },
     {
       "category": "Standalone Go module ownership repair",
@@ -1548,8 +1554,14 @@
       "id": "DT-038",
       "milestone": "NEXT-06",
       "priority": "UNSPECIFIED",
-      "qualification_status": "NOT_REQUALIFIED",
-      "source_status": "OPEN_CODE"
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "PARTIAL_SOURCE",
+      "next06_source_candidate": {
+        "status": "PARTIAL_SOURCE",
+        "evidence": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
+        "real_xbsctl_consumer": "NOT_RUN",
+        "release_qualified": false
+      }
     },
     {
       "category": "Automated dependent CI and wrapper pruning",
@@ -1569,8 +1581,14 @@
       "id": "DT-039",
       "milestone": "NEXT-06",
       "priority": "UNSPECIFIED",
-      "qualification_status": "NOT_REQUALIFIED",
-      "source_status": "OPEN_CODE"
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "PARTIAL_SOURCE",
+      "next06_source_candidate": {
+        "status": "PARTIAL_SOURCE",
+        "evidence": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
+        "real_xbsctl_consumer": "NOT_RUN",
+        "release_qualified": false
+      }
     },
     {
       "category": "Generated-artifact-aware source migration preflight",
@@ -1590,8 +1608,14 @@
       "id": "DT-040",
       "milestone": "NEXT-06",
       "priority": "P1",
-      "qualification_status": "NOT_REQUALIFIED",
-      "source_status": "OPEN_CODE"
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "PARTIAL_SOURCE",
+      "next06_source_candidate": {
+        "status": "PARTIAL_SOURCE",
+        "evidence": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
+        "real_xbsctl_consumer": "NOT_RUN",
+        "release_qualified": false
+      }
     },
     {
       "category": "Versioned language-provider API for discovery, toolchains, targets, jobs, DAG, artifacts and qualifier capabilities",
@@ -2114,5 +2138,11 @@
     "formal_release_qualified": false,
     "actual_six_consumer_integration": "NOT_RUN",
     "documentation": "docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md"
+  },
+  "next06_incremental_acceptance": {
+    "status": "SOURCE_CANDIDATE",
+    "documentation": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
+    "live_xbsctl_extraction": "NOT_RUN",
+    "formal_release_qualified": false
   }
 }

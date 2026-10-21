@@ -13484,6 +13484,18 @@ def _main_after_parse(
     _normalize_live_progress_args(args)
     if args.command == "wrapper":
         return _handle_wrapper_command(args)
+    if args.command == "migration":
+        from .repository_extraction import run as extraction_run, ExtractionBlocked
+        manifest = Path(str(args.migration_manifest)).expanduser()
+        state_dir = Path(str(getattr(args,"state_dir","") or "")).expanduser() if getattr(args,"state_dir",None) else Path.home()/".local/state/devtool/extractions"
+        try:
+            payload = extraction_run(str(args.migration_operation), manifest, state_dir, yes=bool(getattr(args,"yes",False)))
+        except (ExtractionBlocked, OSError, ValueError, RuntimeError) as exc:
+            payload={"schema":"devtool.repo-extraction.v1","ok":False,"state":"BLOCKED","reason":str(exc),
+                     "cross_repo_atomic":False,"release_qualified":False}
+        print(json.dumps(payload,indent=2,sort_keys=True,ensure_ascii=False))
+        return 0 if payload.get("ok") else 2
+
     if args.command == "adopt-batch":
         from .adoption_batch import plan as adoption_plan, apply as adoption_apply, AdoptionBlocked
         manifest = Path(str(args.batch_manifest)).expanduser()
