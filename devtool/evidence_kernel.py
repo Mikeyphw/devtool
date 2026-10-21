@@ -309,6 +309,21 @@ def graph_host_admission(config: Any, graph: Any, *, host_os: str,
             metadata.update(job.metadata or {})
         eligibility = host_eligibility(metadata, runner=runner,
                  host_os=host_os, host_arch=host_arch, toolchains=toolchains)
+        # RM-00: opt-in typed requirements refine (never loosen) legacy host
+        # admission. A malformed/unknown capability declaration fails closed.
+        if 'ci_host_requirements' in metadata:
+            from .contracts_v2 import ContractError, host_eligibility_v2
+            try:
+                typed = host_eligibility_v2(metadata['ci_host_requirements'],
+                    host_os=host_os, host_arch=host_arch, toolchains=toolchains)
+            except ContractError as exc:
+                typed = {'eligible':False, 'reasons':['invalid typed host requirements: ' + str(exc)]}
+            eligibility = {**eligibility,
+                'eligible':eligibility['eligible'] and typed['eligible'],
+                'reasons':[*eligibility['reasons'], *typed['reasons']],
+                'typed_requirements_present':True,
+                'typed_requirements_eligible':typed['eligible']}
+            eligibility['state'] = 'PASS' if eligibility['eligible'] else 'BLOCKED'
         rows.append({'node':node.key,'target':node.target,'workflow':node.workflow,
                      'runner':runner,'eligibility':eligibility})
     return {'schema_version':1,'kind':'devtool.hosted-dag-eligibility',

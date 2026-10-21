@@ -6,6 +6,7 @@ access.  Adapters admit *declarations*, not authenticate remote execution.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 import hashlib
 import json
 import os
@@ -13,11 +14,12 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from .actions_adoption import AdoptionError, _git, _inside_repo, _safe_slug, _sha, _yaml, _atomic
 from .config import load_wrapper_project_config
 from .evidence_kernel import graph_host_admission
+from .contracts_v2 import ContractError, resolve_provider, reviewed_providers, host_eligibility_v2
 from .workflow_graph import graph_from_workflow, WorkflowGraphError
 
 SCHEMA_VERSION = 1
@@ -134,7 +136,12 @@ class PythonShellProvider:
 
 
 # The only provider registry: immutable built-ins, no entry-point/network/plugin loading.
-PROVIDERS: dict[str, LanguageProvider] = {'go': GoProvider(), 'python-shell': PythonShellProvider()}
+PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider()})
+# V1 adapter behavior is preserved; V2 review metadata must match the exact built-ins.
+for _id, _adapter in PROVIDERS.items():
+    resolve_provider(_id, api_version=_adapter.api_version)
+if set(PROVIDERS) != set(reviewed_providers()):
+    raise ProviderError('reviewed provider registry does not match executable built-ins')
 
 
 def _digest(row: Any) -> str:
@@ -153,7 +160,12 @@ def _provider_for(job: Any) -> LanguageProvider:
         raise ProviderError('Go source declaration conflicts with Python toolchain')
     if not go and flag == 'go':
         raise ProviderError('Go toolchain requires a direct go command')
-    return PROVIDERS['go' if go else 'python-shell']
+    selected = 'go' if go else 'python-shell'
+    try:
+        resolve_provider(selected, api_version=PROVIDERS[selected].api_version)
+    except ContractError as exc:
+        raise ProviderError(str(exc)) from None
+    return PROVIDERS[selected]
 
 
 def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
@@ -191,6 +203,15 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if job is None:
             raise ProviderError('Native DAG node has no target-owned job')
         meta = job.metadata or {}
+        if 'ci_host_requirements' in meta:
+            try:
+                host_result = host_eligibility_v2(meta['ci_host_requirements'],
+                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell'))
+            except ContractError as exc:
+                raise ProviderError('Invalid ci_host_requirements: ' + str(exc)) from None
+            if not host_result['eligible']:
+                raise ProviderError('Hosted node requirement blocked: ' +
+                                    ', '.join(host_result['reasons'])[:256])
         if job.runner not in ('command','python','go') or job.shell_command or job.action or job.gradle_tasks:
             raise ProviderError('Only explicit argv target-local command/python/go jobs are reviewable')
         if job.execution_environment not in ('auto', 'native'):
@@ -463,7 +484,7 @@ def provider_doctor(root: Path, *, target: str = '') -> dict[str, Any]:
                 results.append({'target':name,'workflow':wf,'state':'blocked',
                                 'reason':str(exc)[:280]})
     return {'schema_version':SCHEMA_VERSION, 'kind':IDENTITY+'.doctor',
-            'read_only':True,'registered_providers':[{'id':key,'api_version':provider.api_version}
-                             for key,provider in sorted(PROVIDERS.items())],
+            'read_only':True,'registered_providers':[reviewed_providers()[key].describe()
+                             for key in sorted(PROVIDERS)],
             'workflows':results,'source_attested':False,'host_executed':False,
             'release_qualified':False}
