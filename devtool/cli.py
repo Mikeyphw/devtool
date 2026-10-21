@@ -13348,7 +13348,9 @@ def _main_impl(argv: list[str] | None = None) -> int:
 
     def _invoke() -> int:
         command = str(getattr(args, "command", "") or "devtool")
-        emit_build = command in PROGRESS_CAPABLE_COMMANDS
+        emit_build = command in PROGRESS_CAPABLE_COMMANDS or (
+            command == 'workflow' and getattr(args,'workflow_command','') == 'retry'
+            and bool(getattr(args,'yes',False)))
         event_run_id = _ensure_run_id(args)
         _register_cli_run_instance(args, raw_argv, event_run_id)
         lifecycle_started = time.monotonic()
@@ -13548,6 +13550,52 @@ def _main_after_parse(
         else:
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
+
+    if args.command == 'workflow':
+        from .workflow_retry import (WorkflowRetryError, _record_path, _read,
+                                     plan_retry, execute_retry)
+        action = str(getattr(args,'workflow_command',''))
+        if action != 'retry':
+            parser.error('unknown workflow subcommand')
+        try:
+            if not bool(getattr(args,'failed',False)):
+                raise WorkflowRetryError('--failed is required; no implicit retry policy')
+            if bool(getattr(args,'yes',False)) and bool(getattr(args,'plan',False)):
+                raise WorkflowRetryError('--plan and --yes are mutually exclusive')
+            repo = resolve_repository_root(
+                str(getattr(args,'repo','') or ''),str(getattr(args,'config','') or ''))
+            old = _read(_record_path(str(args.run_id)))
+            target = old.get('target')
+            workflow = old.get('workflow')
+            if not target or not workflow or not isinstance(target,str) or not isinstance(workflow,str):
+                raise WorkflowRetryError('original workflow target or action unavailable')
+            if getattr(args,'target','') and args.target != target:
+                raise WorkflowRetryError('selected target differs from original run')
+            config = load_project_config(str(repo),str(getattr(args,'config','') or '') or None,
+                                         target_name=target)
+            if workflow in {'validate','wine-validate'}:
+                specs=build_workspace_validation_specs(config,[target],wine=workflow=='wine-validate')
+            else:
+                specs=build_workspace_specs(config,[target],workflow)
+            result=plan_retry(repo,str(args.run_id),specs)
+            if bool(getattr(args,'yes',False)):
+                def replay(selected_specs, observer):
+                    if not selected_specs: return []
+                    values, _, _ = run_workflow_specs(
+                        config,list(selected_specs),verbose=bool(getattr(args,'verbose',False)),
+                        dry_run=False,continue_on_error=True,log_path=None,
+                        parallel_requested=True,max_parallel_nodes=1,
+                        node_observer=observer)
+                    return values
+                result=execute_retry(repo,result,specs,approval=True,
+                                     original_run_id=str(args.run_id),
+                                     resume=bool(getattr(args,'resume',False)),on_execute=replay)
+        except (WorkflowRetryError,OSError,ValueError,RuntimeError) as exc:
+            result={'schema_version':1,'kind':'devtool.workflow-retry.error',
+                    'disposition':'BLOCKED','reason':str(exc),'original_run_id':str(args.run_id)}
+        print(json.dumps(result,ensure_ascii=False,sort_keys=True,indent=2))
+        return 2 if result.get('disposition')=='BLOCKED' else (
+            0 if result.get('execution_verified',True) else 1)
 
     if args.command in ("evidence", "artifacts"):
         # NEXT-02 reads only: no execution, registry writes, trust promotion or

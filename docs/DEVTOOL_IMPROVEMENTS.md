@@ -696,3 +696,8 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Evidence:** `tests/test_rm03_exo_lineage.py` and existing EXO/workflow tests; comprehensive checklist in `docs/RM03_PROMISE_AUDIT.md`.
 - **Limit:** Authenticated remote provider verification and full producer→consumer artifact graph remain separate RM-05/RM-06 work. Native workflow retry is RM-04.
 - **Status:** implemented and locally test-verified; actual Termux apply to be confirmed by operator.
+
+
+## RM-04 native node retry/recovery (2026-10-21)
+
+Implementation: durable source/graph/host/input/output fingerprints; canonical CLI retry plan and explicit safe replay; EXO terminal reconciliation; per-node checkpoints and output-verified resume. `docs/RM04_PROMISE_AUDIT.md` retains the 23-item promise checklist and tests. RM-05 format-aware artifacts deliberately remains separate.

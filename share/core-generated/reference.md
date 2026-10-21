@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `1e183222fba18d4de0684a695e3046b1efcb2803d09ba31e83e5e3b7663a3bf5`
+Registry digest: `65322f0eb117a8a16137988e16329c4c7cbd7f389f1110bd48353bd4f4e7b322`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -81,6 +81,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions watch` — Poll a remote run in the foreground with finite limits (no daemon)
 - `actions workflow` — Read-only GitHub Actions provider
 - `actions workflows` — Read-only GitHub Actions provider
+- `adopt-batch` — Multi-repo source-lock preview, per-repo apply and explicit partial recovery
 - `affected`
 - `ai-prompt`
 - `android`
@@ -179,6 +180,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `detect`
 - `doctor`
 - `evidence` — Typed evidence and report validation (read-only)
+- `evidence lineage` — Read-only canonical EXO node and remote lineage
 - `evidence normalize` — Parse an actual test report without claiming hosted authority
 - `evidence validate` — Check version, exact identity and untrusted reported gates
 - `federation`
@@ -260,6 +262,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `logs tail`
 - `menu`
 - `menu validation`
+- `migration` — Git-locked extraction inventory, durable generated-data escrow and two-commit recovery
 - `oci`
 - `oci bootstrap`
 - `oci build`
@@ -366,6 +369,8 @@ This file is generated from the CORE command/config registry and the canonical C
 - `validation-stop`
 - `variants`
 - `wine-validate`
+- `workflow` — Native workflow retry planning and guarded execution
+- `workflow retry` — Plan failed-node retry, execute only with explicit --yes
 - `workflows`
 - `wrapper`
 - `wrapper describe`
@@ -379,8 +384,6 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
-- `adopt-batch` — Multi-repo source-lock preview, per-repo apply and explicit partial recovery
-- `migration` — Git-locked extraction inventory, durable generated-data escrow and two-commit recovery
 
 ## Configuration documents
 

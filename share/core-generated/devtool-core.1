@@ -233,6 +233,9 @@ Read\\-only GitHub Actions provider
 .B actions workflows
 Read\\-only GitHub Actions provider
 .TP
+.B adopt\\-batch
+Multi\\-repo source\\-lock preview, per\\-repo apply and explicit partial recovery
+.TP
 .B affected
 Canonical Devtool command.
 Aliases: aff
@@ -542,6 +545,9 @@ Aliases: dr
 .B evidence
 Typed evidence and report validation (read\\-only)
 .TP
+.B evidence lineage
+Read\\-only canonical EXO node and remote lineage
+.TP
 .B evidence normalize
 Parse an actual test report without claiming hosted authority
 .TP
@@ -824,6 +830,9 @@ Canonical Devtool command.
 .B menu validation
 Canonical Devtool command.
 Aliases: menu validate, menu v
+.TP
+.B migration
+Git\\-locked extraction inventory, durable generated\\-data escrow and two\\-commit recovery
 .TP
 .B oci
 Canonical Devtool command.
@@ -1189,6 +1198,12 @@ Canonical Devtool command.
 Canonical Devtool command.
 Aliases: wv
 .TP
+.B workflow
+Native workflow retry planning and guarded execution
+.TP
+.B workflow retry
+Plan failed\\-node retry, execute only with explicit \\-\\-yes
+.TP
 .B workflows
 Canonical Devtool command.
 Aliases: wf
@@ -1229,13 +1244,7 @@ Canonical Devtool command.
 .TP
 .B wrapper verify
 Canonical Devtool command.
-.TP
-.B adopt\\-batch
-Multi\\-repo source\\-lock preview, per\\-repo apply and explicit partial recovery
-.TP
-.B migration
-Git\\-locked extraction inventory, durable generated\\-data escrow and two\\-commit recovery
 .SH GENERATED CONTRACT
-Registry digest: 1e183222fba18d4de0684a695e3046b1efcb2803d09ba31e83e5e3b7663a3bf5
+Registry digest: 65322f0eb117a8a16137988e16329c4c7cbd7f389f1110bd48353bd4f4e7b322
 .SH SEE ALSO
 devtool(1)

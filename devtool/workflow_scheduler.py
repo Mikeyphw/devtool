@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 import threading
 import time
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .core.execution_contract import RunId
 from .models import CommandSpec, OperationResult, ProjectConfig
@@ -760,6 +760,7 @@ def run_workflow_specs(
     progress_callback: Any = None,
     parallel_requested: bool | None = None,
     max_parallel_nodes: int = 0,
+    node_observer: Callable[[str, str, Sequence[OperationResult]], None] | None = None,
 ) -> tuple[list[OperationResult], str, WorkflowExecutionPlan | None]:
     """Execute workflow specs with resource-safe dependency-ready admission.
 
@@ -772,6 +773,17 @@ def run_workflow_specs(
 
     workflow_run_id = str(RunId.current(create=False) or RunId.new(prefix="workflow"))
     _publish_workflow_plan_events(specs, workflow_run_id)
+    # RM-04: freeze the native graph/source/input identities before spawn.
+    # Ordinary execution is never blocked when the repository is not eligible
+    # for optional recovery records (e.g. non-Git fixtures or dirty build trees).
+    retry_record = None
+    if not dry_run and specs :
+        try:
+            from .workflow_retry import capture_start, _record_path
+            if not _record_path(workflow_run_id).exists():
+                retry_record = capture_start(config.repo_root, workflow_run_id, specs)
+        except (Exception, OSError):
+            retry_record = None
     plan = build_execution_plan_from_specs(
         config,
         specs,
@@ -817,7 +829,7 @@ def run_workflow_specs(
                     result.metadata["workflow_temporary_output_hashes"] = retained
             cleanup_owned_temp(root_path, identity)
 
-    if plan is None or not plan.parallel_requested or len(plan.nodes) < 2 or dry_run:
+    if plan is None or (not plan.parallel_requested and node_observer is None) or (len(plan.nodes) < 2 and node_observer is None) or dry_run:
         try:
             results, raw = run_specs(
             config,
@@ -834,6 +846,12 @@ def run_workflow_specs(
             event_run_id=workflow_run_id,
             publish_workflow_plan=False,
             )
+            if retry_record is not None:
+                try:
+                    from .workflow_retry import capture_finish
+                    capture_finish(config.repo_root, retry_record, results)
+                except (Exception, OSError):
+                    pass  # Recovery metadata cannot change execution authority.
             return results, raw, plan
         finally:
             _cleanup_tmp({str(item.metadata.get("workflow_node_key") or ""): [item] for item in results} if 'results' in locals() else {})
@@ -960,6 +978,8 @@ def run_workflow_specs(
 
     def finish(key: str, local_results: list[OperationResult], local_raw: str) -> None:
         nonlocal fail_fast, cancelled
+        if node_observer is not None:
+            node_observer(key, 'terminal', local_results)
         results_by_node[key] = local_results
         raw_by_node[key] = local_raw
         state = _node_terminal_state(local_results)
@@ -1070,6 +1090,8 @@ def run_workflow_specs(
                     for spec in node_specs[key]:
                         spec.metadata["workflow_scheduler_admission_order"] = admitted_index
                         spec.metadata["workflow_scheduler_admission_mode"] = "dependency-ready"
+                    if node_observer is not None:
+                        node_observer(key, 'started', ())
                     future = executor.submit(execute_node, key, initial, False, False)
                     active[future] = key
                     active_keys.add(key)
@@ -1110,4 +1132,10 @@ def run_workflow_specs(
             result.log_path = str(log_path)
     if verbose and raw:
         print(raw)
+    if retry_record is not None:
+        try:
+            from .workflow_retry import capture_finish
+            capture_finish(config.repo_root, retry_record, ordered_results)
+        except (Exception, OSError):
+            pass  # Recovery metadata cannot change execution authority.
     return ordered_results, raw, plan
