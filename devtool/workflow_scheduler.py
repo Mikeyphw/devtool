@@ -17,6 +17,8 @@ from typing import Any, Iterable, Mapping, Sequence
 from .core.execution_contract import RunId
 from .models import CommandSpec, OperationResult, ProjectConfig
 from .reservations import paths_overlap
+from .output_scopes import (OutputScopeError, parse_output_scopes, reservation_scope,
+                            provision_node_temp, cleanup_owned_temp, hash_owned_output)
 from .workflow_graph import ExecutionGraph, WorkflowNode
 
 
@@ -42,6 +44,7 @@ class WorkflowNodeScope:
     resource_class: str = "normal"
     global_reservations: tuple[str, ...] = ()
     scope_reason: str = ""
+    output_scopes: tuple[dict[str, str], ...] = ()
 
     @property
     def parallel_eligible(self) -> bool:
@@ -67,6 +70,7 @@ class WorkflowNodeScope:
             "resource_class": self.resource_class,
             "global_reservations": list(self.global_reservations),
             "scope_reason": self.scope_reason,
+            "output_scopes": list(self.output_scopes),
         }
 
 
@@ -91,6 +95,7 @@ class WorkflowScheduleNode:
     resource_class: str
     global_reservations: tuple[str, ...]
     scope_reason: str
+    output_scopes: tuple[dict[str, str], ...] = ()
 
     @property
     def parallel_eligible(self) -> bool:
@@ -119,6 +124,7 @@ class WorkflowScheduleNode:
             "resource_class": self.resource_class,
             "global_reservations": list(self.global_reservations),
             "scope_reason": self.scope_reason,
+            "output_scopes": list(self.output_scopes),
         }
 
 
@@ -331,6 +337,13 @@ def scope_for_graph_node(config: ProjectConfig, node: WorkflowNode) -> WorkflowN
 
     writes: list[str] = []
     unsafe_writes: list[str] = []
+    typed = parse_output_scopes(metadata.get("output_scopes"), context=f"node {node.key} output_scopes")
+    typed_reservations: list[str] = []
+    for scope in typed:
+        location = reservation_scope(scope, node_key=node.key, repo_root=config.repo_root, job_root=base)
+        writes.append(location)
+        if scope.reservation:
+            typed_reservations.append(scope.reservation)
     for raw in declared_outputs:
         value, safe = _repo_scope(config.repo_root, base, raw)
         if safe:
@@ -339,16 +352,18 @@ def scope_for_graph_node(config: ProjectConfig, node: WorkflowNode) -> WorkflowN
             unsafe_writes.append(value)
 
     read_only = _coerce_bool(metadata.get("read_only", False), False)
+    if typed and read_only:
+        raise WorkflowScheduleError(f"node {node.key}: read_only=true contradicts typed output scopes")
     if unsafe_reads or unsafe_writes:
         read_only = False
-    writes_known = read_only or (bool(declared_outputs) and not unsafe_writes)
+    writes_known = read_only or (bool(declared_outputs or typed) and not unsafe_writes)
     if unsafe_writes:
         writes_known = False
         reason = "declared output escapes repository: " + ", ".join(unsafe_writes)
     elif read_only:
         reason = "node explicitly declares read_only=true"
-    elif declared_outputs:
-        reason = "write set comes from explicit outputs"
+    elif declared_outputs or typed:
+        reason = "write set comes from explicit outputs and typed reservations"
     else:
         reason = "write set is unknown because no outputs are declared"
     if unsafe_reads:
@@ -370,8 +385,9 @@ def scope_for_graph_node(config: ProjectConfig, node: WorkflowNode) -> WorkflowN
         writes_known=writes_known,
         read_only=read_only,
         resource_class=_resource_class(runner, metadata),
-        global_reservations=_global_reservations(metadata),
+        global_reservations=_dedupe((*_global_reservations(metadata), *typed_reservations)),
         scope_reason=reason,
+        output_scopes=tuple(scope.as_dict() for scope in typed),
     )
 
 
@@ -391,6 +407,7 @@ def annotate_specs_with_scopes(config: ProjectConfig, graph: ExecutionGraph, spe
             "workflow_resource_class": scope.resource_class,
             "workflow_global_reservations": list(scope.global_reservations),
             "workflow_scope_reason": scope.scope_reason,
+            "workflow_output_scopes": list(scope.output_scopes),
         })
         spec.metadata = metadata
     return specs
@@ -399,6 +416,12 @@ def annotate_specs_with_scopes(config: ProjectConfig, graph: ExecutionGraph, spe
 def _overlap(left: Iterable[str], right: Iterable[str]) -> tuple[str, str] | None:
     for a in left:
         for b in right:
+            # External/tmp/cache scopes belong to disjoint namespaces, not to
+            # repository-root '.' even when a job reads the whole checkout.
+            left_ns = str(a).split('/', 1)[0] if str(a).startswith('@') else '@repository'
+            right_ns = str(b).split('/', 1)[0] if str(b).startswith('@') else '@repository'
+            if left_ns != right_ns:
+                continue
             try:
                 if paths_overlap(a, b):
                     return a, b
@@ -463,6 +486,7 @@ def _nodes_from_specs(specs: Sequence[CommandSpec]) -> tuple[WorkflowScheduleNod
             resource_class=_resource_class(str(metadata.get("workflow_runner") or metadata.get("runner") or ""), {**metadata, "resource_class": metadata.get("workflow_resource_class") or metadata.get("resource_class")}),
             global_reservations=tuple(str(item) for item in _object_sequence(metadata.get("workflow_global_reservations", [])) if str(item)),
             scope_reason=str(metadata.get("workflow_scope_reason") or ""),
+            output_scopes=tuple(item for item in _object_sequence(metadata.get("workflow_output_scopes", [])) if isinstance(item, dict)),
         ))
     return tuple(nodes)
 
@@ -738,8 +762,48 @@ def run_workflow_specs(
         parallel_requested=parallel_requested,
         max_parallel_nodes=max_parallel_nodes,
     )
+    # RM-01: an execution-scoped root is minted per node, outside the repo.
+    # Only nodes declaring run-temp receive an environment variable.
+    owned_tmp: list[tuple[str, Path, tuple[int, int]]] = []
+    if plan is not None and not dry_run:
+        try:
+            for node in plan.nodes:
+                scopes = parse_output_scopes(list(node.output_scopes), context=f"node {node.key}")
+                if not any(scope.kind == "run-temp" for scope in scopes):
+                    continue
+                tmp_root, identity = provision_node_temp(config.repo_root, workflow_run_id, node.key)
+                owned_tmp.append((node.key, tmp_root, identity))
+                for spec_index in node.spec_indexes:
+                    spec = specs[spec_index]
+                    if "DEVTOOL_WORKFLOW_TMPDIR" in spec.env:
+                        raise WorkflowScheduleError("DEVTOOL_WORKFLOW_TMPDIR is reserved for owned output scopes")
+                    spec.env = {**spec.env, "DEVTOOL_WORKFLOW_TMPDIR": str(tmp_root)}
+        except BaseException:
+            for _, root_path, identity in reversed(owned_tmp):
+                cleanup_owned_temp(root_path, identity)
+            raise
+
+    def _cleanup_tmp(outcomes: Mapping[str, Sequence[OperationResult]] | None = None) -> None:
+        for key, root_path, identity in reversed(owned_tmp):
+            results = (outcomes or {}).get(key, ())
+            node = plan.by_key[key] if plan is not None else None
+            if node is not None and results:
+                retained: list[dict[str, object]] = []
+                for scope in parse_output_scopes(list(node.output_scopes), context=f"node {key}"):
+                    if scope.kind != "run-temp" or scope.hash_retention == "never":
+                        continue
+                    if scope.hash_retention == "on-success" and _node_terminal_state(results) != "passed":
+                        continue
+                    proof = hash_owned_output(root_path, scope.path)
+                    proof["policy"] = scope.hash_retention
+                    retained.append(proof)
+                for result in results:
+                    result.metadata["workflow_temporary_output_hashes"] = retained
+            cleanup_owned_temp(root_path, identity)
+
     if plan is None or not plan.parallel_effective:
-        results, raw = run_specs(
+        try:
+            results, raw = run_specs(
             config,
             specs,
             verbose=verbose,
@@ -753,8 +817,10 @@ def run_workflow_specs(
             progress_callback=progress_callback,
             event_run_id=workflow_run_id,
             publish_workflow_plan=False,
-        )
-        return results, raw, plan
+            )
+            return results, raw, plan
+        finally:
+            _cleanup_tmp({str(item.metadata.get("workflow_node_key") or ""): [item] for item in results} if 'results' in locals() else {})
 
     by_index = {index: spec for index, spec in enumerate(specs)}
     node_specs = {node.key: [by_index[index] for index in node.spec_indexes] for node in plan.nodes}
@@ -856,25 +922,29 @@ def run_workflow_specs(
             )
             return key, [result], message
 
-    for wave in plan.waves:
-        keys = list(wave.nodes)
-        if len(keys) == 1:
-            key, local_results, local_raw = execute_node(keys[0])
-            results_by_node[key] = local_results
-            raw_by_node[key] = local_raw
-        else:
-            with ThreadPoolExecutor(max_workers=min(plan.max_parallel_nodes, len(keys)), thread_name_prefix="devtool-workflow") as executor:
-                futures = {executor.submit(execute_node, key): key for key in keys}
-                for future in as_completed(futures):
-                    key, local_results, local_raw = future.result()
-                    results_by_node[key] = local_results
-                    raw_by_node[key] = local_raw
-        for key in keys:
-            statuses[key] = _node_terminal_state(results_by_node.get(key, ()))
-        if any(state == "cancelled" for state in statuses.values()):
-            cancelled = True
-        if not continue_on_error and any(state == "failed" for state in statuses.values()):
-            fail_fast = True
+    try:
+        for wave in plan.waves:
+            keys = list(wave.nodes)
+            if len(keys) == 1:
+                key, local_results, local_raw = execute_node(keys[0])
+                results_by_node[key] = local_results
+                raw_by_node[key] = local_raw
+            else:
+                with ThreadPoolExecutor(max_workers=min(plan.max_parallel_nodes, len(keys)), thread_name_prefix="devtool-workflow") as executor:
+                    futures = {executor.submit(execute_node, key): key for key in keys}
+                    for future in as_completed(futures):
+                        key, local_results, local_raw = future.result()
+                        results_by_node[key] = local_results
+                        raw_by_node[key] = local_raw
+            for key in keys:
+                statuses[key] = _node_terminal_state(results_by_node.get(key, ()))
+            if any(state == "cancelled" for state in statuses.values()):
+                cancelled = True
+            if not continue_on_error and any(state == "failed" for state in statuses.values()):
+                fail_fast = True
+
+    finally:
+        _cleanup_tmp(results_by_node)
 
     ordered_results: list[OperationResult] = []
     ordered_raw: list[str] = []

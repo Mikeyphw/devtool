@@ -14,6 +14,7 @@ from typing import Any, Mapping
 from .execution_environments import normalize_execution_environment
 from .environment_qualification import assert_environment_overlay_safe
 from .models import JobConfig, TargetConfig, WorkflowConfig, WorkflowStepRef
+from .output_scopes import OutputScopeError, parse_output_scopes
 
 _RUNNER_ALIASES = {"generic": "command"}
 _PLATFORM_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -180,6 +181,17 @@ def load_jobs(
         metadata.setdefault("job_key", stored_name)
         if gradle_tasks:
             metadata.setdefault("gradle_tasks", list(gradle_tasks))
+
+        try:
+            output_scopes = parse_output_scopes(
+                raw_value.get("output_scopes"), context=f"{context_prefix}.{name}.output_scopes"
+            )
+        except OutputScopeError as exc:
+            raise SystemExit(str(exc)) from exc
+        if output_scopes and metadata.get("read_only") is True:
+            raise SystemExit(f"{context_prefix}.{name}: read_only=true contradicts declared output_scopes")
+        if output_scopes:
+            metadata["output_scopes"] = [scope.as_dict() for scope in output_scopes]
 
         jobs[stored_name] = JobConfig(
             name=stored_name,
