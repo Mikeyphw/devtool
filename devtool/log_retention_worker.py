@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import threading
 import sys
 import uuid
 
@@ -102,11 +103,22 @@ def schedule_retention(root: Path, *, protected: Path | None) -> bool:
         package_root = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = package_root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         env["DEVTOOL_LOG_RETENTION_WORKER"] = "1"
-        subprocess.Popen(
+        process = subprocess.Popen(
             [sys.executable, "-m", "devtool.log_retention_worker", str(root)],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             close_fds=True, start_new_session=True, env=env,
         )
+        # Keep the Popen handle alive until the detached worker exits. Without
+        # a waiter, CPython 3.14 may finalize the handle during another
+        # command's gc.collect() and emit ResourceWarning for a live child.
+        # The daemon waiter does not delay foreground log writes or change the
+        # worker's single-owner LIFE cleanup/retention decisions.
+        if callable(getattr(process, "wait", None)):
+            threading.Thread(
+                target=process.wait,
+                name="devtool-log-retention-reaper",
+                daemon=True,
+            ).start()
         return True
     except (OSError, ValueError):
         return False

@@ -24198,6 +24198,69 @@
       "adoption_source": "core-registry",
       "aliases": [],
       "domain": "overlay",
+      "id": "cli.command.overlay.recovery_plan",
+      "options": [
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit read-only recovery evidence JSON",
+          "hidden": false,
+          "id": "cli.option.overlay.recovery_plan.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "limit",
+          "help": "Maximum recent RUN-V3 LIFE failures to show (1-50)",
+          "hidden": false,
+          "id": "cli.option.overlay.recovery_plan.limit",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--limit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "transaction",
+          "help": "Inspect only this exact active transaction ID",
+          "hidden": false,
+          "id": "cli.option.overlay.recovery_plan.transaction",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--transaction"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.overlay.recovery_plan.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "overlay",
+        "recovery-plan"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only transaction rollback and LIFE cleanup recovery evidence"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "overlay",
       "id": "cli.command.overlay.status",
       "options": [
         {
@@ -36573,7 +36636,7 @@
       "summary": ""
     }
   ],
-  "digest": "c4622d8fb1f22da621aa9a01f2373027253b1f07e6c34ccc4ec443123515018e",
+  "digest": "b40b75b765d3ec1cb495fdae1ea099289c83e8fd3a74ee01ff3c332141ff3ae0",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -36921,6 +36984,7 @@
       "overlay check",
       "overlay plan",
       "overlay rebase",
+      "overlay recovery-plan",
       "overlay status",
       "package",
       "pf",
@@ -37071,11 +37135,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 485,
-    "registry_command_count": 359
+    "parser_command_count": 486,
+    "registry_command_count": 360
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "b6b83ffbdc1cf2b2b6676ae713c5bfe8af0e25ee993e6650de8ac102984efefc",
+  "registry_digest": "61ec80305824121ba8225f260d6933b27e92488a941477d5ea70f0d68ca4ed07",
   "registry_schema_version": 1,
   "schema_version": 1
 }

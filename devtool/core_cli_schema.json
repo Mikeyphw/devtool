@@ -4653,6 +4653,22 @@
       "aliases": [],
       "canonical_path": [
         "overlay",
+        "recovery-plan"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "overlay",
+        "stability": "experimental",
+        "summary": "Read-only transaction rollback and LIFE cleanup recovery evidence",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.overlay.recovery_plan"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "overlay",
         "status"
       ],
       "metadata": {
@@ -42852,6 +42868,92 @@
       "sensitive": false,
       "stable_id": "cli.option.handoff.output.dbe4cc3b",
       "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit read-only recovery evidence JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "overlay",
+          "recovery-plan"
+        ],
+        "required": false
+      },
+      "scope": "overlay recovery-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.overlay.recovery_plan.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--limit",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "limit",
+        "help": "Maximum recent RUN-V3 LIFE failures to show (1-50)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "overlay",
+          "recovery-plan"
+        ],
+        "required": false
+      },
+      "scope": "overlay recovery-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.overlay.recovery_plan.limit",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--transaction",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "transaction",
+        "help": "Inspect only this exact active transaction ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "overlay",
+          "recovery-plan"
+        ],
+        "required": false
+      },
+      "scope": "overlay recovery-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.overlay.recovery_plan.transaction",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "overlay",
+          "recovery-plan"
+        ],
+        "required": false
+      },
+      "scope": "overlay recovery-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.overlay.recovery_plan.help",
+      "value_kind": "_HelpAction"
     },
     {
       "aliases": [],
@@ -87214,6 +87316,77 @@
                         ],
                         "required": false,
                         "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Read-only transaction rollback and LIFE cleanup recovery evidence",
+                  "help_present": true,
+                  "name": "recovery-plan",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit read-only recovery evidence JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "transaction",
+                        "group": null,
+                        "help": "Inspect only this exact active transaction ID",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--transaction"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": 10,
+                        "dest": "limit",
+                        "group": null,
+                        "help": "Maximum recent RUN-V3 LIFE failures to show (1-50)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--limit"
+                        ],
+                        "required": false,
+                        "type": "int"
                       }
                     ],
                     "add_help": true,

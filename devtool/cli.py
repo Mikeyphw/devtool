@@ -15451,6 +15451,24 @@ def _main_after_parse(
     if args.command == "overlay":
         repo = Path(args.repo or Path.cwd()).resolve()
         action = str(getattr(args, "overlay_command", "") or "")
+        if action == "recovery-plan":
+            from .overlay.recovery import overlay_recovery_plan
+            payload = overlay_recovery_plan(
+                repo, transaction=str(getattr(args, "transaction", "") or ""),
+                limit=int(getattr(args, "limit", 10) or 10),
+            )
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+            else:
+                rows = [("decision", payload["decision"]),
+                        ("active transactions", str(len(payload["active_transactions"]))),
+                        ("marker issues", str(len(payload["marker_issues"]))),
+                        ("LIFE historic failures", str(len(payload["life"].get("failures", []))))]
+                for tx in payload["active_transactions"]:
+                    rows.append((tx["transaction_id"], tx["classification"] + ": " + tx["status"]))
+                render_status_table(rows)
+                console.print(payload["next_step"])
+            return 0 if not payload["marker_issues"] else 2
         if action == "plan":
             from .overlay.planning import overlay_plan
             try:
@@ -16215,7 +16233,7 @@ def _main_after_parse(
             _write_json_payload(args.machine_file, machine_text)
             _finish_live_progress(tasker_progress, totals=totals, results=[pending_result])
             _maybe_copy(pending_result.output, summary_text, json_text, args, log_path=log_path)
-            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=results)
+            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=[pending_result])
             _release_single_run_lock(args)
             return 1
 
@@ -16288,7 +16306,7 @@ def _main_after_parse(
             _write_json_payload(args.machine_file, machine_text)
             _finish_live_progress(tasker_progress, totals=totals, results=[rollback_result])
             _maybe_copy(recovery_output, summary_text, json_text, args, log_path=log_path)
-            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=results)
+            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=[rollback_result])
             _release_single_run_lock(args)
             return 1
 

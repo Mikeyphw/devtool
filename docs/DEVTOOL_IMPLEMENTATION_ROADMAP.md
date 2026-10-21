@@ -349,3 +349,29 @@ regression tests and real-consumer configuration review remain distinct.
 R06D rollback-failed transaction recovery and all hosted/device/release
 qualification remain OPEN. The user reported R06B applied without its detailed
 Termux receipt; native R06C acceptance is pending.
+
+### R06D — Read-only rollback checkpoint and LIFE failure recovery plan (2026-10-20)
+
+R06D first-source increment provides `devtool overlay recovery-plan --json` against
+canonical transaction journals and RUN-V3, without a second recovery engine.
+It explicitly reports malformed/dangling marker files without the legacy
+marker reader's deletion side effect, stale/live owner identity, staged or
+restored path checkpoints, missing original backups, and Git/index drift.
+Only the existing `devtool rollback --transaction FULL_ID` may act on a
+journal, after re-verifying all guards. Historic LIFE failures remain evidence,
+not authorization to retry deletion or reapply. R06C native installation was
+reported, but no machine acceptance receipt was provided; R06D native acceptance
+and follow-on authorization for incomplete cleanup are separate gates.
+
+### R06D-R1 — Native Termux regression repair (2026-10-20)
+
+Native original R06D run `ba1c2342b39444e6a8fc7eee993aba75` failed the
+stale-transaction test (55 passed, 1 failed) with Python 3.14 live-subprocess
+`ResourceWarning` and a separate early-return `results` UnboundLocalError.
+Corrective R06D-R1 is a **replacement** against the unchanged R06C tree:
+ensure exact rollback, keep asynchronous log retention but reap worker child
+handles on daemon waiters, verify both pending-validation and stale-rollback
+structured results. Historical failure remains recorded; native R06D-R1 and
+LIFE cleanup remain pending until a full real Termux apply receipt is supplied.
+These issues do not license automatic rollback, source-ZIP deletion or release
+qualification.

@@ -91,3 +91,68 @@ def test_drain_is_idempotent_and_active_lock_defers_safely(tmp_path: Path, monke
     monkeypatch.setattr(logstore, '_rotate_log_root', lambda path, *, protected=None: None)
     assert worker.drain_requests(root) == 0
     assert not (root / worker._REQUEST).exists()
+
+
+def test_async_retention_worker_has_a_nonblocking_process_reaper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Async Termux log rotation must keep the child process handle alive.
+
+    Waiting in the foreground would fix ResourceWarning but violate the
+    existing bounded/low-latency log-write contract; the daemon waiter must
+    remain detached and not authorize any source artifact deletion.
+    """
+    import threading
+
+    root = tmp_path / "logs"
+    monkeypatch.setenv("DEVTOOL_LOG_RETENTION_MODE", "async")
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    class Worker:
+        def wait(self) -> int:
+            started.set()
+            release.wait(timeout=5)
+            finished.set()
+            return 0
+
+    spawned = []
+    def fake_spawn(*args, **kwargs):
+        spawned.append((args, kwargs))
+        return Worker()
+
+    monkeypatch.setattr(worker.subprocess, "Popen", fake_spawn)
+    try:
+        assert worker.schedule_retention(root, protected=None)
+        assert started.wait(timeout=2)
+        assert not finished.is_set(), "Foreground path must not block waiting for the worker"
+        assert len(spawned) == 1
+        assert spawned[0][1]["start_new_session"] is True
+    finally:
+        release.set()
+    assert finished.wait(timeout=2)
+
+
+def test_real_async_spawn_survives_live_child_gc_without_resource_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise CPython's live Popen finalizer, not just a synthetic waiter."""
+    import gc
+    import subprocess
+    import sys
+    import time
+    import warnings
+
+    real_spawn = subprocess.Popen
+    launched = []
+    def slow_worker(_argv, **kwargs):
+        launched.append(True)
+        return real_spawn([sys.executable, "-c", "import time; time.sleep(0.3)"], **kwargs)
+
+    monkeypatch.setenv("DEVTOOL_LOG_RETENTION_MODE", "async")
+    monkeypatch.setattr(worker.subprocess, "Popen", slow_worker)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        assert worker.schedule_retention(tmp_path / "logs", protected=None)
+        gc.collect()
+        time.sleep(0.4)
+        gc.collect()
+    assert launched
+    assert not [str(item.message) for item in caught if issubclass(item.category, ResourceWarning)]

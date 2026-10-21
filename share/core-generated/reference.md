@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `b6b83ffbdc1cf2b2b6676ae713c5bfe8af0e25ee993e6650de8ac102984efefc`
+Registry digest: `61ec80305824121ba8225f260d6933b27e92488a941477d5ea70f0d68ca4ed07`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -272,6 +272,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `overlay check`
 - `overlay plan` — Review overlay source, patch presence, and safe lifecycle next step (read-only)
 - `overlay rebase`
+- `overlay recovery-plan` — Read-only transaction rollback and LIFE cleanup recovery evidence
 - `overlay status`
 - `package`
 - `plan`

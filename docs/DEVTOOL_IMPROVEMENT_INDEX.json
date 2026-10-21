@@ -786,6 +786,46 @@
         "PRODUCER_CONSUMER_RUN_AND_ARTIFACT_QUALIFICATION",
         "R06D_ROLLBACK_FAILED_RECOVERY"
       ]
+    },
+    {
+      "id": "R06D-LIFE-RECOVERY-004",
+      "category": "Transactional recovery evidence visibility",
+      "priority": "P1",
+      "historical_status": "NEW",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NOT_REQUALIFIED",
+      "milestone": "R6",
+      "evidence": [
+        "devtool/overlay/recovery.py",
+        "tests/test_overlay_r06d_recovery_plan.py",
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "id": "R06D-R1-TERMUX-RECOVERY-005",
+      "category": "R06D Termux lifecycle result logging and async log worker process reaping",
+      "priority": "P1",
+      "historical_status": "R06D_NATIVE_VALIDATOR_FAILED",
+      "source_status": "REMEDIATION_CANDIDATE",
+      "qualification_status": "NATIVE_TERMUX_PENDING",
+      "milestone": "R6",
+      "affected_paths": [
+        "devtool/cli.py",
+        "devtool/log_retention_worker.py",
+        "tests/test_transactions.py",
+        "tests/test_git_log_retention_latency_v3.py"
+      ],
+      "evidence": [
+        "native apply run ba1c2342b39444e6a8fc7eee993aba75: 55 passed then 1 failed, 35 warnings",
+        "tests/test_transactions.py::TransactionalApplyTests::test_stale_apply_transaction_is_restored_before_next_command",
+        "docs/DEVTOOL_IMPROVEMENTS.md (R06D-R1-TERMUX-RECOVERY-005)"
+      ],
+      "open_followups": [
+        "NATIVE_TERMUX_R06D_R1_REPLACEMENT_VALIDATION",
+        "GIT_COMMIT_AND_LIFE_CLEANUP",
+        "R07_SSH_TERMUX_RELIABILITY",
+        "R09_FULL_ACCEPTANCE"
+      ]
     }
   ],
   "scoped_milestone_closure": {
@@ -814,6 +854,16 @@
       "source_status": "DONE_SOURCE",
       "native_termux": "PENDING",
       "real_consumers": "NOT_QUALIFIED",
+      "release": "NOT_QUALIFIED"
+    },
+    "R06D": {
+      "scope": "Read-only recovery inspection plus native rollback-result logging and async log-retention reaping",
+      "original_native_run": "ba1c2342b39444e6a8fc7eee993aba75",
+      "original_native_status": "FAILED_55_PASS_1_FAIL",
+      "replacement_status": "REMEDIATION_CANDIDATE",
+      "native_termux": "PENDING",
+      "life_cleanup": "PENDING",
+      "hosted": "NOT_QUALIFIED",
       "release": "NOT_QUALIFIED"
     }
   }
