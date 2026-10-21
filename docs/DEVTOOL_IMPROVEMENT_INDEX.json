@@ -903,6 +903,33 @@
         "UX_NOTIFY01_NOT_QUALIFIED",
         "SSH_GENERAL_COMMAND_STAGE_JOURNALS_EXISTING_ONLY"
       ]
+    },
+    {
+      "id": "R08-SECURITY-AUTHORITY-20261021",
+      "category": "RMP H1/H2 current-source evidence reconciliation without false formal closure",
+      "priority": "P0",
+      "historical_status": "NEW",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NATIVE_AND_INDEPENDENT_EXTERNAL_PENDING",
+      "milestone": "R8",
+      "affected_paths": [
+        "devtool/rmp_r08_assessment.py",
+        "tests/test_rmp_r08_assessment.py",
+        "docs/actions/DEVTOOL_R08_SECURITY_AUTHORITY_MATRIX_20261021.json"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R08-SECURITY-AUTHORITY-20261021)"
+      ],
+      "open_followups": [
+        "N01_SIGNED_ORIGINAL_SOURCE",
+        "N02_PERSISTENCE_READ_NATIVE",
+        "C04_TEST_A11_AUTHORITY",
+        "C05_REAL_ANDROID_HUD",
+        "C06_INDEPENDENT_ENV_IDENTITY",
+        "Q02_11_HISTORICAL_CONTRACTS",
+        "U01_6_REAL_SUBSTRATES",
+        "R09_FULL_SYSTEM_ACCEPTANCE"
+      ]
     }
   ],
   "scoped_milestone_closure": {
@@ -964,5 +991,14 @@
         "No hosted/release or Android qualification"
       ]
     }
+  },
+  "r08_acceptance": {
+    "source_inventory": "IMPLEMENTED_PENDING_NATIVE",
+    "formal_h1_closed": false,
+    "formal_h2_closed": false,
+    "release_qualified": false,
+    "external_substrates": "BLOCKED_EXTERNAL",
+    "phase4_historical_receipt": "OPTIONAL_UNVERIFIED_IN_THIS_OVERLAY",
+    "source_parent_tree": "479c448fdd6e21874bcadb37005d0aa064171f18"
   }
 }

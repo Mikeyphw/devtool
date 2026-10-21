@@ -1,0 +1,98 @@
+{
+  "assessment_module": "devtool.rmp_r08_assessment",
+  "baseline_parent_commit": "868a9fef15a64a5daede0d9cd3b2f22dacd8d7eb",
+  "baseline_parent_tree": "479c448fdd6e21874bcadb37005d0aa064171f18",
+  "external_substrates": {
+    "ANDROID-A16": "BLOCKED_EXTERNAL",
+    "DIST-A01": "BLOCKED_EXTERNAL",
+    "DIST-A12": "BLOCKED_EXTERNAL",
+    "DIST-A13": "BLOCKED_EXTERNAL",
+    "ENV-A06": "BLOCKED_EXTERNAL",
+    "TEST-A11": "BLOCKED_EXTERNAL"
+  },
+  "families": {
+    "C04": {
+      "disposition": "OPEN_FORMAL_AUTHORITY",
+      "needed_evidence": [
+        "independent TEST-G3 expected-case and TEST-A11 remote case authority"
+      ]
+    },
+    "C05": {
+      "disposition": "OPEN_FORMAL_AUTHORITY",
+      "needed_evidence": [
+        "real Android HUD end-to-end projection behavior"
+      ]
+    },
+    "C06": {
+      "disposition": "OPEN_FORMAL_AUTHORITY",
+      "needed_evidence": [
+        "independent downstream environment identity and credential-safety evidence"
+      ]
+    },
+    "N01": {
+      "disposition": "OPEN_FORMAL_AUTHORITY",
+      "needed_evidence": [
+        "independently authenticated original 308-finding source"
+      ]
+    },
+    "N02": {
+      "disposition": "OPEN_FORMAL_AUTHORITY",
+      "needed_evidence": [
+        "independent persistence-reader and native redaction assessment"
+      ]
+    },
+    "Q01": {
+      "disposition": "OPEN_FORMAL_AUTHORITY",
+      "needed_evidence": [
+        "current native confined cleanup/rollback negative evidence"
+      ]
+    },
+    "Q02": {
+      "disposition": "OPEN_FORMAL_AUTHORITY",
+      "needed_evidence": [
+        "11 historical test contracts mapped and six original mismatches re-assessed"
+      ]
+    },
+    "U01": {
+      "disposition": "OPEN_FORMAL_AUTHORITY",
+      "needed_evidence": [
+        "six original real-substrate qualification authorities"
+      ]
+    }
+  },
+  "focused_lanes": [
+    "tests/test_rmp_r08_assessment.py",
+    "tests/test_rmp_final_hardening.py",
+    "tests/test_rmp_h1_authority_anchor.py",
+    "tests/test_rmp_h1_consolidated_boundaries.py",
+    "tests/test_rmp_h1_phase3_session_and_selection.py",
+    "tests/test_rmp_h1_phase4_cross_consumers.py",
+    "tests/test_r04_durable_credentials.py",
+    "tests/test_remed_r04a_presentation_evidence_truth.py",
+    "tests/test_rmp_c02_cleanup_recovery.py",
+    "tests/test_rmp_c03_ack_context.py"
+  ],
+  "forbidden_promotions": [
+    "local_tests_to_formal_h1",
+    "local_tests_to_formal_h2",
+    "local_tests_to_release",
+    "unsigned_308_to_independently_authorized",
+    "remote_ci_green_to_device",
+    "local_sha256_to_external_authority"
+  ],
+  "formal_h1_closed": false,
+  "formal_h2_closed": false,
+  "historical": {
+    "n01_rows": 308,
+    "n01_signature_verified": false,
+    "phase4_native_tests_reported": 206,
+    "phase4_receipt_not_checked_on_this_source": true,
+    "q02_historical_mismatches": 6,
+    "q02_legacy_contracts_unmapped": 11,
+    "q02_original_probes": 20
+  },
+  "kind": "devtool.r08.security-authority-matrix",
+  "release_qualified": false,
+  "schema_version": 1,
+  "source_assessment": "PENDING_NATIVE_ACCEPTANCE"
+}

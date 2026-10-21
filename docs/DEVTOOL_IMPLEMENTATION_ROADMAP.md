@@ -407,3 +407,8 @@ Reviewed all four increments against the actual overlay source and tests. The re
 | R07D timing and external evidence | Observed sync/tmux/return/plan and optional first/second project-validation times with ratio; never synthetic FS03, notification or release pass | Real external SSH baseline/fixed-point benchmarks, FS03 performance and Android notifications are **NOT DELIVERED AS QUALIFIED** and cannot be locally fabricated |
 
 Audit regressions specifically cover: orphan status left without manifest, strict inventory limit including unsafe entries, symlinked parent, private source-bound stage evidence, explicit failed/interrupted stage, mixed guest/native inherited environment, and existing source-bound return checks. No automatic SSH operation, rsync, device mutation, guest stop, evidence purge or CI dispatch occurs during install. Continue final independent acceptance on native Termux and real SSH workers before closing external gates.
+
+
+### R08 current-source assessment — 2026-10-21
+
+The R08 single-overlay local implementation exposes `python3 -m devtool.rmp_r08_assessment --repo . --run-tests` as a fail-closed **current-HEAD evidence inventory**. It does not change or supersede the original RMP closure rules. Individual formal N01/N02/C04/C05/C06/Q01/Q02/U01 findings and all six independent substrate authorities stay OPEN. R09 must consume the actual output and independently collected current-source native/hosted/device receipts, not convert a source-only audit into a final security or release pass. See `docs/actions/DEVTOOL_R08_SECURITY_AUTHORITY_MATRIX_20261021.json`.
