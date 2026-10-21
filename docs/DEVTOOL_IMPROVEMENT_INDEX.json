@@ -999,6 +999,27 @@
     "release_qualified": false,
     "external_substrates": "BLOCKED_EXTERNAL",
     "phase4_historical_receipt": "OPTIONAL_UNVERIFIED_IN_THIS_OVERLAY",
-    "source_parent_tree": "479c448fdd6e21874bcadb37005d0aa064171f18"
+    "source_parent_tree": "479c448fdd6e21874bcadb37005d0aa064171f18",
+    "native_current_source_report": {
+      "source_commit": "6620bd553277020a91ab0495dcbcf94239760f6a",
+      "source_tree": "82edc9467365060832415027994edef9b16590a7",
+      "selected_tests_passed": 103,
+      "overall": "PASS_R08_SOURCE_INVENTORY_EXTERNAL_GATES_OPEN",
+      "formally_qualified": false,
+      "receipt_type": "user-provided-assessment-output"
+    }
+  },
+  "r09_acceptance": {
+    "source_implementation": "SOURCE_CANDIDATE",
+    "native_termux": "PENDING",
+    "hosted": "BLOCKED_EXTERNAL",
+    "consumer": "BLOCKED_EXTERNAL",
+    "device": "BLOCKED_EXTERNAL",
+    "formal_security": "BLOCKED_EXTERNAL",
+    "formal_release_qualified": false,
+    "contract": "docs/actions/DEVTOOL_R09_ACCEPTANCE_CONTRACT_20261021.json",
+    "assessment_module": "devtool.rmp_r09_campaign",
+    "source_parent_tree": "82edc9467365060832415027994edef9b16590a7",
+    "evidence_policy": "untrusted hashed receipt observations only; no automatic promotion"
   }
 }

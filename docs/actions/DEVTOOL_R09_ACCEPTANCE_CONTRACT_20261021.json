@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "producer": "devtool-r09-contract",
+  "kind": "source-bound-cross-campaign-acceptance",
+  "current_source_requirement": "Exact clean Git HEAD; R08 independent-authority inventory must pass; current-source focused or full pytest required for source_pass",
+  "native_requirement": "Observed native Termux runtime, current-source passing tests, installed devtool --help success; local native scope only",
+  "external_evidence_policy": "User JSON receipts are hashed, bounded and source-matched as untrusted observations; they never promote hosted, consumer, device, formal security or release booleans",
+  "acceptance_dimensions": [
+    "source_pass",
+    "native_pass",
+    "hosted_pass",
+    "consumer_pass",
+    "device_pass",
+    "security_formal_pass",
+    "formal_release_qualified"
+  ],
+  "independent_obligations": {
+    "hosted": [
+      "CI24_24_SHARDS_CURRENT_SOURCE",
+      "G3R_NATIVE_13_LANES",
+      "FS03_CURRENT_SOURCE",
+      "A09_SECOND_CONSUMER_SKYBIND_GO",
+      "ACTIONS_WORKFLOW_RUN_ATTEMPT_ARTIFACT"
+    ],
+    "consumer": [
+      "SKYBIND",
+      "CINDERBOX",
+      "BKX",
+      "CHROOTCTL",
+      "OTHER_CONFIGURED_CONSUMERS"
+    ],
+    "device": [
+      "REAL_ANDROID_INSTRUMENTATION",
+      "INSTALLED_PAIR_PROVENANCE",
+      "TRUSTED_ROOT_BROKER_IDENTITY",
+      "INDEPENDENT_SSH_WORKER",
+      "ANDROID_NOTIFICATION_DELIVERY"
+    ],
+    "security": [
+      "N01",
+      "N02",
+      "C04",
+      "C05",
+      "C06",
+      "Q01",
+      "Q02",
+      "U01",
+      "ENV-A06",
+      "ANDROID-A16",
+      "DIST-A01",
+      "DIST-A12",
+      "DIST-A13",
+      "TEST-A11"
+    ],
+    "release": [
+      "INDEPENDENT_RELEASE_OWNER_APPROVAL"
+    ]
+  },
+  "never_infer": [
+    "hosted authority from source tests",
+    "remote device identity from adb or operator JSON",
+    "formal H1/H2 closure from historical anchor hashes",
+    "release qualification from any R09 self-report"
+  ],
+  "operations": "Read-only by default. --output creates a new private JSON file only; --run-tests and --full-tests execute bounded local tests. No CI dispatch, downloads, Android mutation, or auto-recovery.",
+  "source_test_skip_policy": "Required R09 focused selection must have zero skips; missing Textual or another lane blocks source_pass/native_pass."
+}

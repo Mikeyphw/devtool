@@ -412,3 +412,20 @@ Audit regressions specifically cover: orphan status left without manifest, stric
 ### R08 current-source assessment — 2026-10-21
 
 The R08 single-overlay local implementation exposes `python3 -m devtool.rmp_r08_assessment --repo . --run-tests` as a fail-closed **current-HEAD evidence inventory**. It does not change or supersede the original RMP closure rules. Individual formal N01/N02/C04/C05/C06/Q01/Q02/U01 findings and all six independent substrate authorities stay OPEN. R09 must consume the actual output and independently collected current-source native/hosted/device receipts, not convert a source-only audit into a final security or release pass. See `docs/actions/DEVTOOL_R08_SECURITY_AUTHORITY_MATRIX_20261021.json`.
+
+
+### R09 final acceptance matrix — 2026-10-21
+
+`python3 -m devtool.rmp_r09_campaign --repo . --run-tests` computes a
+current-HEAD cross-campaign evidence index with independent source/native/hosted/
+consumer/device/security/release statuses. Add operator receipts with repeatable
+`--evidence /path/to/receipt.json` or `--evidence-dir /path/to/receipts`;
+reported digests and source identity are observations, never remote authority.
+`--format text` is available for narrow Termux terminals; `--output` is opt-in
+and private. `--full-tests` selects the whole current local pytest tree;
+`--require-full` fails when independent release/security/hosted/device gates
+remain open. R09 neither claims entire CI24/G3R/FS03 completion from a
+focused pytest result nor dispatches hosted CI or touches Android by default.
+The baseline is the user-provided R08 tree `82edc9467365060832415027994edef9b16590a7`
+with 103 native local security regressions. Formal security and six original
+substrate obligations remain separately open until independent acceptance.
