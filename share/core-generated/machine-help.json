@@ -4614,6 +4614,81 @@
       "adoption_source": "core-registry",
       "aliases": [],
       "domain": "actions",
+      "id": "cli.command.actions.provider-distributions",
+      "options": [
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit result as JSON",
+          "hidden": false,
+          "id": "cli.option.actions.provider-distributions.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "distribution_plan",
+          "help": "Review manifest and source policy without requiring produced output bytes",
+          "hidden": false,
+          "id": "cli.option.actions.provider-distributions.distribution_plan",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--plan"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "adopt_target",
+          "help": "Target with native target-local jobs",
+          "hidden": false,
+          "id": "cli.option.actions.provider-distributions.adopt_target",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--target"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "adopt_workflow",
+          "help": "Workflow under the target",
+          "hidden": false,
+          "id": "cli.option.actions.provider-distributions.adopt_workflow",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--workflow"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.provider-distributions.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "provider-distributions"
+      ],
+      "stability": "experimental",
+      "summary": "Review or verify typed Go/Python distribution outputs (read-only)"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
       "id": "cli.command.actions.provider-doctor",
       "options": [
         {
@@ -37329,7 +37404,7 @@
       "summary": ""
     }
   ],
-  "digest": "74dd57ea81624ed084491e3b0302a1008207652ecb21c85e9ce569f6ebdb1cec",
+  "digest": "adb8a86f3d1d976cc308a2b631e264544a7132fb20e75d1bf0f6172a44da354d",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -37380,6 +37455,7 @@
       "actions pipeline run",
       "actions pipeline status",
       "actions plan",
+      "actions provider-distributions",
       "actions provider-doctor",
       "actions provider-export",
       "actions provider-plan",
@@ -37840,11 +37916,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 498,
-    "registry_command_count": 372
+    "parser_command_count": 499,
+    "registry_command_count": 373
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "eceb5ae8dc404ba710b5627a4d5dd788d82653a26a20bd6eea9e81e9ec0b95a1",
+  "registry_digest": "bcabf1b8480d75f802db0dd12882c522bc91acc9affe02af43a9ef1524032dc1",
   "registry_schema_version": 1,
   "schema_version": 1
 }

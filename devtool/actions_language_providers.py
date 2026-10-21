@@ -73,17 +73,24 @@ class GoProvider:
         if not _tracked(root, 'go.mod'):
             raise ProviderError('Go adapter requires a tracked, non-symlink go.mod at repository root')
         if (root / 'go.work').exists():
-            raise ProviderError('Go workspace support is deferred to NEXT-04')
+            from .actions_distributions import _module, DistributionError
+            try:
+                _module(root)
+            except DistributionError as exc:
+                raise ProviderError(str(exc)) from None
         raw = (root / 'go.mod').read_text(encoding='utf-8')
         version = _GO_VERSION.search(raw)
         if not version:
             raise ProviderError('Go toolchain version absent or unsupported in go.mod')
         # Don't infer CGO or native target compatibility from hosted x86_64.
         if any(a.startswith(('GOOS=', 'GOARCH=', 'CGO_ENABLED=')) for a in argv):
-            raise ProviderError('Go cross-target/CGO admission belongs to NEXT-04')
+            raise ProviderError('Go environment variables must be declared in job.env, not in argv')
+        if argv[1]=='build' and '-o' in argv and (
+                argv.index('-o')+1 >= len(argv) or not argv[argv.index('-o')+1].startswith('dist/')):
+            raise ProviderError('Go distributable outputs must be inside dist/')
         return {'provider': 'go', 'api_version': self.api_version, 'toolchain': 'go',
                 'version': version.group(1), 'version_source': 'go.mod',
-                'lockfiles': ['go.mod'] + (['go.sum'] if _tracked(root, 'go.sum') else []),
+                'lockfiles': ['go.mod'] + [n for n in ('go.sum','go.work','go.work.sum') if _tracked(root,n)],
                 'cache_enabled': False, 'report_adapter': 'go-json',
                 'output_role': 'source-only-unverified', 'release_qualified': False}
 
@@ -97,10 +104,24 @@ class PythonShellProvider:
         _argv(argv)
         if Path(argv[0]).name not in ('python', 'python3'):
             raise ProviderError('Python adapter refuses shell scripts and unreviewed external programs')
-        if len(argv) < 3 or argv[1] != '-m' or argv[2] not in ('pytest', 'unittest', 'compileall', 'ruff'):
-            raise ProviderError('Python adapter admits only python -m pytest/unittest/compileall/ruff')
+        if len(argv) < 3 or argv[1] != '-m' or argv[2] not in ('pytest', 'unittest', 'compileall', 'ruff', 'build'):
+            raise ProviderError('Python adapter admits only python -m pytest/unittest/compileall/ruff/build')
         if 'pytest' in argv and 'compileall' in argv:
             raise ProviderError('Ambiguous Python module argv')
+        if argv[2] == 'build':
+            # Clean Python distribution production uses pinned tooling and no
+            # implicit build-environment downloads; native DAG remains owner.
+            if not _tracked(root, 'pyproject.toml') or '--no-isolation' not in argv:
+                raise ProviderError('Python build requires tracked pyproject and --no-isolation')
+            if not _tracked(root, 'requirements.txt'):
+                raise ProviderError('Python build requires tracked hash-pinned requirements.txt')
+            from .actions_distributions import _python_source, DistributionError
+            try: _python_source(root)
+            except DistributionError as exc: raise ProviderError(str(exc)) from None
+            if argv.count('--outdir') != 1 or argv[argv.index('--outdir')+1:argv.index('--outdir')+2] != ['dist']:
+                raise ProviderError('Python package build must use --outdir dist')
+            if '--wheel' not in argv and '--sdist' not in argv:
+                raise ProviderError('Python package build must select --wheel or --sdist')
         lockfiles = [name for name in ('uv.lock', 'poetry.lock', 'requirements.txt', 'pdm.lock') if _tracked(root, name)]
         # Toolchain is installed by a pinned GitHub Action; full package build/dependency
         # resolution and lock enforcement are NEXT-04, so no tests/release assertions.
@@ -172,33 +193,79 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         meta = job.metadata or {}
         if job.runner not in ('command','python','go') or job.shell_command or job.action or job.gradle_tasks:
             raise ProviderError('Only explicit argv target-local command/python/go jobs are reviewable')
-        if job.env or job.execution_environment not in ('auto', 'native'):
+        if job.execution_environment not in ('auto', 'native'):
             raise ProviderError('NEXT-03 refuses custom environment variables or native/remote execution selectors')
         if any(meta.get(key) is True for key in ('device_required','root_required','signing_required','release_signed','termux_native_required')):
             raise ProviderError('Device, root, Termux and signing cannot be hosted')
         argv = list(job.command or [])
         provider = _provider_for(job)
         declaration = provider.inspect(root, job, argv)
+        if job.env:
+            if declaration['provider'] != 'go' or set(job.env)-{'GOOS','GOARCH','CGO_ENABLED'}:
+                raise ProviderError('Only reviewed Go cross-target environment variables are admitted')
+            goos=job.env.get('GOOS','linux'); goarch=job.env.get('GOARCH','amd64')
+            cgo=job.env.get('CGO_ENABLED','0')
+            if (goos,goarch) not in {('linux','amd64'),('linux','arm64'),('windows','amd64'),
+                                     ('windows','arm64'),('darwin','amd64'),('darwin','arm64')} or cgo not in ('0','1'):
+                raise ProviderError('Unsupported Go cross-target/CGO environment')
+            if cgo=='1' and (goos,goarch)!=('linux','amd64'):
+                raise ProviderError('CGO requires independently qualified cross-compiler')
+            declaration['distribution_target']={'goos':goos,'goarch':goarch,'cgo_enabled':cgo=='1'}
         if job.root not in ('', '.', str(root), str(root.resolve())):
             raise ProviderError('NEXT-03 only exports jobs rooted at the repository (subdirectory roots need review)')
         if any(not isinstance(v, str) or v.startswith('/') or '..' in Path(v).parts or '\\' in v for v in job.outputs):
             raise ProviderError('Job output path is not bounded')
         rows.append({'node':node.key, 'job':local, 'depends_on':list(node.depends_on),
                      'argv_sha256': _digest(argv), 'inputs_sha256':_digest(list(job.inputs)),
-                     'provider':declaration})
+                     'provider':declaration,'outputs':list(job.outputs), 'command':argv, 'env':dict(job.env)})
     providers = sorted({r['provider']['provider'] for r in rows})
     head, tree = _git(root, 'rev-parse', 'HEAD'), _git(root, 'rev-parse', 'HEAD^{tree}')
     # A generated workflow is itself a new Git commit: binding the frozen review
     # digest to the *pre-export* HEAD would make the first CI run fail. Instead
     # bind reviewed config, provider lockfiles and selected native job graph.
+    from .actions_distributions import CONTRACT_PATH, distribution_contract, DistributionError
+    distribution = None
+    if (root / CONTRACT_PATH).exists():
+        try:
+            distribution = distribution_contract(root,target=target,workflow=workflow)
+        except DistributionError as exc: raise ProviderError(str(exc)) from None
+        for dist in distribution['entries']:
+            e=dist['expected']
+            candidates=[row for row in rows if e['path'] in row['outputs'] and
+                (row['provider']['provider']=='go' if e['kind']=='go' else row['provider']['provider']=='python-shell')]
+            if len(candidates)!=1:
+                raise ProviderError('Each distribution must belong to exactly one declared native-DAG output: '+e['id'])
+            owner=candidates[0]
+            if e['kind']=='go':
+                cmd=owner['command']
+                if len(cmd)<4 or cmd[:2]!=['go','build'] or '-o' not in cmd or cmd[cmd.index('-o')+1]!=e['path']:
+                    raise ProviderError('Go distribution must be produced by an exact go build -o job')
+                env=owner['env']
+                if (env.get('GOOS','linux'),env.get('GOARCH','amd64'),env.get('CGO_ENABLED','0')) != (e['goos'],e['goarch'],'1' if e['cgo_enabled'] else '0'):
+                    raise ProviderError('Go distribution does not match declared build environment')
+            else:
+                cmd=owner['command']
+                if cmd[:3] not in (['python','-m','build'],['python3','-m','build']):
+                    raise ProviderError('Python distribution requires python -m build --no-isolation')
+                if '--no-isolation' not in cmd:
+                    raise ProviderError('Python build isolation could install unpinned dependencies')
+                if '--outdir' not in cmd or cmd[cmd.index('--outdir')+1:cmd.index('--outdir')+2] != ['dist']:
+                    raise ProviderError('Python build outputs must use exact --outdir dist')
+                if ('--wheel' if e['kind']=='wheel' else '--sdist') not in cmd:
+                    raise ProviderError('Python build command does not select declared output format')
+                if not (root / 'requirements.txt').exists():
+                    raise ProviderError('Python provider requires hash-pinned requirements for hosted provisioning')
     tracked_sources = ['.devtool.toml'] + sorted({p for row in rows for p in row['provider']['lockfiles']})
+    if distribution:
+        tracked_sources += [CONTRACT_PATH,'pyproject.toml'] if any(e['kind']!='go' for e in (r['expected'] for r in distribution['entries'])) else [CONTRACT_PATH]
     source_digests = {p: hashlib.sha256((root / p).read_bytes()).hexdigest()
                       for p in tracked_sources if _tracked(root, p)}
     if '.devtool.toml' not in source_digests:
         raise ProviderError('Provider review requires tracked .devtool.toml')
     bound = {'source_digests':source_digests, 'target':target,
              'workflow':workflow, 'runtime_sha':devtool_sha, 'nodes':rows,
-             'host':{'os':'ubuntu-24.04','arch':'x86_64'}, 'providers':providers}
+             'host':{'os':'ubuntu-24.04','arch':'x86_64'}, 'providers':providers,
+             'distribution_contract_sha256':distribution['contract_sha256'] if distribution else ''}
     digest = _digest(bound)
     if expect_plan_sha and expect_plan_sha != digest:
         raise ProviderError('Selected source/DAG/toolchain differs from frozen provider plan')
@@ -209,6 +276,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
             'plan_sha256':digest,'export_job_strategy':'single-hosted-job-native-dag',
             'host_matrix':[{'os':'ubuntu-24.04','arch':'x86_64'}],
             'cache':'disabled-until-reviewed-lock-policy',
+            'distributions': ([] if not distribution else [{'id':r['id'],'kind':r['kind'],'path':r['path']} for r in distribution['entries']]),
             'changed_target_selection':'run-full-dag-unless-authoritatively-proven',
             'test_evidence':'not_verified','remote_dispatched':False,
             'artifact_authenticated':False,'release_qualified':False}
@@ -219,6 +287,36 @@ def _workflow_yaml(plan: dict[str, Any]) -> str:
     target, workflow, pin = plan['target'], plan['workflow'], plan['runtime_sha']
     namespace = f'devtool-{target}-{workflow}-providers'
     # All dynamic strings are slug/SHA constants checked by provider_plan.
+    dist = bool(plan.get('distributions'))
+    py_dist = any(row['kind'] in ('wheel','sdist') for row in plan.get('distributions',[]))
+    py_requirements = ('''      - name: Install hash-verified Python build/test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --require-hashes -r requirements.txt
+''' if py_dist else '')
+    clean_outputs = (f'''      - name: Refuse pre-existing candidate outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+{chr(10).join('          test ! -e '+repr(row['path'])+' && test ! -L '+repr(row['path']) for row in plan['distributions'])}
+''' if dist else '')
+    post_verify = (f'''      - name: Verify declared distributions against tracked source contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/devtool-venv/bin/python" -m devtool --repo "$GITHUB_WORKSPACE" actions provider-distributions --target {target} --workflow {workflow} --json > "$RUNNER_TEMP/devtool-distributions.json"
+''' if dist else '')
+    candidate_upload = (f'''      - name: Upload verified candidate distributions (not release-qualified)
+        if: success()
+        uses: actions/upload-artifact@{_UPLOAD_SHA}
+        with:
+          name: {namespace}-candidate-bytes
+          path: |
+{chr(10).join('            '+row['path'] for row in plan['distributions'])}
+          if-no-files-found: error
+          retention-days: 14
+''' if dist else '')
     go_setup = (f'''      - name: Pinned Go toolchain
         uses: actions/setup-go@{_SETUP_GO_SHA}
         with:
@@ -263,7 +361,7 @@ jobs:
         uses: actions/setup-python@{SETUP_PYTHON_SHA}
         with:
           python-version: '3.12'
-{go_setup}      - name: Acquire frozen Devtool runtime
+{go_setup}{py_requirements}      - name: Acquire frozen Devtool runtime
         shell: bash
         run: |
           set -euo pipefail
@@ -279,12 +377,12 @@ jobs:
           "$RUNNER_TEMP/devtool-venv/bin/python" -m devtool --repo "$GITHUB_WORKSPACE" actions provider-plan --target {target} --workflow {workflow} --devtool-sha {pin} --expect-plan-sha {plan['plan_sha256']} --json > "$RUNNER_TEMP/devtool-provider-plan.json"
           "$RUNNER_TEMP/devtool-venv/bin/python" -m devtool --repo "$GITHUB_WORKSPACE" plan --target {target} {workflow} --json > "$RUNNER_TEMP/devtool-plan.json"
           "$RUNNER_TEMP/devtool-venv/bin/python" -m devtool --repo "$GITHUB_WORKSPACE" preflight --target {target} --workflow {workflow} --json > "$RUNNER_TEMP/devtool-preflight.json"
-      - name: Run native DAG (one owner, no duplicated GitHub scheduler)
+{clean_outputs}      - name: Run native DAG (one owner, no duplicated GitHub scheduler)
         shell: bash
         run: |
           set -euo pipefail
           "$RUNNER_TEMP/devtool-venv/bin/python" -m devtool --repo "$GITHUB_WORKSPACE" --machine-file "$RUNNER_TEMP/devtool-invoke.json" invoke --target {target} {workflow}
-      - name: Record source-bound evidence, never release authority
+{post_verify}{candidate_upload}      - name: Record source-bound evidence, never release authority
         if: always()
         shell: bash
         run: |
@@ -293,7 +391,7 @@ jobs:
           printf '%s\\n' "$GITHUB_SHA" > "$RUNNER_TEMP/devtool-provider-evidence/consumer-source.txt"
           printf '%s\\n' "$DEVTOOL_SOURCE_SHA" > "$RUNNER_TEMP/devtool-provider-evidence/devtool-source.txt"
           printf '%s\\n' "$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/devtool-provider-evidence/github-run-attempt.txt"
-          for f in devtool-provider-plan.json devtool-plan.json devtool-preflight.json devtool-invoke.json; do
+          for f in devtool-provider-plan.json devtool-plan.json devtool-preflight.json devtool-invoke.json devtool-distributions.json; do
             if test -f "$RUNNER_TEMP/$f"; then
               cp "$RUNNER_TEMP/$f" "$RUNNER_TEMP/devtool-provider-evidence/$f"
             fi

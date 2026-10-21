@@ -29,12 +29,20 @@ def run_actions_command(args: Any) -> int:
                 return 1
             print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
             return 0
-        if command in ('provider-plan', 'provider-export', 'provider-doctor'):
+        if command in ('provider-plan', 'provider-export', 'provider-doctor', 'provider-distributions'):
             from .actions_language_providers import (provider_plan, provider_export,
                                                      provider_doctor, ProviderError, AdoptionError)
             try:
                 selected = str(getattr(args, 'adopt_target', '') or '')
-                if command == 'provider-doctor':
+                if command == 'provider-distributions':
+                    from .actions_distributions import distribution_contract, verify_distributions, DistributionError
+                    named = str(getattr(args,'adopt_workflow','') or '')
+                    try:
+                        payload = (distribution_contract(root,target=selected,workflow=named)
+                                   if bool(getattr(args,'distribution_plan',False)) else
+                                   verify_distributions(root,target=selected,workflow=named))
+                    except DistributionError as exc: raise ProviderError(str(exc)) from None
+                elif command == 'provider-doctor':
                     payload = provider_doctor(root, target=selected)
                 else:
                     named = str(getattr(args, 'adopt_workflow', '') or '')

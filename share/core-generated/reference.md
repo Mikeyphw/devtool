@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `eceb5ae8dc404ba710b5627a4d5dd788d82653a26a20bd6eea9e81e9ec0b95a1`
+Registry digest: `bcabf1b8480d75f802db0dd12882c522bc91acc9affe02af43a9ef1524032dc1`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -53,6 +53,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions pipeline run` — Create durable pipeline journal and execute ready nodes
 - `actions pipeline status` — Read local durable pipeline states (no GitHub operations)
 - `actions plan` — Validate workflow ref and inputs without dispatching
+- `actions provider-distributions` — Review or verify typed Go/Python distribution outputs (read-only)
 - `actions provider-doctor` — Inspect allowlisted hosted language providers per workflow
 - `actions provider-export` — Review, write or verify source-bound provider-hosted workflow
 - `actions provider-plan` — Review exact source-bound native DAG provider plan (never dispatches)

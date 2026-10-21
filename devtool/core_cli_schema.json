@@ -784,6 +784,22 @@
       "aliases": [],
       "canonical_path": [
         "actions",
+        "provider-distributions"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Review or verify typed Go/Python distribution outputs (read-only)",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.provider-distributions"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
         "provider-doctor"
       ],
       "metadata": {
@@ -13421,6 +13437,113 @@
       "scope": "actions plan",
       "sensitive": false,
       "stable_id": "cli.option.actions.plan.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit result as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "provider-distributions"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-distributions",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-distributions.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--plan",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "distribution_plan",
+        "help": "Review manifest and source policy without requiring produced output bytes",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "provider-distributions"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-distributions",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-distributions.distribution_plan",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "adopt_target",
+        "help": "Target with native target-local jobs",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "provider-distributions"
+        ],
+        "required": true
+      },
+      "scope": "actions provider-distributions",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-distributions.adopt_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--workflow",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "adopt_workflow",
+        "help": "Workflow under the target",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "provider-distributions"
+        ],
+        "required": true
+      },
+      "scope": "actions provider-distributions",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-distributions.adopt_workflow",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "provider-distributions"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-distributions",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-distributions.help",
       "value_kind": "_HelpAction"
     },
     {
@@ -114919,6 +115042,94 @@
                 },
                 {
                   "aliases": [],
+                  "help": "Review or verify typed Go/Python distribution outputs (read-only)",
+                  "help_present": true,
+                  "name": "provider-distributions",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "adopt_target",
+                        "group": null,
+                        "help": "Target declaring ci/devtool-distributions.json",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--target"
+                        ],
+                        "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "adopt_workflow",
+                        "group": null,
+                        "help": "Workflow owning selected distribution outputs",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--workflow"
+                        ],
+                        "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit result as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": null,
+                        "default": false,
+                        "dest": "distribution_plan",
+                        "group": null,
+                        "help": "Review manifest and source policy without requiring produced output bytes",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--plan"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
                   "help": "Inspect allowlisted hosted language providers per workflow",
                   "help_present": true,
                   "name": "provider-doctor",
@@ -116309,7 +116520,7 @@
                         },
                         {
                           "aliases": [],
-                          "help": "Verify offline signed\u2192unsigned registry lineage and LIFE identity without release promotion",
+                          "help": "Verify offline signed→unsigned registry lineage and LIFE identity without release promotion",
                           "help_present": true,
                           "name": "local-evidence",
                           "parser": {
