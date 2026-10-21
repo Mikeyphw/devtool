@@ -687,3 +687,12 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 - **Change:** Replace runtime-threshold concurrency proof with a two-process peer-marker handshake. Real subprocesses must be simultaneously in progress to pass. Serialized execution causes an explicit timeout/failure, while slow concurrent execution remains valid. No regression suite is removed, and RM-02's prior fail-fast scheduler fix remains intact.
 - **Evidence:** `tests/test_mp09_mp10_safe_scheduler_plan.py::ParallelExecutionTests::test_safe_independent_nodes_really_execute_concurrently`, `tests/test_rm02_dependency_ready.py` and `docs/RM02_PROMISE_AUDIT.md`. Post-apply native `devtool` target validation and transaction rollback remain mandatory.
 - **Status:** implementation repaired in source-bound RM-02 overlay; genuine Termux installed result remains pending the user's validation. This is separate from source and remote qualification gates.
+
+## RM-03 — Canonical EXO cross-boundary lineage implementation (2026-10-21)
+
+- **Scope:** DT-006/DT-023 Devtool core. No Cinderbox A11 configuration work.
+- **Implemented:** source/config/attempt-bound workflow node identity, conservative EXO event lifecycle correction for multi-part jobs, three local typed evidence-verifier target jobs, read-only `evidence lineage` query and strict source/run/attempt/artifact digest correlation.
+- **Safety:** no synthetic remote trust, no GitHub dispatch or retry, no inferred authority from green CI/checks or local files. Absent or inconsistent event journals remain unknown/incomplete; invalid bindings block.
+- **Evidence:** `tests/test_rm03_exo_lineage.py` and existing EXO/workflow tests; comprehensive checklist in `docs/RM03_PROMISE_AUDIT.md`.
+- **Limit:** Authenticated remote provider verification and full producer→consumer artifact graph remain separate RM-05/RM-06 work. Native workflow retry is RM-04.
+- **Status:** implemented and locally test-verified; actual Termux apply to be confirmed by operator.

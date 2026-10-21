@@ -6535,6 +6535,22 @@
       },
       "options": [],
       "stable_id": "cli.command.migration"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "evidence",
+        "lineage"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "evidence",
+        "stability": "experimental",
+        "summary": "Read-only canonical EXO node and remote lineage",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.evidence.lineage"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -62669,6 +62685,92 @@
       "sensitive": false,
       "stable_id": "cli.option.migration.help",
       "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "help",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "evidence",
+          "lineage"
+        ],
+        "required": false
+      },
+      "scope": "evidence.lineage",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.lineage.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "run id",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "evidence",
+          "lineage"
+        ],
+        "required": true
+      },
+      "scope": "evidence.lineage",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.lineage.run_id",
+      "value_kind": "store"
+    },
+    {
+      "aliases": [],
+      "canonical": "--remote-receipt",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "remote_receipt",
+        "help": "remote receipt",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "evidence",
+          "lineage"
+        ],
+        "required": false
+      },
+      "scope": "evidence.lineage",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.lineage.remote_receipt",
+      "value_kind": "append"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "json",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "evidence",
+          "lineage"
+        ],
+        "required": false
+      },
+      "scope": "evidence.lineage",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.lineage.json",
+      "value_kind": "store_true"
     }
   ],
   "parser": {
@@ -118802,6 +118904,77 @@
                     "mutexes": [],
                     "subparsers": null,
                     "usage": null
+                  }
+                },
+                {
+                  "name": "lineage",
+                  "aliases": [],
+                  "help_present": true,
+                  "help": "Read-only canonical EXO node and remote evidence lineage",
+                  "parser": {
+                    "description": "Read-only RM-03 EXO lineage",
+                    "epilog": null,
+                    "usage": null,
+                    "formatter": "HelpFormatter",
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "groups": [],
+                    "mutexes": [],
+                    "defaults": null,
+                    "subparsers": null,
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "run_id",
+                        "group": null,
+                        "help": "run id",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--run-id"
+                        ],
+                        "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "append",
+                        "choices": null,
+                        "const": null,
+                        "default": [],
+                        "dest": "remote_receipt",
+                        "group": null,
+                        "help": "remote receipt",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--remote-receipt"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "json",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ]
                   }
                 }
               ],

@@ -131,6 +131,12 @@ def load_jobs(
         command = _command_tuple(raw_value.get("command"), job_name=name, context_prefix=context_prefix)
         shell_command = str(raw_value.get("shell_command", "") or "").strip()
         action = str(raw_value.get("action", "") or "").strip()
+        if runner in {'remote-run-correlated', 'remote-build-verified', 'artifact-verified'}:
+            if action != 'verify' or command or shell_command or gradle_tasks:
+                raise SystemExit(f"Job '{name}' typed evidence runner requires action = 'verify', never a dispatch command")
+            declared = raw_value.get('inputs')
+            if not isinstance(declared, list) or len(declared) != 1:
+                raise SystemExit(f"Job '{name}' typed evidence runner requires exactly one receipt in inputs")
         modes = sum(bool(item) for item in (command, shell_command, action, gradle_tasks))
         if modes == 0:
             raise SystemExit(

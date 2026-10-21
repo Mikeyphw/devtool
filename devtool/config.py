@@ -569,7 +569,7 @@ SUPPORTED_PROJECT_KINDS = {
     "go", "maven", "cmake", "meson", "make", "command", "unknown",
 }
 # MP01 canonical name. Keep SUPPORTED_PROJECT_KINDS for public compatibility.
-SUPPORTED_RUNNERS = SUPPORTED_PROJECT_KINDS
+SUPPORTED_RUNNERS = SUPPORTED_PROJECT_KINDS | {"remote-run-correlated", "remote-build-verified", "artifact-verified"}
 RUNNER_OPTION_SECTIONS = (
     "android", "gradle", "python", "dotnet", "node", "rust", "go",
     "maven", "cmake", "meson", "make", "build", "tasks", "artifacts",

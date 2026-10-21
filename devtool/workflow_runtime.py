@@ -419,6 +419,20 @@ def _job_specs(config: ProjectConfig, job: JobConfig) -> list[CommandSpec]:
         device_serial=job.device_serial,
         options=job.options,
     )
+    if job.runner in {'remote-run-correlated', 'remote-build-verified', 'artifact-verified'}:
+        if job.action != 'verify' or len(job.inputs) != 1 or job.command or job.shell_command or job.gradle_tasks:
+            raise WorkflowRuntimeError('typed remote evidence job requires one input receipt and action=verify')
+        # No remote dispatch is performed. The executable checks bound local
+        # evidence only and can never convert it to external provider authority.
+        import sys
+        return [CommandSpec(
+            name=f'job:{job.name}',
+            argv=[sys.executable, '-m', 'devtool.remote_evidence_jobs', job.runner,
+                  job.inputs[0], '--root', str(config.repo_root)],
+            env=effective_env, cwd=str(config.repo_root),
+            metadata={**_structured_job_metadata(job), 'remote_evidence_only': True,
+                      'remote_dispatch_allowed': False, 'remote_authenticated': False},
+        )]
     if job.action:
         return _runner_action_specs(job_config, job.runner, job.action)
     if job.gradle_tasks:
@@ -558,6 +572,29 @@ def _node_specs(config: ProjectConfig, node: WorkflowNode, *, validation_skip: t
                 ),
             }
         )
+        # RM-03: persist a stable node identity and its exact planning context
+        # on each executable spec; no remote authority is inferred here.
+        import hashlib
+        import json
+        import subprocess
+        try:
+            source_probe = subprocess.run(['git','rev-parse','HEAD'], cwd=config.repo_root,
+                                          capture_output=True, text=True, timeout=3, check=False)
+            commit = source_probe.stdout.strip().lower() if source_probe.returncode == 0 else ''
+        except (OSError, subprocess.TimeoutExpired):
+            commit = ''
+        if len(commit) != 40 or any(c not in '0123456789abcdef' for c in commit):
+            commit = ''
+        digest_inputs = [node.key, node.target, node.workflow, runner_name, effective_action,
+                         list(inputs), list(outputs), list(spec.argv)]
+        config_digest = hashlib.sha256(json.dumps(digest_inputs, sort_keys=True,
+                                                   default=str, separators=(',', ':')).encode()).hexdigest()
+        identity_inputs = [commit, node.target, node.workflow, node.key, 1]
+        metadata['workflow_source_commit'] = commit
+        metadata['workflow_config_fingerprint'] = config_digest
+        metadata['workflow_attempt'] = 1
+        metadata['workflow_canonical_identity'] = hashlib.sha256(
+            json.dumps(identity_inputs, separators=(',', ':')).encode()).hexdigest()
         spec.metadata = metadata
     return specs
 

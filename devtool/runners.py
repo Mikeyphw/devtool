@@ -2337,6 +2337,10 @@ def _publish_workflow_plan_events(specs: Sequence[CommandSpec], event_run_id: st
                 "index": spec.metadata.get("workflow_node_index"),
                 "runner": str(spec.metadata.get("workflow_runner") or ""),
                 "action": str(spec.metadata.get("workflow_action") or ""),
+                "source_commit": str(spec.metadata.get("workflow_source_commit") or ""),
+                "workflow_config_fingerprint": str(spec.metadata.get("workflow_config_fingerprint") or ""),
+                "workflow_canonical_identity": str(spec.metadata.get("workflow_canonical_identity") or ""),
+                "workflow_attempt": int(spec.metadata.get("workflow_attempt") or 1),
             },
         ))
 
@@ -2511,7 +2515,8 @@ def run_specs(
                     workflow_node_status[workflow_node_key] = synthetic_state
                 if tasker_progress is not None and not dry_run:
                     tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=spec.argv, metadata=spec.metadata)
-                publish_event(TaskStarted(
+                if prior_state not in {"failed", "blocked", "cancelled", "skipped"}:
+                    publish_event(TaskStarted(
                     run_id=event_run_id,
                     task=spec.name,
                     argv=tuple(str(value) for value in redact_sensitive_value(list(spec.argv))),
@@ -2542,7 +2547,8 @@ def run_specs(
                         pass
                 results.append(synthetic_result)
                 raw_sections.append(synthetic_raw)
-                publish_event(TaskFinished(
+                if prior_state not in {"failed", "blocked", "cancelled", "skipped"}:
+                    publish_event(TaskFinished(
                     run_id=event_run_id,
                     task=spec.name,
                     success=synthetic_state not in {"failed", "blocked", "cancelled"},
@@ -2672,7 +2678,8 @@ def run_specs(
                         "process_executed": False,
                     },
                 ))
-            publish_event(TaskFinished(
+            if not command_part_node_id or workflow_part_index == workflow_part_total:
+                publish_event(TaskFinished(
                 run_id=event_run_id,
                 task=spec.name,
                 success=True,
@@ -2742,7 +2749,8 @@ def run_specs(
                     run_id=event_run_id, node_id=command_part_node_id, parent_id=workflow_node_key,
                     status="skipped", exit_code=0, source="runner", metadata={"dry_run": True},
                 ))
-            publish_event(TaskFinished(
+            if not command_part_node_id or workflow_part_index == workflow_part_total:
+                publish_event(TaskFinished(
                     run_id=event_run_id,
                 task=spec.name,
                 success=True,
@@ -3612,7 +3620,8 @@ def run_specs(
                 source="runner",
                 metadata={"part_index": workflow_part_index, "part_total": workflow_part_total},
             ))
-        publish_event(TaskFinished(
+        if not command_part_node_id or workflow_part_index == workflow_part_total or returncode != 0:
+            publish_event(TaskFinished(
                     run_id=event_run_id,
             task=spec.name,
             success=returncode == 0,
@@ -3631,6 +3640,8 @@ def run_specs(
                 "duration_seconds": duration,
                 "failure_kind": failure_kind,
                 **({key: result_metadata[key] for key in (
+                    "workflow_source_commit", "workflow_config_fingerprint",
+                    "workflow_canonical_identity", "workflow_attempt",
                     "reuse_fingerprint", "reuse_output_manifest", "reuse_result_identity",
                     "reuse_evidence_refs", "reuse_portability_class",
                     "gradle_execution_receipt", "gradle_receipt_id",

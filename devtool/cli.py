@@ -13567,6 +13567,15 @@ def _main_after_parse(
                 if getattr(args, "run_id", None) is not None: expected["execution.run_id"] = args.run_id
                 if getattr(args, "attempt", None) is not None: expected["execution.attempt"] = args.attempt
                 result = validate_evidence(payload, expected=expected)
+            elif command == "evidence" and action == "lineage":
+                from .execution_lineage_v2 import LineageError, project_execution_lineage
+                try:
+                    result = project_execution_lineage(
+                        Path(str(getattr(args, 'repo', '') or Path.cwd())),
+                        str(args.run_id), receipt_paths=tuple(getattr(args, 'remote_receipt', []) or []),
+                    )
+                except LineageError as exc:
+                    raise EvidenceError(str(exc)) from exc
             elif command == "evidence" and action == "normalize":
                 result = normalize_test_report(Path(str(args.report)), str(args.format))
             elif command == "artifacts" and action == "verify":
