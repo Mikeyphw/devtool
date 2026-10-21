@@ -826,6 +826,83 @@
         "R07_SSH_TERMUX_RELIABILITY",
         "R09_FULL_ACCEPTANCE"
       ]
+    },
+    {
+      "id": "R07A-SSH-RETURN-EVIDENCE-001",
+      "category": "SSH qualification project return provenance and completion",
+      "priority": "P1",
+      "historical_status": "NEW",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NATIVE_AND_REAL_WORKER_PENDING",
+      "milestone": "R7",
+      "affected_paths": [
+        "devtool/ssh_qualification.py",
+        "tests/test_ssh_r07a_qualification_returns.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R07A-SSH-RETURN-EVIDENCE-001)",
+        "tests/test_ssh_r07a_qualification_returns.py"
+      ],
+      "open_followups": [
+        "TERMUX_R07A_ACCEPTANCE",
+        "INDEPENDENT_SSH_WORKER_RETURN",
+        "DURABLE_STAGE_FAILURE_RECEIPTS",
+        "SSH_R07B_TIMING_AND_SUPERVISOR",
+        "R09_FULL_ACCEPTANCE"
+      ]
+    },
+    {
+      "id": "R07-CONSOLIDATED-SSH-RELIABILITY-20261020",
+      "category": "SSH stage-durable recovery, Termux PRoot and benchmark integration",
+      "priority": "P1",
+      "historical_status": "NEW",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "NATIVE_REMOTE_AND_NOTIFICATION_PENDING",
+      "milestone": "R7",
+      "affected_paths": [
+        "devtool/ssh_qualification.py",
+        "devtool/ssh_worker.py",
+        "devtool/ssh_r07_reliability.py",
+        "tests/test_ssh_r07_consolidated_reliability.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R07-CONSOLIDATED-20261020)",
+        "tests/test_ssh_r07_consolidated_reliability.py"
+      ],
+      "open_followups": [
+        "TERMUX_R07_CONSOLIDATED_ACCEPTANCE",
+        "INDEPENDENT_REAL_SSH_WORKER",
+        "FS03_REAL_WORKER_FIXED_POINT",
+        "UX_NOTIFY_REAL_ANDROID_DELIVERY",
+        "R08_INDEPENDENT_SECURITY_ACCEPTANCE",
+        "R09_CROSS_SYSTEM_ACCEPTANCE"
+      ]
+    },
+    {
+      "id": "R07-CONSOLIDATED-AUDIT-20261021",
+      "category": "SSH consolidated promise audit and fail-closed local evidence",
+      "priority": "P1",
+      "historical_status": "NEW",
+      "source_status": "DONE_SOURCE",
+      "qualification_status": "TERMUX_AND_EXTERNAL_PENDING",
+      "milestone": "R7",
+      "affected_paths": [
+        "devtool/ssh_r07_reliability.py",
+        "devtool/ssh_qualification.py",
+        "tests/test_ssh_r07_consolidated_reliability.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R07-CONSOLIDATED-AUDIT-20261021)",
+        "docs/DEVTOOL_IMPLEMENTATION_ROADMAP.md (R07A consolidated pre-install audit)",
+        "docs/actions/DEVTOOL_R07_PROMISE_AUDIT_20261021.json"
+      ],
+      "open_followups": [
+        "TERMUX_R07_ACCEPTANCE",
+        "INDEPENDENT_REAL_SSH_WORKER",
+        "FS03_BENCHMARK_NOT_QUALIFIED",
+        "UX_NOTIFY01_NOT_QUALIFIED",
+        "SSH_GENERAL_COMMAND_STAGE_JOURNALS_EXISTING_ONLY"
+      ]
     }
   ],
   "scoped_milestone_closure": {
@@ -865,6 +942,27 @@
       "life_cleanup": "PENDING",
       "hosted": "NOT_QUALIFIED",
       "release": "NOT_QUALIFIED"
+    }
+  },
+  "r07_incremental_acceptance": {
+    "R07A_CONSOLIDATED_BCD": {
+      "source_status": "DONE_SOURCE",
+      "disposable": "PASS_197_TESTS_APPLY_COMMIT_CLEANUP",
+      "native_termux": "PENDING",
+      "independent_worker": "NOT_QUALIFIED",
+      "fs03": "NOT_QUALIFIED",
+      "notifications": "NOT_QUALIFIED",
+      "release": "NOT_QUALIFIED",
+      "scope": "R07A return integrity + R07B stage evidence + R07C substrate safety + R07D measured performance projection",
+      "replaces": "DEVTOOL_SSH_RETURN_EVIDENCE_R07A.zip",
+      "separate_r07_overlays_planned": false,
+      "scope_limitations": [
+        "Physical worker run required for source sync/return and cold-warm benchmarking",
+        "Not proof of PRoot guest session",
+        "Notifications not sent or qualified",
+        "No automated recovery mutations",
+        "No hosted/release or Android qualification"
+      ]
     }
   }
 }

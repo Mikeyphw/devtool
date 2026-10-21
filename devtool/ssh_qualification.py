@@ -9,6 +9,7 @@ survival across SSH connections, tablet -> phone evidence return, and a second
 incremental sync plan that must be clean when the phone source did not change.
 """
 
+import hashlib
 import os
 import posixpath
 from pathlib import Path
@@ -18,9 +19,11 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Any
+from typing import Any, Callable
 
-from .ssh_returns import build_return_rsync_argv
+from .ssh_r07_reliability import QualificationReceipt, performance_projection
+
+from .ssh_returns import _read_manifest, build_return_rsync_argv
 from .ssh_tmux_runner import SSHRunnerConfig, build_ssh_remote_sh_argv, worker_session_name
 from .ssh_worker import bootstrap_worker, probe_worker, worker_doctor_payload
 from .ssh_workspace import resolve_workspace_spec, sync_workspace, plan_workspace_sync
@@ -213,7 +216,72 @@ def _return_manifest_snapshot(repo_root: Path) -> set[str]:
     root = repo_root / ".devtool" / "ssh-return"
     if not root.is_dir():
         return set()
-    return {str(path.resolve()) for path in root.rglob("manifest.json") if path.is_file()}
+    return {str(path.absolute()) for path in root.rglob("manifest.json") if path.is_file() or path.is_symlink()}
+
+
+def _verify_new_project_returns(
+    config: SSHRunnerConfig, repo_root: Path, manifests: list[str], *, ordinal: int,
+) -> list[dict[str, Any]]:
+    """Require finished, producer-bound return receipts, not just new filenames.
+
+    This is a read-only qualification check. It never performs return recovery,
+    deletes partial bytes, or upgrades an incomplete transfer to success.
+    """
+    boundary = (repo_root / ".devtool" / "ssh-return").resolve()
+    receipts: list[dict[str, Any]] = []
+    for filename in manifests:
+        candidate = Path(filename)
+        if candidate.is_symlink() or not candidate.is_file() or candidate.name != "manifest.json":
+            raise ValueError(f"SSH qualification project validation pass {ordinal} has unsafe return manifest")
+        path = candidate.resolve(strict=True)
+        try:
+            relative = path.relative_to(boundary)
+        except ValueError as exc:
+            raise ValueError(f"SSH qualification project validation pass {ordinal} return manifest escapes repository") from exc
+        if len(relative.parts) != 3 or relative.parts[-1] != "manifest.json":
+            raise ValueError(f"SSH qualification project validation pass {ordinal} return manifest has invalid ownership layout")
+        manifest = _read_manifest(path)  # Existing producer-identity checksum authority.
+        if str(manifest.get("profile") or "") != config.profile or str(manifest.get("destination") or "") != config.destination:
+            raise ValueError(f"SSH qualification project validation pass {ordinal} return profile/destination mismatch")
+        if (str(manifest.get("run_id") or "") != relative.parts[0] or
+                str(manifest.get("session") or "") != relative.parts[1]):
+            raise ValueError(f"SSH qualification project validation pass {ordinal} return run/session mismatch")
+        if not str(manifest.get("source_sync_id") or "").strip():
+            raise ValueError(f"SSH qualification project validation pass {ordinal} lacks source sync provenance")
+        if not str(manifest.get("producer_sha256") or "").strip():
+            raise ValueError(f"SSH qualification project validation pass {ordinal} lacks producer identity digest")
+        producer = manifest.get("producer")
+        if not isinstance(producer, dict) or any(
+            str(producer.get(key) or "") != str(manifest.get(key) or "")
+            for key in ("profile", "destination", "run_id", "session", "source_sync_id")
+        ):
+            raise ValueError(f"SSH qualification project validation pass {ordinal} producer provenance mismatch")
+        mirror = Path(str(manifest.get("local_return_repo_root") or ""))
+        if mirror.is_symlink() or mirror.resolve(strict=False) != (path.parent / "repo").resolve(strict=False):
+            raise ValueError(f"SSH qualification project validation pass {ordinal} return mirror identity mismatch")
+        status = path.parent / "transfer.status"
+        if status.is_symlink() or not status.is_file():
+            raise ValueError(f"SSH qualification project validation pass {ordinal} has no completed return status")
+        data = status.read_bytes()
+        values: dict[str, str] = {}
+        for line in data.decode("utf-8", errors="strict").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                if key in values:
+                    raise ValueError(f"SSH qualification project validation pass {ordinal} has ambiguous return status")
+                values[key] = value
+        if values.get("state") != "complete" or values.get("returncode") != "0":
+            raise ValueError(f"SSH qualification project validation pass {ordinal} return transfer incomplete or failed")
+        receipt_bytes = path.read_bytes()
+        receipts.append({
+            "run_id": relative.parts[0], "session": relative.parts[1],
+            "source_sync_id": str(manifest["source_sync_id"]),
+            "producer_sha256": str(manifest["producer_sha256"]),
+            "manifest": str(path), "manifest_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
+            "status_sha256": hashlib.sha256(data).hexdigest(),
+            "state": "complete", "returncode": 0,
+        })
+    return receipts
 
 
 def _project_validation_argv(
@@ -256,6 +324,7 @@ def _run_project_validation(
             f"SSH qualification project validation pass {ordinal} produced no new SSH return evidence; "
             "the real remote validation path was not fully exercised"
         )
+    verified = _verify_new_project_returns(config, repo_root, new_manifests, ordinal=ordinal)
     return {
         "ok": True,
         "ordinal": ordinal,
@@ -263,10 +332,12 @@ def _run_project_validation(
         "seconds": round(elapsed, 3),
         "return_manifests": new_manifests,
         "return_manifest_count": len(new_manifests),
+        "return_evidence": verified,
+        "return_evidence_verified": len(verified),
     }
 
 
-def qualify_worker(
+def _qualify_worker_inner(
     config: SSHRunnerConfig,
     repo_root: str | Path,
     *,
@@ -277,7 +348,12 @@ def qualify_worker(
     validation_target: str = "",
     validation_tasks: tuple[str, ...] = (),
     validation_twice: bool = True,
+    _stage_event: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
+    def checkpoint(stage: str, state: str) -> None:
+        if _stage_event is not None:
+            _stage_event(stage, state)
+
     if not config.profile:
         raise ValueError("SSH qualification requires a named worker profile")
     if config.mode != "commands":
@@ -290,15 +366,19 @@ def qualify_worker(
         raise ValueError(f"SSH qualification repository does not exist: {repo}")
 
     started = time.monotonic()
+    checkpoint("worker-probe", "started")
     doctor_before = worker_doctor_payload(config)
     bootstrap_payload: dict[str, Any] = {}
     worker = probe_worker(config)
+    checkpoint("worker-probe", "passed")
     if worker.missing_required:
         if not bootstrap:
             raise ValueError("SSH worker is missing required tools: " + ", ".join(worker.missing_required))
+        checkpoint("bootstrap", "started")
         bootstrap_payload = bootstrap_worker(config, dry_run=dry_run)
         if not bool(bootstrap_payload.get("ok")):
             raise ValueError(str(bootstrap_payload.get("detail") or "SSH worker bootstrap failed"))
+        checkpoint("bootstrap", "passed")
         if not dry_run:
             worker = probe_worker(config)
 
@@ -356,14 +436,17 @@ def qualify_worker(
     if sync:
         spec = resolve_workspace_spec(config, repo, remote_home=worker.home)
         sync_started = time.monotonic()
+        checkpoint("source-sync", "started")
         sync_payload = sync_workspace(config, spec, dry_run=False, retain_lease=False)
         sync_seconds = time.monotonic() - sync_started
         if not bool(sync_payload.get("ok")):
             raise ValueError(str(sync_payload.get("detail") or "SSH qualification source synchronization failed"))
+        checkpoint("source-sync", "passed")
 
     project_runs: list[dict[str, Any]] = []
     post_build_plan: dict[str, Any] = {}
     if project_validation:
+        checkpoint("project-validation", "started")
         project_runs.append(_run_project_validation(
             config, repo, target=validation_target, tasks=validation_tasks, ordinal=1,
         ))
@@ -379,15 +462,19 @@ def qualify_worker(
             project_runs.append(_run_project_validation(
                 config, repo, target=validation_target, tasks=validation_tasks, ordinal=2,
             ))
+        checkpoint("project-validation", "passed")
 
     nonce = "q-" + uuid.uuid4().hex[:12]
     local_root = _local_qualification_root(repo, config.profile, nonce)
     tmux_started = time.monotonic()
+    checkpoint("tmux-probe", "started")
     session, remote_root = _start_tmux_probe(config, nonce=nonce)
     try:
         tmux_state = _wait_tmux_probe(config, session=session, remote_root=remote_root)
+        checkpoint("tmux-probe", "passed")
         tmux_seconds = time.monotonic() - tmux_started
         return_started = time.monotonic()
+        checkpoint("return-transfer", "started")
         returned = _retrieve_probe_artifact(
             config,
             remote_root=remote_root,
@@ -397,8 +484,10 @@ def qualify_worker(
             remote_home=worker.home,
         )
         return_seconds = time.monotonic() - return_started
+        checkpoint("return-transfer", "passed")
         if sync:
             plan_started = time.monotonic()
+            checkpoint("incremental-sync", "started")
             second_plan = plan_workspace_sync(config, spec)
             second_plan_seconds = time.monotonic() - plan_started
             if int(second_plan.get("change_count", 0) or 0) != 0:
@@ -407,6 +496,7 @@ def qualify_worker(
                     f"or sync exclusions are incomplete ({second_plan.get('change_count')} pending change(s)): "
                     + _sync_difference_detail(second_plan)
                 )
+            checkpoint("incremental-sync", "passed")
     finally:
         _cleanup_probe(config, session=session, remote_root=remote_root)
 
@@ -463,3 +553,51 @@ def qualify_worker(
         },
         "detail": "SSH managed worker qualification passed" + (" with project validation" if project_validation else ""),
     }
+
+
+
+def qualify_worker(
+    config: SSHRunnerConfig,
+    repo_root: str | Path,
+    *,
+    dry_run: bool = False,
+    bootstrap: bool = True,
+    sync: bool = True,
+    project_validation: bool = False,
+    validation_target: str = "",
+    validation_tasks: tuple[str, ...] = (),
+    validation_twice: bool = True,
+) -> dict[str, Any]:
+    """Source-bound qualification with durable stage evidence on interruption/failure.
+
+    Dry-run remains non-persistent. A previously crashed process leaves its last
+    'running' stage as evidence; it is never auto-promoted to pass.
+    """
+    receipt = None if dry_run else QualificationReceipt.start(
+        Path(repo_root).expanduser().resolve(), config.profile, config.destination,
+    )
+    try:
+        result = _qualify_worker_inner(
+            config, repo_root, dry_run=dry_run, bootstrap=bootstrap, sync=sync,
+            project_validation=project_validation, validation_target=validation_target,
+            validation_tasks=validation_tasks, validation_twice=validation_twice,
+            _stage_event=receipt.checkpoint if receipt else None,
+        )
+    except BaseException as exc:
+        if receipt:
+            # Persist even KeyboardInterrupt/SystemExit; the original failure
+            # retains priority. SIGKILL leaves the last `running` checkpoint.
+            try:
+                receipt.finish(passed=False, failure_type=type(exc).__name__)
+            except (OSError, ValueError):
+                pass
+        raise
+    if receipt:
+        receipt.checkpoint("completed", "passed")
+        receipt.finish(passed=True)
+        result["stage_receipt"] = str(receipt.path)
+        result["stage_receipt_sha256"] = hashlib.sha256(receipt.path.read_bytes()).hexdigest()
+        result["performance_evidence"] = performance_projection(result.get("performance") or {})
+        result["remote_worker_attested"] = False
+        result["notification_qualified"] = False
+    return result

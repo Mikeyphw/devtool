@@ -375,3 +375,35 @@ structured results. Historical failure remains recorded; native R06D-R1 and
 LIFE cleanup remain pending until a full real Termux apply receipt is supplied.
 These issues do not license automatic rollback, source-ZIP deletion or release
 qualification.
+
+
+### R07A — SSH project-return evidence integrity (2026-10-20; source candidate)
+
+Read-only qualification reinforcement: real `ssh qualify --project-validation` now requires each newly created SSH return manifest to reside under the selected repository's owned `.devtool/ssh-return/RUN/SESSION/manifest.json`, match the configured profile, destination, producer identity and source-sync claim, and have a non-symlink transfer status with `state=complete` and `returncode=0`. An exit-zero child and a manifest filename alone are **not** proof of a successful evidence return. Receipts expose SHA-256 of the manifest and status bytes without mutating existing return records. Existing canonical `ssh recover` remains the only explicit return-recovery authority; partial/failure evidence is retained. The digest binds *local recorded bytes*, not an independent remote host or provider trust attestation.
+
+R07A is only the first bounded increment. Live SSH/Termux/PRoot cold-and-warm sync measurements, typed stage-failure receipts, supervisor safety, FS03 timings and Android notifications remain open. The user reports R06D-R1 installed but has not provided a complete native validator receipt; no native or external qualification is inferred from that report.
+
+
+### R07 consolidated A+B+C+D — Single replacement R07A overlay (2026-10-20)
+
+**Source implementation (197 tests and disposable transaction accepted; native Termux pending; built against R06D-R1):** supersedes the earlier R07A-only planned sequence. In addition to R07A's return-manifest and transfer-completion checks:
+
+- **R07B, durable stage and recovery evidence:** successful and failed real `devtool ssh qualify` calls persist a private, atomic, permission-restricted per-attempt JSON receipt under `.devtool/ssh-qualification/<profile>/<nonce>.json`. Stage transitions include worker probe, bootstrap, source sync, optional project validation, tmux probe, return, incremental sync, and completion. A terminated process retains `running` evidence; failures remain `not-qualified`, recording only exception type (not sensitive error text). `--dry-run` does not write stage receipts. `devtool ssh doctor PROFILE` with repository context adds a bounded, read-only inventory of SSH return manifests and statuses, indicating complete/pending/partial/invalid cases without invoking rsync or LIFE cleanup. Existing `devtool ssh recover` / `ssh retrieve` continue to own explicit mutation.
+- **R07C, native Termux / PRoot diagnosis:** SSH doctor distinguishes observed native Termux login paths, platform-only reports, ordinary Linux shells, and unknown substrate. PRoot availability and readiness are separate from guest-session attestation. The existing `scripts/devtool-proot-worker.py` safety checks for live/unknown guest work remain the only supervisor stop authority; R07 neither force-stops nor automatically installs a guest.
+- **R07D, real measurement and false-qualification controls:** `ssh qualify` now projects observed sync, detached tmux, return, incremental planning and (when both actually ran) cold/warm project timings and ratio. It provides an explicit false qualification flag for FS03 and notifications. Local timing/mocks and SSH command exit-zero never confer independent real-worker, FS03, notifications, Android-device, hosted, or release qualifications. An external real-worker benchmark/notification acceptance receipt remains necessary to close those externally dependent gates.
+
+**Operator sequence:** install the *consolidated R07A replacement* once on a clean R06D-R1 tree; run `devtool ssh doctor PROFILE --format json`; run `devtool ssh qualify PROFILE --project-validation --target TARGET --task TASK` for actual configured tasks if appropriate; inspect `stage_receipt` and `performance_evidence` from the qualification JSON. Any root/host bootstrap or build operations require normal explicit Devtool command invocation, never automatic overlay behavior. No R07B/C/D ZIPs are planned. Source-only tests and disposable installation cannot substitute for a real SSH worker, Termux native or notification qualification.
+
+
+### R07A consolidated pre-install audit and hardening (2026-10-21)
+
+Reviewed all four increments against the actual overlay source and tests. The replacement remains source-pinned to R06D-R1 and supersedes **both** earlier R07A ZIPs; neither should be stacked. Evidence classification:
+
+| Promise | Source audit result | Boundaries |
+| --- | --- | --- |
+| R07A verified return identity and completion | Implemented and regression tested | Manifest digest is local integrity, not independent worker authentication |
+| R07B durable stage receipts and recovery | Implemented for `ssh qualify` attempts. Audit strengthened explicit failure-stage, Git HEAD/tree provenance, 0700 receipt directory and retained interrupted evidence; return inventory now includes orphan `transfer.status`, bounded unsafe directory entries, rejects symlinked `.devtool`. | Other general SSH operations still use their existing journals; this is not a new universal SSH event log or automatic recovery |
+| R07C Termux/PRoot diagnostic | Implemented conservative shell classification; audit requires both Termux HOME and PREFIX before `termux-native` is shown. Existing guarded PRoot supervisor unchanged. | Actual guest attestation and guest-safe stop evidence require independent session verification |
+| R07D timing and external evidence | Observed sync/tmux/return/plan and optional first/second project-validation times with ratio; never synthetic FS03, notification or release pass | Real external SSH baseline/fixed-point benchmarks, FS03 performance and Android notifications are **NOT DELIVERED AS QUALIFIED** and cannot be locally fabricated |
+
+Audit regressions specifically cover: orphan status left without manifest, strict inventory limit including unsafe entries, symlinked parent, private source-bound stage evidence, explicit failed/interrupted stage, mixed guest/native inherited environment, and existing source-bound return checks. No automatic SSH operation, rsync, device mutation, guest stop, evidence purge or CI dispatch occurs during install. Continue final independent acceptance on native Termux and real SSH workers before closing external gates.
