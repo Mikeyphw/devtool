@@ -2008,6 +2008,44 @@
       "priority": "P0",
       "qualification_status": "NOT_REQUALIFIED",
       "source_status": "OPEN_CODE"
+    },
+    {
+      "id": "DT-057",
+      "priority": "P1",
+      "category": "Go distribution Go toolchain buildinfo target and CGO contract",
+      "milestone": "NEXT-04-HOTFIX",
+      "historical_status": "NEW_2026_10_21",
+      "source_status": "HOTFIX_CANDIDATE_TESTED",
+      "qualification_status": "NOT_EXTERNALLY_REQUALIFIED",
+      "evidence": [
+        "tests/test_roadmap_hotfix_distribution_integrity.py",
+        "docs/DEVTOOL_POST_NEXT06_ROADMAP_AUDIT.md"
+      ],
+      "current_source_assessment": {
+        "reviewed_source_commit": "cef18fa68828ad683483b7bc117626bd3fd85ac8",
+        "reviewed_tree": "536b90c02049b45f651fbe1bd2a4df03b361b782",
+        "local_test_expected": "NEGATIVE_CASES_PASS",
+        "native_hosted_consumer_device_release_accepted": false
+      }
+    },
+    {
+      "id": "DT-058",
+      "priority": "P1",
+      "category": "Wheel compatibility tags and console script target integrity",
+      "milestone": "NEXT-04-HOTFIX",
+      "historical_status": "NEW_2026_10_21",
+      "source_status": "HOTFIX_CANDIDATE_TESTED",
+      "qualification_status": "NOT_EXTERNALLY_REQUALIFIED",
+      "evidence": [
+        "tests/test_roadmap_hotfix_distribution_integrity.py",
+        "docs/DEVTOOL_POST_NEXT06_ROADMAP_AUDIT.md"
+      ],
+      "current_source_assessment": {
+        "reviewed_source_commit": "cef18fa68828ad683483b7bc117626bd3fd85ac8",
+        "reviewed_tree": "536b90c02049b45f651fbe1bd2a4df03b361b782",
+        "local_test_expected": "NEGATIVE_CASES_PASS",
+        "native_hosted_consumer_device_release_accepted": false
+      }
     }
   ],
   "kind": "devtool.improvement-traceability",
@@ -2144,5 +2182,17 @@
     "documentation": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
     "live_xbsctl_extraction": "NOT_RUN",
     "formal_release_qualified": false
+  },
+  "post_next06_reconciliation": {
+    "kind": "source_and_gate_audit",
+    "reviewed_commit": "cef18fa68828ad683483b7bc117626bd3fd85ac8",
+    "reviewed_tree": "536b90c02049b45f651fbe1bd2a4df03b361b782",
+    "hotfix_ids": [
+      "DT-057",
+      "DT-058"
+    ],
+    "phases_document": "docs/DEVTOOL_POST_NEXT06_ROADMAP_AUDIT.md",
+    "formal_release_qualified": false,
+    "independent_authority": "NOT_RUN"
   }
 }

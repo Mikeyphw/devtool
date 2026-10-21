@@ -130,7 +130,8 @@ def _python_source(root: Path) -> dict[str, Any]:
         if 'build' not in packages:
             raise DistributionError('Python distribution requires a hash-pinned build tool in requirements.txt')
     return {'name':name,'version':ver,'source_sha256':_digest(text.encode()),'locks':locks,
-            'entrypoints':sorted(project.get('scripts',{})) if isinstance(project.get('scripts',{}),dict) else []}
+            'entrypoints':sorted(project.get('scripts',{})) if isinstance(project.get('scripts',{}),dict) else [],
+            'entrypoint_targets':dict(project.get('scripts',{})) if isinstance(project.get('scripts',{}),dict) else {}}
 
 
 def _read_archive_member(z: zipfile.ZipFile, n: str) -> bytes:
@@ -146,8 +147,30 @@ def _safe_archive_name(name: str) -> None:
         raise DistributionError('Unsafe archive member path')
 
 
-def verify_wheel(path: Path, *, name: str, version: str, entrypoints: list[str]) -> dict[str, Any]:
+def _wheel_filename_tags(path: Path, *, name: str, version: str) -> set[str]:
+    # PEP 427 filename: distribution-version(-build)?-python-abi-platform.whl.
+    # Do not load wheel or packaging dynamically just to validate untrusted bytes.
+    fields = path.name[:-4].split('-')
+    if len(fields) not in (5, 6):
+        raise DistributionError('Wheel filename is malformed')
+    distribution, declared_version = fields[:2]
+    if _norm(distribution) != _norm(name) or declared_version != version:
+        raise DistributionError('Wheel filename does not match declared distribution')
+    if len(fields) == 6 and not re.fullmatch(r'[0-9][A-Za-z0-9_]*', fields[2]):
+        raise DistributionError('Wheel build tag malformed')
+    triples = fields[-3:]
+    if any(not re.fullmatch(r'[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*', field) for field in triples):
+        raise DistributionError('Wheel compatibility tag malformed')
+    python, abi, platform = (part.split('.') for part in triples)
+    if len(python)*len(abi)*len(platform) > 256:
+        raise DistributionError('Wheel expanded compatibility tags exceed bound')
+    return {f'{py}-{a}-{plat}' for py in python for a in abi for plat in platform}
+
+
+def verify_wheel(path: Path, *, name: str, version: str, entrypoints: list[str],
+                 entrypoint_targets: dict[str,str] | None = None) -> dict[str, Any]:
     if path.suffix!='.whl': raise DistributionError('Expected .whl extension')
+    filename_tags = _wheel_filename_tags(path, name=name, version=version)
     try:
         with zipfile.ZipFile(path) as z:
             infos=z.infolist()
@@ -171,8 +194,9 @@ def verify_wheel(path: Path, *, name: str, version: str, entrypoints: list[str])
             wheel=Parser().parsestr(_read_archive_member(z,di+'/WHEEL').decode('utf-8'))
             if wheel.get('Wheel-Version','').split('.')[0]!='1' or not wheel.get_all('Tag'):
                 raise DistributionError('Wheel tag/version missing or unsupported')
-            if not path.name.lower().startswith(_norm(name).replace('-','_')+'-'+version+'-'):
-                raise DistributionError('Wheel filename does not match declared distribution')
+            declared_tags = wheel.get_all('Tag') or []
+            if len(declared_tags) != len(set(declared_tags)) or not set(declared_tags).issubset(filename_tags):
+                raise DistributionError('Wheel WHEEL tags conflict with filename compatibility tags')
             record=di+'/RECORD'
             raw=_read_archive_member(z,record).decode('utf-8')
             rows=list(csv.reader(io.StringIO(raw)))
@@ -202,6 +226,10 @@ def verify_wheel(path: Path, *, name: str, version: str, entrypoints: list[str])
                 parser.read_string(content)
                 if not parser.has_section('console_scripts') or not set(entrypoints).issubset(parser['console_scripts']):
                     raise DistributionError('Declared Python console scripts absent from wheel')
+                if entrypoint_targets is not None:
+                    for command in entrypoints:
+                        if parser['console_scripts'][command].strip() != entrypoint_targets[command]:
+                            raise DistributionError('Wheel console script target disagrees with pyproject.toml')
             return {'format':'wheel','metadata_name':metadata['Name'],'version':metadata['Version'],
                     'tags':wheel.get_all('Tag'),'members':len(actual),'record_sha256_verified':True,
                     'entrypoints_verified':entrypoints}
@@ -275,7 +303,22 @@ def verify_go_binary(path: Path, *, goos: str, goarch: str, cgo: bool, module: s
             raise DistributionError('Go binary buildinfo inspection unavailable') from None
         if process.returncode or not any(line.strip().split('\t')[:2]==['mod', module] for line in process.stdout.splitlines()):
             raise DistributionError('Go binary module metadata does not match source')
-        buildinfo = {'present':True,'module_matches_source':True}
+        # A matching ELF/Mach-O/PE header does not prove the recorded toolchain
+        # target or CGO setting. Read Go buildinfo without executing the binary.
+        settings: dict[str,str] = {}
+        for line in process.stdout.splitlines():
+            parts = line.strip().split('\t', 1)
+            if len(parts) != 2 or parts[0] != 'build' or '=' not in parts[1]:
+                continue
+            key, value = parts[1].split('=', 1)
+            if key in settings:
+                raise DistributionError('Duplicate Go buildinfo setting: '+key)
+            settings[key] = value
+        if any(settings.get(key) != value for key, value in
+               (('GOOS', goos), ('GOARCH', goarch), ('CGO_ENABLED', '1' if cgo else '0'))):
+            raise DistributionError('Go binary buildinfo GOOS/GOARCH/CGO differs from declaration')
+        buildinfo = {'present':True,'module_matches_source':True,'goos_matches':True,
+                     'goarch_matches':True,'cgo_matches':True}
     return {'format':target,'goos':goos,'goarch':goarch,'cgo_enabled':cgo,
             'binary_header_verified':True,'go_buildinfo':buildinfo,
             'native_runnable_on_host':goos=='linux' and goarch=='amd64'}
@@ -363,7 +406,7 @@ def verify_distributions(root: Path, *, target: str, workflow: str,
             checks.append({'id':entry['id'],'state':'NOT_RUN','path':entry['path']})
             continue
         if entry['kind']=='go':details=verify_go_binary(path,goos=entry['goos'],goarch=entry['goarch'],cgo=entry['cgo_enabled'],module=entry['module'])
-        elif entry['kind']=='wheel':details=verify_wheel(path,name=entry['name'],version=entry['version'],entrypoints=entry['entrypoints'])
+        elif entry['kind']=='wheel':details=verify_wheel(path,name=entry['name'],version=entry['version'],entrypoints=entry['entrypoints'],entrypoint_targets=row['source']['entrypoint_targets'])
         else:details=verify_sdist(path,name=entry['name'],version=entry['version'])
         checks.append({'id':entry['id'],'state':'LOCAL_BYTES_VERIFIED','path':entry['path'],
                        'size':path.stat().st_size,'sha256':_file_digest(path),'details':details})

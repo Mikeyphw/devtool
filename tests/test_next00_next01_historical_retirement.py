@@ -140,10 +140,11 @@ def test_pipeline_example_is_trackable_and_index_continuous(tmp_path):
     assert git(repo,'ls-files')=='docs/ci/actions-pipeline.json'
     index=json.loads((ROOT/'docs/DEVTOOL_IMPROVEMENT_INDEX.json').read_text())
     rows={x['id']:x for x in index['issues'] if x['id'].startswith('DT-')}
-    assert set(rows)=={f'DT-{i:03}' for i in range(1,57)}
+    assert set(rows)=={f'DT-{i:03}' for i in range(1,59)}
     assert index['baseline']['sha']=='6f7b1de146838dca2458eaa35d54cc8dd4445f70'
     assert not index['formal_release_qualified']
-    assert all(row['current_source_assessment']['source_commit']=='b045f65eb44b9e7b7ca25f55f9a60c7902d60671' for row in rows.values())
+    assert all(rows[f'DT-{i:03}']['current_source_assessment']['source_commit']=='b045f65eb44b9e7b7ca25f55f9a60c7902d60671' for i in range(1,57))
+    assert all(rows[f'DT-{i:03}']['qualification_status']=='NOT_EXTERNALLY_REQUALIFIED' for i in (57,58))
 
 
 def test_keep_artifact_existing_and_bootstrap_diagnosis():
