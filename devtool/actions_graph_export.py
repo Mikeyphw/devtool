@@ -23,6 +23,8 @@ from .config import load_wrapper_project_config
 
 # Official download-artifact v4 action pin; never float a tag in generated YAML.
 _DOWNLOAD_SHA = 'd3f86a106a0bac45b974a628896c90dbdf5c8093'
+_SETUP_BUN_SHA = '0c5077e51419868618aeaa5fe8019c62421857d6' # oven-sh/setup-bun v2
+_SETUP_NODE_SHA = '49933ea5288caeca8642d1e84afbd3f7d6820020' # actions/setup-node v4.4.0
 _SETUP_DOTNET_SHA = '67a3573c9a986a3f9c594539f4ab511d57bb3ce9'  # actions/setup-dotnet v4.3.1
 SCHEMA = 2
 MAX_NODES = 24
@@ -105,7 +107,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     graph=graph_from_workflow(plan['target'],cfg.targets[plan['target']].workflows[plan['workflow']])
     for profile in profiles:
         admission=graph_host_admission(cfg,graph,host_os=profile.os,
-                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo'))
+                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo','node'))
         if not admission['all_eligible']:
             failures=[item['node']+':'+','.join(item['eligibility']['reasons'])
                       for item in admission['nodes'] if not item['eligibility']['eligible']]
@@ -156,6 +158,14 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'rust_base_argv':list(row['command']) if row['provider']['provider']=='rust-cargo' else [],
                          'rust_feature_cell':feature_set if row['provider']['provider']=='rust-cargo' else 'none',
                          'rust_json_capture':row['provider'].get('cargo_json_capture',False),
+                         'node_manager':row['provider'].get('manager',''),
+                         'node_manager_version':row['provider'].get('manager_version',''),
+                         'node_kind':row['provider'].get('kind',''),
+                         'node_script':row['provider'].get('script',''),
+                         'node_shard':row['provider'].get('shard',''),
+                         'node_package_path':row['provider'].get('package_path',''),
+                         'node_workspace':row['provider'].get('workspace') if row['provider']['provider']=='node' else None,
+                         'node_base_argv':list(row['command']) if row['provider']['provider']=='node' else [],
                          'dotnet_command':row['provider'].get('command',''),
                          'dotnet_selected':row['provider'].get('selected',''),
                          'dotnet_package':row['provider'].get('package'),
@@ -186,7 +196,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 raise ProviderError('RM-06 generated input requires direct producer dependency: '+inp)
         if job['race'] and job['runner']!='ubuntu-24.04':
             raise ProviderError('RM-08 Go race profile requires reviewed Linux amd64 runner')
-        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo'):
+        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo','node'):
             raise ProviderError('RM-06 refuses unreviewed hosted provider')
     immutable = {'schema_version': SCHEMA, 'kind': 'devtool.actions.export-graph',
                  'provider_plan_sha256':plan['plan_sha256'], 'target':plan['target'],
@@ -195,7 +205,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                  'matrix': [{'os':p.hosted_runner,'arch':p.arch} for p in profiles],
                  'toolchain_profiles':[p.identifier for p in profiles],
                  'language_versions':versions,'rust_feature_sets':feature_sets,
-                 'cache': 'enabled-reviewed-go-only' if cache_locks else 'disabled', 'changed_targets':'full-dag', 'jobs':jobs}
+                 'cache': 'enabled-reviewed-stores' if cache_locks else 'disabled', 'changed_targets':'full-dag', 'jobs':jobs}
     return {**immutable, 'graph_sha256':_digest(immutable), 'native_source_sha256':plan['plan_sha256'],
             'fallback':'single-job', 'read_only':True, 'authenticated_remote':False,
             'release_qualified':False, 'consumer_commit':plan['consumer_commit'],
@@ -231,6 +241,24 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                       '        with:\n'
                       f"          dotnet-version: '{job['toolchain_version']}'\n"
                       '          cache: false\n') if job['provider']=='dotnet' else ''
+        node_setup=(f'      - name: Pinned Node runtime\n'
+                    f'        uses: actions/setup-node@{_SETUP_NODE_SHA}\n'
+                    '        with:\n'
+                    f"          node-version: '{job['toolchain_version']}'\n"
+                    '          check-latest: false\n') if job['provider']=='node' else ''
+        bun_setup=(f'      - name: Pinned Bun runtime\n'
+                   f'        uses: oven-sh/setup-bun@{_SETUP_BUN_SHA}\n'
+                   '        with:\n'
+                   f"          bun-version: '{job['node_manager_version']}'\n") if job['provider']=='node' and job['node_manager']=='bun' else ''
+        node_manager_setup=('      - name: Verify or activate reviewed package manager\n'
+                            '        shell: bash\n        run: |\n'
+                            '          set -euo pipefail\n'
+                            + (f'          npm install --global npm@{job["node_manager_version"]} --ignore-scripts --no-audit --no-fund\n'
+                               if job['node_manager']=='npm' else
+                               '          npm install --global corepack@0.34.7 --ignore-scripts --no-audit --no-fund\n'
+                               + f'          corepack enable\n          corepack prepare {job["node_manager"]}@{job["node_manager_version"]} --activate\n'
+                               if job['node_manager'] in ('pnpm','yarn') else '')
+                            + f'          test "$( {job["node_manager"]} --version )" = "{job["node_manager_version"]}"\n') if job['provider']=='node' else ''
         rust_setup=('      - name: Verify preinstalled pinned Rust toolchain (no network installation)\n'
                     '        shell: bash\n        run: |\n'
                     '          set -euo pipefail\n'
@@ -248,7 +276,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                           f'          name: {_artifact_name(namespace,dep)}\n'
                           f'          path: ${{{{ runner.temp }}}}/rm06-inputs/{dep}\n')
         cache=job['cache_policy']
-        cache_step=(f'      - name: Opt-in pinned Go build cache\n'
+        cache_step=(f'      - name: Opt-in pinned provider content cache\n'
                     f'        uses: actions/cache@{cache["action_sha"]}\n'
                     '        with:\n'
                     f'          path: {cache["path"]}\n'
@@ -285,7 +313,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
-               f'{setup_go}{dotnet_setup}{rust_setup}{cache_step}'
+               f'{setup_go}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{cache_step}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -444,6 +472,47 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     specs=build_direct_job_specs(cfg, f'{target}:job:{selected["job"]}',target_name=target)
     if not specs:
         raise ProviderError('RM-06 native job resolver returned no executable specs')
+    node_receipts=[]
+    if selected['provider']=='node':
+        # Repo scripts and tool configuration are executable code. Enforce the
+        # checkout's exact Git source before any dependency installation.
+        import subprocess as _subprocess
+        if _subprocess.run(['git','-C',str(root),'diff','--quiet','HEAD','--'],check=False).returncode != 0:
+            raise ProviderError('RM-11 tracked source changed after reviewed commit')
+        from dataclasses import replace
+        from .actions_rm11_node import node_workspace, NodeError
+        import shutil as _shutil
+        if len(specs)!=1 or specs[0].argv!=selected['node_base_argv']:
+            raise ProviderError('RM-11 native manager script resolver diverged from source review')
+        try:ws=node_workspace(root,manager_selection=selected['node_manager'])
+        except NodeError as exc:raise ProviderError(str(exc)) from None
+        if ws['source_digest']!=selected['node_workspace']['source_digest']:
+            raise ProviderError('RM-11 manager source drift before installation')
+        env=dict(specs[0].env)
+        manager=selected['node_manager']
+        import subprocess as _subprocess
+        try:
+            version_probe=_subprocess.run([manager,'--version'],cwd=root,capture_output=True,
+                                         text=True,timeout=12,check=False)
+        except (OSError,_subprocess.TimeoutExpired):
+            raise ProviderError('RM-11 reviewed package manager is not installed') from None
+        if version_probe.returncode or version_probe.stdout.strip()!=selected['node_manager_version']:
+            raise ProviderError('RM-11 installed manager version differs from reviewed pin')
+        store=str((Path(os.environ.get('RUNNER_TEMP',str(root)))/'devtool-node-store'/manager).resolve())
+        # Persistent host caches are never part of consumer source/artifact handoffs.
+        env.update({'COREPACK_ENABLE_AUTO_PIN':'0','COREPACK_ENABLE_DOWNLOAD_PROMPT':'0',
+                    'npm_config_ignore_scripts':'true','npm_config_audit':'false',
+                    'npm_config_cache':store,'BUN_INSTALL_CACHE_DIR':store,'YARN_CACHE_FOLDER':store,
+                    'YARN_ENABLE_SCRIPTS':'false','YARN_ENABLE_IMMUTABLE_INSTALLS':'true'})
+        bootstrap={'npm':['npm','ci','--ignore-scripts','--no-audit','--no-fund'],
+                   'pnpm':['pnpm','install','--frozen-lockfile','--ignore-scripts','--store-dir',store],
+                   'yarn':['yarn','install','--immutable','--mode=skip-builds'],
+                   'bun':['bun','install','--frozen-lockfile','--ignore-scripts']}[manager]
+        installer=replace(specs[0],name=specs[0].name+' [frozen install]',argv=bootstrap,env=env)
+        installed,_=run_specs(cfg,[installer],verbose=True,dry_run=False,continue_on_error=False)
+        if not installed or any(r.returncode!=0 or r.skipped for r in installed):
+            raise ProviderError('RM-11 frozen dependency install failed')
+        specs=[replace(specs[0],env=env)]
     if selected['provider']=='dotnet' and selected['dotnet_command']!='restore':
         # GitHub jobs do not share obj/, project.assets.json or NuGet global
         # package directories. A dependency edge is not restored filesystem
@@ -554,6 +623,27 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
                 raise ProviderError('RM-09 pack lost declared NuGet identity')
             try:verify_nupkg(_regular(root,files[0]),**package)
             except DotNetError as exc:raise ProviderError(str(exc)) from None
+    if selected['provider']=='node' and selected['node_kind']=='build':
+        # The manifest is generated by the trusted native runner, not by an
+        # unchecked package script; it attests only explicitly owned outputs.
+        intended=[p for p in selected['outputs'] if p!='dist/manifest.json']
+        manifest=_regular(root,'dist/manifest.json',must_exist=False)
+        if manifest.exists() or manifest.is_symlink():
+            raise ProviderError('RM-11 source job must not pre-create trusted manifest')
+        manifest.parent.mkdir(parents=True,exist_ok=True)
+        signed={}
+        for rel in intended:
+            signed[rel.removeprefix('dist/')]=_hash_file(_regular(root,rel))
+        manifest.write_text(json.dumps({'files':signed},sort_keys=True)+'\n')
+    if selected['provider']=='node':
+        from .actions_rm11_node import verify_js_report, verify_js_artifacts, NodeError
+        try:
+            if selected['node_kind']=='test':
+                node_receipts.append(verify_js_report(root,selected['outputs'][0],'test'))
+            elif selected['node_kind'] in ('pack','build'):
+                node_receipts+=verify_js_artifacts(root,selected['outputs'],selected['node_kind'],
+                                                   selected['node_workspace'],selected['node_package_path'])
+        except NodeError as exc:raise ProviderError(str(exc)) from None
     rust_receipts=[];rust_test_evidence=[]
     if selected['provider']=='rust-cargo':
         if selected['rust_json_capture']:
@@ -587,7 +677,7 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     stage_outputs(root,outputs,graph,selected,source,run,attempt)
     return {'status':'LOCAL_JOB_SUCCEEDED', 'node':selected['node'], 'job_id':job_id,
             'graph_sha256':graph_sha, 'workflow_sha256':hashlib.sha256(workflow_yaml(graph).encode()).hexdigest(), 'github_source':source,'run_id':run,'attempt':attempt,
-            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
+            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'node_receipts':node_receipts,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
 
 
 def main(argv: list[str] | None = None) -> int:

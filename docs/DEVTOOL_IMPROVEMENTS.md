@@ -791,3 +791,51 @@ Implementation: durable source/graph/host/input/output fingerprints; canonical C
 - **Affected:** `actions_rm10_cargo.py`, `actions_graph_export.py`, Devtool native owned Rust jobs, Rust consumer workflows.
 - **Remedy:** Replace original RM-10 (post-RM-09 source lock) with feature × toolchain matrix job isolation, safe inherited dependency/patch graph, provisioned-only Linux AArch64 cross linker, strict ELF verification, optional native Cargo JSON/libtest output, run/attempt/argv/flag identity, additional negative tests. Harden ambient Rust flags. No floating toolchain installation or broader host privilege grant.
 - **Status:** **Implementation delivered for reviewed bounded policies; real Rust/hosted execution remains UNQUALIFIED**, documented in `docs/RM10_PROMISE_AUDIT.md`. Original RM-10 ZIP superseded; do not apply both. No evidence of actual external Rust acceptance yet. 
+
+### RM-11 — Node/JS/TS hosted provider closure (2026-10-22)
+- **Root cause (DT-047):** Devtool had no trusted, locked npm/pnpm/Yarn/bun workspace adapter, direct native-JS job review, manager-version setup, cache key, JS result normalization or web/tarball artifact verifier. Node work previously could only enter through unreviewed shell/command paths.
+- **Implementation:** `actions_rm11_node.py` validates Git-tracked workspace graph and affected dependents, exact manager and lock identities, reviewed script templates, literal workspace selectors, controlled Node 20/22/24 host/version matrix, opt-in manager content-store caching and frozen lifecycle-disabled install. `actions_graph_export.py` reuses native owned DAG execution, validates unchanged tracked source prior to install, pins setup-node/Corepack/setup-bun, and verifies JUnit/Jest results and manifest/packed archive bytes before SHA-bound handoff.
+- **Behavioral evidence:** `tests/test_rm11_node.py` uses four manager fixtures, a real Node.js JUnit test and npm offline native install/package, negative script injection/hook/source/lock/cycle/symlink/output tests, native handoff, six-cell version/host isolation and cache key invalidation. RM-06–RM-10 compatibility tests retained. See `docs/RM11_PROMISE_AUDIT.md` for the exact promise checklist.
+- **Status:** RM-11 bounded engineering acceptance implemented. Independent hosted npm/pnpm/Yarn/bun execution, source-side third-party config authority, authentic producer provenance, and release-signing qualification remain **unqualified external evidence**. RM-12 JVM is a separate merge-window package. Outstanding RM-06/07/08/09 earlier-scope gaps are not closed by RM-11 and remain in the cumulative ledger.
+
+
+### RM-11R1 — Host-version leak in mocked Node runner test (2026-10-22)
+
+- **Evidence:** On Android/Termux, `tests/test_rm11_node.py::test_nodes_compile_versions_report_artifact_handoff` failed with `RM-11 installed manager version differs from reviewed pin` when the host's npm version differed from the mock fixture's `npm@10.9.2`.
+- **Cause:** The fixture mocked `runners.run_specs` but allowed `actions_graph_export.run_node` to execute an actual host `npm --version` probe, introducing a hidden host dependency.
+- **Correction:** Mocked acceptance uses a temporary pinned-version CLI shim; real npm acceptance derives and commits its temporary project's pin from the installed npm. A new negative test proves manager-version drift remains a hard refusal before installation. Production manager admission is unchanged.
+- **Status:** Engineering repair implemented and under local acceptance; real Termux transaction remains a separate gate.
+
+
+### RM-11R2 — Host-dependent offline npm lock generation in mandatory test (2026-10-22)
+
+- **Evidence:** Termux RM11R1 stopped after 9 passing tests at
+  `test_real_native_npm_install_node_execution_report`, where host npm
+  `install --package-lock-only --offline` failed with exit code 1 and a debug
+  log path (the actual npm error cause was not in the supplied transcript).
+- **Scope:** test fixture setup only; not a production npm provider failure.
+- **Correction:** deterministic source-derived npm v3 workspace lockfile,
+  validated exact local links/dependency metadata, isolated empty cache/npmrc;
+  preserve actual frozen `npm ci --offline`, Node execution and attested JUnit.
+- **Status:** R2 code prepared; local and Termux device acceptance recorded
+  separately. Never claim R1 was accepted on device.
+
+
+### RM-11R3 — Native npm smoke installation still failed on Termux (2026-10-22)
+
+- **Evidence:** RM11R2 Termux validator passed 9 tests, then the real native
+  test `test_real_native_npm_install_node_execution_report` failed because
+  `npm ci` exited nonzero. The captured output supplied only an npm debug-log
+  path; its specific cause is unknown. Earlier lockfile generation was already
+  removed, so R2 still had a device-dependent acceptance fixture.
+- **Correction:** Require a real, fully offline `npm ci` with an exact local
+  manager pin on a self-contained zero-dependency package fixture. Remove
+  unneeded workspace symlink/linker requirements from this one smoke; retain
+  independent mandatory workspace dependency, source and lockfile graph tests.
+  Route the native runner store to external `RUNNER_TEMP`, isolate user/global
+  npmrc, and verify real Node/JUnit artifact transfer. Add explicit refused
+  failed-install test before native command/handoff.
+- **Production policy:** unchanged; frozen install and exact installed-manager
+  pin remain strict, with no silent fallback, no network expansion and no
+  acceptance of a failed install as a passed job.
+- **Status:** local validation and device acceptance recorded separately.

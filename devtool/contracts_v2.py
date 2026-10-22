@@ -80,6 +80,8 @@ _REVIEWED: Mapping[str, ProviderDescriptor] = MappingProxyType({
                              ('source-only-unverified',)),
     'rust-cargo': ProviderDescriptor('rust-cargo', 1, ('fmt','clippy','test','build','package'),
                              ('ubuntu-24.04-x86_64',), 'bounded-offline-cargo-argv-v1', ('local-bytes-only',)),
+    'node': ProviderDescriptor('node', 1, ('typecheck','lint','test','build','pack'),
+                             ('ubuntu-24.04-x86_64',), 'reviewed-node-workspace-scripts-v1', ('local-bytes-only',)),
     'dotnet': ProviderDescriptor('dotnet', 1, ('restore','build','test','pack','publish'),
                              ('ubuntu-24.04-x86_64',), 'bounded-dotnet-argv-v1',
                              ('local-bytes-only',)),

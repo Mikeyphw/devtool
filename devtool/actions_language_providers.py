@@ -199,8 +199,18 @@ class RustCargoProvider:
         try:return {'api_version':self.api_version, **inspect_cargo_job(root,argv,job.metadata or {})}
         except CargoError as exc:raise ProviderError(str(exc)) from None
 
+@dataclass(frozen=True)
+class NodeProvider:
+    api_version: int = SCHEMA_VERSION
+    provider_id: str = 'node'
+
+    def inspect(self, root: Path, job: Any, argv: list[str]) -> dict[str, Any]:
+        from .actions_rm11_node import inspect_node_job, NodeError
+        try:return {'api_version':self.api_version, **inspect_node_job(root,argv,job.metadata or {})}
+        except NodeError as exc:raise ProviderError(str(exc)) from None
+
 # The only provider registry: immutable built-ins, no entry-point/network/plugin loading.
-PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider()})
+PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider(), 'node': NodeProvider()})
 # V1 adapter behavior is preserved; V2 review metadata must match the exact built-ins.
 for _id, _adapter in PROVIDERS.items():
     resolve_provider(_id, api_version=_adapter.api_version)
@@ -237,6 +247,10 @@ def _provider_for(job: Any) -> LanguageProvider:
     flag = meta.get('ci_toolchain')
     argv = list(job.command or [])
     name = Path(argv[0]).name if argv else ''
+    if flag == 'node' or name in ('npm','pnpm','yarn','bun'):
+        if name not in ('npm','pnpm','yarn','bun') or flag not in (None,'node'):
+            raise ProviderError('RM-11 Node provider/argv mismatch')
+        return PROVIDERS['node']
     if flag == 'rust-cargo' or name == 'cargo':
         if name!='cargo' or flag not in (None,'rust-cargo'):
             raise ProviderError('RM-10 Rust Cargo provider/argv mismatch')
@@ -246,7 +260,7 @@ def _provider_for(job: Any) -> LanguageProvider:
             raise ProviderError('RM-09 dotnet provider/argv mismatch')
         return PROVIDERS['dotnet']
     go = (flag == 'go' or job.runner == 'go' or name == 'go' or 'go.mod' in job.inputs)
-    if flag not in (None, 'go', 'python-shell', 'dotnet', 'rust-cargo'):
+    if flag not in (None, 'go', 'python-shell', 'dotnet', 'rust-cargo', 'node'):
         raise ProviderError('No reviewed language provider for ci_toolchain ' + str(flag)[:50])
     if go and flag == 'python-shell':
         raise ProviderError('Go source declaration conflicts with Python toolchain')
@@ -282,7 +296,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
     if not (1 <= len(graph.nodes) <= MAX_NODES):
         raise ProviderError('NEXT-03 DAG size must be between 1 and 32 nodes')
     admission = graph_host_admission(cfg, graph, host_os='linux', host_arch='x86_64',
-                                     toolchains=('go', 'python-shell','dotnet','rust-cargo'))
+                                     toolchains=('go', 'python-shell','dotnet','rust-cargo','node'))
     if not admission['all_eligible']:
         reasons = [r['node']+':'+','.join(r['eligibility']['reasons']) for r in admission['nodes'] if not r['eligibility']['eligible']]
         raise ProviderError('Hosted node admission blocked: ' + '; '.join(reasons)[:320])
@@ -298,7 +312,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if 'ci_host_requirements' in meta:
             try:
                 host_result = host_eligibility_v2(meta['ci_host_requirements'],
-                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell','dotnet','rust-cargo'))
+                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell','dotnet','rust-cargo','node'))
             except ContractError as exc:
                 raise ProviderError('Invalid ci_host_requirements: ' + str(exc)) from None
             if not host_result['eligible']:
@@ -354,6 +368,21 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
             if not re.search(r'(?m)^coverage==[0-9][A-Za-z0-9_.+!-]*\s+--hash=sha256:[a-f0-9]{64}\s*$',
                              (root/declaration['project']['install_lock']).read_text()):
                 raise ProviderError('RM-08 automatic coverage requires hash-pinned coverage dependency')
+        if declaration['provider']=='node':
+            kind=declaration['kind']
+            outs=list(job.outputs)
+            if kind=='test':
+                want=('dist/test-results/shard-'+declaration['shard'].split('/')[0].zfill(2)+'.xml' if declaration['shard'] else
+                      'dist/test-results.json' if declaration['script'].startswith('jest ') else 'dist/test-results.xml')
+                if outs!=[want]:raise ProviderError('RM-11 JS test must own exact JUnit/Jest output')
+            elif kind in ('typecheck','lint'):
+                if outs:raise ProviderError('RM-11 typecheck/lint cannot claim generated outputs')
+            elif kind=='build':
+                if not outs or len(outs)>32 or any(not x.startswith('dist/') for x in outs):
+                    raise ProviderError('RM-11 build needs bounded dist/ output files')
+            elif kind=='pack':
+                if len(outs)!=1 or not outs[0].startswith('dist/') or not outs[0].endswith('.tgz'):
+                    raise ProviderError('RM-11 package requires exact dist/*.tgz output')
         if declaration['provider']=='rust-cargo':
             if declaration['command']=='package':
                 pkg=next(x for x in declaration['workspace']['members'].values()
@@ -687,7 +716,7 @@ def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
         dest = f'.github/workflows/devtool-{target}-{workflow}-providers-multi.yml'
     else:
         plan = provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
-        if 'dotnet' in plan['providers'] or 'rust-cargo' in plan['providers']:
+        if 'dotnet' in plan['providers'] or 'rust-cargo' in plan['providers'] or 'node' in plan['providers']:
             raise ProviderError('RM-09/RM-10 .NET and Rust require native multi-job export with reviewed toolchain preflight')
         frozen_sha = plan['plan_sha256']
         content = _workflow_yaml(plan).encode()

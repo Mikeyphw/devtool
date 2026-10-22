@@ -45,11 +45,11 @@ class ToolchainProfile:
 
 PROFILES = {
     p.identifier: p for p in (
-        ToolchainProfile('ubuntu-24.04-x64','linux','x86_64','ubuntu-24.04',True,('go','python-shell','dotnet','rust-cargo'),'3.12',60),
-        ToolchainProfile('macos-15-intel','macos','x86_64','macos-15-intel',True,('go','python-shell'),'3.12',60),
-        ToolchainProfile('windows-2022-x64','windows','x86_64','windows-2022',False,('go','python-shell'),'3.12',60,
+        ToolchainProfile('ubuntu-24.04-x64','linux','x86_64','ubuntu-24.04',True,('go','python-shell','dotnet','rust-cargo','node'),'3.12',60),
+        ToolchainProfile('macos-15-intel','macos','x86_64','macos-15-intel',True,('go','python-shell','node'),'3.12',60),
+        ToolchainProfile('windows-2022-x64','windows','x86_64','windows-2022',False,('go','python-shell','node'),'3.12',60,
                          'RM-06 POSIX artifact/runtime bridge is not portable to Windows'),
-        ToolchainProfile('termux-android-arm64','android','aarch64',None,False,('go','python-shell'),'3.12',60,
+        ToolchainProfile('termux-android-arm64','android','aarch64',None,False,('go','python-shell','node'),'3.12',60,
                          'native Termux is a local host, not a GitHub-hosted runner'),
     )
 }
@@ -86,6 +86,9 @@ def validate_versions(providers: list[dict[str, Any]], profiles: tuple[Toolchain
         if provider == 'go':
             if not isinstance(version,str) or not _PINNED_GO.fullmatch(version):
                 raise ProfileError('RM-07 Go toolchain version must be an explicit supported 1.x version')
+        elif provider == 'node':
+            if version not in ('20','22','24'):
+                raise ProfileError('RM-11 Node version requires a reviewed 20/22/24 major')
         elif provider == 'rust-cargo':
             if not isinstance(version,str) or not re.fullmatch(r'1\.(?:[7-9]\d|\d{3})\.\d+',version):
                 raise ProfileError('RM-10 requires exact reviewed Rust toolchain semver')
@@ -132,6 +135,23 @@ def cache_policy(root: Path, row: dict[str, Any], profile: ToolchainProfile, *, 
     """
     if not enabled:
         return {'enabled':False,'reason':'opt-in disabled'}
+    if row['provider']=='node':
+        from .actions_rm11_node import node_workspace, NodeError
+        try:ws=node_workspace(root,manager_selection=row['manager'])
+        except NodeError as exc:raise ProfileError(str(exc)) from None
+        if ws['source_files']!=sorted(set(row.get('lockfiles',[]))):
+            raise ProfileError('RM-11 cache source file inventory differs from reviewed Node plan')
+        for name in ws['source_files']:
+            if not _tracked_regular(root,name):
+                # .yarnrc.yml is reviewed as source, not a cache-path dependency.
+                if name!='.yarnrc.yml' or not _tracked_regular(root,name):
+                    raise ProfileError('RM-11 unsafe Node cache lock source')
+        manager=ws['manager']
+        digest=hashlib.sha256(json.dumps(ws['source_sha256'],sort_keys=True).encode()).hexdigest()
+        return {'enabled':True,'action_sha':CACHE_ACTION_SHA,
+                'path':'${{ runner.temp }}/devtool-node-store/'+manager,
+                'key':'devtool-rm11-'+profile.identifier+'-node-'+str(row['version'])+'-'+manager+'-'+digest,
+                'contains_credentials':False,'scope':'reviewed package-manager content store only'}
     if row['provider']!='go':
         return {'enabled':False,'reason':'reviewed Python cache policy not yet available'}
     locks=row.get('lockfiles',[])
