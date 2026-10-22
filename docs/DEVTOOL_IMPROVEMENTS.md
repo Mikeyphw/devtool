@@ -839,3 +839,12 @@ Implementation: durable source/graph/host/input/output fingerprints; canonical C
   pin remain strict, with no silent fallback, no network expansion and no
   acceptance of a failed install as a passed job.
 - **Status:** local validation and device acceptance recorded separately.
+
+### RM-12 — JVM/Java/Kotlin Gradle and Maven standalone hosted provider (2026-10-22)
+
+- **Root issue DT-048:** No source-owned Maven reactor/Gradle multi-project read-only parser, JVM host toolchain/version matrix, Java JUnit normalization, signed/unsigned JAR verifier, desktop distribution bytes or independent Android plugin refusal within the existing hosted provider DAG.
+- **Architecture:** Reviewed immutable `jvm` provider in `contracts_v2` and `actions_language_providers`; only literal direct `mvn -B -o -ntp` or `gradle --offline --no-daemon` commands, with tracked module/config catalog provenance. Reuses RM-06 DAG node ownership and SHA/run-attempt-bound byte handoff. Node-specific output normalization executed *after* successful native job; no alternative scheduler.
+- **Host and security:** Exact `javac` major and build-tool version checked before running native jobs; review pins JDK 17/21/25, Maven 3.9.x, Gradle 8/9; setup-java and Gradle actions immutable Git commits, two reviewed POSIX runners and opt-in content-only, version/source-bound dependency caches. Disallow arbitrary settings evaluation, Android-only build plugins, JDK auto-provision, unsafe XML/ZIP or classpath and uncontrolled build outputs. Neither JAR ZIP validity nor jarsigner structure promotes signer trust.
+- **Behavioral evidence:** Dedicated `test_rm12_jvm.py` with real javac/JAR, Kotlin JVM Gradle plugin, Gradle/Maven reactor positive/negative, version/OS matrix, source drift, JUnit failure/duplicate, native SHA handoff, desktop distribution and wrong-tool refuse-before-run. See `docs/RM12_PROMISE_AUDIT.md` for each promise and qualification boundaries.
+- **Merge window:** RM-12 and RM-13 remain separate: JVM vs native ABI/compiler semantics. RM-13 next. RM-06/07/08/09 earlier promise gaps remain independently open; do not relabel them closed.
+- **Status:** Engineering complete within explicitly supported JVM contracts; exact source-bound ZIP positive/negative transaction passed locally, independent Termux/GitHub execution evidence pending.

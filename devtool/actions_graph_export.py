@@ -25,6 +25,8 @@ from .config import load_wrapper_project_config
 _DOWNLOAD_SHA = 'd3f86a106a0bac45b974a628896c90dbdf5c8093'
 _SETUP_BUN_SHA = '0c5077e51419868618aeaa5fe8019c62421857d6' # oven-sh/setup-bun v2
 _SETUP_NODE_SHA = '49933ea5288caeca8642d1e84afbd3f7d6820020' # actions/setup-node v4.4.0
+_SETUP_GRADLE_SHA = 'ed408507eac070d1f99cc633dbcf757c94c7933a'  # gradle/actions/setup-gradle v4
+_SETUP_JAVA_SHA = 'cf277c60eb25467037889841efdb72551f06f6c3'  # actions/setup-java v4
 _SETUP_DOTNET_SHA = '67a3573c9a986a3f9c594539f4ab511d57bb3ce9'  # actions/setup-dotnet v4.3.1
 SCHEMA = 2
 MAX_NODES = 24
@@ -107,7 +109,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     graph=graph_from_workflow(plan['target'],cfg.targets[plan['target']].workflows[plan['workflow']])
     for profile in profiles:
         admission=graph_host_admission(cfg,graph,host_os=profile.os,
-                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo','node'))
+                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm'))
         if not admission['all_eligible']:
             failures=[item['node']+':'+','.join(item['eligibility']['reasons'])
                       for item in admission['nodes'] if not item['eligibility']['eligible']]
@@ -158,6 +160,14 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'rust_base_argv':list(row['command']) if row['provider']['provider']=='rust-cargo' else [],
                          'rust_feature_cell':feature_set if row['provider']['provider']=='rust-cargo' else 'none',
                          'rust_json_capture':row['provider'].get('cargo_json_capture',False),
+                         'jvm_tool_version':row['provider'].get('tool_version',''),
+                         'jvm_manager':row['provider'].get('manager','') if row['provider']['provider']=='jvm' else '',
+                         'jvm_project':row['provider'].get('project') if row['provider']['provider']=='jvm' else None,
+                         'jvm_selected':row['provider'].get('selected',''),
+                         'jvm_operation':row['provider'].get('command',''),
+                         'jvm_artifact_name':row['provider'].get('artifact_name',''),
+                         'jvm_desktop_bundle':row['provider'].get('desktop_bundle',False),
+                         'jvm_base_argv':list(row['command']) if row['provider']['provider']=='jvm' else [],
                          'node_manager':row['provider'].get('manager',''),
                          'node_manager_version':row['provider'].get('manager_version',''),
                          'node_kind':row['provider'].get('kind',''),
@@ -196,7 +206,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 raise ProviderError('RM-06 generated input requires direct producer dependency: '+inp)
         if job['race'] and job['runner']!='ubuntu-24.04':
             raise ProviderError('RM-08 Go race profile requires reviewed Linux amd64 runner')
-        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo','node'):
+        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo','node','jvm'):
             raise ProviderError('RM-06 refuses unreviewed hosted provider')
     immutable = {'schema_version': SCHEMA, 'kind': 'devtool.actions.export-graph',
                  'provider_plan_sha256':plan['plan_sha256'], 'target':plan['target'],
@@ -259,6 +269,24 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                                + f'          corepack enable\n          corepack prepare {job["node_manager"]}@{job["node_manager_version"]} --activate\n'
                                if job['node_manager'] in ('pnpm','yarn') else '')
                             + f'          test "$( {job["node_manager"]} --version )" = "{job["node_manager_version"]}"\n') if job['provider']=='node' else ''
+        jvm_setup=(
+            '      - name: Pinned Java SDK\n'
+            f'        uses: actions/setup-java@{_SETUP_JAVA_SHA}\n'
+            '        with:\n          distribution: temurin\n'
+            f'          java-version: "{job["toolchain_version"]}"\n'
+            '          check-latest: false\n'
+            '      - name: Check Maven or Gradle installation\n'
+            '        shell: bash\n        run: |\n'
+            '          set -euo pipefail\n'
+            '          java -version\n'
+            f'          {"mvn" if job["jvm_manager"]=="maven" else "gradle"} {"-version" if job["jvm_manager"]=="maven" else "--version"}\n'
+        ) if job['provider']=='jvm' else ''
+        if job['provider']=='jvm' and job['jvm_manager']=='gradle':
+            gradle_step=(f'      - name: Pinned Gradle distribution\n'
+                         f'        uses: gradle/actions/setup-gradle@{_SETUP_GRADLE_SHA}\n'
+                         f'        with:\n          gradle-version: "{job["jvm_tool_version"]}"\n'
+                         '          cache-disabled: true\n')
+            jvm_setup=gradle_step+jvm_setup
         rust_setup=('      - name: Verify preinstalled pinned Rust toolchain (no network installation)\n'
                     '        shell: bash\n        run: |\n'
                     '          set -euo pipefail\n'
@@ -313,7 +341,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
-               f'{setup_go}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{cache_step}'
+               f'{setup_go}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{cache_step}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -513,6 +541,43 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
         if not installed or any(r.returncode!=0 or r.skipped for r in installed):
             raise ProviderError('RM-11 frozen dependency install failed')
         specs=[replace(specs[0],env=env)]
+    if selected['provider']=='jvm':
+        from .actions_rm12_jvm import jvm_project, JvmError
+        import subprocess as _subprocess
+        if len(specs)!=1 or specs[0].argv!=selected['jvm_base_argv']:
+            raise ProviderError('RM-12 JVM native direct-job argv diverged from review')
+        if _subprocess.run(['git','-C',str(root),'diff','--quiet','HEAD','--'],check=False).returncode:
+            raise ProviderError('RM-12 tracked source modified after review')
+        try: actual=jvm_project(root,manager=selected['jvm_manager'])
+        except JvmError as exc:raise ProviderError(str(exc)) from None
+        if actual['source_digest']!=selected['jvm_project']['source_digest']:
+            raise ProviderError('RM-12 JVM project source drift before native execution')
+        try:
+            jdk=_subprocess.run(['javac','-version'],capture_output=True,text=True,timeout=8)
+            version=(jdk.stdout+' '+jdk.stderr).strip()
+        except (OSError,_subprocess.TimeoutExpired):
+            raise ProviderError('RM-12 missing pinned javac toolchain') from None
+        if jdk.returncode or not __import__('re').search(r'javac '+__import__('re').escape(selected['toolchain_version'])+r'(?:\.|\s|$)',version):
+            raise ProviderError('RM-12 installed Java SDK differs from reviewed pin')
+        # The exact build tool pin is verified even in local native execution.
+        tool=['mvn','-version'] if selected['jvm_manager']=='maven' else ['gradle','--version']
+        try:
+            probe=_subprocess.run(tool,capture_output=True,text=True,timeout=15)
+        except (OSError,_subprocess.TimeoutExpired):
+            raise ProviderError('RM-12 reviewed JVM build tool is not installed') from None
+        version_output=probe.stdout+' '+probe.stderr
+        import re as _re
+        expected=selected['jvm_tool_version']
+        regex=(r'Apache Maven '+_re.escape(expected)+r'(?:\s|$)' if selected['jvm_manager']=='maven'
+               else r'Gradle '+_re.escape(expected)+r'(?:\s|$)')
+        if probe.returncode or not _re.search(regex,version_output):
+            raise ProviderError('RM-12 installed Maven/Gradle version differs from reviewed pin')
+        from dataclasses import replace as _replace
+        controlled=dict(specs[0].env)
+        controlled.update({'ORG_GRADLE_JAVA_INSTALLATIONS_AUTO_DOWNLOAD':'false',
+                           'GRADLE_OPTS':'-Dorg.gradle.java.installations.auto-download=false',
+                           'MAVEN_OPTS':'-Djava.awt.headless=true'})
+        specs=[_replace(specs[0],env=controlled)]
     if selected['provider']=='dotnet' and selected['dotnet_command']!='restore':
         # GitHub jobs do not share obj/, project.assets.json or NuGet global
         # package directories. A dependency edge is not restored filesystem
@@ -644,6 +709,17 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
                 node_receipts+=verify_js_artifacts(root,selected['outputs'],selected['node_kind'],
                                                    selected['node_workspace'],selected['node_package_path'])
         except NodeError as exc:raise ProviderError(str(exc)) from None
+    jvm_receipts=[]
+    if selected['provider']=='jvm':
+        from .actions_rm12_jvm import aggregate_junit, verify_jar, verify_desktop_bundle, JvmError
+        from .actions_rm12_jvm import materialize_jvm_package
+        try:
+            if selected['jvm_operation']=='test':
+                jvm_receipts.append(aggregate_junit(root,selected['jvm_project'],selected['jvm_selected']))
+            elif selected['jvm_operation']=='package':
+                jvm_receipts+=materialize_jvm_package(root,selected['jvm_project'],selected['jvm_selected'],
+                    selected['jvm_artifact_name'],desktop=selected['jvm_desktop_bundle'])
+        except JvmError as exc:raise ProviderError(str(exc)) from None
     rust_receipts=[];rust_test_evidence=[]
     if selected['provider']=='rust-cargo':
         if selected['rust_json_capture']:
@@ -677,7 +753,7 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     stage_outputs(root,outputs,graph,selected,source,run,attempt)
     return {'status':'LOCAL_JOB_SUCCEEDED', 'node':selected['node'], 'job_id':job_id,
             'graph_sha256':graph_sha, 'workflow_sha256':hashlib.sha256(workflow_yaml(graph).encode()).hexdigest(), 'github_source':source,'run_id':run,'attempt':attempt,
-            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'node_receipts':node_receipts,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
+            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'node_receipts':node_receipts,'jvm_receipts':jvm_receipts,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
 
 
 def main(argv: list[str] | None = None) -> int:

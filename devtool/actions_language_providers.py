@@ -209,8 +209,18 @@ class NodeProvider:
         try:return {'api_version':self.api_version, **inspect_node_job(root,argv,job.metadata or {})}
         except NodeError as exc:raise ProviderError(str(exc)) from None
 
+@dataclass(frozen=True)
+class JvmProvider:
+    api_version: int = SCHEMA_VERSION
+    provider_id: str = 'jvm'
+
+    def inspect(self, root: Path, job: Any, argv: list[str]) -> dict[str, Any]:
+        from .actions_rm12_jvm import inspect_jvm_job, JvmError
+        try:return {'api_version':self.api_version, **inspect_jvm_job(root,argv,job.metadata or {})}
+        except JvmError as exc:raise ProviderError(str(exc)) from None
+
 # The only provider registry: immutable built-ins, no entry-point/network/plugin loading.
-PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider(), 'node': NodeProvider()})
+PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider(), 'node': NodeProvider(), 'jvm': JvmProvider()})
 # V1 adapter behavior is preserved; V2 review metadata must match the exact built-ins.
 for _id, _adapter in PROVIDERS.items():
     resolve_provider(_id, api_version=_adapter.api_version)
@@ -247,6 +257,10 @@ def _provider_for(job: Any) -> LanguageProvider:
     flag = meta.get('ci_toolchain')
     argv = list(job.command or [])
     name = Path(argv[0]).name if argv else ''
+    if flag == 'jvm' or name in ('mvn','gradle'):
+        if name not in ('mvn','gradle') or flag not in (None,'jvm'):
+            raise ProviderError('RM-12 JVM provider/argv mismatch')
+        return PROVIDERS['jvm']
     if flag == 'node' or name in ('npm','pnpm','yarn','bun'):
         if name not in ('npm','pnpm','yarn','bun') or flag not in (None,'node'):
             raise ProviderError('RM-11 Node provider/argv mismatch')
@@ -260,7 +274,7 @@ def _provider_for(job: Any) -> LanguageProvider:
             raise ProviderError('RM-09 dotnet provider/argv mismatch')
         return PROVIDERS['dotnet']
     go = (flag == 'go' or job.runner == 'go' or name == 'go' or 'go.mod' in job.inputs)
-    if flag not in (None, 'go', 'python-shell', 'dotnet', 'rust-cargo', 'node'):
+    if flag not in (None, 'go', 'python-shell', 'dotnet', 'rust-cargo', 'node', 'jvm'):
         raise ProviderError('No reviewed language provider for ci_toolchain ' + str(flag)[:50])
     if go and flag == 'python-shell':
         raise ProviderError('Go source declaration conflicts with Python toolchain')
@@ -296,7 +310,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
     if not (1 <= len(graph.nodes) <= MAX_NODES):
         raise ProviderError('NEXT-03 DAG size must be between 1 and 32 nodes')
     admission = graph_host_admission(cfg, graph, host_os='linux', host_arch='x86_64',
-                                     toolchains=('go', 'python-shell','dotnet','rust-cargo','node'))
+                                     toolchains=('go', 'python-shell','dotnet','rust-cargo','node','jvm'))
     if not admission['all_eligible']:
         reasons = [r['node']+':'+','.join(r['eligibility']['reasons']) for r in admission['nodes'] if not r['eligibility']['eligible']]
         raise ProviderError('Hosted node admission blocked: ' + '; '.join(reasons)[:320])
@@ -312,7 +326,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if 'ci_host_requirements' in meta:
             try:
                 host_result = host_eligibility_v2(meta['ci_host_requirements'],
-                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell','dotnet','rust-cargo','node'))
+                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm'))
             except ContractError as exc:
                 raise ProviderError('Invalid ci_host_requirements: ' + str(exc)) from None
             if not host_result['eligible']:
@@ -368,6 +382,26 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
             if not re.search(r'(?m)^coverage==[0-9][A-Za-z0-9_.+!-]*\s+--hash=sha256:[a-f0-9]{64}\s*$',
                              (root/declaration['project']['install_lock']).read_text()):
                 raise ProviderError('RM-08 automatic coverage requires hash-pinned coverage dependency')
+        if declaration['provider']=='jvm':
+            from .actions_rm12_jvm import JvmError
+            m=declaration['project']['modules'][declaration['selected']]
+            artifact=(m.get('coordinate','').split(':')[-1] if declaration['manager']=='maven' else
+                      (declaration['selected'].split(':')[-1] if declaration['selected']!=':' else 'root'))
+            if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{0,79}',artifact):
+                raise ProviderError('RM-12 unsafe JVM artifact identity')
+            expected=(['dist/jvm-tests.xml'] if declaration['command']=='test' else
+                      ['dist/'+artifact+'.jar'] if declaration['command']=='package' else [])
+            desktop=meta.get('ci_jvm_desktop_bundle',False)
+            if type(desktop) is not bool:
+                raise ProviderError('RM-12 desktop bundle opt-in must be boolean')
+            if desktop:
+                if declaration['command']!='package':
+                    raise ProviderError('RM-12 desktop bundle requires package job')
+                expected+=['dist/'+artifact+'.zip']
+            if list(job.outputs)!=expected:
+                raise ProviderError('RM-12 JVM owned native output must match '+repr(expected))
+            declaration['artifact_name']=artifact
+            declaration['desktop_bundle']=desktop
         if declaration['provider']=='node':
             kind=declaration['kind']
             outs=list(job.outputs)
@@ -413,6 +447,22 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
                      'provider':declaration,'outputs':list(job.outputs), 'command':argv, 'env':dict(job.env),
                      'wheel_smoke':wheel_smoke,'sdist_smoke':sdist_smoke,
                      'auto_coverage':auto_coverage})
+    # JVM reactor source dependencies cannot silently become a second scheduler.
+    # When a dependency has a separate native owner, consumers must declare
+    # an explicit direct native edge (or use reviewed Maven -am reactor builds).
+    jvm_rows=[r for r in rows if r['provider']['provider']=='jvm']
+    owners={}
+    for r in jvm_rows:
+        p=r['provider'];key=(p['manager'],p['selected'])
+        if key in owners and owners[key]['node']!=r['node'] and (owners[key]['node'] not in r['depends_on'] and r['node'] not in owners[key]['depends_on']):
+            raise ProviderError('RM-12 overlapping JVM module jobs require native ordering')
+        owners[key]=r
+    for r in jvm_rows:
+        p=r['provider']
+        for dependency in p['project']['edges'][p['selected']]:
+            other=owners.get((p['manager'],dependency))
+            if other and other['node']!=r['node'] and other['node'] not in r['depends_on']:
+                raise ProviderError('RM-12 JVM reactor dependency requires native DAG edge')
     # Cargo workspace member producers must follow native DAG dependency edges.
     rust_rows=[r for r in rows if r['provider']['provider']=='rust-cargo']
     for row in rust_rows:
@@ -716,8 +766,8 @@ def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
         dest = f'.github/workflows/devtool-{target}-{workflow}-providers-multi.yml'
     else:
         plan = provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
-        if 'dotnet' in plan['providers'] or 'rust-cargo' in plan['providers'] or 'node' in plan['providers']:
-            raise ProviderError('RM-09/RM-10 .NET and Rust require native multi-job export with reviewed toolchain preflight')
+        if 'dotnet' in plan['providers'] or 'rust-cargo' in plan['providers'] or 'node' in plan['providers'] or 'jvm' in plan['providers']:
+            raise ProviderError('RM-09–RM-12 reviewed .NET/Rust/Node/JVM require native multi-job export with reviewed toolchain preflight')
         frozen_sha = plan['plan_sha256']
         content = _workflow_yaml(plan).encode()
         dest = f'.github/workflows/devtool-{target}-{workflow}-providers.yml'
