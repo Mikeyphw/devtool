@@ -84,18 +84,29 @@ def _norm(name: str) -> str:
     return re.sub(r'[-_.]+','-',name).lower()
 
 
-def _module(root: Path) -> dict[str, Any]:
-    text = _text(root,'go.mod')
-    mod, version = _GO_MOD.search(text), _GO_VERSION.search(text)
-    if not mod or not version:
-        raise DistributionError('Go module/version missing in tracked go.mod')
-    if (root/'go.work').exists():
-        work = _text(root,'go.work')
-        if not _GO_VERSION.search(work) or not re.search(r'(?m)^use\s+(?:\.|\(\s*$)',work):
-            raise DistributionError('Unsupported Go workspace: root module must be explicitly used')
-    return {'module':mod.group(1),'go_version':version.group(1),
-            'source_sha256':_digest(text.encode()),
-            'locks':{n:_digest(_text(root,n).encode()) for n in ('go.sum','go.work','go.work.sum') if (root/n).exists()}}
+def _module(root: Path, module_name: str = '') -> dict[str, Any]:
+    from .actions_rm08_projects import (go_workspace_manifest, _tracked_manifests,
+                                        ProjectReviewError, _GO_MODULE)
+    try:
+        names=_tracked_manifests(root,'go.mod')
+        chosen=[]
+        for path in names:
+            raw=_text(root,path)
+            match=_GO_MODULE.search(raw)
+            if match and (match.group(1)==module_name if module_name else path=='go.mod'):
+                chosen.append(path)
+        if len(chosen)!=1:
+            raise DistributionError('Go distribution must select exactly one tracked module')
+        module_file=chosen[0]
+        folder=module_file.rsplit('/',1)[0] if '/' in module_file else '.'
+        manifest=go_workspace_manifest(root,directory=folder)
+    except ProjectReviewError as exc:
+        raise DistributionError(str(exc)) from None
+    selected=manifest['selected']
+    locks={n:_digest(_text(root,n).encode()) for n in manifest['source_files'] if n!=module_file}
+    return {'module':selected['module'],'go_version':selected['version'],
+            'module_file':module_file,'module_dir':folder,'source_sha256':selected['sha256'],
+            'locks':locks}
 
 
 def _python_source(root: Path) -> dict[str, Any]:
@@ -349,12 +360,19 @@ def distribution_contract(root: Path, *, target: str, workflow: str) -> dict[str
         if kind not in allowed or set(entry)!=allowed[kind]:
             raise DistributionError('Unknown/missing distribution fields')
         path=entry['path'];_checked_path(root,path,must_exist=False)
-        if not path.startswith('dist/') or path.startswith('dist/.'):
+        if path.startswith('dist/') and not path.startswith('dist/.'):
+            pass
+        elif kind=='go':
+            selected_module=_module(root,entry['module'])
+            prefix=selected_module['module_dir']+'/dist/'
+            if selected_module['module_dir']=='.' or not path.startswith(prefix) or path.startswith(prefix+'.'):
+                raise DistributionError('Candidate nested Go output must stay within selected module dist/')
+        else:
             raise DistributionError('Candidate output paths must be within dist/')
         if path in paths:raise DistributionError('Duplicate output path')
         paths.add(path)
         if kind=='go':
-            module=_module(root)
+            module=_module(root,entry['module'])
             if entry['module']!=module['module'] or type(entry['cgo_enabled']) is not bool:
                 raise DistributionError('Go module/CGO identity mismatch')
             if (entry['goos'],entry['goarch']) not in {('linux','amd64'),('linux','arm64'),('windows','amd64'),('windows','arm64'),('darwin','amd64'),('darwin','arm64')}:
@@ -388,7 +406,7 @@ def verify_distributions(root: Path, *, target: str, workflow: str,
     # made by a job after GitHub checked out its reviewed commit.
     tracked = {CONTRACT_PATH}
     for row in base['entries']:
-        tracked.add('go.mod' if row['kind']=='go' else 'pyproject.toml')
+        tracked.add(row['source']['module_file'] if row['kind']=='go' else 'pyproject.toml')
         tracked.update(row['source']['locks'])
     for rel in sorted(tracked):
         p=_checked_path(root,rel,must_exist=True)

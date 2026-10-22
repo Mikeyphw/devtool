@@ -70,29 +70,49 @@ class GoProvider:
 
     def inspect(self, root: Path, job: Any, argv: list[str]) -> dict[str, Any]:
         _argv(argv)
-        if Path(argv[0]).name != 'go' or len(argv) < 2 or argv[1] not in ('test', 'vet', 'build'):
-            raise ProviderError('Go adapter admits only go test/vet/build argv, no shell wrapper or go run')
-        if not _tracked(root, 'go.mod'):
-            raise ProviderError('Go adapter requires a tracked, non-symlink go.mod at repository root')
-        if (root / 'go.work').exists():
-            from .actions_distributions import _module, DistributionError
-            try:
-                _module(root)
-            except DistributionError as exc:
-                raise ProviderError(str(exc)) from None
-        raw = (root / 'go.mod').read_text(encoding='utf-8')
-        version = _GO_VERSION.search(raw)
-        if not version:
-            raise ProviderError('Go toolchain version absent or unsupported in go.mod')
-        # Don't infer CGO or native target compatibility from hosted x86_64.
+        from .actions_rm08_projects import go_workspace_manifest, ProjectReviewError
+        if Path(argv[0]).name != 'go':
+            raise ProviderError('Go adapter requires the direct go executable')
+        # `go -C module/path test ...` is a native Go command, not a shell
+        # wrapper.  Both the directory and module must be tracked and reviewed.
+        directory='.'
+        if len(argv)>2 and argv[1]=='-C':
+            directory=argv[2]
+            command=argv[3:]
+        else:
+            command=argv[1:]
+        if not command or command[0] not in ('test','vet','build'):
+            raise ProviderError('Go adapter admits only direct test/vet/build commands')
+        if any(token=='-C' for token in command):
+            raise ProviderError('Go -C must precede the subcommand')
+        try:
+            reviewed=go_workspace_manifest(root,directory=directory)
+        except (ProjectReviewError,UnicodeError,OSError,subprocess.CalledProcessError) as exc:
+            raise ProviderError('RM-08 Go workspace: '+str(exc)[:240]) from None
+        selected=reviewed['selected']
+        meta=job.metadata or {}
+        variants=_matrix_versions(meta.get('ci_go_versions'),selected['version'],kind='go')
+        if '-race' in command:
+            if command[0]!='test':
+                raise ProviderError('Go race instrumentation is reviewed for tests only')
+            # Cross-target/CGO admission is checked against declared job env
+            # in provider_plan and against the actual hosted runner later.
+            if job.env.get('CGO_ENABLED','0')!='1' or job.env.get('GOOS','linux')!='linux' or job.env.get('GOARCH','amd64')!='amd64':
+                raise ProviderError('Go -race requires Linux amd64 with explicit CGO_ENABLED=1')
         if any(a.startswith(('GOOS=', 'GOARCH=', 'CGO_ENABLED=')) for a in argv):
             raise ProviderError('Go environment variables must be declared in job.env, not in argv')
-        if argv[1]=='build' and '-o' in argv and (
-                argv.index('-o')+1 >= len(argv) or not argv[argv.index('-o')+1].startswith('dist/')):
+        reproducible=meta.get('ci_go_reproducible',False)
+        if type(reproducible) is not bool:raise ProviderError('RM-08 repeat-build flag must be boolean')
+        if reproducible and (command[0]!='build' or '-trimpath' not in command or '-buildvcs=false' not in command or
+                             '-o' not in command or job.env.get('CGO_ENABLED','0')!='0'):
+            raise ProviderError('RM-08 repeat-build requires CGO-free go build -trimpath -buildvcs=false -o')
+        if command[0]=='build' and '-o' in command and (
+                command.index('-o')+1 >= len(command) or not command[command.index('-o')+1].startswith('dist/')):
             raise ProviderError('Go distributable outputs must be inside dist/')
         return {'provider': 'go', 'api_version': self.api_version, 'toolchain': 'go',
-                'version': version.group(1), 'version_source': 'go.mod',
-                'lockfiles': ['go.mod'] + [n for n in ('go.sum','go.work','go.work.sum') if _tracked(root,n)],
+                'version': selected['version'], 'matrix_versions':variants, 'version_source': selected['manifest'],
+                'workspace':reviewed,'reproducible_go':reproducible,
+                'lockfiles': reviewed['source_files'],
                 'cache_enabled': False, 'report_adapter': 'go-json',
                 'output_role': 'source-only-unverified', 'release_qualified': False}
 
@@ -106,8 +126,10 @@ class PythonShellProvider:
         _argv(argv)
         if Path(argv[0]).name not in ('python', 'python3'):
             raise ProviderError('Python adapter refuses shell scripts and unreviewed external programs')
-        if len(argv) < 3 or argv[1] != '-m' or argv[2] not in ('pytest', 'unittest', 'compileall', 'ruff', 'build'):
-            raise ProviderError('Python adapter admits only python -m pytest/unittest/compileall/ruff/build')
+        if len(argv) < 3 or argv[1] != '-m' or argv[2] not in ('pytest', 'unittest', 'compileall', 'ruff', 'build', 'coverage'):
+            raise ProviderError('Python adapter admits only reviewed Python -m commands')
+        if argv[2]=='coverage' and not (argv[3:6]==['run','-m','pytest'] or argv[3:]==['xml','-o','dist/coverage.xml']):
+            raise ProviderError('RM-08 coverage only accepts native pytest instrumentation or XML report')
         if 'pytest' in argv and 'compileall' in argv:
             raise ProviderError('Ambiguous Python module argv')
         if argv[2] == 'build':
@@ -115,7 +137,7 @@ class PythonShellProvider:
             # implicit build-environment downloads; native DAG remains owner.
             if not _tracked(root, 'pyproject.toml') or '--no-isolation' not in argv:
                 raise ProviderError('Python build requires tracked pyproject and --no-isolation')
-            if not _tracked(root, 'requirements.txt'):
+            if not any(_tracked(root, n) for n in ('requirements.txt','uv.lock','poetry.lock','pdm.lock')):
                 raise ProviderError('Python build requires tracked hash-pinned requirements.txt')
             from .actions_distributions import _python_source, DistributionError
             try: _python_source(root)
@@ -124,15 +146,34 @@ class PythonShellProvider:
                 raise ProviderError('Python package build must use --outdir dist')
             if '--wheel' not in argv and '--sdist' not in argv:
                 raise ProviderError('Python package build must select --wheel or --sdist')
-        lockfiles = [name for name in ('uv.lock', 'poetry.lock', 'requirements.txt', 'pdm.lock') if _tracked(root, name)]
-        # Toolchain is installed by a pinned GitHub Action; full package build/dependency
-        # resolution and lock enforcement are NEXT-04, so no tests/release assertions.
-        return {'provider': 'python-shell', 'api_version': self.api_version,
-                'toolchain': 'python', 'version': '3.12',
-                'version_source': 'bounded-next03-host-profile',
-                'lockfiles': lockfiles, 'cache_enabled': False,
-                'report_adapter': 'pytest-junit', 'output_role': 'source-only-unverified',
-                'release_qualified': False}
+        from .actions_rm08_projects import python_project_manifest, ProjectReviewError
+        meta=job.metadata or {}
+        version=meta.get('ci_python_version','3.12')
+        if not isinstance(version,str) or version not in ('3.11','3.12','3.13'):
+            raise ProviderError('RM-08 Python version must be a reviewed 3.11/3.12/3.13 pin')
+        variants=_matrix_versions(meta.get('ci_python_versions'),version,kind='python')
+        strict=meta.get('ci_python_policy', '')=='reviewed'
+        if meta.get('ci_python_policy','') not in ('','reviewed'):
+            raise ProviderError('RM-08 unknown Python dependency policy')
+        try:
+            project=python_project_manifest(root,require_package=strict) if strict else None
+        except (ProjectReviewError,OSError,UnicodeError) as exc:
+            raise ProviderError('RM-08 Python project: '+str(exc)[:200]) from None
+        if strict and not project['dependency_install_supported']:
+            raise ProviderError('RM-08 package lacks a reviewed hash installer policy')
+        lockfiles=[name for name in ('uv.lock','poetry.lock','requirements.txt','pdm.lock') if _tracked(root,name)]
+        if project and project['project_present']:
+            lockfiles=project['source_files']
+        elif argv[2]=='build':
+            # Existing V1 package policies stay operational; they are not
+            # silently called an RM-08 strict backend/installer qualification.
+            lockfiles=sorted(set(lockfiles+(['pyproject.toml'] if _tracked(root,'pyproject.toml') else [])))
+        return {'provider':'python-shell','api_version':self.api_version,
+                'toolchain':'python','version':version,'matrix_versions':variants,
+                'version_source':'native-job-ci_python_version' if 'ci_python_version' in meta else 'bounded-next03-host-profile',
+                'project':project, 'lockfiles':lockfiles,'cache_enabled':False,
+                'report_adapter':'pytest-junit','output_role':'source-only-unverified',
+                'release_qualified':False}
 
 
 # The only provider registry: immutable built-ins, no entry-point/network/plugin loading.
@@ -142,6 +183,26 @@ for _id, _adapter in PROVIDERS.items():
     resolve_provider(_id, api_version=_adapter.api_version)
 if set(PROVIDERS) != set(reviewed_providers()):
     raise ProviderError('reviewed provider registry does not match executable built-ins')
+
+
+def _matrix_versions(raw: Any, base: str, *, kind: str) -> list[str]:
+    if raw is None:return [base]
+    if not isinstance(raw,str) or len(raw)>96:
+        raise ProviderError('RM-08 toolchain matrix must be bounded comma-separated text')
+    values=raw.split(',')
+    if not 1<=len(values)<=3 or len(set(values))!=len(values):
+        raise ProviderError('RM-08 toolchain matrix must have 1..3 unique versions')
+    allowed= ('3.11','3.12','3.13') if kind=='python' else None
+    for v in values:
+        if kind=='python':
+            if v not in allowed:raise ProviderError('RM-08 unsupported Python matrix version')
+        elif not re.fullmatch(r'1\.(?:2[0-9]|[3-9][0-9])(?:\.\d+)?',v):
+            raise ProviderError('RM-08 unsupported Go matrix version')
+        if kind=='go' and tuple(map(int,(v+'.0').split('.')[:2])) < tuple(map(int,(base+'.0').split('.')[:2])):
+            raise ProviderError('RM-08 Go matrix version predates module requirement')
+    if base not in values:
+        raise ProviderError('RM-08 matrix must include declared primary toolchain version')
+    return values
 
 
 def _digest(row: Any) -> str:
@@ -236,9 +297,53 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
             raise ProviderError('NEXT-03 only exports jobs rooted at the repository (subdirectory roots need review)')
         if any(not isinstance(v, str) or v.startswith('/') or '..' in Path(v).parts or '\\' in v for v in job.outputs):
             raise ProviderError('Job output path is not bounded')
+        sdist_smoke=meta.get('ci_sdist_smoke',False)
+        if type(sdist_smoke) is not bool:
+            raise ProviderError('RM-08 sdist smoke opt-in must be boolean')
+        if sdist_smoke and (declaration['provider']!='python-shell' or len(argv)<3 or argv[2]!='build'
+                            or not declaration.get('project') or not declaration['project'].get('dependency_install_supported')):
+            raise ProviderError('RM-08 sdist smoke requires reviewed Python package build/dependency policy')
+        wheel_smoke=meta.get('ci_wheel_smoke',False)
+        if type(wheel_smoke) is not bool:
+            raise ProviderError('RM-08 wheel smoke opt-in must be boolean')
+        if wheel_smoke and (declaration['provider']!='python-shell' or len(argv)<3 or argv[2]!='build'
+                            or not declaration.get('project') or not declaration['project'].get('dependency_install_supported')):
+            raise ProviderError('RM-08 wheel smoke requires reviewed Python package build and pinned pip lock')
+        if declaration['provider']=='python-shell' and argv[2:]==['coverage','xml','-o','dist/coverage.xml'] and 'dist/coverage.xml' not in job.outputs:
+            raise ProviderError('RM-08 coverage reporter must declare dist/coverage.xml output')
         rows.append({'node':node.key, 'job':local, 'depends_on':list(node.depends_on),
                      'argv_sha256': _digest(argv), 'inputs_sha256':_digest(list(job.inputs)),
-                     'provider':declaration,'outputs':list(job.outputs), 'command':argv, 'env':dict(job.env)})
+                     'provider':declaration,'outputs':list(job.outputs), 'command':argv, 'env':dict(job.env),
+                     'wheel_smoke':wheel_smoke,'sdist_smoke':sdist_smoke})
+    # Workspace dependency edges must be owned by native DAG nodes, not by a
+    # second hosted scheduler. When both modules have producers in this workflow,
+    # a direct native dependency is mandatory (an implicit Go workspace build
+    # order must never bypass native target ownership).
+    owned_modules={}
+    for row in rows:
+        if row['provider']['provider']=='go':
+            directory=row['provider']['workspace']['selected']['directory']
+            if directory in owned_modules and owned_modules[directory]!=row['node']:
+                # Multiple target-local commands per module are valid; they
+                # must remain explicitly ordered if they produce shared bytes.
+                continue
+            owned_modules[directory]=row['node']
+    for row in rows:
+        if row['provider']['provider']!='go':continue
+        workspace=row['provider']['workspace']
+        directory=workspace['selected']['directory']
+        for dependency in workspace['workspace_edges'].get(directory,[]):
+            owner=owned_modules.get(dependency)
+            if owner and owner!=row['node'] and owner not in row['depends_on']:
+                raise ProviderError('RM-08 Go module dependency must be a native DAG edge: '+dependency)
+    # One version fanout per native DAG: every node participates in its cell.
+    # Mixed providers would require a per-node product strategy; refuse that
+    # rather than misbind a Go producer to another Python version's outputs.
+    matrix_specs={tuple(r['provider']['matrix_versions']) for r in rows}
+    if len(matrix_specs)>1 and any(len(v)>1 for v in matrix_specs):
+        raise ProviderError('RM-08 version matrix requires a uniform native DAG toolchain declaration')
+    if len(matrix_specs)==1 and len(next(iter(matrix_specs)))>1 and len({r['provider']['provider'] for r in rows})>1:
+        raise ProviderError('RM-08 version fanout refuses a mixed-language DAG')
     providers = sorted({r['provider']['provider'] for r in rows})
     head, tree = _git(root, 'rev-parse', 'HEAD'), _git(root, 'rev-parse', 'HEAD^{tree}')
     # A generated workflow is itself a new Git commit: binding the frozen review
@@ -259,8 +364,12 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
             owner=candidates[0]
             if e['kind']=='go':
                 cmd=owner['command']
-                if len(cmd)<4 or cmd[:2]!=['go','build'] or '-o' not in cmd or cmd[cmd.index('-o')+1]!=e['path']:
+                go_cmd=cmd[3:] if len(cmd)>3 and cmd[1]=='-C' else cmd[1:]
+                prefix=(cmd[2]+'/' if len(cmd)>3 and cmd[1]=='-C' else '')
+                if len(go_cmd)<3 or go_cmd[0]!='build' or '-o' not in go_cmd or prefix+go_cmd[go_cmd.index('-o')+1]!=e['path']:
                     raise ProviderError('Go distribution must be produced by an exact go build -o job')
+                if e['module']!=owner['provider']['workspace']['selected']['module']:
+                    raise ProviderError('Go distribution module differs from job-selected tracked module')
                 env=owner['env']
                 if (env.get('GOOS','linux'),env.get('GOARCH','amd64'),env.get('CGO_ENABLED','0')) != (e['goos'],e['goarch'],'1' if e['cgo_enabled'] else '0'):
                     raise ProviderError('Go distribution does not match declared build environment')
@@ -274,8 +383,28 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
                     raise ProviderError('Python build outputs must use exact --outdir dist')
                 if ('--wheel' if e['kind']=='wheel' else '--sdist') not in cmd:
                     raise ProviderError('Python build command does not select declared output format')
-                if not (root / 'requirements.txt').exists():
-                    raise ProviderError('Python provider requires hash-pinned requirements for hosted provisioning')
+                if owner['provider'].get('project'):
+                    if not owner['provider']['project']['dependency_install_supported']:
+                        raise ProviderError('RM-08 distribution needs reviewed hash-pinned package policy')
+                elif not _tracked(root, 'requirements.txt'):
+                    raise ProviderError('RM-08 legacy distribution requires tracked hash-pinned requirements.txt')
+    for row in rows:
+        if row['sdist_smoke']:
+            if distribution is None:
+                raise ProviderError('RM-08 sdist smoke requires a reviewed distribution contract')
+            owned=[d['expected'] for d in distribution['entries'] if d['expected']['path'] in row['outputs']]
+            project=row['provider'].get('project') or {}
+            from .actions_distributions import _python_source
+            scripts=_python_source(root)['entrypoints']
+            if len(owned)!=1 or owned[0]['kind']!='sdist' or len(scripts)!=1:
+                raise ProviderError('RM-08 sdist smoke requires one owned source archive and console entrypoint')
+        if not row['wheel_smoke']:
+            continue
+        if distribution is None:
+            raise ProviderError('RM-08 wheel smoke requires a reviewed distribution contract')
+        owned=[d['expected'] for d in distribution['entries'] if d['expected']['path'] in row['outputs']]
+        if len(owned)!=1 or owned[0]['kind']!='wheel' or len(owned[0]['entrypoints'])!=1:
+            raise ProviderError('RM-08 wheel smoke requires one owned wheel and one reviewed console entrypoint')
     tracked_sources = ['.devtool.toml'] + sorted({p for row in rows for p in row['provider']['lockfiles']})
     if distribution:
         tracked_sources += [CONTRACT_PATH,'pyproject.toml'] if any(e['kind']!='go' for e in (r['expected'] for r in distribution['entries'])) else [CONTRACT_PATH]
@@ -306,6 +435,14 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
 def _workflow_yaml(plan: dict[str, Any]) -> str:
     from .actions_adoption import _CHECKOUT_SHA, _UPLOAD_SHA, _SETUP_GO_SHA
     target, workflow, pin = plan['target'], plan['workflow'], plan['runtime_sha']
+    go_versions={(r['provider']['version'],r['provider']['version_source']) for r in plan['nodes'] if r['provider']['provider']=='go'}
+    py_versions={r['provider']['version'] for r in plan['nodes'] if r['provider']['provider']=='python-shell'}
+    if len(go_versions)>1 or len(py_versions)>1:
+        raise ProviderError('RM-08 single-host job cannot safely combine different pinned toolchains; use multi-job')
+    if any(len(r['provider']['matrix_versions'])>1 for r in plan['nodes']):
+        raise ProviderError('RM-08 requested multiple toolchain versions; choose --mode multi-job')
+    go_version_file=next(iter(go_versions))[1] if go_versions else 'go.mod'
+    python_version=next(iter(py_versions)) if py_versions else '3.12'
     namespace = f'devtool-{target}-{workflow}-providers'
     # All dynamic strings are slug/SHA constants checked by provider_plan.
     dist = bool(plan.get('distributions'))
@@ -341,7 +478,7 @@ def _workflow_yaml(plan: dict[str, Any]) -> str:
     go_setup = (f'''      - name: Pinned Go toolchain
         uses: actions/setup-go@{_SETUP_GO_SHA}
         with:
-          go-version-file: go.mod
+          go-version-file: {go_version_file}
           cache: false
 ''' if 'go' in plan['providers'] else '')
     return f'''# Generated by Devtool NEXT-03: native DAG remains the execution authority.
@@ -367,6 +504,7 @@ jobs:
     env:
       DEVTOOL_SOURCE_SHA: {pin}
       PYTHONDONTWRITEBYTECODE: "1"
+      GOTOOLCHAIN: local
     steps:
       - name: Checkout exact consumer source
         uses: actions/checkout@{_CHECKOUT_SHA}
@@ -381,7 +519,7 @@ jobs:
       - name: Pinned Python host interpreter
         uses: actions/setup-python@{SETUP_PYTHON_SHA}
         with:
-          python-version: '3.12'
+          python-version: '{python_version}'
 {go_setup}{py_requirements}      - name: Acquire frozen Devtool runtime
         shell: bash
         run: |

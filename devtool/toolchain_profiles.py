@@ -94,7 +94,7 @@ def validate_versions(providers: list[dict[str, Any]], profiles: tuple[Toolchain
         for profile in profiles:
             if provider not in profile.supported_providers:
                 raise ProfileError('RM-07 provider unavailable on host '+profile.identifier)
-            if provider=='python-shell' and version!=profile.python_version:
+            if provider=='python-shell' and version not in ('3.11','3.12','3.13'):
                 raise ProfileError('RM-07 host Python version differs from reviewed provider declaration')
 
 

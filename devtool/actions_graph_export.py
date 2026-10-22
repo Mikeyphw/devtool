@@ -75,7 +75,15 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
         profiles=select_profiles(host_profiles)
         validate_versions([row['provider'] for row in rows],profiles)
     except ProfileError as exc: raise ProviderError(str(exc)) from None
-    if len(profiles)*len(rows)>MAX_TOTAL_JOBS:
+    versions=rows[0]['provider']['matrix_versions']
+    # Do not infer a shared toolchain from a mixed set of node profiles.
+    if any(row['provider']['matrix_versions']!=versions for row in rows):
+        if any(len(row['provider']['matrix_versions'])>1 for row in rows):
+            raise ProviderError('RM-08 matrix versions differ across DAG nodes')
+        versions=['']  # independent pinned node versions, no fanout
+    elif len(versions)==1:
+        versions=['']  # retain original graph/job IDs exactly
+    if len(profiles)*len(rows)*len(versions)>MAX_TOTAL_JOBS:
         raise ProviderError('RM-07 matrix fanout exceeds total job cap')
     if not 1 <= len(rows) <= MAX_NODES:
         raise ProviderError('RM-06 bounded multi-job export accepts 1..24 nodes; use single-job fallback')
@@ -96,9 +104,12 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     node_to_id: dict[tuple[str,str],str] = {}
     jobs: list[dict[str, Any]] = []
     for profile in profiles:
+      for version in versions:
+        cell=profile.identifier+(':'+version if version else '')
         for index,row in enumerate(rows,1):
-            jid=f'node-{index:02d}' if len(profiles)==1 and profile.identifier=='ubuntu-24.04-x64' else f'node-{index:02d}-{profile.identifier.replace(".","-")}'
-            node_to_id[(row['node'],profile.identifier)]=jid
+            jid=(f'node-{index:02d}' if len(profiles)==1 and profile.identifier=='ubuntu-24.04-x64' else f'node-{index:02d}-{profile.identifier.replace(".","-")}')
+            if version:jid+='-v'+version.replace('.','-')
+            node_to_id[(row['node'],cell)]=jid
             outs=list(row['outputs'])
             if len(outs)>MAX_TRANSFER_FILES or len(set(outs))!=len(outs):
                 raise ProviderError('RM-07 node output count exceeds cap or has duplicates')
@@ -108,23 +119,35 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 if _tracked(root,path):
                     raise ProviderError('RM-06 output must not overwrite tracked source: '+path)
             try:
-                cache=cache_policy(root,row['provider'],profile,enabled=cache_locks)
+                cache=cache_policy(root,{**row['provider'],'version':version or row['provider']['version']},profile,enabled=cache_locks)
             except ProfileError as exc: raise ProviderError(str(exc)) from None
             jobs.append({'id':jid,'node':row['node'],'job':row['job'],
                          'depends_on':list(row['depends_on']), 'profile_id':profile.identifier,
+                         'matrix_cell':cell,'matrix_version':version,
                          'runner':profile.hosted_runner,'arch':profile.arch,
                          'timeout_minutes':profile.timeout_minutes, 'cache_policy':cache,
                          'outputs':sorted(outs),'inputs':list(native_jobs[row['job']].inputs),
-                         'provider':row['provider']['provider'],'needs':[],'handoffs':[]})
+                         'provider':row['provider']['provider'],
+                         'toolchain_version':version or row['provider']['version'],
+                         'go_manifest':row['provider'].get('version_source','go.mod'),
+                         'race':('-race' in row['command']),
+                         'python_package':row['provider']['provider']=='python-shell' and bool(row['provider'].get('project')),
+                         'wheel_smoke':row['wheel_smoke'],'sdist_smoke':row['sdist_smoke'],
+                         'reproducible_go':row['provider'].get('reproducible_go',False),
+                         'go_command':list(row['command']) if row['provider']['provider']=='go' else [],
+                         'go_env':dict(row['env']) if row['provider']['provider']=='go' else {},
+                         'python_install_lock':(row['provider'].get('project') or {}).get('install_lock',''),
+                         'coverage_report':row['provider']['provider']=='python-shell' and row['command'][2:]==['coverage','xml','-o','dist/coverage.xml'],
+                         'needs':[],'handoffs':[]})
     owners: dict[tuple[str,str],str] = {}
     for job in jobs:
         for output in job['outputs']:
-            key=(job['profile_id'],output)
+            key=(job['matrix_cell'],output)
             if key in owners:
                 raise ProviderError('RM-06 multiple DAG nodes produce one output: '+output)
             owners[key]=job['node']
     for job in jobs:
-        profile=job['profile_id'];deps=list(job['depends_on'])
+        profile=job['matrix_cell'];deps=list(job['depends_on'])
         if len(set(deps))!=len(deps) or any((dep,profile) not in node_to_id for dep in deps):
             raise ProviderError('RM-07 invalid native dependency projection')
         job['needs']=[node_to_id[(dep,profile)] for dep in deps]
@@ -139,6 +162,8 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
             key=(profile,inp)
             if key in owners and owners[key]!=job['node'] and owners[key] not in deps:
                 raise ProviderError('RM-06 generated input requires direct producer dependency: '+inp)
+        if job['race'] and job['runner']!='ubuntu-24.04':
+            raise ProviderError('RM-08 Go race profile requires reviewed Linux amd64 runner')
         if job['provider'] not in ('go','python-shell'):
             raise ProviderError('RM-06 refuses unreviewed hosted provider')
     immutable = {'schema_version': SCHEMA, 'kind': 'devtool.actions.export-graph',
@@ -147,6 +172,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                  'runner': profiles[0].hosted_runner if len(profiles)==1 else 'per-cell',
                  'matrix': [{'os':p.hosted_runner,'arch':p.arch} for p in profiles],
                  'toolchain_profiles':[p.identifier for p in profiles],
+                 'language_versions':versions,
                  'cache': 'enabled-reviewed-go-only' if cache_locks else 'disabled', 'changed_targets':'full-dag', 'jobs':jobs}
     return {**immutable, 'graph_sha256':_digest(immutable), 'native_source_sha256':plan['plan_sha256'],
             'fallback':'single-job', 'read_only':True, 'authenticated_remote':False,
@@ -174,9 +200,10 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
     for job in graph['jobs']:
         jid=job['id']
         dep_str=('    needs: ['+', '.join(job['needs'])+']\n') if job['needs'] else ''
+        go_selector=("go-version: '"+job["toolchain_version"]+"'" if job["matrix_version"] else f'go-version-file: {job["go_manifest"]}')
         setup_go=(f'      - name: Pinned Go toolchain\n'
                   f'        uses: actions/setup-go@{_SETUP_GO_SHA}\n'
-                  '        with:\n          go-version-file: go.mod\n          cache: false\n') if job['provider']=='go' else ''
+                  f'        with:\n          {go_selector}\n          cache: false\n') if job['provider']=='go' else ''
         downloads=''
         for dep in job['handoffs']:
             downloads += (f'      - name: Download {dep} byte handoff\n'
@@ -190,6 +217,11 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                     '        with:\n'
                     f'          path: {cache["path"]}\n'
                     f'          key: {cache["key"]}\n') if cache['enabled'] else ''
+        py_requirements=(('      - name: Install tracked hash-locked Python build requirements\n'
+                          '        shell: bash\n        run: |\n'
+                          '          set -euo pipefail\n'
+                          f'          python3 -m pip install --disable-pip-version-check --require-hashes -r {job["python_install_lock"] or "requirements.txt"}\n')
+                         if job['python_package'] else '')
         upload=''
         if job['outputs']:
             upload=(f'      - name: Upload {jid} declared bytes (not authenticated)\n'
@@ -207,13 +239,14 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '    env:\n'
                f'      DEVTOOL_SOURCE_SHA: {pin}\n'
                '      PYTHONDONTWRITEBYTECODE: "1"\n'
+               '      GOTOOLCHAIN: local\n'
                '    steps:\n'
                '      - name: Checkout consumer commit\n'
                f'        uses: actions/checkout@{_CHECKOUT_SHA}\n'
                '        with:\n          persist-credentials: false\n'
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
-               "        with:\n          python-version: '3.12'\n"
+               f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
                f'{setup_go}{cache_step}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
@@ -224,7 +257,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '          test "$(git -C "$RUNNER_TEMP/devtool-source" rev-parse HEAD)" = "$DEVTOOL_SOURCE_SHA"\n'
                '          python3 -m venv "$RUNNER_TEMP/devtool-venv"\n'
                '          "$RUNNER_TEMP/devtool-venv/bin/python" -m pip install --disable-pip-version-check "$RUNNER_TEMP/devtool-source"\n'
-               f'{downloads}'
+               f'{downloads}{py_requirements}'
                '      - name: Verify dependencies and run native target-local node\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -376,10 +409,41 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     results,_=run_specs(cfg,specs,verbose=True,dry_run=False,continue_on_error=False)
     if any(result.returncode!=0 or result.skipped for result in results):
         raise ProviderError('RM-06 native target-local job did not succeed')
+    smoke=[]
+    if selected['sdist_smoke']:
+        from .actions_distributions import distribution_contract, _python_source
+        from .actions_rm08_projects import smoke_sdist
+        contract=distribution_contract(root,target=target,workflow=workflow)
+        sd=next((item['expected'] for item in contract['entries']
+                 if item['expected']['path'] in selected['outputs'] and item['kind']=='sdist'),None)
+        if sd is None:raise ProviderError('RM-08 sdist smoke lost owned archive identity')
+        scripts=_python_source(root)['entrypoints']
+        if len(scripts)!=1:raise ProviderError('RM-08 sdist smoke requires exactly one console script')
+        smoke.append(smoke_sdist(root,sd['path'],name=sd['name'],version=sd['version'],entrypoint=scripts[0]))
+    if selected['wheel_smoke']:
+        from .actions_distributions import distribution_contract
+        from .actions_rm08_projects import smoke_wheel
+        contract=distribution_contract(root,target=target,workflow=workflow)
+        wheel=next((item['expected'] for item in contract['entries']
+                    if item['expected']['path'] in selected['outputs'] and item['kind']=='wheel'),None)
+        if wheel is None:
+            raise ProviderError('RM-08 wheel smoke lost owned distribution contract')
+        smoke.append(smoke_wheel(root,wheel['path'],name=wheel['name'],
+                                 version=wheel['version'],entrypoint=wheel['entrypoints'][0]))
+    repeat_build=[]
+    if selected['reproducible_go']:
+        from .actions_rm08_projects import verify_go_repeat_build
+        repeat_build.append(verify_go_repeat_build(root,selected['go_command'],selected['go_env']))
+    coverage=[]
+    if selected['coverage_report']:
+        from .actions_rm08_projects import merge_coverage_xml
+        if 'dist/coverage.xml' not in selected['outputs']:
+            raise ProviderError('RM-08 coverage reporter must declare its output')
+        coverage.append(merge_coverage_xml(root,['dist/coverage.xml']))
     stage_outputs(root,outputs,graph,selected,source,run,attempt)
     return {'status':'LOCAL_JOB_SUCCEEDED', 'node':selected['node'], 'job_id':job_id,
             'graph_sha256':graph_sha, 'workflow_sha256':hashlib.sha256(workflow_yaml(graph).encode()).hexdigest(), 'github_source':source,'run_id':run,'attempt':attempt,
-            'uploaded_artifacts_authenticated':False,'release_qualified':False}
+            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'uploaded_artifacts_authenticated':False,'release_qualified':False}
 
 
 def main(argv: list[str] | None = None) -> int:

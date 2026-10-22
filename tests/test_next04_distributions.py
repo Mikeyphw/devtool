@@ -46,7 +46,7 @@ def repo(tmp, *, kind='go'):
 
 def build_go(root):
     (root/'dist').mkdir(exist_ok=True)
-    subprocess.run(['go','build','-o','dist/hello','.'],cwd=root,env={**os.environ,'CGO_ENABLED':'0','GOTOOLCHAIN':'local'},check=True,timeout=90,capture_output=True)
+    subprocess.run(['go','build','-o','dist/hello','.'],cwd=root,env={**os.environ,'GOOS':'linux','GOARCH':'amd64','CGO_ENABLED':'0','GOTOOLCHAIN':'local'},check=True,timeout=90,capture_output=True)
 
 def wheel_file(path, *, metadata_version='1.0', malicious=False, bad_record=False):
     di='demo_pkg-1.0.dist-info'; contents={
@@ -65,7 +65,12 @@ def wheel_file(path, *, metadata_version='1.0', malicious=False, bad_record=Fals
     with zipfile.ZipFile(path,'w') as z:
         for name,content in contents.items(): z.writestr(name,content)
 
-def test_real_go_build_and_verification_with_source_pin(tmp_path):
+def test_real_go_build_and_verification_with_source_pin(tmp_path,monkeypatch):
+    # Reproduce Android/ARM64 Go defaults even on an x86_64 CI machine.
+    # The binary declared below is Linux/AMD64, and the test build must
+    # explicitly create that target rather than inheriting the host.
+    monkeypatch.setenv("GOOS", "android")
+    monkeypatch.setenv("GOARCH", "arm64")
     root=repo(tmp_path)
     reviewed=provider_plan(root,target='app',workflow='ci',devtool_sha=PIN)
     assert reviewed['distributions'][0]['kind']=='go'
