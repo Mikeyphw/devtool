@@ -701,3 +701,11 @@ This is the cumulative in-repository improvements ledger. Keep existing findings
 ## RM-04 native node retry/recovery (2026-10-21)
 
 Implementation: durable source/graph/host/input/output fingerprints; canonical CLI retry plan and explicit safe replay; EXO terminal reconciliation; per-node checkpoints and output-verified resume. `docs/RM04_PROMISE_AUDIT.md` retains the 23-item promise checklist and tests. RM-05 format-aware artifacts deliberately remains separate.
+
+## RM-05 — Unified typed artifact integrity and deterministic test evidence
+
+- **Status:** Implemented in RM-05 source-bound overlay; native Termux/device qualification not claimed.
+- **Work:** New version-2 producer→artifact→consumer receipt reader, SHA-256/format-specific archive checks, optional caller-pinned Ed25519 attestation verification, SBOM integrity, deterministic JUnit/TRX/Go/Cargo shard aggregation, hash-bound optional EXO journal correlation, read-only CLI entries.
+- **Safety:** No receipt/registry field promotes GitHub, signing, device or release authority. Claimed Android package identities without a trusted compiled-manifest parser fail closed. Declared consumers are not executed; RM-06 will own hosted handoff admission.
+- **Validation:** Adversarial fixtures for traversal/duplicates/zip bombs, tampering, signatures, reports, wrong identities and EXO inconsistency; canonical CLI fixed point; mandatory target validation and rollback.
+- **Promise ledger:** `docs/RM05_PROMISE_AUDIT.md` and `docs/RM05_ARTIFACT_TEST_CONVERGENCE.md`.

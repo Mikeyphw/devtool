@@ -15067,6 +15067,18 @@
           "spellings": [
             "--run-id"
           ]
+        },
+        {
+          "choices": [],
+          "dest": "receipt",
+          "help": "ArtifactReceiptV2 file (instead of registry selector)",
+          "hidden": false,
+          "id": "cli.option.artifacts.verify.receipt",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--receipt"
+          ]
         }
       ],
       "path": [
@@ -18655,6 +18667,93 @@
       ],
       "stability": "experimental",
       "summary": "Read-only canonical EXO node and remote lineage"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "evidence",
+      "id": "cli.command.evidence.merge_tests",
+      "options": [
+        {
+          "choices": [],
+          "dest": "attempt",
+          "help": "Expected attempt ID",
+          "hidden": false,
+          "id": "cli.option.evidence.merge-tests.attempt",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--attempt"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "commit",
+          "help": "Expected source SHA-1",
+          "hidden": false,
+          "id": "cli.option.evidence.merge-tests.commit",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--commit"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit structured JSON",
+          "hidden": false,
+          "id": "cli.option.evidence.merge-tests.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "receipt",
+          "help": "TestShardReceiptV2 manifest",
+          "hidden": false,
+          "id": "cli.option.evidence.merge-tests.receipt",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--receipt"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Expected native run ID",
+          "hidden": false,
+          "id": "cli.option.evidence.merge-tests.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.evidence.merge-tests.help",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "evidence",
+        "merge-tests"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only hash-bound deterministic test shard merge"
     },
     {
       "adoption_source": "core-registry",
@@ -37716,7 +37815,7 @@
       "summary": ""
     }
   ],
-  "digest": "154df72eebc7828b97252cc278f373a1d9428a011b1f72d317fcfa95791847a8",
+  "digest": "0cbc1cceb91826a58b5809bb931e61c174635d44d8c40b9a587626d6beb7745c",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -37911,6 +38010,7 @@
       "dr",
       "evidence",
       "evidence lineage",
+      "evidence merge-tests",
       "evidence normalize",
       "evidence validate",
       "fed",
@@ -38233,11 +38333,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 504,
-    "registry_command_count": 378
+    "parser_command_count": 505,
+    "registry_command_count": 379
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "65322f0eb117a8a16137988e16329c4c7cbd7f389f1110bd48353bd4f4e7b322",
+  "registry_digest": "35005cb78a3902bd5f2147022264b487aab28f533333b1d5539c5d045ca8861e",
   "registry_schema_version": 1,
   "schema_version": 1
 }

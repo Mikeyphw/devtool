@@ -13626,12 +13626,30 @@ def _main_after_parse(
                     raise EvidenceError(str(exc)) from exc
             elif command == "evidence" and action == "normalize":
                 result = normalize_test_report(Path(str(args.report)), str(args.format))
+            elif command == "evidence" and action == "merge-tests":
+                from .artifact_convergence import merge_test_shards
+                repo = resolve_repository_root(str(getattr(args,"repo","") or ""), str(getattr(args,"config","") or ""))
+                expected = {}
+                if getattr(args,"commit",None): expected["source_sha"] = str(args.commit)
+                if getattr(args,"run_id",None): expected["run_id"] = str(args.run_id)
+                if getattr(args,"attempt",None): expected["attempt"] = int(args.attempt)
+                result = merge_test_shards(repo, Path(str(args.receipt)), expected=expected)
             elif command == "artifacts" and action == "verify":
                 repo = resolve_repository_root(str(getattr(args, "repo", "") or ""), str(getattr(args, "config", "") or ""))
-                result = typed_artifact_verify(repo, str(args.selector),
-                    repository=str(getattr(args, "repository", "") or ""),
-                    commit=str(getattr(args, "commit", "") or ""),
-                    run_id=getattr(args, "run_id", None), attempt=getattr(args, "attempt", None))
+                if getattr(args, "receipt", None):
+                    if getattr(args, "selector", None):
+                        raise EvidenceError("--receipt cannot be combined with an artifact selector")
+                    from .artifact_convergence import verify_artifact_receipt
+                    expected = {}
+                    if getattr(args,"commit",None): expected["source_sha"] = str(args.commit)
+                    if getattr(args,"run_id",None): expected["run_id"] = str(args.run_id)
+                    if getattr(args,"attempt",None): expected["attempt"] = int(args.attempt)
+                    result = verify_artifact_receipt(repo, Path(str(args.receipt)), expected=expected)
+                else:
+                    result = typed_artifact_verify(repo, str(args.selector),
+                        repository=str(getattr(args, "repository", "") or ""),
+                        commit=str(getattr(args, "commit", "") or ""),
+                        run_id=getattr(args, "run_id", None), attempt=getattr(args, "attempt", None))
             else:
                 raise EvidenceError("unsupported read-only evidence operation")
         except (EvidenceError, ArtifactEvidenceError, OSError, UnicodeError, ValueError, TypeError) as exc:

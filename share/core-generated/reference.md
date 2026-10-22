@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `65322f0eb117a8a16137988e16329c4c7cbd7f389f1110bd48353bd4f4e7b322`
+Registry digest: `35005cb78a3902bd5f2147022264b487aab28f533333b1d5539c5d045ca8861e`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -181,6 +181,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `doctor`
 - `evidence` — Typed evidence and report validation (read-only)
 - `evidence lineage` — Read-only canonical EXO node and remote lineage
+- `evidence merge-tests` — Read-only hash-bound deterministic test shard merge
 - `evidence normalize` — Parse an actual test report without claiming hosted authority
 - `evidence validate` — Check version, exact identity and untrusted reported gates
 - `federation`

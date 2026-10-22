@@ -2909,6 +2909,22 @@
       "aliases": [],
       "canonical_path": [
         "evidence",
+        "merge-tests"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "evidence",
+        "stability": "experimental",
+        "summary": "Read-only hash-bound deterministic test shard merge",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.evidence.merge_tests"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "evidence",
         "normalize"
       ],
       "metadata": {
@@ -31673,6 +31689,27 @@
     },
     {
       "aliases": [],
+      "canonical": "--receipt",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "receipt",
+        "help": "ArtifactReceiptV2 file (instead of registry selector)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "artifacts",
+          "verify"
+        ],
+        "required": false
+      },
+      "scope": "artifacts.verify",
+      "sensitive": false,
+      "stable_id": "cli.option.artifacts.verify.receipt",
+      "value_kind": "store"
+    },
+    {
+      "aliases": [],
       "canonical": "--evidence",
       "config_field_id": null,
       "metadata": {
@@ -36965,6 +37002,134 @@
       "sensitive": false,
       "stable_id": "cli.option.evidence.lineage.run_id",
       "value_kind": "store"
+    },
+    {
+      "aliases": [],
+      "canonical": "--attempt",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "attempt",
+        "help": "Expected attempt ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "evidence",
+          "merge-tests"
+        ],
+        "required": false
+      },
+      "scope": "evidence.merge-tests",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.merge-tests.attempt",
+      "value_kind": "store"
+    },
+    {
+      "aliases": [],
+      "canonical": "--commit",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "commit",
+        "help": "Expected source SHA-1",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "evidence",
+          "merge-tests"
+        ],
+        "required": false
+      },
+      "scope": "evidence.merge-tests",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.merge-tests.commit",
+      "value_kind": "store"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit structured JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "evidence",
+          "merge-tests"
+        ],
+        "required": false
+      },
+      "scope": "evidence.merge-tests",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.merge-tests.json",
+      "value_kind": "store_true"
+    },
+    {
+      "aliases": [],
+      "canonical": "--receipt",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "receipt",
+        "help": "TestShardReceiptV2 manifest",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "evidence",
+          "merge-tests"
+        ],
+        "required": true
+      },
+      "scope": "evidence.merge-tests",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.merge-tests.receipt",
+      "value_kind": "store"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Expected native run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "evidence",
+          "merge-tests"
+        ],
+        "required": false
+      },
+      "scope": "evidence.merge-tests",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.merge-tests.run_id",
+      "value_kind": "store"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "evidence",
+          "merge-tests"
+        ],
+        "required": false
+      },
+      "scope": "evidence.merge-tests",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.merge-tests.help",
+      "value_kind": "_HelpAction"
     },
     {
       "aliases": [],
@@ -119109,21 +119274,11 @@
                   }
                 },
                 {
-                  "name": "lineage",
                   "aliases": [],
-                  "help_present": true,
                   "help": "Read-only canonical EXO node and remote evidence lineage",
+                  "help_present": true,
+                  "name": "lineage",
                   "parser": {
-                    "description": "Read-only RM-03 EXO lineage",
-                    "epilog": null,
-                    "usage": null,
-                    "formatter": "HelpFormatter",
-                    "add_help": true,
-                    "allow_abbrev": true,
-                    "groups": [],
-                    "mutexes": [],
-                    "defaults": null,
-                    "subparsers": null,
                     "actions": [
                       {
                         "action": "store",
@@ -119176,7 +119331,122 @@
                         "required": false,
                         "type": null
                       }
-                    ]
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": null,
+                    "description": "Read-only RM-03 EXO lineage",
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Read-only deterministic test shard merge",
+                  "help_present": true,
+                  "name": "merge-tests",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "receipt",
+                        "group": null,
+                        "help": "Test-shard manifest file",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--receipt"
+                        ],
+                        "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Expected json",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "commit",
+                        "group": null,
+                        "help": "Expected commit",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--commit"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "run_id",
+                        "group": null,
+                        "help": "Expected run_id",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--run-id"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "attempt",
+                        "group": null,
+                        "help": "Expected attempt",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--attempt"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": false,
+                    "defaults": {},
+                    "description": "Hash-bound deterministic test shard merge (read-only)",
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
                   }
                 }
               ],
@@ -119223,7 +119493,7 @@
                         "help": "",
                         "metavar": null,
                         "mutex": null,
-                        "nargs": null,
+                        "nargs": "?",
                         "option_strings": [],
                         "required": false,
                         "type": null
@@ -119309,6 +119579,23 @@
                         "nargs": 0,
                         "option_strings": [
                           "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": null,
+                        "dest": "receipt",
+                        "group": null,
+                        "help": "ArtifactReceiptV2 file (instead of registry selector)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--receipt"
                         ],
                         "required": false,
                         "type": null
@@ -119550,10 +119837,10 @@
           }
         },
         {
-          "name": "workflow",
           "aliases": [],
           "help": "Native-node recovery (source-locked and explicit)",
           "help_present": true,
+          "name": "workflow",
           "parser": {
             "actions": [],
             "add_help": true,
@@ -119567,10 +119854,10 @@
             "subparsers": {
               "children": [
                 {
-                  "name": "retry",
                   "aliases": [],
                   "help": "Native-node retry planning and guarded execution",
                   "help_present": true,
+                  "name": "retry",
                   "parser": {
                     "actions": [
                       {
