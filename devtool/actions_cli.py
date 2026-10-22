@@ -43,7 +43,8 @@ def run_actions_command(args: Any) -> int:
                                    verify_distributions(root,target=selected,workflow=named))
                     except DistributionError as exc: raise ProviderError(str(exc)) from None
                 elif command == 'provider-doctor':
-                    payload = provider_doctor(root, target=selected)
+                    payload = provider_doctor(root, target=selected,
+                                              all_profiles=bool(getattr(args,'provider_all_profiles',False)))
                 else:
                     named = str(getattr(args, 'adopt_workflow', '') or '')
                     sha = str(getattr(args, 'devtool_sha', '') or '')
@@ -57,7 +58,9 @@ def run_actions_command(args: Any) -> int:
                         payload = provider_export(root, target=selected, workflow=named,
                             devtool_sha=sha, write=bool(getattr(args,'yes',False)),
                             verify=bool(getattr(args,'verify',False)),
-                            mode=str(getattr(args,'provider_mode','single-job') or 'single-job'))
+                            mode=str(getattr(args,'provider_mode','single-job') or 'single-job'),
+                            host_profiles=str(getattr(args,'provider_host_profiles','') or ''),
+                            cache_locks=bool(getattr(args,'provider_cache_locks',False)))
             except (ProviderError, AdoptionError, ValueError) as exc:
                 print(f'ACTIONS_NEXT03_PROVIDER_REFUSED: {exc}', file=sys.stderr)
                 return 1

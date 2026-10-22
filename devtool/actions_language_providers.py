@@ -430,14 +430,18 @@ jobs:
 
 
 def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
-                    write: bool = False, verify: bool = False, mode: str = 'single-job') -> dict[str, Any]:
+                    write: bool = False, verify: bool = False, mode: str = 'single-job',
+                    host_profiles: str = '', cache_locks: bool = False) -> dict[str, Any]:
     if write and verify:
         raise ProviderError('Export --yes and --verify are mutually exclusive')
     if mode not in ('single-job', 'multi-job'):
         raise ProviderError('Unknown provider exporter mode')
+    if mode == 'single-job' and (host_profiles or cache_locks):
+        raise ProviderError('RM-07 host profiles/cache require --mode multi-job')
     if mode == 'multi-job':
         from .actions_graph_export import compile_graph, workflow_yaml
-        graph = compile_graph(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
+        graph = compile_graph(root,target=target,workflow=workflow,devtool_sha=devtool_sha,
+                              host_profiles=host_profiles,cache_locks=cache_locks)
         plan = {key:value for key,value in graph.items() if key != 'provider_plan'}
         frozen_sha = graph['graph_sha256']
         content = workflow_yaml(graph).encode()
@@ -469,9 +473,12 @@ def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
         raise ProviderError('Provider export requires clean Git source')
     if _git(root,'rev-parse','HEAD') != plan['consumer_commit'] or _git(root,'rev-parse','HEAD^{tree}') != plan['consumer_tree']:
         raise ProviderError('Source identity changed after planning')
+    if mode == 'single-job' and (host_profiles or cache_locks):
+        raise ProviderError('RM-07 host profiles/cache require --mode multi-job')
     if mode == 'multi-job':
         from .actions_graph_export import compile_graph
-        if compile_graph(root,target=target,workflow=workflow,devtool_sha=devtool_sha)['graph_sha256'] != frozen_sha:
+        if compile_graph(root,target=target,workflow=workflow,devtool_sha=devtool_sha,
+                         host_profiles=host_profiles,cache_locks=cache_locks)['graph_sha256'] != frozen_sha:
             raise ProviderError('RM-06 graph changed after review')
     elif provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)['plan_sha256'] != frozen_sha:
         raise ProviderError('Provider plan changed after review')
@@ -481,7 +488,7 @@ def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
     return result
 
 
-def provider_doctor(root: Path, *, target: str = '') -> dict[str, Any]:
+def provider_doctor(root: Path, *, target: str = '', all_profiles: bool = False) -> dict[str, Any]:
     root = root.resolve()
     cfg = load_wrapper_project_config(str(root), None)
     if target and target not in cfg.targets:
@@ -493,12 +500,24 @@ def provider_doctor(root: Path, *, target: str = '') -> dict[str, Any]:
             try:
                 # Doctor only needs a syntactically valid runtime pin for review.
                 entry = provider_plan(root,target=name,workflow=wf,devtool_sha='0'*40)
+                requested=[{'node':row['node'], 'provider':row['provider']['provider'],
+                            'toolchain':row['provider']['toolchain'],
+                            'requested_version':row['provider']['version'],
+                            'version_source':row['provider']['version_source'],
+                            'lockfiles':row['provider']['lockfiles'],
+                            'expected_hosted_runner':'ubuntu-24.04'} for row in entry['nodes']]
                 results.append({'target':name,'workflow':wf,'state':'locally_eligible',
-                                'providers':entry['providers'],'node_count':len(entry['nodes'])})
+                                'providers':entry['providers'],'node_count':len(entry['nodes']),
+                                'requested_toolchains':requested,
+                                'next_action':'Review multi-job export; do not infer hosted runner availability'})
             except (ProviderError, ValueError) as exc:
                 results.append({'target':name,'workflow':wf,'state':'blocked',
-                                'reason':str(exc)[:280]})
+                                'reason':str(exc)[:280],
+                                'next_action':'Review configured native workflow and missing prerequisites; no automatic installation'})
+    from .toolchain_profiles import capability_report
+    host_report=capability_report(root)
     return {'schema_version':SCHEMA_VERSION, 'kind':IDENTITY+'.doctor',
+            'toolchains':host_report, 'all_profiles_requested':bool(all_profiles),
             'read_only':True,'registered_providers':[reviewed_providers()[key].describe()
                              for key in sorted(PROVIDERS)],
             'workflows':results,'source_attested':False,'host_executed':False,

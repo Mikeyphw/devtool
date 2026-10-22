@@ -806,7 +806,7 @@
         "authority": "canonical-schema",
         "domain": "actions",
         "stability": "experimental",
-        "summary": "Inspect allowlisted hosted language providers per workflow",
+        "summary": "Read-only local installed toolchains and reviewed host profiles",
         "wrapper_native": false
       },
       "options": [],
@@ -63183,6 +63183,69 @@
       "sensitive": false,
       "stable_id": "cli.option.yes",
       "value_kind": "bool"
+    },
+    {
+      "aliases": [],
+      "canonical": "--host-profiles",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "provider_host_profiles",
+        "help": "Comma-separated reviewed hosted profile IDs (bounded fanout; multi-job only)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "provider-export"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-export",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-export.provider_host_profiles",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--cache-locks",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "provider_cache_locks",
+        "help": "Opt in to pinned cache of trusted Go compiler outputs only; multi-job only",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "provider-export"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-export",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-export.provider_cache_locks",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--all",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "provider_all_profiles",
+        "help": "Include all reviewed hosted/local profiles and installed toolchain status",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "provider-doctor"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-doctor",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-doctor.provider_all_profiles",
+      "value_kind": "_StoreTrueAction"
     }
   ],
   "parser": {
@@ -115876,6 +115939,23 @@
                         ],
                         "required": false,
                         "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "provider_all_profiles",
+                        "group": null,
+                        "help": "Include all reviewed hosted/local profiles and installed toolchain status",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--all"
+                        ],
+                        "required": false,
+                        "type": null
                       }
                     ],
                     "add_help": true,
@@ -116032,6 +116112,40 @@
                         "nargs": 0,
                         "option_strings": [
                           "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "provider_host_profiles",
+                        "group": null,
+                        "help": "Comma-separated reviewed hosted profile IDs (bounded fanout; multi-job only)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--host-profiles"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "provider_cache_locks",
+                        "group": null,
+                        "help": "Opt in to pinned cache of trusted Go compiler outputs only; multi-job only",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--cache-locks"
                         ],
                         "required": false,
                         "type": null

@@ -17,6 +17,7 @@ import sys
 from typing import Any
 
 from .actions_language_providers import provider_plan, ProviderError, SETUP_PYTHON_SHA
+from .toolchain_profiles import (select_profiles, validate_versions, cache_policy, ProfileError, MAX_TOTAL_JOBS)
 from .actions_adoption import _CHECKOUT_SHA, _SETUP_GO_SHA, _UPLOAD_SHA, _safe_slug, _sha
 from .config import load_wrapper_project_config
 
@@ -65,63 +66,88 @@ def _regular(root: Path, rel: str, *, must_exist: bool = True) -> Path:
     return here
 
 
-def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str) -> dict[str, Any]:
-    """Pure, deterministic compiler. Single pinned Ubuntu profile; RM-07 owns matrix/profile expansion."""
+def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
+                  host_profiles: str = '', cache_locks: bool = False) -> dict[str, Any]:
+    """Deterministic compiler; each reviewed host cell gets isolated jobs and handoffs."""
     plan = provider_plan(root, target=target, workflow=workflow, devtool_sha=devtool_sha)
     rows = plan['nodes']
+    try:
+        profiles=select_profiles(host_profiles)
+        validate_versions([row['provider'] for row in rows],profiles)
+    except ProfileError as exc: raise ProviderError(str(exc)) from None
+    if len(profiles)*len(rows)>MAX_TOTAL_JOBS:
+        raise ProviderError('RM-07 matrix fanout exceeds total job cap')
     if not 1 <= len(rows) <= MAX_NODES:
         raise ProviderError('RM-06 bounded multi-job export accepts 1..24 nodes; use single-job fallback')
     cfg = load_wrapper_project_config(str(root.resolve()), None)
     native_jobs = cfg.targets[plan['target']].jobs
-    node_to_id: dict[str, str] = {}
+    # RM-07 must re-admit every selected host. The RM-06 provider plan is
+    # Ubuntu-based and cannot be used as evidence for the other matrix cells.
+    from .workflow_graph import graph_from_workflow
+    from .evidence_kernel import graph_host_admission
+    graph=graph_from_workflow(plan['target'],cfg.targets[plan['target']].workflows[plan['workflow']])
+    for profile in profiles:
+        admission=graph_host_admission(cfg,graph,host_os=profile.os,
+                                      host_arch=profile.arch,toolchains=('go','python-shell'))
+        if not admission['all_eligible']:
+            failures=[item['node']+':'+','.join(item['eligibility']['reasons'])
+                      for item in admission['nodes'] if not item['eligibility']['eligible']]
+            raise ProviderError('RM-07 host profile '+profile.identifier+' refuses node: '+'; '.join(failures)[:320])
+    node_to_id: dict[tuple[str,str],str] = {}
     jobs: list[dict[str, Any]] = []
-    for index, row in enumerate(rows, 1):
-        # Position is stable within the native graph; never interpolate user-provided node keys in YAML identifiers.
-        jid = f'node-{index:02d}'
-        node_to_id[row['node']] = jid
-        outs = list(row['outputs'])
-        if len(outs) > MAX_TRANSFER_FILES:
-            raise ProviderError('RM-06 node output count exceeds transfer cap')
-        if len(set(outs)) != len(outs):
-            raise ProviderError('RM-06 duplicate output path in one node')
-        for path in outs:
-            _path(path)
-            from .actions_language_providers import _tracked
-            if _tracked(root, path):
-                raise ProviderError('RM-06 output must not overwrite tracked source: '+path)
-        jobs.append({'id':jid, 'node':row['node'], 'job':row['job'], 'depends_on':list(row['depends_on']),
-                     'outputs':sorted(outs), 'inputs':list(native_jobs[row['job']].inputs),
-                     'provider':row['provider']['provider'], 'needs':[], 'handoffs':[]})
-    owners: dict[str, str] = {}
+    for profile in profiles:
+        for index,row in enumerate(rows,1):
+            jid=f'node-{index:02d}' if len(profiles)==1 and profile.identifier=='ubuntu-24.04-x64' else f'node-{index:02d}-{profile.identifier.replace(".","-")}'
+            node_to_id[(row['node'],profile.identifier)]=jid
+            outs=list(row['outputs'])
+            if len(outs)>MAX_TRANSFER_FILES or len(set(outs))!=len(outs):
+                raise ProviderError('RM-07 node output count exceeds cap or has duplicates')
+            for path in outs:
+                _path(path)
+                from .actions_language_providers import _tracked
+                if _tracked(root,path):
+                    raise ProviderError('RM-06 output must not overwrite tracked source: '+path)
+            try:
+                cache=cache_policy(root,row['provider'],profile,enabled=cache_locks)
+            except ProfileError as exc: raise ProviderError(str(exc)) from None
+            jobs.append({'id':jid,'node':row['node'],'job':row['job'],
+                         'depends_on':list(row['depends_on']), 'profile_id':profile.identifier,
+                         'runner':profile.hosted_runner,'arch':profile.arch,
+                         'timeout_minutes':profile.timeout_minutes, 'cache_policy':cache,
+                         'outputs':sorted(outs),'inputs':list(native_jobs[row['job']].inputs),
+                         'provider':row['provider']['provider'],'needs':[],'handoffs':[]})
+    owners: dict[tuple[str,str],str] = {}
     for job in jobs:
         for output in job['outputs']:
-            if output in owners:
-                raise ProviderError('RM-06 multiple DAG nodes produce one output: ' + output)
-            owners[output] = job['node']
-    # Reject shared writes to one output or consumed generated inputs without explicit direct dependencies.
-    for job,row in zip(jobs,rows):
-        deps = list(job['depends_on'])
-        if len(set(deps)) != len(deps) or any(dep not in node_to_id for dep in deps):
-            raise ProviderError('RM-06 invalid native dependency projection')
-        job['needs'] = [node_to_id[dep] for dep in deps]
-        job['handoffs'] = [node_to_id[dep] for dep in deps if jobs[int(node_to_id[dep].split('-')[1])-1]['outputs']]
-        if len(job['handoffs']) > MAX_NODES:
+            key=(job['profile_id'],output)
+            if key in owners:
+                raise ProviderError('RM-06 multiple DAG nodes produce one output: '+output)
+            owners[key]=job['node']
+    for job in jobs:
+        profile=job['profile_id'];deps=list(job['depends_on'])
+        if len(set(deps))!=len(deps) or any((dep,profile) not in node_to_id for dep in deps):
+            raise ProviderError('RM-07 invalid native dependency projection')
+        job['needs']=[node_to_id[(dep,profile)] for dep in deps]
+        by_id={item['id']:item for item in jobs}
+        job['handoffs']=[dep for dep in job['needs'] if by_id[dep]['outputs']]
+        if len(job['handoffs'])>MAX_NODES:
             raise ProviderError('RM-06 handoff fanin exceeds cap')
-        for inp in job['inputs']:  # native declared input paths, not just language locks
-            if any(c in str(inp) for c in '*?[]') and owners:
+        for inp in job['inputs']:
+            if not isinstance(inp,str):raise ProviderError('RM-06 nonliteral node input')
+            if any(c in inp for c in '*?[]') and owners:
                 raise ProviderError('RM-06 cannot prove generated-input ownership through globs')
-            if not isinstance(inp, str):
-                raise ProviderError('RM-06 nonliteral node input')
-            if inp in owners and owners[inp] != job['node'] and owners[inp] not in deps:
-                raise ProviderError('RM-06 generated input requires direct producer dependency: ' + inp)
-        # Future runner/OS toolchains belong to RM-07; no implicit cross-host or matrix fan-out.
-        if job['provider'] not in ('go', 'python-shell'):
+            key=(profile,inp)
+            if key in owners and owners[key]!=job['node'] and owners[key] not in deps:
+                raise ProviderError('RM-06 generated input requires direct producer dependency: '+inp)
+        if job['provider'] not in ('go','python-shell'):
             raise ProviderError('RM-06 refuses unreviewed hosted provider')
     immutable = {'schema_version': SCHEMA, 'kind': 'devtool.actions.export-graph',
                  'provider_plan_sha256':plan['plan_sha256'], 'target':plan['target'],
                  'workflow':plan['workflow'], 'runtime_sha':plan['runtime_sha'],
-                 'runner': 'ubuntu-24.04', 'matrix': [{'os':'ubuntu-24.04','arch':'x86_64'}],
-                 'cache': 'disabled', 'changed_targets':'full-dag', 'jobs':jobs}
+                 'runner': profiles[0].hosted_runner if len(profiles)==1 else 'per-cell',
+                 'matrix': [{'os':p.hosted_runner,'arch':p.arch} for p in profiles],
+                 'toolchain_profiles':[p.identifier for p in profiles],
+                 'cache': 'enabled-reviewed-go-only' if cache_locks else 'disabled', 'changed_targets':'full-dag', 'jobs':jobs}
     return {**immutable, 'graph_sha256':_digest(immutable), 'native_source_sha256':plan['plan_sha256'],
             'fallback':'single-job', 'read_only':True, 'authenticated_remote':False,
             'release_qualified':False, 'consumer_commit':plan['consumer_commit'],
@@ -158,6 +184,12 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                           '        with:\n'
                           f'          name: {_artifact_name(namespace,dep)}\n'
                           f'          path: ${{{{ runner.temp }}}}/rm06-inputs/{dep}\n')
+        cache=job['cache_policy']
+        cache_step=(f'      - name: Opt-in pinned Go build cache\n'
+                    f'        uses: actions/cache@{cache["action_sha"]}\n'
+                    '        with:\n'
+                    f'          path: {cache["path"]}\n'
+                    f'          key: {cache["key"]}\n') if cache['enabled'] else ''
         upload=''
         if job['outputs']:
             upload=(f'      - name: Upload {jid} declared bytes (not authenticated)\n'
@@ -171,7 +203,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                     '          retention-days: 7\n')
         # Runtime downloads pinned commit before any handoff touches the workspace.
         entry=(f'  {jid}:\n{dep_str}'
-               '    runs-on: ubuntu-24.04\n    timeout-minutes: 60\n'
+               f'    runs-on: {job["runner"]}\n    timeout-minutes: {job["timeout_minutes"]}\n'
                '    env:\n'
                f'      DEVTOOL_SOURCE_SHA: {pin}\n'
                '      PYTHONDONTWRITEBYTECODE: "1"\n'
@@ -182,7 +214,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                "        with:\n          python-version: '3.12'\n"
-               f'{setup_go}'
+               f'{setup_go}{cache_step}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -199,7 +231,9 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '          "$RUNNER_TEMP/devtool-venv/bin/python" -m devtool.actions_graph_export run-node '
                f'--root "$GITHUB_WORKSPACE" --target {target} --workflow {workflow} '
                f'--devtool-sha {pin} --graph-sha {digest} --job-id {jid} '
-               ' --inputs "$RUNNER_TEMP/rm06-inputs" --outputs "$RUNNER_TEMP/rm06-output"\n'
+               f' --host-profiles {",".join(graph.get("toolchain_profiles",[]))}'
+               + (' --cache-locks' if graph['cache']!='disabled' else '')
+               + ' --inputs "$RUNNER_TEMP/rm06-inputs" --outputs "$RUNNER_TEMP/rm06-output"\n'
                f'{upload}'
                '      - name: Record local run attempt (not authentication)\n'
                '        if: always()\n        shell: bash\n        run: |\n'
@@ -313,9 +347,10 @@ def stage_outputs(root: Path, outdir: Path, graph: dict[str, Any], job: dict[str
 
 
 def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_sha: str,
-             job_id: str, inputs: Path, outputs: Path) -> dict[str, Any]:
+             job_id: str, inputs: Path, outputs: Path, host_profiles: str = '', cache_locks: bool = False) -> dict[str, Any]:
     root=root.resolve()
-    graph=compile_graph(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
+    graph=compile_graph(root,target=target,workflow=workflow,devtool_sha=devtool_sha,
+                        host_profiles=host_profiles,cache_locks=cache_locks)
     if graph_sha!=graph['graph_sha256']:
         raise ProviderError('RM-06 frozen graph digest changed before native node execution')
     from .actions_adoption import _git
@@ -323,6 +358,10 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     selected=next((item for item in graph['jobs'] if item['id']==job_id),None)
     if selected is None:
         raise ProviderError('RM-06 unknown compiled GitHub node')
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        expected={'ubuntu-24.04-x64':'Linux','macos-15-intel':'macOS'}[selected['profile_id']]
+        if os.environ.get('RUNNER_OS')!=expected or os.environ.get('RUNNER_ARCH')!='X64':
+            raise ProviderError('RM-07 selected hosted profile does not match runner OS/architecture')
     consume_handoffs(root,inputs,graph,selected,source,run,attempt)
     for path in selected['outputs']:
         out=_regular(root,path,must_exist=False)
@@ -348,10 +387,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('action',choices=['run-node'])
     for flag in ('root','target','workflow','devtool-sha','graph-sha','job-id','inputs','outputs'):
         parser.add_argument('--'+flag,required=True)
+    parser.add_argument('--host-profiles',default='')
+    parser.add_argument('--cache-locks',action='store_true')
     ns=parser.parse_args(argv)
     try:
         result=run_node(Path(ns.root),target=ns.target,workflow=ns.workflow,devtool_sha=ns.devtool_sha,
-                        graph_sha=ns.graph_sha,job_id=ns.job_id,inputs=Path(ns.inputs),outputs=Path(ns.outputs))
+                        graph_sha=ns.graph_sha,job_id=ns.job_id,inputs=Path(ns.inputs),outputs=Path(ns.outputs),
+                        host_profiles=ns.host_profiles,cache_locks=ns.cache_locks)
     except (ProviderError, ValueError, OSError) as exc:
         print(f'RM06_REFUSED: {exc}',file=sys.stderr)
         return 2

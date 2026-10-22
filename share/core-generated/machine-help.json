@@ -4727,6 +4727,18 @@
           "spellings": [
             "--json"
           ]
+        },
+        {
+          "choices": [],
+          "dest": "provider_all_profiles",
+          "help": "Include all reviewed hosted/local profiles and installed toolchain status",
+          "hidden": false,
+          "id": "cli.option.actions.provider-doctor.provider_all_profiles",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--all"
+          ]
         }
       ],
       "path": [
@@ -4734,7 +4746,7 @@
         "provider-doctor"
       ],
       "stability": "experimental",
-      "summary": "Inspect allowlisted hosted language providers per workflow"
+      "summary": "Read-only local installed toolchains and reviewed host profiles"
     },
     {
       "adoption_source": "core-registry",
@@ -4852,6 +4864,30 @@
           "required": false,
           "spellings": [
             "--plan"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "provider_host_profiles",
+          "help": "Comma-separated reviewed hosted profile IDs (bounded fanout; multi-job only)",
+          "hidden": false,
+          "id": "cli.option.actions.provider-export.provider_host_profiles",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--host-profiles"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "provider_cache_locks",
+          "help": "Opt in to pinned cache of trusted Go compiler outputs only; multi-job only",
+          "hidden": false,
+          "id": "cli.option.actions.provider-export.provider_cache_locks",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--cache-locks"
           ]
         }
       ],
@@ -37842,7 +37878,7 @@
       "summary": ""
     }
   ],
-  "digest": "a6c19b4ccc91bc84bb5cbb7b95e35b83bf890a24d209d2b1bc72bf9102d509ec",
+  "digest": "8177f01269499c173f19c0e3ef2ebe77c1efc96d5f220734f425ae795b380793",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -38364,7 +38400,7 @@
     "registry_command_count": 379
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "121a9374a04bac16247f1e533084ab03a4354dd4fac51cb916bf4077f6bbd85a",
+  "registry_digest": "f6c6e57d2722f372b56ba4ff3f4c51f92078407a8b9b7a0c22c8c79745d35320",
   "registry_schema_version": 1,
   "schema_version": 1
 }
