@@ -31,3 +31,15 @@ Required installer validator includes `tests/test_rm08_completion.py`, `tests/te
 
 ### RM-08R3 Termux regression remedy
 - Required NEXT-04 real Go distribution test now cross-builds Linux/amd64 explicitly and injects Android/ARM64 defaults during test execution; the production verifier remains fail-closed. The original broader promise checklist and its open cells are unchanged. A real Termux installation pass is still required.
+
+
+### RM-08R4 promise-by-promise delta (2026-10-22)
+
+| Promise | Demonstrated implementation, not file presence | Status |
+| --- | --- | --- |
+| Native pytest test collection | Real `run_node` executes a pinned `python -m pytest` target-local spec instrumented via coverage.py, then generates XML; both steps are subject to `run_specs` failure propagation | DELIVERED (opt-in, multi-job, source-bound) |
+| XML evidence and producer binding | Real coverage XML parses under strict line/file identity rules, with declared `dist/coverage.xml` staged as an owned SHA-256 output | DELIVERED (local); remote provenance not implied |
+| No unsafe fallback | Reject absent/forged coverage lock, unowned output, incompatible command, stale output and single-job exporter instead of skipping instrumentation | DELIVERED |
+| uv/Poetry/PDM reviewed lock policies | Hash-bound pip export must match locked package identities; no hidden unreviewed native frontend execution | DELIVERED within original roadmap's policy scope; native frontend execution still OPEN as follow-up enhancement |
+| All prior RM-08 promises | R3 full positive/negative Go workspace/module, Go version/cross-target/repro, Python build/sdist/wheel/matrices smoke tests are retained unchanged | DELIVERED/BOUNDED as previously audited |
+| Real hosted/Termux external qualification | Local regression does not establish independent hosted or device authority | PENDING |

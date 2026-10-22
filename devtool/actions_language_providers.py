@@ -309,12 +309,27 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if wheel_smoke and (declaration['provider']!='python-shell' or len(argv)<3 or argv[2]!='build'
                             or not declaration.get('project') or not declaration['project'].get('dependency_install_supported')):
             raise ProviderError('RM-08 wheel smoke requires reviewed Python package build and pinned pip lock')
+        auto_coverage=meta.get('ci_python_auto_coverage',False)
+        if type(auto_coverage) is not bool:
+            raise ProviderError('RM-08 automatic coverage opt-in must be boolean')
+        if auto_coverage:
+            if (declaration['provider']!='python-shell' or argv[:3] not in
+                (['python','-m','pytest'],['python3','-m','pytest'])):
+                raise ProviderError('RM-08 automatic coverage requires a native python -m pytest job')
+            if 'dist/coverage.xml' not in job.outputs or len(job.outputs)!=1:
+                raise ProviderError('RM-08 automatic coverage requires exclusive declared dist/coverage.xml output')
+            if not declaration.get('project') or not declaration['project'].get('dependency_install_supported'):
+                raise ProviderError('RM-08 automatic coverage requires reviewed Python dependency lock policy')
+            if not re.search(r'(?m)^coverage==[0-9][A-Za-z0-9_.+!-]*\s+--hash=sha256:[a-f0-9]{64}\s*$',
+                             (root/declaration['project']['install_lock']).read_text()):
+                raise ProviderError('RM-08 automatic coverage requires hash-pinned coverage dependency')
         if declaration['provider']=='python-shell' and argv[2:]==['coverage','xml','-o','dist/coverage.xml'] and 'dist/coverage.xml' not in job.outputs:
             raise ProviderError('RM-08 coverage reporter must declare dist/coverage.xml output')
         rows.append({'node':node.key, 'job':local, 'depends_on':list(node.depends_on),
                      'argv_sha256': _digest(argv), 'inputs_sha256':_digest(list(job.inputs)),
                      'provider':declaration,'outputs':list(job.outputs), 'command':argv, 'env':dict(job.env),
-                     'wheel_smoke':wheel_smoke,'sdist_smoke':sdist_smoke})
+                     'wheel_smoke':wheel_smoke,'sdist_smoke':sdist_smoke,
+                     'auto_coverage':auto_coverage})
     # Workspace dependency edges must be owned by native DAG nodes, not by a
     # second hosted scheduler. When both modules have producers in this workflow,
     # a direct native dependency is mandatory (an implicit Go workspace build
@@ -441,6 +456,8 @@ def _workflow_yaml(plan: dict[str, Any]) -> str:
         raise ProviderError('RM-08 single-host job cannot safely combine different pinned toolchains; use multi-job')
     if any(len(r['provider']['matrix_versions'])>1 for r in plan['nodes']):
         raise ProviderError('RM-08 requested multiple toolchain versions; choose --mode multi-job')
+    if any(r['auto_coverage'] for r in plan['nodes']):
+        raise ProviderError('RM-08 automatic native pytest coverage requires --mode multi-job')
     go_version_file=next(iter(go_versions))[1] if go_versions else 'go.mod'
     python_version=next(iter(py_versions)) if py_versions else '3.12'
     namespace = f'devtool-{target}-{workflow}-providers'

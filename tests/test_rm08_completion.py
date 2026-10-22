@@ -192,3 +192,59 @@ def build_wheel(wheel_directory,config_settings=None,metadata_directory=None):
     (house/'build-1.2.2-py3-none-any.whl').write_bytes(b'tampered')
     with pytest.raises(ProjectReviewError,match='backend provisioning'):
         smoke_sdist(root,'dist/demo_pkg-1.0.tar.gz',name='demo-pkg',version='1.0',entrypoint='demo')
+
+
+def test_automatic_coverage_is_in_native_job_and_uploaded_with_handoff(tmp_path, monkeypatch):
+    """Actual pytest is instrumented, XML verified and staged by its DAG owner."""
+    from devtool.actions_graph_export import run_node
+    root=repo(tmp_path,python=True)
+    add_python_project(root)
+    lock=root/'requirements.txt'
+    lock.write_text(lock.read_text()+'coverage==7.6.1 --hash=sha256:'+'e'*64+'\n')
+    project=root/'tests';project.mkdir()
+    (project/'test_sample.py').write_text('def test_covered():\n    assert (1 + 1)==2\n')
+    cfg=root/'.devtool.toml'
+    cfg.write_text(cfg.read_text().replace('command = ["python3", "-m", "unittest"]',
+        'command = ["python3", "-m", "pytest", "-q", "tests/test_sample.py"]\n'
+        'outputs = ["dist/coverage.xml"]\n'
+        'metadata = {ci_python_policy="reviewed", ci_python_auto_coverage=true}'))
+    commit(root)
+    graph=compile_graph(root,target='app',workflow='ci',devtool_sha=PIN)
+    assert graph['jobs'][0]['auto_coverage'] and graph['jobs'][0]['coverage_report']
+    with pytest.raises(ProviderError,match='multi-job'):_workflow_yaml(plan(root))
+    monkeypatch.setenv('XDG_STATE_HOME',str(tmp_path/'state'))
+    monkeypatch.setenv('XDG_CACHE_HOME',str(tmp_path/'cache'))
+    monkeypatch.setenv('GITHUB_SHA',git(root,'rev-parse','HEAD'))
+    monkeypatch.setenv('GITHUB_RUN_ID','42061')
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT','1')
+    monkeypatch.setenv('PYTHONPATH',str(root))
+    result=run_node(root,target='app',workflow='ci',devtool_sha=PIN,
+       graph_sha=graph['graph_sha256'],job_id=graph['jobs'][0]['id'],
+       inputs=tmp_path/'none',outputs=tmp_path/'outputs')
+    assert result['status']=='LOCAL_JOB_SUCCEEDED'
+    assert result['coverage'][0]['shards']
+    assert (root/'dist/coverage.xml').is_file()
+    assert (tmp_path/'outputs'/graph['jobs'][0]['id']/'payload/dist/coverage.xml').is_file()
+    assert not (root/'dist/.coverage').exists()
+    with pytest.raises(ProviderError,match='exists before'):
+        run_node(root,target='app',workflow='ci',devtool_sha=PIN,
+           graph_sha=graph['graph_sha256'],job_id=graph['jobs'][0]['id'],
+           inputs=tmp_path/'none',outputs=tmp_path/'other')
+
+
+def test_automatic_coverage_bad_claims_fail_closed(tmp_path):
+    root=repo(tmp_path,python=True);add_python_project(root)
+    cfg=root/'.devtool.toml'
+    cfg.write_text(cfg.read_text().replace('command = ["python3", "-m", "unittest"]',
+       'command = ["python3", "-m", "pytest"]\n'
+       'metadata = {ci_python_auto_coverage=true, ci_python_policy="reviewed"}'))
+    git(root,'add','.')
+    with pytest.raises(ProviderError,match='output'):plan(root)
+    cfg.write_text(cfg.read_text().replace('metadata =', 'outputs = ["dist/coverage.xml"]\nmetadata ='))
+    with pytest.raises(ProviderError,match='coverage dependency'):plan(root)
+    req=root/'requirements.txt';req.write_text(req.read_text()+'# coverage==8.0.0 --hash=sha256:'+'c'*64+'\n')
+    with pytest.raises(ProviderError,match='coverage dependency'):plan(root)
+    req.write_text(req.read_text()+'coverage==7.6.1 --hash=sha256:'+'d'*64+'\n')
+    assert plan(root)['nodes'][0]['auto_coverage']
+    cfg.write_text(cfg.read_text().replace('"pytest"','"unittest"'))
+    with pytest.raises(ProviderError,match='requires a native'):plan(root)

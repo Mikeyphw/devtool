@@ -137,7 +137,8 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'go_command':list(row['command']) if row['provider']['provider']=='go' else [],
                          'go_env':dict(row['env']) if row['provider']['provider']=='go' else {},
                          'python_install_lock':(row['provider'].get('project') or {}).get('install_lock',''),
-                         'coverage_report':row['provider']['provider']=='python-shell' and row['command'][2:]==['coverage','xml','-o','dist/coverage.xml'],
+                         'auto_coverage':row['auto_coverage'],
+                         'coverage_report':row['auto_coverage'] or (row['provider']['provider']=='python-shell' and row['command'][2:]==['coverage','xml','-o','dist/coverage.xml']),
                          'needs':[],'handoffs':[]})
     owners: dict[tuple[str,str],str] = {}
     for job in jobs:
@@ -406,7 +407,32 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     specs=build_direct_job_specs(cfg, f'{target}:job:{selected["job"]}',target_name=target)
     if not specs:
         raise ProviderError('RM-06 native job resolver returned no executable specs')
-    results,_=run_specs(cfg,specs,verbose=True,dry_run=False,continue_on_error=False)
+    if selected['auto_coverage']:
+        # Instrument the same reviewed native target-local job, rather than
+        # running an extra unowned test command from the hosted exporter.
+        from dataclasses import replace
+        from tempfile import TemporaryDirectory
+        if len(specs)!=1 or specs[0].argv[:3] not in (['python','-m','pytest'],['python3','-m','pytest']):
+            raise ProviderError('RM-08 coverage native resolver diverged from reviewed pytest job')
+        report_path=_regular(root,'dist/coverage.xml',must_exist=False)
+        if report_path.exists() or report_path.is_symlink():
+            raise ProviderError('RM-08 coverage output exists before instrumentation')
+        report_path.parent.mkdir(parents=True,exist_ok=True)
+        with TemporaryDirectory(prefix='devtool-coverage-') as temp:
+            env=dict(specs[0].env)
+            env['COVERAGE_FILE']=str(Path(temp)/'.coverage')
+            original=specs[0]
+            tests=replace(original,name=original.name+' [coverage tests]',
+                          argv=[original.argv[0],'-m','coverage','run','-m','pytest',*original.argv[3:]],env=env)
+            xml=replace(original,name=original.name+' [coverage report]',
+                        argv=[original.argv[0],'-m','coverage','xml','-o','dist/coverage.xml'],env=env)
+            results,_=run_specs(cfg,[tests],verbose=True,dry_run=False,continue_on_error=False)
+            if any(r.returncode!=0 or r.skipped for r in results):
+                raise ProviderError('RM-08 instrumented native pytest job failed; no coverage report accepted')
+            reports,_=run_specs(cfg,[xml],verbose=True,dry_run=False,continue_on_error=False)
+            results+=reports
+    else:
+        results,_=run_specs(cfg,specs,verbose=True,dry_run=False,continue_on_error=False)
     if any(result.returncode!=0 or result.skipped for result in results):
         raise ProviderError('RM-06 native target-local job did not succeed')
     smoke=[]

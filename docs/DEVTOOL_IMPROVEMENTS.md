@@ -759,3 +759,12 @@ Implementation: durable source/graph/host/input/output fingerprints; canonical C
 - **Scope/rollback:** Source-bound *replacement* overlay for clean post-RM-07, not stacked on failed R2. Keep the all-promise RM-08 mandatory validator (including NEXT-04); exact outer and inner hashes; full rollback on errors.
 - **Status:** Fixture correction implemented; independent Termux transaction acceptance **PENDING**. The separate RM-08 native uv/Poetry/PDM and auto-coverage promises remain open, and hosted/release qualification is not asserted.
 - **Process gap:** Prior local tests did not poison ambient GOOS/GOARCH across all mandatory real-build tests. Continue scanning all required test selections for implicit host-target assumptions whenever cross-target binaries are compared.
+
+
+### RM-08R4 — Native-owner automatic pytest coverage (2026-10-22)
+
+- **Evidence:** RM-08R3 verified `python -m coverage xml`, but only after an operator separately configured coverage instrumentation and report jobs. A normal native pytest job lacked automatic collection and could be incorrectly described as complete coverage.
+- **Change:** Opt-in `ci_python_auto_coverage=true` on a reviewed, hash-locked Python `-m pytest` target-local job with exclusive `outputs = ["dist/coverage.xml"]`. Multi-job compiler binds the option in the frozen DAG identity; hosted `run-node` executes the original native job's specs through coverage.py, then invokes the native report command. Coverage data resides outside the source tree, XML bytes are checked by the existing strict verifier and staged through the original node's SHA-256 artifact handoff. Single-job exporter refuses the unsupported option. Failed pytest jobs never generate accepted coverage.
+- **Behavioral tests:** Actual native job via `run_node` passes an instrumented pytest fixture, stages checked coverage XML, refuses preexisting output and missing/forged coverage lock, rejects non-pytest and single-job declarations. Full regression selection is required in the overlay validator; no hosted remote/release authority is implied.
+- **Residual:** Native uv/Poetry/PDM *front-end execution* remains optional extension/open because only reviewed lock-policy plus hash-bound pip-export execution is established. Do not conflate a recognized lock with an executed manager command. RM-06 affected pruning and RM-07 Windows/Python caching remain separately open.
+- **Status:** Locally delivered pending source-bound Termux acceptance; repeat after actual installation.

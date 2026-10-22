@@ -59,3 +59,10 @@ The earlier RM-08/R1 table is preserved as history, not overwritten or retrospec
 | Strict wrong architecture/CGO refusals | No production verifier relaxation | `test_wrong_go_architecture_and_cgo_rejected`, RM-08 nested-receipt negative checks | Preserved |
 | All original Go/Python provider scope | Same RM-08R2 implementation and admitted limitations | Full `docs/RM08_COMPLETION_PROMISES.md` checklist and mandatory multi-suite validator | Native manager frontend execution and automatic Python coverage still OPEN; do not mark RM-08 closed |
 | Independent hosted/device/release authority | No claims from local tests or receipt bytes | Source-bound logs, explicit non-qualified status | External acceptance OPEN |
+
+
+### RM-08R4 automatic coverage behavior audit (2026-10-22)
+
+- **Delivered:** `ci_python_auto_coverage=true` requires hash-bound coverage in the tracked reviewed Python installer lock, exact native `python -m pytest`, output ownership, multi-job export. The compiled graph carries the opt-in in its digest; `run_node` instrumented test + XML generate and verifier/hand-off are exercised end-to-end.
+- **Negative:** Wrong command, missing dependency, comment-only forged coverage pin, missing output, preexisting output and single-job export are rejected. No test may pass solely because XML exists.
+- **Open:** Native standalone uv/Poetry/PDM frontends. Their lockfiles alone are **not** proof that their own executables ran. Hosted/device acceptance remains external.
