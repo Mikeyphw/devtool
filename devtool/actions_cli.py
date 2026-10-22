@@ -52,9 +52,12 @@ def run_actions_command(args: Any) -> int:
                             devtool_sha=sha,
                             expect_plan_sha=str(getattr(args,'expect_plan_sha','') or ''))
                     else:
+                        if bool(getattr(args,'provider_review_plan',False)) and (getattr(args,'yes',False) or getattr(args,'verify',False)):
+                            raise ProviderError('--plan cannot be combined with --yes or --verify')
                         payload = provider_export(root, target=selected, workflow=named,
                             devtool_sha=sha, write=bool(getattr(args,'yes',False)),
-                            verify=bool(getattr(args,'verify',False)))
+                            verify=bool(getattr(args,'verify',False)),
+                            mode=str(getattr(args,'provider_mode','single-job') or 'single-job'))
             except (ProviderError, AdoptionError, ValueError) as exc:
                 print(f'ACTIONS_NEXT03_PROVIDER_REFUSED: {exc}', file=sys.stderr)
                 return 1

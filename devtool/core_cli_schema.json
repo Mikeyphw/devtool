@@ -13855,6 +13855,51 @@
     },
     {
       "aliases": [],
+      "canonical": "--mode",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "single-job",
+          "multi-job"
+        ],
+        "dest": "provider_mode",
+        "help": "Export mode: native single-job fallback or source-bound per-node multi-job",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "provider-export"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-export",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-export.provider_mode",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--plan",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "provider_review_plan",
+        "help": "Read-only reviewed export plan; incompatible with write/verify",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "provider-export"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-export",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-export.provider_review_plan",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
       "canonical": "--target",
       "config_field_id": null,
       "metadata": {
@@ -115901,6 +115946,43 @@
                           "--devtool-sha"
                         ],
                         "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "single-job",
+                          "multi-job"
+                        ],
+                        "const": null,
+                        "default": "single-job",
+                        "dest": "provider_mode",
+                        "group": null,
+                        "help": "Export mode: native single-job fallback or source-bound per-node multi-job",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--mode"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "provider_review_plan",
+                        "group": null,
+                        "help": "Read-only reviewed export plan; incompatible with write/verify",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--plan"
+                        ],
+                        "required": false,
                         "type": null
                       },
                       {

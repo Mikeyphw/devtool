@@ -4826,6 +4826,33 @@
           "spellings": [
             "--yes"
           ]
+        },
+        {
+          "choices": [
+            "single-job",
+            "multi-job"
+          ],
+          "dest": "provider_mode",
+          "help": "Export mode: native single-job fallback or source-bound per-node multi-job",
+          "hidden": false,
+          "id": "cli.option.actions.provider-export.provider_mode",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--mode"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "provider_review_plan",
+          "help": "Read-only reviewed export plan; incompatible with write/verify",
+          "hidden": false,
+          "id": "cli.option.actions.provider-export.provider_review_plan",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--plan"
+          ]
         }
       ],
       "path": [
@@ -37815,7 +37842,7 @@
       "summary": ""
     }
   ],
-  "digest": "0cbc1cceb91826a58b5809bb931e61c174635d44d8c40b9a587626d6beb7745c",
+  "digest": "a6c19b4ccc91bc84bb5cbb7b95e35b83bf890a24d209d2b1bc72bf9102d509ec",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -38337,7 +38364,7 @@
     "registry_command_count": 379
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "35005cb78a3902bd5f2147022264b487aab28f533333b1d5539c5d045ca8861e",
+  "registry_digest": "121a9374a04bac16247f1e533084ab03a4354dd4fac51cb916bf4077f6bbd85a",
   "registry_schema_version": 1,
   "schema_version": 1
 }

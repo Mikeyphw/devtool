@@ -430,17 +430,28 @@ jobs:
 
 
 def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
-                    write: bool = False, verify: bool = False) -> dict[str, Any]:
+                    write: bool = False, verify: bool = False, mode: str = 'single-job') -> dict[str, Any]:
     if write and verify:
         raise ProviderError('Export --yes and --verify are mutually exclusive')
-    plan = provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
+    if mode not in ('single-job', 'multi-job'):
+        raise ProviderError('Unknown provider exporter mode')
+    if mode == 'multi-job':
+        from .actions_graph_export import compile_graph, workflow_yaml
+        graph = compile_graph(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
+        plan = {key:value for key,value in graph.items() if key != 'provider_plan'}
+        frozen_sha = graph['graph_sha256']
+        content = workflow_yaml(graph).encode()
+        dest = f'.github/workflows/devtool-{target}-{workflow}-providers-multi.yml'
+    else:
+        plan = provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
+        frozen_sha = plan['plan_sha256']
+        content = _workflow_yaml(plan).encode()
+        dest = f'.github/workflows/devtool-{target}-{workflow}-providers.yml'
     root = root.resolve()
-    dest = f'.github/workflows/devtool-{target}-{workflow}-providers.yml'
     try:
         path = _inside_repo(root, dest)
     except AdoptionError as exc:
         raise ProviderError(str(exc)) from None
-    content = _workflow_yaml(plan).encode()
     digest = hashlib.sha256(content).hexdigest()
     result = {**plan, 'workflow_path':dest, 'workflow_sha256':digest,
               'writes_performed':False,'remote_dispatch':False}
@@ -458,7 +469,11 @@ def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
         raise ProviderError('Provider export requires clean Git source')
     if _git(root,'rev-parse','HEAD') != plan['consumer_commit'] or _git(root,'rev-parse','HEAD^{tree}') != plan['consumer_tree']:
         raise ProviderError('Source identity changed after planning')
-    if provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)['plan_sha256'] != plan['plan_sha256']:
+    if mode == 'multi-job':
+        from .actions_graph_export import compile_graph
+        if compile_graph(root,target=target,workflow=workflow,devtool_sha=devtool_sha)['graph_sha256'] != frozen_sha:
+            raise ProviderError('RM-06 graph changed after review')
+    elif provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)['plan_sha256'] != frozen_sha:
         raise ProviderError('Provider plan changed after review')
     _atomic(path, content)
     result['status'] = 'LOCAL_WORKFLOW_WRITTEN_NOT_REMOTE'
