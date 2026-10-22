@@ -78,6 +78,9 @@ _REVIEWED: Mapping[str, ProviderDescriptor] = MappingProxyType({
                              ('pytest', 'unittest', 'compileall', 'ruff', 'build'),
                              ('ubuntu-24.04-x86_64',), 'bounded-python-module-argv-v1',
                              ('source-only-unverified',)),
+    'dotnet': ProviderDescriptor('dotnet', 1, ('restore','build','test','pack','publish'),
+                             ('ubuntu-24.04-x86_64',), 'bounded-dotnet-argv-v1',
+                             ('local-bytes-only',)),
 })
 
 

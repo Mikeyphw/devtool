@@ -176,8 +176,21 @@ class PythonShellProvider:
                 'release_qualified':False}
 
 
+@dataclass(frozen=True)
+class DotNetProvider:
+    api_version: int = SCHEMA_VERSION
+    provider_id: str = 'dotnet'
+
+    def inspect(self, root: Path, job: Any, argv: list[str]) -> dict[str, Any]:
+        # The reviewed .NET logger contains a literal semicolon; generic Go/Python
+        # argv grammar intentionally refuses that token. Use the dedicated parser.
+        from .actions_rm09_dotnet import inspect_dotnet_job, DotNetError
+        try: return {'api_version':self.api_version, **inspect_dotnet_job(root,argv,job.metadata or {})}
+        except DotNetError as exc: raise ProviderError(str(exc)) from None
+
+
 # The only provider registry: immutable built-ins, no entry-point/network/plugin loading.
-PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider()})
+PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider()})
 # V1 adapter behavior is preserved; V2 review metadata must match the exact built-ins.
 for _id, _adapter in PROVIDERS.items():
     resolve_provider(_id, api_version=_adapter.api_version)
@@ -214,8 +227,12 @@ def _provider_for(job: Any) -> LanguageProvider:
     flag = meta.get('ci_toolchain')
     argv = list(job.command or [])
     name = Path(argv[0]).name if argv else ''
+    if flag == 'dotnet' or name == 'dotnet':
+        if name!='dotnet' or flag not in (None,'dotnet'):
+            raise ProviderError('RM-09 dotnet provider/argv mismatch')
+        return PROVIDERS['dotnet']
     go = (flag == 'go' or job.runner == 'go' or name == 'go' or 'go.mod' in job.inputs)
-    if flag not in (None, 'go', 'python-shell'):
+    if flag not in (None, 'go', 'python-shell', 'dotnet'):
         raise ProviderError('No reviewed language provider for ci_toolchain ' + str(flag)[:50])
     if go and flag == 'python-shell':
         raise ProviderError('Go source declaration conflicts with Python toolchain')
@@ -251,7 +268,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
     if not (1 <= len(graph.nodes) <= MAX_NODES):
         raise ProviderError('NEXT-03 DAG size must be between 1 and 32 nodes')
     admission = graph_host_admission(cfg, graph, host_os='linux', host_arch='x86_64',
-                                     toolchains=('go', 'python-shell'))
+                                     toolchains=('go', 'python-shell','dotnet'))
     if not admission['all_eligible']:
         reasons = [r['node']+':'+','.join(r['eligibility']['reasons']) for r in admission['nodes'] if not r['eligibility']['eligible']]
         raise ProviderError('Hosted node admission blocked: ' + '; '.join(reasons)[:320])
@@ -267,7 +284,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if 'ci_host_requirements' in meta:
             try:
                 host_result = host_eligibility_v2(meta['ci_host_requirements'],
-                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell'))
+                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell','dotnet'))
             except ContractError as exc:
                 raise ProviderError('Invalid ci_host_requirements: ' + str(exc)) from None
             if not host_result['eligible']:
@@ -323,6 +340,17 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
             if not re.search(r'(?m)^coverage==[0-9][A-Za-z0-9_.+!-]*\s+--hash=sha256:[a-f0-9]{64}\s*$',
                              (root/declaration['project']['install_lock']).read_text()):
                 raise ProviderError('RM-08 automatic coverage requires hash-pinned coverage dependency')
+        if declaration['provider']=='dotnet':
+            operation=declaration['command']
+            if operation=='test' and (len(job.outputs)!=1 or job.outputs[0]!=declaration['trx_path']):
+                raise ProviderError('RM-09 test must declare exact owned TRX logger output')
+            if operation=='pack':
+                package=declaration['package']
+                expected=package['package_id']+'.'+package['version']+'.nupkg'
+                if len(job.outputs)!=1 or job.outputs[0] != 'dist/'+expected:
+                    raise ProviderError('RM-09 pack must declare exact dist/package-id.version.nupkg output')
+            if operation=='publish' and not job.outputs:
+                raise ProviderError('RM-09 publish job must declare output manifest bytes')
         if declaration['provider']=='python-shell' and argv[2:]==['coverage','xml','-o','dist/coverage.xml'] and 'dist/coverage.xml' not in job.outputs:
             raise ProviderError('RM-08 coverage reporter must declare dist/coverage.xml output')
         rows.append({'node':node.key, 'job':local, 'depends_on':list(node.depends_on),
@@ -330,6 +358,25 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
                      'provider':declaration,'outputs':list(job.outputs), 'command':argv, 'env':dict(job.env),
                      'wheel_smoke':wheel_smoke,'sdist_smoke':sdist_smoke,
                      'auto_coverage':auto_coverage})
+    # .NET solution restore/build/test/pack/publish ordering is expressed by
+    # native DAG needs, never by a hidden second Actions scheduler.
+    dotnet_rows=[r for r in rows if r['provider']['provider']=='dotnet']
+    for row in dotnet_rows:
+        op=row['provider']['command'];selected=row['provider']['selected']
+        if op in ('build','test','pack','publish'):
+            predecessor=('restore' if op=='build' else 'build')
+            owners=[r for r in dotnet_rows if r['provider']['selected']==selected and
+                    r['provider']['command']==predecessor]
+            if len(owners)!=1 or owners[0]['node'] not in row['depends_on']:
+                raise ProviderError('RM-09 '+op+' requires a direct native '+predecessor+' dependency for '+selected)
+        if op=='restore':
+            owners=[r for r in dotnet_rows if r['node']!=row['node'] and
+                    r['provider']['command']=='restore' and
+                    set(r['provider']['graph']['solutions'].get(r['provider']['selected'],[r['provider']['selected']])) &
+                    set(row['provider']['graph']['solutions'].get(selected,[selected]))]
+            for other in owners:
+                if other['node'] not in row['depends_on'] and row['node'] not in other['depends_on']:
+                    raise ProviderError('RM-09 overlapping NuGet restore owners require native DAG ordering')
     # Workspace dependency edges must be owned by native DAG nodes, not by a
     # second hosted scheduler. When both modules have producers in this workflow,
     # a direct native dependency is mandatory (an implicit Go workspace build
@@ -603,6 +650,8 @@ def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
         dest = f'.github/workflows/devtool-{target}-{workflow}-providers-multi.yml'
     else:
         plan = provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
+        if 'dotnet' in plan['providers']:
+            raise ProviderError('RM-09 dotnet requires native multi-job export; single-job provider YAML has no .NET SDK setup')
         frozen_sha = plan['plan_sha256']
         content = _workflow_yaml(plan).encode()
         dest = f'.github/workflows/devtool-{target}-{workflow}-providers.yml'

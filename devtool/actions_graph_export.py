@@ -23,6 +23,7 @@ from .config import load_wrapper_project_config
 
 # Official download-artifact v4 action pin; never float a tag in generated YAML.
 _DOWNLOAD_SHA = 'd3f86a106a0bac45b974a628896c90dbdf5c8093'
+_SETUP_DOTNET_SHA = '67a3573c9a986a3f9c594539f4ab511d57bb3ce9'  # actions/setup-dotnet v4.3.1
 SCHEMA = 2
 MAX_NODES = 24
 MAX_TRANSFER_FILES = 64
@@ -96,7 +97,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     graph=graph_from_workflow(plan['target'],cfg.targets[plan['target']].workflows[plan['workflow']])
     for profile in profiles:
         admission=graph_host_admission(cfg,graph,host_os=profile.os,
-                                      host_arch=profile.arch,toolchains=('go','python-shell'))
+                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet'))
         if not admission['all_eligible']:
             failures=[item['node']+':'+','.join(item['eligibility']['reasons'])
                       for item in admission['nodes'] if not item['eligibility']['eligible']]
@@ -138,6 +139,9 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'go_env':dict(row['env']) if row['provider']['provider']=='go' else {},
                          'python_install_lock':(row['provider'].get('project') or {}).get('install_lock',''),
                          'auto_coverage':row['auto_coverage'],
+                         'dotnet_command':row['provider'].get('command',''),
+                         'dotnet_selected':row['provider'].get('selected',''),
+                         'dotnet_package':row['provider'].get('package'),
                          'coverage_report':row['auto_coverage'] or (row['provider']['provider']=='python-shell' and row['command'][2:]==['coverage','xml','-o','dist/coverage.xml']),
                          'needs':[],'handoffs':[]})
     owners: dict[tuple[str,str],str] = {}
@@ -165,7 +169,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 raise ProviderError('RM-06 generated input requires direct producer dependency: '+inp)
         if job['race'] and job['runner']!='ubuntu-24.04':
             raise ProviderError('RM-08 Go race profile requires reviewed Linux amd64 runner')
-        if job['provider'] not in ('go','python-shell'):
+        if job['provider'] not in ('go','python-shell','dotnet'):
             raise ProviderError('RM-06 refuses unreviewed hosted provider')
     immutable = {'schema_version': SCHEMA, 'kind': 'devtool.actions.export-graph',
                  'provider_plan_sha256':plan['plan_sha256'], 'target':plan['target'],
@@ -205,6 +209,11 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
         setup_go=(f'      - name: Pinned Go toolchain\n'
                   f'        uses: actions/setup-go@{_SETUP_GO_SHA}\n'
                   f'        with:\n          {go_selector}\n          cache: false\n') if job['provider']=='go' else ''
+        dotnet_setup=(f'      - name: Pinned .NET SDK\n'
+                      f'        uses: actions/setup-dotnet@{_SETUP_DOTNET_SHA}\n'
+                      '        with:\n'
+                      f"          dotnet-version: '{job['toolchain_version']}'\n"
+                      '          cache: false\n') if job['provider']=='dotnet' else ''
         downloads=''
         for dep in job['handoffs']:
             downloads += (f'      - name: Download {dep} byte handoff\n'
@@ -248,7 +257,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
-               f'{setup_go}{cache_step}'
+               f'{setup_go}{dotnet_setup}{cache_step}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -407,6 +416,20 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     specs=build_direct_job_specs(cfg, f'{target}:job:{selected["job"]}',target_name=target)
     if not specs:
         raise ProviderError('RM-06 native job resolver returned no executable specs')
+    if selected['provider']=='dotnet' and selected['dotnet_command']!='restore':
+        # GitHub jobs do not share obj/, project.assets.json or NuGet global
+        # package directories. A dependency edge is not restored filesystem
+        # state. Re-run the reviewed locked restore inside this SAME native
+        # node before its --no-restore build/test/pack/publish command.
+        from dataclasses import replace
+        if len(specs)!=1 or specs[0].argv[:3]!=['dotnet',selected['dotnet_command'],selected['dotnet_selected']]:
+            raise ProviderError('RM-09 native .NET job resolver changed after review')
+        selected_spec=specs[0]
+        bootstrap=replace(selected_spec,name=selected_spec.name+' [locked restore]',
+                          argv=['dotnet','restore',selected['dotnet_selected'],'--locked-mode'])
+        restored,_=run_specs(cfg,[bootstrap],verbose=True,dry_run=False,continue_on_error=False)
+        if not restored or any(x.returncode!=0 or x.skipped for x in restored):
+            raise ProviderError('RM-09 native locked restore failed; no downstream output accepted')
     if selected['auto_coverage']:
         # Instrument the same reviewed native target-local job, rather than
         # running an extra unowned test command from the hosted exporter.
@@ -466,6 +489,20 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
         if 'dist/coverage.xml' not in selected['outputs']:
             raise ProviderError('RM-08 coverage reporter must declare its output')
         coverage.append(merge_coverage_xml(root,['dist/coverage.xml']))
+    if selected['provider']=='dotnet':
+        from .actions_rm09_dotnet import merge_trx, DotNetError
+        trx=[p for p in selected['outputs'] if p.endswith('.trx')]
+        if selected['dotnet_command']=='test':
+            try:merge_trx(root,trx,expected_project=selected['dotnet_selected'])
+            except DotNetError as exc:raise ProviderError(str(exc)) from None
+        if selected['dotnet_command']=='pack':
+            from .actions_rm09_dotnet import verify_nupkg
+            package=selected['dotnet_package']
+            files=[p for p in selected['outputs'] if p.endswith('.nupkg')]
+            if not package or len(files)!=1:
+                raise ProviderError('RM-09 pack lost declared NuGet identity')
+            try:verify_nupkg(_regular(root,files[0]),**package)
+            except DotNetError as exc:raise ProviderError(str(exc)) from None
     stage_outputs(root,outputs,graph,selected,source,run,attempt)
     return {'status':'LOCAL_JOB_SUCCEEDED', 'node':selected['node'], 'job_id':job_id,
             'graph_sha256':graph_sha, 'workflow_sha256':hashlib.sha256(workflow_yaml(graph).encode()).hexdigest(), 'github_source':source,'run_id':run,'attempt':attempt,

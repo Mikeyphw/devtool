@@ -47,7 +47,7 @@ def plan(root):
 def test_two_independent_builtin_adapter_contracts(tmp_path):
     root=fixture(tmp_path)
     result=plan(root)
-    assert set(PROVIDERS)=={'go','python-shell'}
+    assert set(PROVIDERS)=={'go','python-shell','dotnet'}
     assert {p.api_version for p in PROVIDERS.values()}=={1}
     assert result['providers']==['go','python-shell']
     assert len(result['nodes'])==2

@@ -1,0 +1,327 @@
+"""RM-09: read-only, source-bound .NET solution and artifact contracts.
+
+No MSBuild evaluation, restore, network access, credentials or signing trust is
+inferred from manifest parsing. Native target-local Devtool jobs remain owners.
+"""
+from __future__ import annotations
+
+from collections import defaultdict
+from hashlib import sha256
+import json
+from pathlib import Path, PurePosixPath
+import re
+import subprocess
+from xml.etree import ElementTree as ET
+import zipfile
+
+class DotNetError(ValueError):
+    pass
+
+MAX_SOURCE = 2_000_000
+_NAME = re.compile(r'[a-zA-Z0-9_.-]{1,100}\Z')
+_VERSION = re.compile(r'(?:8|9|10)\.0\.[0-9]{1,4}\Z')
+_TFM = re.compile(r'net(?:8|9|10)\.0(?:-windows(?:[0-9.]+)?)?\Z')
+_RIDS = {'linux-x64','linux-arm64','win-x64','win-arm64','osx-x64','osx-arm64'}
+_SOLUTION = re.compile(r'^Project\([^\n]+\)\s*=\s*"[^"]+",\s*"([^"]+\.csproj)"',re.M|re.I)
+
+
+def _path(root: Path, rel: str, *, existing=True) -> Path:
+    if (not isinstance(rel,str) or len(rel)>220 or not rel or rel.startswith('/')
+        or '\\' in rel or not re.fullmatch(r'[a-zA-Z0-9_.+/-]+',rel)
+        or any(part in ('','.','..') for part in rel.split('/'))):
+        raise DotNetError('RM-09 unsafe project/artifact path')
+    target=root
+    for piece in rel.split('/'):
+        target=target/piece
+        if target.is_symlink(): raise DotNetError('RM-09 symlinked source/artifact path')
+    if existing and (not target.is_file() or target.stat().st_size>MAX_SOURCE):
+        raise DotNetError('RM-09 missing or unbounded source: '+rel)
+    return target
+
+
+def _source(root: Path, rel: str) -> bytes:
+    path=_path(root,rel)
+    check=subprocess.run(['git','-C',str(root),'ls-files','--error-unmatch','--',rel],capture_output=True,timeout=10)
+    if check.returncode: raise DotNetError('RM-09 requires tracked source: '+rel)
+    raw=path.read_bytes()
+    if b'\x00' in raw or b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
+        raise DotNetError('RM-09 unsafe XML or binary source: '+rel)
+    return raw
+
+
+def _xml(raw: bytes, name: str):
+    try:return ET.fromstring(raw)
+    except ET.ParseError as exc:raise DotNetError('RM-09 malformed XML in '+name) from exc
+
+
+def _tracked(root: Path):
+    p=subprocess.run(['git','-C',str(root),'ls-files','-z'],capture_output=True,timeout=15,check=True)
+    paths=[]
+    for raw in p.stdout.split(b'\x00'):
+        if not raw:continue
+        try:name=raw.decode('utf8')
+        except UnicodeDecodeError:continue
+        if name.endswith(('.csproj','.sln','.slnx','global.json','packages.lock.json')) or name.lower().endswith('nuget.config'):
+            _source(root,name)
+            paths.append(name)
+    if len(paths)>128:raise DotNetError('RM-09 project inventory exceeds cap')
+    return sorted(paths)
+
+
+def _related(parent: str, path: str) -> str:
+    # Reject MSBuild property interpolation, absolute/windows paths and escapes.
+    if not path or any(x in path for x in ('$','%','\\',':','*','?')):
+        raise DotNetError('RM-09 unreviewed MSBuild path expression')
+    base=PurePosixPath(parent).parent
+    parts=[]
+    for part in [*base.parts,*PurePosixPath(path).parts]:
+        if part=='..':
+            if not parts:raise DotNetError('RM-09 project reference escapes repository')
+            parts.pop()
+        elif part not in ('','.'):parts.append(part)
+    return '/'.join(parts)
+
+
+def solution_graph(root: Path, *, selected: str = '') -> dict:
+    """Inspect tracked static project references and .sln/.slnx membership."""
+    root=root.resolve();all_names=_tracked(root)
+    projects=[name for name in all_names if name.endswith('.csproj')]
+    solutions=[name for name in all_names if name.endswith(('.sln','.slnx'))]
+    if not projects or len(projects)>48 or len(solutions)>16:
+        raise DotNetError('RM-09 requires bounded tracked .NET projects/solutions')
+    props={};edges={};sources={}
+    for name in projects:
+        xml=_xml(_source(root,name),name)
+        refs=[];tfms=[];rids=[];flags=[];pack_identity={}
+        for node in xml.iter():
+            tag=node.tag.rsplit('}',1)[-1]
+            if tag=='ProjectReference':
+                ref=_related(name,node.attrib.get('Include',''))
+                if not ref.endswith('.csproj') or ref not in projects or ref==name:
+                    raise DotNetError('RM-09 missing/invalid tracked project reference: '+name)
+                refs.append(ref)
+            if tag in ('TargetFramework','TargetFrameworks','RuntimeIdentifier','RuntimeIdentifiers',
+                       'UseWPF','UseWindowsForms','PackageId','Version'):
+                val=(node.text or '').strip()
+                if '$' in val:raise DotNetError('RM-09 conditional MSBuild property evaluation unsupported')
+                if tag in ('PackageId','Version'):
+                    if val and not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}',val):
+                        raise DotNetError('RM-09 unsafe NuGet identity in project')
+                    pack_identity[tag]=val
+                elif tag.startswith('TargetFramework'):tfms+=val.split(';')
+                elif tag.startswith('RuntimeIdentifier'):rids+=val.split(';')
+                else: flags.append((tag,val.lower()))
+        if not tfms or any(not _TFM.fullmatch(x) for x in tfms):
+            raise DotNetError('RM-09 project requires reviewed net8/net9/net10 target framework')
+        if rids and any(r not in _RIDS for r in rids):raise DotNetError('RM-09 unknown runtime identifier')
+        if len(set(refs))!=len(refs):raise DotNetError('RM-09 duplicate project reference')
+        windows=any('-windows' in x for x in tfms) or any(k in ('UseWPF','UseWindowsForms') and v=='true' for k,v in flags)
+        if windows and any(not x.endswith('windows') and '-windows' not in x for x in tfms):
+            raise DotNetError('RM-09 mixed Windows-only/portable TFMs need separate native jobs')
+        props[name]={'tfms':sorted(set(tfms)), 'rids':sorted(set(filter(None,rids))), 'windows_only':windows,'package_id':pack_identity.get('PackageId',Path(name).stem),'package_version':pack_identity.get('Version','')}
+        edges[name]=sorted(refs)
+        sources[name]=sha256(_source(root,name)).hexdigest()
+    for name in solutions:
+        raw=_source(root,name)
+        if name.endswith('.sln'):
+            try:refs=_SOLUTION.findall(raw.decode('utf8'))
+            except UnicodeDecodeError:raise DotNetError('RM-09 malformed solution encoding') from None
+        else:
+            xml=_xml(raw,name)
+            refs=[e.attrib.get('Path','') for e in xml.iter() if e.tag.rsplit('}',1)[-1]=='Project']
+        if not refs:raise DotNetError('RM-09 empty or unrecognized solution: '+name)
+        included=[_related(name,ref.replace('\\','/')) for ref in refs]
+        if len(set(included))!=len(included) or any(p not in projects for p in included):
+            raise DotNetError('RM-09 solution contains missing/duplicate/untracked projects')
+        for p in included:
+            if any(ref not in included for ref in edges[p]):
+                raise DotNetError('RM-09 solution excludes local project dependency')
+        sources[name]=sha256(raw).hexdigest()
+    seen=set();active=set();order=[]
+    def visit(p):
+        if p in active:raise DotNetError('RM-09 project dependency cycle')
+        if p in seen:return
+        active.add(p)
+        for dep in edges[p]:visit(dep)
+        active.remove(p);seen.add(p);order.append(p)
+    for p in projects:visit(p)
+    if selected and selected not in projects+solutions:
+        raise DotNetError('RM-09 job must select tracked solution/project')
+    global_json='global.json'
+    if global_json not in all_names:raise DotNetError('RM-09 requires tracked global.json SDK pin')
+    try:spec=json.loads(_source(root,global_json))
+    except ValueError:raise DotNetError('RM-09 malformed global.json') from None
+    sdk=spec.get('sdk',{})
+    version=sdk.get('version') if isinstance(sdk,dict) else None
+    if not isinstance(version,str) or not _VERSION.fullmatch(version) or sdk.get('allowPrerelease',False) is True:
+        raise DotNetError('RM-09 requires fixed reviewed .NET SDK version without prerelease')
+    sources[global_json]=sha256(_source(root,global_json)).hexdigest()
+    locks=[]
+    for name in all_names:
+        if name.endswith('packages.lock.json'):
+            try:lock=json.loads(_source(root,name))
+            except ValueError:raise DotNetError('RM-09 malformed NuGet lock') from None
+            if not isinstance(lock,dict) or not isinstance(lock.get('dependencies'),dict):
+                raise DotNetError('RM-09 invalid NuGet lock structure')
+            locks.append(name);sources[name]=sha256(_source(root,name)).hexdigest()
+        elif name.lower().endswith('nuget.config'):
+            raw=_source(root,name);config=_xml(raw,name)
+            # Disallow authenticated/custom/private package sources and cleartext feed credentials.
+            if any(x.tag.rsplit('}',1)[-1] in ('packageSourceCredentials','apikeys','packageSources') for x in config.iter() if x is not config):
+                raise DotNetError('RM-09 NuGet.Config source/credentials require separate qualification')
+            sources[name]=sha256(raw).hexdigest()
+    if not locks:raise DotNetError('RM-09 requires tracked NuGet lockfiles for restore')
+    # For all projects, an own lockfile is mandatory to ensure restore does not
+    # silently pick an unreviewed transitive version.
+    for name in projects:
+        folder=name.rsplit('/',1)[0] if '/' in name else ''
+        own=(folder+'/' if folder else '')+'packages.lock.json'
+        if own not in locks:raise DotNetError('RM-09 missing project NuGet lock: '+name)
+    membership={}
+    for name in solutions:
+        raw=_source(root,name)
+        if name.endswith('.sln'):
+            refs=_SOLUTION.findall(raw.decode('utf8'))
+        else:refs=[e.attrib.get('Path','') for e in _xml(raw,name).iter() if e.tag.rsplit('}',1)[-1]=='Project']
+        membership[name]=sorted(_related(name,x.replace('\\','/')) for x in refs)
+    return {'kind':'devtool.dotnet.solution-graph','sdk_version':version,'sources':sources,
+            'projects':props,'solutions':membership,'edges':edges,'topological_projects':order,
+            'selected':selected,'windows_only':(any(props[p]['windows_only'] for p in membership.get(selected,[selected])) if selected else False),
+            'source_bound':True,'execution_performed':False,'release_qualified':False}
+
+
+def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict) -> dict:
+    if len(argv)<3 or argv[0]!='dotnet' or argv[1] not in ('restore','build','test','pack','publish'):
+        raise DotNetError('RM-09 requires direct dotnet restore/build/test/pack/publish')
+    if any(not isinstance(x,str) or len(x)>160 or '\\' in x or '$' in x or (';' in x and x!='trx;LogFileName=results.trx') for x in argv):
+        raise DotNetError('RM-09 refuses shell/variable/interpolation arguments')
+    command,selected=argv[1:3]
+    i=3;opts={}
+    while i<len(argv):
+        arg=argv[i]
+        if arg in ('--locked-mode','--no-restore','--no-build'):
+            if arg in opts:raise DotNetError('RM-09 duplicate .NET switch')
+            opts[arg]=True;i+=1;continue
+        if arg in ('--configuration','--framework','--runtime','--output','--logger','--results-directory'):
+            if arg in opts or i+1>=len(argv):raise DotNetError('RM-09 missing or duplicate argument')
+            opts[arg]=argv[i+1];i+=2;continue
+        raise DotNetError('RM-09 refuses unreviewed .NET argument: '+arg[:80])
+    if opts.get('--configuration','Release') not in ('Release','Debug'):
+        raise DotNetError('RM-09 invalid .NET configuration')
+    if '--framework' in opts and not _TFM.fullmatch(opts['--framework']):
+        raise DotNetError('RM-09 unsupported .NET framework')
+    if '--runtime' in opts and opts['--runtime'] not in _RIDS:
+        raise DotNetError('RM-09 unsupported .NET runtime identifier')
+    if '--output' in opts and (opts['--output']!='dist' and
+                               not re.fullmatch(r'dist/[a-zA-Z0-9_./-]{1,150}',opts['--output'])):
+        raise DotNetError('RM-09 package output must be within dist/')
+    if '--logger' in opts and opts['--logger'] not in ('trx;LogFileName=results.trx',):
+        raise DotNetError('RM-09 requires fixed TRX logger name')
+    if command=='restore' and (opts.get('--locked-mode') is not True or len(opts)!=1):
+        raise DotNetError('RM-09 restore must use locked-mode only')
+    if command!='restore':
+        if '--no-restore' not in opts or '--no-build' in opts:
+            raise DotNetError('RM-09 hosted jobs require --no-restore (and forbid --no-build): locked restore is repeated inside the same native node')
+    if command in ('pack','publish') and '--output' not in opts:
+        raise DotNetError('RM-09 package command requires dist/ output')
+    if command=='test' and (opts.get('--logger')!='trx;LogFileName=results.trx' or
+        not re.fullmatch(r'dist(?:/[A-Za-z0-9_-]{1,64})?',opts.get('--results-directory',''))):
+        raise DotNetError('RM-09 test requires fixed TRX logger and dist results directory')
+    graph=solution_graph(root,selected=selected)
+    members=graph['solutions'].get(selected,[selected])
+    if graph['windows_only']:
+        raise DotNetError('RM-09 Windows-only APIs/workloads cannot run on reviewed Linux host')
+    tfms={x for p in members for x in graph['projects'][p]['tfms']}
+    if '--framework' in opts and opts['--framework'] not in tfms:
+        raise DotNetError('RM-09 framework not declared by selected projects')
+    rids={x for p in members for x in graph['projects'][p]['rids']}
+    if '--runtime' in opts and (opts['--runtime'] not in rids or opts['--runtime'].startswith(('win','osx'))):
+        raise DotNetError('RM-09 incompatible or undeclared Linux runtime identifier')
+    package=None
+    if command=='pack':
+        if selected not in graph['projects']:
+            raise DotNetError('RM-09 NuGet packaging requires explicit single .csproj owner')
+        project=graph['projects'][selected]
+        package={'package_id':project['package_id'],'version':project['package_version'],
+                 'tfm':opts.get('--framework',project['tfms'][0]),'rid':opts.get('--runtime','')}
+        if not package['version'] or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?',package['version']):
+            raise DotNetError('RM-09 pack requires pinned project Version')
+        if len(project['tfms'])!=1 and '--framework' not in opts:
+            raise DotNetError('RM-09 multi-TFM pack requires explicit framework')
+    return {'trx_path':opts.get('--results-directory','')+'/results.trx' if command=='test' else '',
+            'package':package,'provider':'dotnet','toolchain':'dotnet' ,'version':graph['sdk_version'],
+            'matrix_versions':[graph['sdk_version']], 'version_source':'global.json',
+            'graph':graph,'command':command,'selected':selected,'lockfiles':list(graph['sources']),
+            'cache_enabled':False,'report_adapter':'trx','output_role':'local-bytes-only',
+            'release_qualified':False}
+
+
+def merge_trx(root: Path, paths: list[str], *, expected_project: str) -> dict:
+    if not paths or len(paths)>32 or len(set(paths))!=len(paths):raise DotNetError('RM-09 TRX shards missing/duplicate')
+    results={};failed=[]
+    for rel in paths:
+        path=_path(root,rel)
+        if path.stat().st_size>8_000_000:raise DotNetError('RM-09 TRX too large')
+        raw=path.read_bytes()
+        if b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():raise DotNetError('RM-09 unsafe TRX XML')
+        tree=_xml(raw,rel)
+        if tree.tag.rsplit('}',1)[-1]!='TestRun':raise DotNetError('RM-09 invalid TRX root')
+        counters=[e for e in tree.iter() if e.tag.rsplit('}',1)[-1]=='Counters']
+        runresults=[e for e in tree.iter() if e.tag.rsplit('}',1)[-1]=='UnitTestResult']
+        if len(counters)!=1 or not runresults:raise DotNetError('RM-09 empty/invalid TRX counters')
+        if counters[0].get('passed') is not None and int(counters[0].get('passed','-1'))!=sum(x.get('outcome')=='Passed' for x in runresults):
+            raise DotNetError('RM-09 TRX passed counter differs from results')
+        if counters[0].get('failed') is not None and int(counters[0].get('failed','-1'))!=sum(x.get('outcome')=='Failed' for x in runresults):
+            raise DotNetError('RM-09 TRX failed counter differs from results')
+        for item in runresults:
+            uid=item.get('testId');name=item.get('testName');outcome=item.get('outcome')
+            if not uid or not name or outcome not in ('Passed','Failed','NotExecuted','Timeout','Aborted'):
+                raise DotNetError('RM-09 invalid TRX test identity/outcome')
+            if uid in results:raise DotNetError('RM-09 duplicate test ID across TRX shards')
+            results[uid]={'name':name,'outcome':outcome}
+            if outcome!='Passed':failed.append(uid)
+        if int(counters[0].get('total','-1'))!=len(runresults):
+            raise DotNetError('RM-09 TRX counters/results mismatch')
+    if failed:raise DotNetError('RM-09 TRX contains failed/nonexecuted tests: '+','.join(failed[:4]))
+    return {'kind':'devtool.dotnet.trx-merge','project':expected_project,'shards':len(paths),
+            'tests':len(results),'passed':len(results),'failed':0,'source_authenticated':False,
+            'release_qualified':False}
+
+
+def verify_nupkg(path: Path, *, package_id: str, version: str, tfm: str, rid: str = '') -> dict:
+    if not _NAME.fullmatch(package_id) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?',version):
+        raise DotNetError('RM-09 invalid NuGet package identity')
+    if not _TFM.fullmatch(tfm) or (rid and rid not in _RIDS):
+        raise DotNetError('RM-09 invalid NuGet target TFM/RID')
+    if path.is_symlink() or not path.is_file() or path.stat().st_size>100_000_000:
+        raise DotNetError('RM-09 missing/symlinked/oversized NuGet package')
+    try:
+        with zipfile.ZipFile(path) as z:
+            infos=z.infolist();names=[i.filename for i in infos]
+            if len(infos)>2048 or len(set(names))!=len(names) or sum(i.file_size for i in infos)>200_000_000:
+                raise DotNetError('RM-09 duplicate/oversized NuGet package members')
+            if any(n.startswith('/') or '\\' in n or any(p in ('','.','..') for p in n.rstrip('/').split('/')) for n in names):
+                raise DotNetError('RM-09 unsafe NuGet member path')
+            if any((info.external_attr >> 16) & 0o170000 == 0o120000 for info in infos):
+                raise DotNetError('RM-09 NuGet symlink member refused')
+            nuspec=[n for n in names if n.endswith('.nuspec') and '/' not in n]
+            if len(nuspec)!=1:raise DotNetError('RM-09 expected exactly one root nuspec')
+            if z.getinfo(nuspec[0]).file_size > 256_000:
+                raise DotNetError('RM-09 oversized nuspec metadata')
+            meta=_xml(z.read(nuspec[0]),'nuspec')
+            ids=[(el.text or '').strip() for el in meta.iter() if el.tag.rsplit('}',1)[-1]=='id']
+            vers=[(el.text or '').strip() for el in meta.iter() if el.tag.rsplit('}',1)[-1]=='version']
+            if ids!=[package_id] or vers!=[version] or nuspec[0]!=package_id+'.nuspec':
+                raise DotNetError('RM-09 NuGet package identity mismatch')
+            if rid:
+                matched=any(n.startswith('runtimes/'+rid+'/lib/'+tfm+'/') or
+                            n.startswith('runtimes/'+rid+'/native/') for n in names)
+            else:
+                matched=any(n.startswith('lib/'+tfm+'/') or n.startswith('ref/'+tfm+'/') for n in names)
+            if not matched:
+                raise DotNetError('RM-09 NuGet target framework/runtime missing from package')
+    except (zipfile.BadZipFile,ET.ParseError) as exc:
+        raise DotNetError('RM-09 malformed NuGet zip/XML') from exc
+    return {'kind':'devtool.dotnet.nupkg-verification','package_id':package_id,'version':version,
+            'tfm':tfm,'rid':rid,'sha256':sha256(path.read_bytes()).hexdigest(),
+            'bytes_verified':True,'signer_authenticated':False,'release_qualified':False}

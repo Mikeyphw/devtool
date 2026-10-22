@@ -1,0 +1,23 @@
+# RM-09 — .NET hosted-provider promise audit (2026-10-22)
+
+**Source base:** exact clean post-RM-08R4 Git tree `7b6b39a8c35d581d842b3e13b31162f07190d822`.
+**Merge window:** RM-09/.NET and RM-10/Rust reviewed. Separate overlays: the same runner and artifacts machinery is shared, but MSBuild solution graphs/NuGet/TRX/TFMs/RIDs and Cargo workspaces/features/target triples are different contract owners. Merging would complicate failure isolation.
+
+| Original RM-09 roadmap promise | Engineering status | Behavioral evidence and remaining scope |
+|---|---|---|
+| Discover tracked `.sln`, `.slnx`, `.csproj` | **Delivered, bounded** | `solution_graph` validates tracked files, solution membership, project-reference closure, topological order; tests for two solutions, cycle, traversal, missing lock, escaping project and missing membership. No arbitrary MSBuild evaluation. |
+| `global.json`, NuGet.Config, lockfiles | **Delivered, bounded** | Strict stable pinned SDK version, per-project tracked `packages.lock.json`, invalid JSON refusal, credential-bearing custom sources refused. NuGet restore runs `--locked-mode`. Dynamic custom feeds/workloads remain unsupported. |
+| Explicit selection/override | **Delivered** | Native direct `dotnet ... <tracked project|solution>` owns selection. No anonymous repository-root invocation. |
+| Generate bounded restore/build/test/pack/publish DAG | **Delivered, bounded** | Exact target-owned native DAG with explicit restore→build→test/pack/publish edges; parser admits only reviewed arguments. Existing multi-job exporter owns graph. Linux jobs repeat locked restore inside the same job before `--no-restore` execution; a GitHub `needs` edge does not transfer `obj`/NuGet state. No claim of shared installed packages across jobs. |
+| Configurations, TFMs and runtime identifiers | **Delivered, bounded** | Reviewed Release/Debug, explicit net8–net10 TFMs, bounded target RID; incompatibility, unknown option and command injection fail. Multi-TFM/project-specific profile fanout is **OPEN**. |
+| Windows-only API/workload compatibility | **Safe refusal delivered; Windows hosted execution OPEN** | Windows TFMs/WPF/WinForms explicitly blocked on Linux. RM-06 POSIX runtime bridge still disallows Windows hosted profiles. MacOS/.NET eligibility held off until validated. |
+| TRX and coverage identities/aggregation | **TRX delivered, coverage OPEN** | Real XML parses, rejects malformed/DTD, missing/duplicate IDs, failed/nonexecuted tests and inconsistent counters. Native test node verifies TRX before SHA-bound staging. Native automatic .NET coverage collection, normalized TRX attempt/source lineage and cross-node shard binding need more work. |
+| NuGet package verification | **Delivered, bounded** | Real NUPKG ZIP/nuspec identity, version, TFM/RID, symlinks/traversal/duplicates/size limits; native pack node verifies output before upload. Source/package signer trust not inferred. |
+| Portable publication receipts | **Partial** | `dotnet publish` command allowed with reviewed output root and native execution. Portable publish file manifest, RID/ABI proof and typed checks are **OPEN**. |
+| Multiple solutions share restored dependencies without collisions | **Partial** | Overlapping restore jobs must be ordered by native DAG. Hosted nodes repeat locked restore locally to avoid untransferred `obj/project.assets.json`; no cross-job NuGet cache reuse claim. Global package cache and actual multi-solution NuGet execution require SDK/host evidence. |
+| Preserve Devtool native dotnet runner | **Delivered structurally** | Uses original `build_direct_job_specs` and `run_specs` with same target-local ownership; positive/negative mocked runtime tests prove pre-transfer gate and bad archive refusal. .NET SDK not installed in validation container; real external .NET build not attested. |
+| Do not infer GitHub/release authority | **Delivered** | Host source/graph checks and SHA-bound byte handoffs reused. No claims for GitHub authenticity, signer trust or release/device status. |
+
+**Tests:** `tests/test_rm09_dotnet.py` exercises 11 integration/negative cases including real ZIP/XML fixture parsing and mocked native-runner behavior. Existing RM-06/RM-07 and NEXT-03 exporter tests act as compatibility guard. Mocked runner execution is not proof of successful compilation with an actual .NET SDK.
+
+**Status:** RM-09 bounded Linux core implemented; roadmap-wide RM-09 **PARTIAL** until Windows hosted bridge, real SDK smoke, coverage/publish receipts, and improved shared restore semantics. External qualification remains separately pending; it must not be confused with implementation completeness.
