@@ -45,7 +45,7 @@ class ToolchainProfile:
 
 PROFILES = {
     p.identifier: p for p in (
-        ToolchainProfile('ubuntu-24.04-x64','linux','x86_64','ubuntu-24.04',True,('go','python-shell','dotnet'),'3.12',60),
+        ToolchainProfile('ubuntu-24.04-x64','linux','x86_64','ubuntu-24.04',True,('go','python-shell','dotnet','rust-cargo'),'3.12',60),
         ToolchainProfile('macos-15-intel','macos','x86_64','macos-15-intel',True,('go','python-shell'),'3.12',60),
         ToolchainProfile('windows-2022-x64','windows','x86_64','windows-2022',False,('go','python-shell'),'3.12',60,
                          'RM-06 POSIX artifact/runtime bridge is not portable to Windows'),
@@ -86,6 +86,9 @@ def validate_versions(providers: list[dict[str, Any]], profiles: tuple[Toolchain
         if provider == 'go':
             if not isinstance(version,str) or not _PINNED_GO.fullmatch(version):
                 raise ProfileError('RM-07 Go toolchain version must be an explicit supported 1.x version')
+        elif provider == 'rust-cargo':
+            if not isinstance(version,str) or not re.fullmatch(r'1\.(?:[7-9]\d|\d{3})\.\d+',version):
+                raise ProfileError('RM-10 requires exact reviewed Rust toolchain semver')
         elif provider == 'dotnet':
             if not isinstance(version,str) or not re.fullmatch(r'(?:8|9|10)\.0\.[0-9]{1,4}',version):
                 raise ProfileError('RM-09 dotnet SDK requires reviewed global.json version')

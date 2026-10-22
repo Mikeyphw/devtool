@@ -84,7 +84,15 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
         versions=['']  # independent pinned node versions, no fanout
     elif len(versions)==1:
         versions=['']  # retain original graph/job IDs exactly
-    if len(profiles)*len(rows)*len(versions)>MAX_TOTAL_JOBS:
+    rust_rows=[row for row in rows if row['provider']['provider']=='rust-cargo']
+    feature_sets=['none']
+    if rust_rows:
+        feature_sets=rust_rows[0]['provider']['feature_matrix']
+        if any(row['provider']['feature_matrix']!=feature_sets for row in rust_rows):
+            raise ProviderError('RM-10 feature matrix must match across reviewed Rust DAG nodes')
+        if len(feature_sets)>1 and any(row['provider']['provider']!='rust-cargo' for row in rows):
+            raise ProviderError('RM-10 Rust feature fanout requires Rust-only native DAG')
+    if len(profiles)*len(rows)*len(versions)*len(feature_sets)>MAX_TOTAL_JOBS:
         raise ProviderError('RM-07 matrix fanout exceeds total job cap')
     if not 1 <= len(rows) <= MAX_NODES:
         raise ProviderError('RM-06 bounded multi-job export accepts 1..24 nodes; use single-job fallback')
@@ -97,7 +105,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     graph=graph_from_workflow(plan['target'],cfg.targets[plan['target']].workflows[plan['workflow']])
     for profile in profiles:
         admission=graph_host_admission(cfg,graph,host_os=profile.os,
-                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet'))
+                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo'))
         if not admission['all_eligible']:
             failures=[item['node']+':'+','.join(item['eligibility']['reasons'])
                       for item in admission['nodes'] if not item['eligibility']['eligible']]
@@ -106,10 +114,12 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     jobs: list[dict[str, Any]] = []
     for profile in profiles:
       for version in versions:
-        cell=profile.identifier+(':'+version if version else '')
+       for feature_index,feature_set in enumerate(feature_sets):
+        cell=profile.identifier+(':'+version if version else '')+((':f'+str(feature_index)) if len(feature_sets)>1 else '')
         for index,row in enumerate(rows,1):
             jid=(f'node-{index:02d}' if len(profiles)==1 and profile.identifier=='ubuntu-24.04-x64' else f'node-{index:02d}-{profile.identifier.replace(".","-")}')
             if version:jid+='-v'+version.replace('.','-')
+            if len(feature_sets)>1:jid+='-f'+str(feature_index)
             node_to_id[(row['node'],cell)]=jid
             outs=list(row['outputs'])
             if len(outs)>MAX_TRANSFER_FILES or len(set(outs))!=len(outs):
@@ -139,6 +149,13 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'go_env':dict(row['env']) if row['provider']['provider']=='go' else {},
                          'python_install_lock':(row['provider'].get('project') or {}).get('install_lock',''),
                          'auto_coverage':row['auto_coverage'],
+                          'rust_command':row['provider'].get('command','') if row['provider']['provider']=='rust-cargo' else '',
+                         'rust_target':row['provider'].get('target_triple',''),
+                         'rust_workspace':row['provider'].get('workspace') if row['provider']['provider']=='rust-cargo' else None,
+                         'rust_package':row['provider'].get('package_name',''),
+                         'rust_base_argv':list(row['command']) if row['provider']['provider']=='rust-cargo' else [],
+                         'rust_feature_cell':feature_set if row['provider']['provider']=='rust-cargo' else 'none',
+                         'rust_json_capture':row['provider'].get('cargo_json_capture',False),
                          'dotnet_command':row['provider'].get('command',''),
                          'dotnet_selected':row['provider'].get('selected',''),
                          'dotnet_package':row['provider'].get('package'),
@@ -169,7 +186,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 raise ProviderError('RM-06 generated input requires direct producer dependency: '+inp)
         if job['race'] and job['runner']!='ubuntu-24.04':
             raise ProviderError('RM-08 Go race profile requires reviewed Linux amd64 runner')
-        if job['provider'] not in ('go','python-shell','dotnet'):
+        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo'):
             raise ProviderError('RM-06 refuses unreviewed hosted provider')
     immutable = {'schema_version': SCHEMA, 'kind': 'devtool.actions.export-graph',
                  'provider_plan_sha256':plan['plan_sha256'], 'target':plan['target'],
@@ -177,7 +194,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                  'runner': profiles[0].hosted_runner if len(profiles)==1 else 'per-cell',
                  'matrix': [{'os':p.hosted_runner,'arch':p.arch} for p in profiles],
                  'toolchain_profiles':[p.identifier for p in profiles],
-                 'language_versions':versions,
+                 'language_versions':versions,'rust_feature_sets':feature_sets,
                  'cache': 'enabled-reviewed-go-only' if cache_locks else 'disabled', 'changed_targets':'full-dag', 'jobs':jobs}
     return {**immutable, 'graph_sha256':_digest(immutable), 'native_source_sha256':plan['plan_sha256'],
             'fallback':'single-job', 'read_only':True, 'authenticated_remote':False,
@@ -214,7 +231,16 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                       '        with:\n'
                       f"          dotnet-version: '{job['toolchain_version']}'\n"
                       '          cache: false\n') if job['provider']=='dotnet' else ''
-        downloads=''
+        rust_setup=('      - name: Verify preinstalled pinned Rust toolchain (no network installation)\n'
+                    '        shell: bash\n        run: |\n'
+                    '          set -euo pipefail\n'
+                    '          export RUSTUP_AUTO_INSTALL=0\n'
+                    '          export CARGO_NET_OFFLINE=true\n'
+                    f'          rustup run {job["toolchain_version"]} rustc --version | grep -F "rustc {job["toolchain_version"]} "\n'
+                    f'          rustup run {job["toolchain_version"]} cargo --version\n'
+                    f'          rustup target list --installed --toolchain {job["toolchain_version"]} | grep -Fx {job["rust_target"]}\n'
+                    + ('          command -v aarch64-linux-gnu-gcc >/dev/null\n' if job['rust_target']=='aarch64-unknown-linux-gnu' else '')) if job['provider']=='rust-cargo' else ''
+        downloads=""
         for dep in job['handoffs']:
             downloads += (f'      - name: Download {dep} byte handoff\n'
                           f'        uses: actions/download-artifact@{_DOWNLOAD_SHA}\n'
@@ -250,6 +276,8 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                f'      DEVTOOL_SOURCE_SHA: {pin}\n'
                '      PYTHONDONTWRITEBYTECODE: "1"\n'
                '      GOTOOLCHAIN: local\n'
+               '      RUSTUP_AUTO_INSTALL: "0"\n'
+               '      CARGO_NET_OFFLINE: "true"\n'
                '    steps:\n'
                '      - name: Checkout consumer commit\n'
                f'        uses: actions/checkout@{_CHECKOUT_SHA}\n'
@@ -257,7 +285,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
-               f'{setup_go}{dotnet_setup}{cache_step}'
+               f'{setup_go}{dotnet_setup}{rust_setup}{cache_step}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -430,6 +458,29 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
         restored,_=run_specs(cfg,[bootstrap],verbose=True,dry_run=False,continue_on_error=False)
         if not restored or any(x.returncode!=0 or x.skipped for x in restored):
             raise ProviderError('RM-09 native locked restore failed; no downstream output accepted')
+    if selected['provider']=='rust-cargo':
+        # Native runner receives an exact preinstalled toolchain selector. Cargo
+        # is forbidden from fetching missing registries or toolchains.
+        from dataclasses import replace
+        if len(specs)!=1 or specs[0].argv!=selected['rust_base_argv']:
+            raise ProviderError('RM-10 direct Cargo native job resolver diverged from review')
+        from .actions_rm10_cargo import feature_cell_argv, CargoError
+        try: reviewed_command=feature_cell_argv(specs[0].argv,selected['rust_feature_cell'])
+        except CargoError as exc:raise ProviderError(str(exc)) from None
+        env=dict(specs[0].env)
+        env.update({'RUSTUP_TOOLCHAIN':selected['toolchain_version'],
+                    'RUSTUP_AUTO_INSTALL':'0','CARGO_NET_OFFLINE':'true',
+                    'RUSTFLAGS':'','CARGO_ENCODED_RUSTFLAGS':'','RUSTDOCFLAGS':'',
+                    'RUSTC_WRAPPER':'','CARGO_BUILD_RUSTC_WRAPPER':'',
+                    'CARGO_TARGET_DIR':'target',
+                    'CARGO_BUILD_TARGET':selected['rust_target'],
+                    'CARGO_NET_GIT_FETCH_WITH_CLI':'false'})
+        if selected['rust_target']=='aarch64-unknown-linux-gnu':
+            import shutil as _shutil
+            if not _shutil.which('aarch64-linux-gnu-gcc'):
+                raise ProviderError('RM-10 preinstalled aarch64 cross linker is unavailable')
+            env['CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER']='aarch64-linux-gnu-gcc'
+        specs=[replace(specs[0],argv=reviewed_command,env=env)]
     if selected['auto_coverage']:
         # Instrument the same reviewed native target-local job, rather than
         # running an extra unowned test command from the hosted exporter.
@@ -503,10 +554,40 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
                 raise ProviderError('RM-09 pack lost declared NuGet identity')
             try:verify_nupkg(_regular(root,files[0]),**package)
             except DotNetError as exc:raise ProviderError(str(exc)) from None
+    rust_receipts=[];rust_test_evidence=[]
+    if selected['provider']=='rust-cargo':
+        if selected['rust_json_capture']:
+            from .actions_rm10_cargo import verify_native_cargo_output, CargoError
+            if len(results)!=1:
+                raise ProviderError('RM-10 expected one native Cargo result')
+            try:
+                evidence=verify_native_cargo_output(results[0].output,operation=selected['rust_command'],
+                   source_sha256=selected['rust_workspace']['source_sha256'],
+                   version=selected['toolchain_version'],run_id=run,attempt=attempt,
+                   expected_features=[] if selected['rust_feature_cell']=='none' else selected['rust_feature_cell'].split(','),
+                   target=selected['rust_target'],argv=specs[0].argv,rust_env=specs[0].env)
+            except CargoError as exc:raise ProviderError(str(exc)) from None
+            rust_test_evidence.append(evidence)
+        from .actions_rm10_cargo import verify_rust_binary, verify_crate, CargoError
+        for rel in selected['outputs']:
+            path=_regular(root,rel)
+            try:
+                if rel.endswith('.crate'):
+                    name=selected['rust_package']
+                    package=next(p for p in selected['rust_workspace']['members'].values() if p['name']==name)
+                    rust_receipts.append(verify_crate(path,name=name,version=package['version']))
+                else:
+                    rust_receipts.append(verify_rust_binary(path,target=selected['rust_target']))
+            except CargoError as exc:raise ProviderError(str(exc)) from None
+    if selected['provider']=='rust-cargo' and selected['rust_json_capture'] and selected['rust_command']=='build' and selected['outputs']:
+        reported={Path(path).resolve() for event in rust_test_evidence for path in event['artifacts']}
+        for rel in selected['outputs']:
+            if (root/rel).resolve() not in reported:
+                raise ProviderError('RM-10 compiler JSON did not attest declared native binary artifact: '+rel)
     stage_outputs(root,outputs,graph,selected,source,run,attempt)
     return {'status':'LOCAL_JOB_SUCCEEDED', 'node':selected['node'], 'job_id':job_id,
             'graph_sha256':graph_sha, 'workflow_sha256':hashlib.sha256(workflow_yaml(graph).encode()).hexdigest(), 'github_source':source,'run_id':run,'attempt':attempt,
-            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'uploaded_artifacts_authenticated':False,'release_qualified':False}
+            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
 
 
 def main(argv: list[str] | None = None) -> int:

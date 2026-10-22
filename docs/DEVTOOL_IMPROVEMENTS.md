@@ -777,3 +777,17 @@ Implementation: durable source/graph/host/input/output fingerprints; canonical C
 - **Artifact and TRX behaviors:** Strict TRX failure/duplicate/mismatched-count refusal; real NuGet ZIP/nuspec/TMF/RID/source-limited verification before native output handoff. Neither SHA nor local package format proves signing/release authority. The runtime verifier handles `.nupkg` and TRX through existing target-owned nodes.
 - **Known gaps (OPEN):** Windows hosted bridge, .NET coverage instrumentation, verified publish/portable RID receipts, rich TFM/configuration matrix and real multi-solution hosted SDK execution. See `docs/RM09_PROMISE_AUDIT.md` for precise status and test evidence.
 - **Follow-up:** RM-10 Rust separate; RM-09 completion debt remains cumulative, not silently closed. No external GitHub/device/release gate is counted toward engineering completion.
+
+## RM10-RUST-001 — Native Rust/Cargo hosted provider and bounded source graph
+
+- **Status:** Implemented bounded source contract in RM-10 overlay, awaiting Termux and real hosted Rust compiler acceptance; outstanding features remain OPEN in `docs/RM10_PROMISE_AUDIT.md`.
+- **Evidence:** Real tracked Rust workspace fixture, local `path` dependency cycle/traversal checks, lock/member matching, pinned toolchain+component/target profile, reviewed direct `cargo` command templates, native DAG projection, architecture and archive rejection fixtures, source/run/attempt-bound byte staging.
+- **Security boundaries:** No arbitrary Cargo subcommands, shell, network install or unreviewed `.cargo/config*` and build.rs; `cargo --offline --locked` for dependency-bearing tasks; runner proves preinstalled exact pin or refuses. Crate archive structural verification and ELF header checks do **not** authenticate signing or release readiness.
+- **Gap:** Real Cargo CI runtime absent in local host, unsupported full feature-set matrices and cross compilers, no automatic libtest JSON extraction/normalization, third-party build script provenance unverified.
+- **Recommendation:** Extend from source-reviewed job/byte contracts only after provisioning a genuine Rust environment; add integration tests for full cargo fmt/clippy/test/build/package, all output digests, strict feature graph and executor-attested compiler JSON. Keep RM-11 Node provider a separate merge-window installation boundary.
+
+### RM-10R1 source-bound Cargo provider closure review (2026-10-22)
+- **Root cause:** First RM-10 overlay reported *Partial* for feature matrices, AArch64 target/verifier, Cargo JSON execution integration, inherited workspace/patch graphs, and compiler/source/attempt metadata despite satisfying only isolated nominal fixtures.
+- **Affected:** `actions_rm10_cargo.py`, `actions_graph_export.py`, Devtool native owned Rust jobs, Rust consumer workflows.
+- **Remedy:** Replace original RM-10 (post-RM-09 source lock) with feature × toolchain matrix job isolation, safe inherited dependency/patch graph, provisioned-only Linux AArch64 cross linker, strict ELF verification, optional native Cargo JSON/libtest output, run/attempt/argv/flag identity, additional negative tests. Harden ambient Rust flags. No floating toolchain installation or broader host privilege grant.
+- **Status:** **Implementation delivered for reviewed bounded policies; real Rust/hosted execution remains UNQUALIFIED**, documented in `docs/RM10_PROMISE_AUDIT.md`. Original RM-10 ZIP superseded; do not apply both. No evidence of actual external Rust acceptance yet. 

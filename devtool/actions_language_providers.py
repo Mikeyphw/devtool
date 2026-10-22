@@ -189,8 +189,18 @@ class DotNetProvider:
         except DotNetError as exc: raise ProviderError(str(exc)) from None
 
 
+@dataclass(frozen=True)
+class RustCargoProvider:
+    api_version: int = SCHEMA_VERSION
+    provider_id: str = 'rust-cargo'
+
+    def inspect(self, root: Path, job: Any, argv: list[str]) -> dict[str, Any]:
+        from .actions_rm10_cargo import inspect_cargo_job, CargoError
+        try:return {'api_version':self.api_version, **inspect_cargo_job(root,argv,job.metadata or {})}
+        except CargoError as exc:raise ProviderError(str(exc)) from None
+
 # The only provider registry: immutable built-ins, no entry-point/network/plugin loading.
-PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider()})
+PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider()})
 # V1 adapter behavior is preserved; V2 review metadata must match the exact built-ins.
 for _id, _adapter in PROVIDERS.items():
     resolve_provider(_id, api_version=_adapter.api_version)
@@ -227,12 +237,16 @@ def _provider_for(job: Any) -> LanguageProvider:
     flag = meta.get('ci_toolchain')
     argv = list(job.command or [])
     name = Path(argv[0]).name if argv else ''
+    if flag == 'rust-cargo' or name == 'cargo':
+        if name!='cargo' or flag not in (None,'rust-cargo'):
+            raise ProviderError('RM-10 Rust Cargo provider/argv mismatch')
+        return PROVIDERS['rust-cargo']
     if flag == 'dotnet' or name == 'dotnet':
         if name!='dotnet' or flag not in (None,'dotnet'):
             raise ProviderError('RM-09 dotnet provider/argv mismatch')
         return PROVIDERS['dotnet']
     go = (flag == 'go' or job.runner == 'go' or name == 'go' or 'go.mod' in job.inputs)
-    if flag not in (None, 'go', 'python-shell', 'dotnet'):
+    if flag not in (None, 'go', 'python-shell', 'dotnet', 'rust-cargo'):
         raise ProviderError('No reviewed language provider for ci_toolchain ' + str(flag)[:50])
     if go and flag == 'python-shell':
         raise ProviderError('Go source declaration conflicts with Python toolchain')
@@ -268,7 +282,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
     if not (1 <= len(graph.nodes) <= MAX_NODES):
         raise ProviderError('NEXT-03 DAG size must be between 1 and 32 nodes')
     admission = graph_host_admission(cfg, graph, host_os='linux', host_arch='x86_64',
-                                     toolchains=('go', 'python-shell','dotnet'))
+                                     toolchains=('go', 'python-shell','dotnet','rust-cargo'))
     if not admission['all_eligible']:
         reasons = [r['node']+':'+','.join(r['eligibility']['reasons']) for r in admission['nodes'] if not r['eligibility']['eligible']]
         raise ProviderError('Hosted node admission blocked: ' + '; '.join(reasons)[:320])
@@ -284,7 +298,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if 'ci_host_requirements' in meta:
             try:
                 host_result = host_eligibility_v2(meta['ci_host_requirements'],
-                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell','dotnet'))
+                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell','dotnet','rust-cargo'))
             except ContractError as exc:
                 raise ProviderError('Invalid ci_host_requirements: ' + str(exc)) from None
             if not host_result['eligible']:
@@ -340,6 +354,18 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
             if not re.search(r'(?m)^coverage==[0-9][A-Za-z0-9_.+!-]*\s+--hash=sha256:[a-f0-9]{64}\s*$',
                              (root/declaration['project']['install_lock']).read_text()):
                 raise ProviderError('RM-08 automatic coverage requires hash-pinned coverage dependency')
+        if declaration['provider']=='rust-cargo':
+            if declaration['command']=='package':
+                pkg=next(x for x in declaration['workspace']['members'].values()
+                         if x['name']==declaration['package_name'])
+                expected=f"target/package/{pkg['name']}-{pkg['version']}.crate"
+                if list(job.outputs)!=[expected]:
+                    raise ProviderError('RM-10 package must declare exact owned .crate output')
+            elif declaration['command']=='build':
+                if len(job.outputs)>16 or any(not p.startswith('target/release/') for p in job.outputs):
+                    raise ProviderError('RM-10 build outputs must be bounded target/release binaries')
+            elif job.outputs:
+                raise ProviderError('RM-10 fmt/Clippy/test must not claim unverified generated output')
         if declaration['provider']=='dotnet':
             operation=declaration['command']
             if operation=='test' and (len(job.outputs)!=1 or job.outputs[0]!=declaration['trx_path']):
@@ -358,6 +384,17 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
                      'provider':declaration,'outputs':list(job.outputs), 'command':argv, 'env':dict(job.env),
                      'wheel_smoke':wheel_smoke,'sdist_smoke':sdist_smoke,
                      'auto_coverage':auto_coverage})
+    # Cargo workspace member producers must follow native DAG dependency edges.
+    rust_rows=[r for r in rows if r['provider']['provider']=='rust-cargo']
+    for row in rust_rows:
+        # A workspace operation compiles its own path dependencies. Any package
+        # operation that reuses a produced member requires an explicit DAG edge.
+        if row['provider']['command']=='package':
+            name=row['provider']['package_name']
+            for other in rust_rows:
+                if other is row or other['provider']['command']!='build':continue
+                if other['node'] not in row['depends_on']:
+                    raise ProviderError('RM-10 Cargo package requires native build dependency')
     # .NET solution restore/build/test/pack/publish ordering is expressed by
     # native DAG needs, never by a hidden second Actions scheduler.
     dotnet_rows=[r for r in rows if r['provider']['provider']=='dotnet']
@@ -650,8 +687,8 @@ def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
         dest = f'.github/workflows/devtool-{target}-{workflow}-providers-multi.yml'
     else:
         plan = provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
-        if 'dotnet' in plan['providers']:
-            raise ProviderError('RM-09 dotnet requires native multi-job export; single-job provider YAML has no .NET SDK setup')
+        if 'dotnet' in plan['providers'] or 'rust-cargo' in plan['providers']:
+            raise ProviderError('RM-09/RM-10 .NET and Rust require native multi-job export with reviewed toolchain preflight')
         frozen_sha = plan['plan_sha256']
         content = _workflow_yaml(plan).encode()
         dest = f'.github/workflows/devtool-{target}-{workflow}-providers.yml'
