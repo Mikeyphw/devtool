@@ -104,9 +104,15 @@ def _read_config(path: Path) -> dict[str, Any]:
             raise AdoptionBlocked(f"{row['id']}: absolute overlay archive required")
         if not DIGEST.fullmatch(str(row.get("overlay_sha256", ""))):
             raise AdoptionBlocked(f"{row['id']}: archive SHA-256 must be pinned")
-        for flag in ("wrapper", "migrate_config"):
+        for flag in ("wrapper", "migrate_config", "repair_gitignore"):
             if flag in row and not isinstance(row[flag], bool):
                 raise AdoptionBlocked(f"{row['id']}: {flag} must be bool")
+        hooks = row.get('offline_hooks', [])
+        if not isinstance(hooks, list) or len(hooks) > 8:
+            raise AdoptionBlocked(f"{row['id']}: offline_hooks must be a bounded list")
+        reviewed = row.get('reviewed_wrapper_sha256', {})
+        if not isinstance(reviewed, dict) or any(k not in WRAPPER or not DIGEST.fullmatch(str(v)) for k, v in reviewed.items()):
+            raise AdoptionBlocked(f"{row['id']}: reviewed_wrapper_sha256 must map managed filenames to SHA-256")
     return payload
 
 
@@ -184,7 +190,16 @@ def _desired(repo: Path, row: dict[str, Any]) -> tuple[dict[str, bytes | None], 
         try:
             txt = original.decode("utf-8")
             translated, findings = migrate_config_text(txt)
-            tomllib.loads(translated)
+            from .config import REPO_SAFE_TOP_LEVEL_SECTIONS
+            source_obj = tomllib.loads(txt)
+            unknown = set(source_obj) - REPO_SAFE_TOP_LEVEL_SECTIONS
+            if any(not name.startswith('x-') for name in unknown):
+                raise AdoptionBlocked('unknown legacy config sections require reviewed migration')
+            from .wrapper_migration import migrate_wrapper_schema_text
+            if 'wrapper' in tomllib.loads(translated):
+                translated = migrate_wrapper_schema_text(translated).migrated_text
+            if tomllib.loads(translated).get('extensions') != source_obj.get('extensions'):
+                raise AdoptionBlocked('config extensions changed during migration')
         except (UnicodeError, ValueError, tomllib.TOMLDecodeError) as exc:
             raise AdoptionBlocked(f"ambiguous legacy config: {exc}") from exc
         if any(not f.safe for f in findings):
@@ -201,12 +216,35 @@ def _desired(repo: Path, row: dict[str, Any]) -> tuple[dict[str, bytes | None], 
             old = file.read_bytes() if file.is_file() else None
             target = expected[name].encode("utf-8")
             if old is not None and old != target:
-                raise AdoptionBlocked(f"existing generated wrapper differs: {name}")
+                reviewed = row.get('reviewed_wrapper_sha256', {}).get(name)
+                if not reviewed or reviewed != _sha(old):
+                    raise AdoptionBlocked(f"existing wrapper requires exact reviewed SHA-256: {name}")
             if name == "devtoolw" and old == target and not os.access(file, os.X_OK):
                 raise AdoptionBlocked("existing devtoolw launcher is not executable")
             if old != target:
                 contents[name] = target
                 before[name] = old
+    if row.get('repair_gitignore'):
+        name = '.gitignore'
+        if name in contents:
+            raise AdoptionBlocked('overlay already owns .gitignore: review as a single source input')
+        file = _path(repo, name)
+        old = file.read_bytes() if file.is_file() else None
+        if old is not None:
+            try:
+                text = old.decode('utf-8')
+            except UnicodeError as exc:
+                raise AdoptionBlocked('.gitignore is not UTF-8') from exc
+        else:
+            text = ''
+        patterns = ('/.devtool/cache/', '/.devtool/runs/', '/.devtool/state/', '/.devtool-artifact/')
+        existing = {line.strip() for line in text.splitlines()}
+        missing = [p for p in patterns if p not in existing and '.devtool/' not in existing and '/.devtool/' not in existing]
+        # Ignore only Devtool-owned generated paths; never broad project build roots.
+        if missing:
+            new_text = text + ('' if not text or text.endswith('\n') else '\n') + '\n'.join(missing) + '\n'
+            contents[name] = new_text.encode('utf-8')
+            before[name] = old
     if not contents:
         raise AdoptionBlocked("empty candidate adoption")
     return contents, before

@@ -948,3 +948,10 @@ Complete matrix and truthful outstanding external gates: `docs/RM06_RM09_ENGINEE
 - **Fix:** Introduce a narrow host-gate seam; explicitly force only that seam to `True` for the mocked Linux namespace command test and to `False` for Android/unsupported-host refusal checks. Never replace the real policy, skip tests, or weaken network isolation.
 - **Affected:** Devtool RM08 Python native manager and RM06–RM09 overlay validator.
 - **Status:** Source fixed and local validation pending; device must re-run the corrected full source-bound overlay. No claims of real Poetry/PDM hosted qualification.
+
+## RM17/RM18 merged staged adoption — 2026-10-23
+
+- **Problem:** existing `adopt-batch apply` committed independently during traversal, so later repo failures left partial work; composite ownership was limited to overlay, wrapper and legacy config; changed-source overlay upgrades and source-safe recovery guidance lacked a unified path. A hypothetical cross-repository "atomic Git commit" would be false.
+- **Remedy:** `adopt-batch review-staged|upgrade-review|prepare|publish|resume-staged|recovery-plan|recover` with read-only preflight-all, reviewed extension-preserving migration, wrapper schema upgrade, strict generated-only ignore repair and offline built-in preflights. Detached Git tree/commit staging via private index + namespaced Git refs precedes guarded target-branch update-ref with expected-old lease; fsynced external journal reports PARTIAL_COMMIT and blocks compensating rollback if a HEAD advanced. The old sequential API is retained for compatibility, not advertised as globally atomic.
+- **Evidence:** `tests/test_rm17_rm18_staged.py`, `tests/test_next05_adoption_batch.py`, `docs/RM17_RM18_STAGED_ADOPTION_PROMISE_AUDIT_20261023.md` and qualified outer overlay receipt.
+- **Status:** implementation and local disposables tested; user Termux installation, real Telegram/Studyflow fixture acceptance and multi-repository production qualification remain external. Source-changed upgrade applies only after manual review/rebind; no unreviewed automatic rebase. RM19 remains cancelled and RM13 device acceptance unrelated.

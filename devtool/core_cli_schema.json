@@ -124560,7 +124560,7 @@
         },
         {
           "aliases": [],
-          "help": "Prepare and resume a source-locked multi-repository adoption",
+          "help": "Source-locked multi-repository adoption, staged commit publication and guarded recovery",
           "help_present": true,
           "name": "adopt-batch",
           "parser": {
@@ -124571,13 +124571,21 @@
                   "plan",
                   "apply",
                   "resume",
-                  "status"
+                  "status",
+                  "review-staged",
+                  "prepare",
+                  "publish",
+                  "resume-staged",
+                  "recover",
+                  "status-staged",
+                  "upgrade-review",
+                  "recovery-plan"
                 ],
                 "const": null,
                 "default": null,
                 "dest": "batch_operation",
                 "group": null,
-                "help": "Operation (plan, apply, resume, status)",
+                "help": "Operation (legacy plan/apply/resume/status or staged review/prepare/publish/resume-staged/recover/status-staged)",
                 "metavar": null,
                 "mutex": null,
                 "nargs": null,

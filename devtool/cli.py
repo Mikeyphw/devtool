@@ -13500,10 +13500,24 @@ def _main_after_parse(
 
     if args.command == "adopt-batch":
         from .adoption_batch import plan as adoption_plan, apply as adoption_apply, AdoptionBlocked
+        from . import adoption_staged
         manifest = Path(str(args.batch_manifest)).expanduser()
         state_dir = Path(str(getattr(args, 'state_dir', '') or '')).expanduser() if getattr(args,'state_dir',None) else Path.home()/'.local/state/devtool/adoption-batches'
         try:
-            if str(args.batch_operation) in {"apply", "resume"}:
+            operation = str(args.batch_operation)
+            if operation in {"prepare", "publish", "recover", "resume-staged"}:
+                worker = {"prepare": adoption_staged.prepare, "publish": adoption_staged.publish,
+                          "recover": adoption_staged.recover, "resume-staged": adoption_staged.publish}[operation]
+                payload = worker(manifest, state_dir, yes=bool(getattr(args, 'yes', False)))
+                payload = {**payload, 'ok': payload.get('overall') in {'PREPARED', 'COMPLETE', 'ROLLED_BACK'},
+                           'cross_repository_atomic': False, 'formal_release_qualified': False}
+            elif operation in {"review-staged", "status-staged"}:
+                payload = adoption_staged.review(manifest, state_dir)
+            elif operation == "upgrade-review":
+                payload = adoption_staged.upgrade_review(manifest, state_dir)
+            elif operation == "recovery-plan":
+                payload = adoption_staged.recovery_plan(manifest, state_dir)
+            elif operation in {"apply", "resume"}:
                 payload = adoption_apply(manifest, state_dir, yes=bool(getattr(args,'yes',False)))
             else:
                 payload = adoption_plan(manifest, state_dir)
