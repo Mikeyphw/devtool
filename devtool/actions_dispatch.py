@@ -5,6 +5,9 @@ Run tracking and remote execution qualification belong to ACTIONS-03.
 from __future__ import annotations
 
 import base64
+import hashlib
+import fcntl
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -162,9 +165,75 @@ class GitHubDispatchPreflightError(GitHubActionsError):
     """Definitive rejection before any non-idempotent dispatch POST."""
 
 
+# RM-16: one read-only inventory and one filesystem lock for new dispatches.
+# A legacy receipt without an input digest is never considered a safe match:
+# it is treated as a potential duplicate and blocks uncertain redispatch.
+_PENDING_STATES = frozenset({'dispatch-outcome-unknown','accepted-uncorrelated',
+                             'accepted-correlated','accepted','correlated','requested',
+                             'queued','in_progress','completed','success','failure',
+                             'cancelled','timed_out'})
+
+def _inputs_digest(inputs: Mapping[str,str]) -> str:
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(',', ':'),
+                         ensure_ascii=False).encode('utf-8')).hexdigest()
+
+
+def _existing_dispatches(folder: Path, summary: Mapping[str,Any], digest: str) -> list[dict[str,Any]]:
+    from .actions_runs import _read_dispatch_receipt
+    if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
+        raise GitHubActionsError('Dispatch journal root is unsafe')
+    if not folder.exists():
+        return []
+    candidates=[]
+    for count, entry in enumerate(folder.iterdir()):
+        if count >= 512:
+            raise GitHubActionsError('Dispatch history exceeds bounded scan; review requests manually')
+        if entry.name == '.rm16-dispatch.lock':
+            if entry.is_symlink(): raise GitHubActionsError('Dispatch lock is a symlink')
+            continue
+        if entry.suffix != '.json':
+            continue
+        if entry.is_symlink() or not re.fullmatch(r'[a-f0-9]{32}\.json',entry.name):
+            raise GitHubActionsError('Unexpected dispatch journal name or symlink')
+        _, receipt=_read_dispatch_receipt(entry.stem,folder)
+        if (str(receipt.get('repository','')).lower() != str(summary['repository']).lower() or
+            receipt.get('workflow_id') != summary['workflow_id'] or
+            receipt.get('ref') != summary['ref'] or
+            str(receipt.get('pre_dispatch_sha','')).lower() != summary['pre_dispatch_sha'].lower()):
+            continue
+        state=receipt.get('state')
+        if state=='rejected-by-api':
+            continue  # Definitively rejected before dispatch; explicit retry is allowed.
+        if state not in _PENDING_STATES:
+            raise GitHubActionsError('Unknown dispatch receipt state; manual reconciliation required')
+        recorded=receipt.get('inputs_sha256')
+        if recorded is not None and recorded != digest:
+            continue
+        candidates.append({'request_id':entry.stem,'state':state,
+                           'run_id':receipt.get('run_id'),
+                           'ambiguous_inputs':recorded is None})
+    return sorted(candidates,key=lambda x:x['request_id'])
+
+
+@contextmanager
+def _dispatch_lock(folder: Path):
+    if folder.is_symlink():raise GitHubActionsError('Dispatch journal root is a symlink')
+    folder.mkdir(mode=0o700,parents=True,exist_ok=True)
+    if folder.is_symlink():raise GitHubActionsError('Dispatch journal root is a symlink')
+    path=folder/'.rm16-dispatch.lock'
+    fd=os.open(path,os.O_CREAT | os.O_RDWR | getattr(os,'O_NOFOLLOW',0),0o600)
+    try:
+        fcntl.flock(fd,fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd,fcntl.LOCK_UN)
+        os.close(fd)
+
+
 def dispatch_workflow(client: GitHubActionsClient, slug: str, workflow_id: str, ref: str,
                        inputs: dict[str,str], *, execute: bool, state_root: Path | None=None,
-                       expected_source_sha: str | None = None) -> dict[str, Any]:
+                       expected_source_sha: str | None = None,
+                       resume_if_existing: bool = False) -> dict[str, Any]:
 
     slug = _slug(slug)
     ref = _ref(ref)
@@ -205,15 +274,42 @@ def dispatch_workflow(client: GitHubActionsClient, slug: str, workflow_id: str, 
                  "repository_push_hint": repo.get("permissions", {}).get("push"),
                  "actions_write_permission": "not-independently-verifiable",
                  "authoritative_check": "GitHub dispatch POST (only with --yes)"}}
+    digest=_inputs_digest(inputs)
+    folder=state_root if state_root is not None else _state_root()
+    def _existing() -> dict[str,Any] | None:
+        matches=_existing_dispatches(folder,summary,digest)
+        if not matches:return None
+        if len(matches)!=1 or matches[0]['ambiguous_inputs']:
+            raise GitHubActionsError('Matching uncertain or legacy dispatch exists; inspect exact receipt, no second POST')
+        receipt=matches[0]
+        return {'phase':'RM-16','dispatched':False,'resume_existing':True,
+                'request_id':receipt['request_id'],'state':receipt['state'],
+                'run_id':receipt['run_id'],'safe_to_redispatch':False,
+                'safe_next_command':('devtool actions resume --request-id '+receipt['request_id']),
+                **summary}
     if not execute:
-        return {"phase":"ACTIONS-02","state":"validated-plan","dispatched":False,**summary}
+        existing=_existing() if resume_if_existing else None
+        return existing or {'phase':'ACTIONS-02','state':'validated-plan','dispatched':False,
+                            'resume_if_existing':resume_if_existing,**summary}
+    if resume_if_existing:
+        # Lock spans journal inspection, POST and durable finalization: two local
+        # processes cannot both dispatch the same reviewed source/input tuple.
+        with _dispatch_lock(folder):
+            existing=_existing()
+            if existing:return existing
+            return _dispatch_checked(client,slug,ref,inputs,summary,folder,digest)
+    return _dispatch_checked(client,slug,ref,inputs,summary,folder,digest)
+
+
+def _dispatch_checked(client:GitHubActionsClient,slug:str,ref:str,inputs:dict[str,str],
+                      summary:Mapping[str,Any],folder:Path,digest:str)->dict[str,Any]:
     identity=uuid.uuid4().hex
-    location=(state_root if state_root is not None else _state_root())/(identity+".json")
+    location=folder/(identity+".json")
     obj={"schema":1,"request_id":identity,"created_at":datetime.now(timezone.utc).isoformat(),
-         "state":"dispatch-outcome-unknown","run_id":None,**summary}
+         "state":"dispatch-outcome-unknown","run_id":None,"inputs_sha256":digest,**summary}
     _durable_record(location,obj)  # Must succeed before sending non-idempotent POST.
     try:
-        result=client.dispatch(slug, str(workflow["id"]), ref, inputs)
+        result=client.dispatch(slug, str(summary["workflow_id"]), ref, inputs)
     except GitHubDispatchOutcomeUnknown:
         # Successful POST with malformed response and transport outages are uncertain.
         raise GitHubActionsError(f"Dispatch outcome uncertain; do not retry blindly (request {identity})") from None

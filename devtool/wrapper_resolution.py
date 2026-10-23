@@ -577,6 +577,16 @@ def resolve_wrapper_argv(
     if command.devtool:
         command_token = command.devtool
         fixed_args: list[str] = []
+        if command.devtool=='actions':
+            spec=command.actions
+            op=str(spec['operation'])
+            fixed_args.append('run' if op=='dispatch' else op)
+            if op in {'plan','dispatch'}:
+                fixed_args.extend([str(spec['workflow_id']),'--ref',str(spec['ref'])])
+                if op=='dispatch':fixed_args.append('--resume-if-existing')
+                elif op=='plan':fixed_args.append('--resume-if-existing')
+                for key,value in sorted(spec.get('inputs',{}).items()):
+                    fixed_args.extend(['--input',str(key)+'='+str(value)])
     else:
         command_token = "invoke"
         fixed_args = [command.workflow]
@@ -589,6 +599,11 @@ def resolve_wrapper_argv(
     elif command.all_targets:
         scope_args.append("--all-targets")
 
+    if command.devtool=='actions' and command.actions['operation'] in {'watch','resume','artifacts'}:
+        import re
+        req=values_by_name.get('request_id')
+        if not isinstance(req,str) or not re.fullmatch(r'[a-f0-9]{32}',req):
+            raise _fail('Actions wrapper requires an exact 32-character dispatch request ID')
     command_argv = [*fixed_args, *scope_args, *command_bindings]
     passthrough_argv = [*passthrough_bindings, *raw_passthrough]
     canonical = [*global_argv, command_token, *command_argv]

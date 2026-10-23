@@ -246,7 +246,9 @@ def emit_manifest(apk: Path, output: Path, env: dict[str, str], *, consumer: dic
 
 
 def unsigned_dispatch(client: GitHubActionsClient, slug: str, root: Path, *, ref: str,
-                      execute: bool = False, consumer_id: str = '') -> dict[str, Any]:
+                      execute: bool = False, consumer_id: str = '',
+                      source_root: Path | None = None,
+                      resume_if_existing: bool = False) -> dict[str, Any]:
     slug = _slug(slug)
     consumer = select_consumer(root, consumer_id=consumer_id, repository=slug)
     if consumer['id'] == 'devtool-hud':
@@ -254,10 +256,16 @@ def unsigned_dispatch(client: GitHubActionsClient, slug: str, root: Path, *, ref
         if relative != consumer['project_dir'] or consumer['module'] not in _gradle_modules(project):
             raise GitHubActionsError('Unsigned lane requires the known Devtool HUD application')
         _gradle_bootstrap(project)
-    sha = _git(root, 'rev-parse', 'HEAD')
-    if not _SHA40.fullmatch(sha) or _git(root, 'status', '--porcelain', '--untracked-files=normal'):
+    source = Path(source_root).resolve() if source_root is not None else Path(root).resolve()
+    if source.is_symlink() or not source.is_dir():
+        raise GitHubActionsError('Unsigned dispatch needs a safe local producer checkout')
+    sha = _git(source, 'rev-parse', 'HEAD')
+    if not _SHA40.fullmatch(sha) or _git(source, 'status', '--porcelain', '--untracked-files=normal'):
         raise GitHubActionsError('Unsigned CI dispatch requires clean committed local source')
-    workflow = dispatch_workflow(client, slug, consumer['workflow'], ref, {}, execute=False)
+    dispatch_opts = ({'expected_source_sha':sha,'resume_if_existing':True}
+                     if resume_if_existing else {})
+    workflow = dispatch_workflow(client, slug, consumer['workflow'], ref, {},
+                                 execute=False, **dispatch_opts)
     if workflow.get('workflow_path') != '.github/workflows/' + consumer['workflow'] or workflow['pre_dispatch_sha'].lower() != sha.lower():
         raise GitHubActionsError('Unsigned CI workflow or remote Git SHA differs from local HEAD')
     report = {'phase': 'ACTIONS-10', 'operation': 'unsigned-build',
@@ -265,7 +273,8 @@ def unsigned_dispatch(client: GitHubActionsClient, slug: str, root: Path, *, ref
               'ref': ref, 'dispatched': False, 'qualified_release': False,
               'workflow_plan': workflow}
     if execute:
-        result = dispatch_workflow(client, slug, consumer['workflow'], ref, {}, execute=True)
+        result = dispatch_workflow(client, slug, consumer['workflow'], ref, {},
+                                   execute=True, **dispatch_opts)
         report['dispatch'] = result
         report['dispatched'] = True
         if result.get('pre_dispatch_sha', '').lower() != sha.lower():

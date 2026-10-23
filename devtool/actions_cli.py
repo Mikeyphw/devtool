@@ -107,6 +107,9 @@ def run_actions_command(args: Any) -> int:
                 payload = {'repository':payload['item']['repository'],'items':[payload['item']]}
             content = screen_lines(payload,compact=True)
             print(content['title']+'\n'+content['rows']+'\n'+content['detail']+'\n'+content['footer'])
+    elif command == 'overview':
+        from .actions_control_center import overview_text
+        print(overview_text(payload, width=int(getattr(args,'width',40))))
     elif command == 'lineage':
         from .actions_lineage import lineage_text
         print(lineage_text(payload, width=60))

@@ -13730,6 +13730,19 @@ def _main_after_parse(
         return auto_chroot_rc
     _print_chroot_indicator_once(args)
 
+    if args.command == "capabilities":
+        from .actions_control_center import capability_inventory
+        try:
+            result=capability_inventory(Path(str(args.repo)))
+        except Exception as exc:
+            from .github_actions import GitHubActionsError
+            if isinstance(exc,(GitHubActionsError,ValueError,OSError)):
+                print(f"Devtool capabilities: {exc}",file=sys.stderr)
+                return 1
+            raise
+        print(json.dumps(result,indent=2,ensure_ascii=False,sort_keys=True))
+        return 0
+
     if args.command == "actions":
         from .actions_cli import run_actions_command
         return run_actions_command(args)

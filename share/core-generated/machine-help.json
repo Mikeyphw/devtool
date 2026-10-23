@@ -5406,6 +5406,18 @@
           "spellings": [
             "--ref"
           ]
+        },
+        {
+          "choices": [],
+          "dest": "resume_if_existing",
+          "help": "Safely reuse an exact unresolved dispatch request; never POST twice",
+          "hidden": false,
+          "id": "cli.option.actions.plan.resume_if_existing",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--resume-if-existing"
+          ]
         }
       ],
       "path": [
@@ -7365,6 +7377,18 @@
           "required": false,
           "spellings": [
             "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "resume_if_existing",
+          "help": "Safely reuse an exact unresolved dispatch request; never POST twice",
+          "hidden": false,
+          "id": "cli.option.actions.run.resume_if_existing",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--resume-if-existing"
           ]
         }
       ],
@@ -38681,9 +38705,781 @@
       ],
       "stability": "stable",
       "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.overview",
+      "options": [
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Explicit GitHub repository",
+          "hidden": false,
+          "id": "cli.option.actions.overview.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "live",
+          "help": "Opt in to credentialed read-only GitHub queries",
+          "hidden": false,
+          "id": "cli.option.actions.overview.live",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--live"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "width",
+          "help": "Terminal width, minimum 40",
+          "hidden": false,
+          "id": "cli.option.actions.overview.width",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--width"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Machine-readable state",
+          "hidden": false,
+          "id": "cli.option.actions.overview.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.overview.help.h",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.overview.help.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "overview"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only Actions overview"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "diagnostics",
+      "id": "cli.command.capabilities",
+      "options": [
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Machine-readable capability report",
+          "hidden": false,
+          "id": "cli.option.capabilities.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.capabilities.help.h",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.capabilities.help.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "capabilities"
+      ],
+      "stability": "experimental",
+      "summary": "Source-aware capability inventory"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.release-batch-plan",
+      "options": [
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-plan.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "auth",
+          "help": "Source-locked Android batch auth; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-plan.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Source-locked Android batch json; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-plan.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "consumers",
+          "help": "Source-locked Android batch consumers; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-plan.consumers",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--consumers"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ref",
+          "help": "Source-locked Android batch ref; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-plan.ref",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ref"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "source_root",
+          "help": "Source-locked Android batch source_root; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-plan.source_root",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--source-root"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.release_batch_plan.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.release_batch_plan.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "release-batch-plan"
+      ],
+      "stability": "experimental",
+      "summary": "Source-bound unsigned Android release batch"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.release-batch-run",
+      "options": [
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-run.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "auth",
+          "help": "Source-locked Android batch auth; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-run.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Source-locked Android batch json; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-run.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "consumers",
+          "help": "Source-locked Android batch consumers; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-run.consumers",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--consumers"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ref",
+          "help": "Source-locked Android batch ref; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-run.ref",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ref"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "source_root",
+          "help": "Source-locked Android batch source_root; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-run.source_root",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--source-root"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Source-locked Android batch yes; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-run.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.release_batch_run.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.release_batch_run.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "release-batch-run"
+      ],
+      "stability": "experimental",
+      "summary": "Source-bound unsigned Android release batch"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.release-batch-check",
+      "options": [
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-check.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "auth",
+          "help": "Source-locked Android batch auth; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-check.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Source-locked Android batch json; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-check.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "consumers",
+          "help": "Source-locked Android batch consumers; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-check.consumers",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--consumers"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Source-locked Android batch run_id; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-check.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_sha",
+          "help": "Source-locked Android batch expected_sha; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-check.expected_sha",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-sha"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "artifact",
+          "help": "Source-locked Android batch artifact; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-check.artifact",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--artifact"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "download",
+          "help": "Source-locked Android batch download; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-check.download",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--download"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.release_batch_check.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.release_batch_check.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "release-batch-check"
+      ],
+      "stability": "experimental",
+      "summary": "Source-bound unsigned Android release batch"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.release-batch-import",
+      "options": [
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-import.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "auth",
+          "help": "Source-locked Android batch auth; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-import.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Source-locked Android batch json; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-import.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "consumers",
+          "help": "Source-locked Android batch consumers; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-import.consumers",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--consumers"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "run_id",
+          "help": "Source-locked Android batch run_id; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-import.run_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--run-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_sha",
+          "help": "Source-locked Android batch expected_sha; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-import.expected_sha",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-sha"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "artifact",
+          "help": "Source-locked Android batch artifact; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-import.artifact",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--artifact"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "download",
+          "help": "Source-locked Android batch download; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-import.download",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--download"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Source-locked Android batch yes; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-import.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.release_batch_import.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.release_batch_import.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "release-batch-import"
+      ],
+      "stability": "experimental",
+      "summary": "Source-bound unsigned Android release batch"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.release-batch-sign",
+      "options": [
+        {
+          "choices": [],
+          "dest": "github_repo",
+          "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-sign.github_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--github-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "auth",
+          "help": "Source-locked Android batch auth; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-sign.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Source-locked Android batch json; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-sign.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "consumers",
+          "help": "Source-locked Android batch consumers; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-sign.consumers",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--consumers"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "registry",
+          "help": "Source-locked Android batch registry; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-sign.registry",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--registry"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Source-locked Android batch yes; no GitHub signing keys",
+          "hidden": false,
+          "id": "cli.option.actions.android.release-batch-sign.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.release_batch_sign.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.release_batch_sign.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "release-batch-sign"
+      ],
+      "stability": "experimental",
+      "summary": "Source-bound unsigned Android release batch"
     }
   ],
-  "digest": "271594051027515e9994ffa2118049ea6b9b3a1cd27735f5997a2f37ec85a505",
+  "digest": "986be2edeb65ba7c5530cad5eb81521cf7e62a60dac4e9bc6cc488e0d9e10173",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -38700,6 +39496,11 @@
       "actions android discover",
       "actions android options-repair",
       "actions android plan",
+      "actions android release-batch-check",
+      "actions android release-batch-import",
+      "actions android release-batch-plan",
+      "actions android release-batch-run",
+      "actions android release-batch-sign",
       "actions android release-import",
       "actions android release-plan",
       "actions android release-run",
@@ -38732,6 +39533,7 @@
       "actions jobs",
       "actions lineage",
       "actions logs",
+      "actions overview",
       "actions pipeline",
       "actions pipeline cancel",
       "actions pipeline plan",
@@ -38846,6 +39648,7 @@
       "campaign rollback",
       "campaign status",
       "campaign supersede",
+      "capabilities",
       "ci",
       "cl",
       "clean",
@@ -39206,11 +40009,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 510,
-    "registry_command_count": 384
+    "parser_command_count": 517,
+    "registry_command_count": 391
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "aeebe73c254ec8514394ca14a6ed406743cdda2103b3356da1721b03617e2ad1",
+  "registry_digest": "bc680cd19cfe950d24500566fb49b696e7b11f48144af3536709c7f3490fd8f1",
   "registry_schema_version": 1,
   "schema_version": 1
 }

@@ -6683,6 +6683,122 @@
       },
       "options": [],
       "stable_id": "cli.command.wrapper.verify"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "overview"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Read-only Actions overview",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.overview"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "capabilities"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "diagnostics",
+        "stability": "experimental",
+        "summary": "Source-aware capability inventory",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.capabilities"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "release-batch-plan"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Source-bound unsigned Android release batch",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.release-batch-plan"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "release-batch-run"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Source-bound unsigned Android release batch",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.release-batch-run"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "release-batch-check"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Source-bound unsigned Android release batch",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.release-batch-check"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "release-batch-import"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Source-bound unsigned Android release batch",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.release-batch-import"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "release-batch-sign"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Source-bound unsigned Android release batch",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.release-batch-sign"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -8703,9 +8819,8 @@
       "value_kind": "_StoreAction"
     },
     {
-      "stable_id": "cli.option.actions.android.release_import.consumer",
-      "canonical": "--consumer",
       "aliases": [],
+      "canonical": "--consumer",
       "config_field_id": null,
       "metadata": {
         "choices": [],
@@ -8722,6 +8837,7 @@
       },
       "scope": "actions android release-import",
       "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_import.consumer",
       "value_kind": "_StoreAction"
     },
     {
@@ -10013,9 +10129,8 @@
       "value_kind": "_StoreAction"
     },
     {
-      "stable_id": "cli.option.actions.android.unsigned_check.consumer",
-      "canonical": "--consumer",
       "aliases": [],
+      "canonical": "--consumer",
       "config_field_id": null,
       "metadata": {
         "choices": [],
@@ -10032,6 +10147,7 @@
       },
       "scope": "actions android unsigned-check",
       "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_check.consumer",
       "value_kind": "_StoreAction"
     },
     {
@@ -10196,9 +10312,8 @@
       "value_kind": "_StoreAction"
     },
     {
-      "stable_id": "cli.option.actions.android.unsigned_import.consumer",
-      "canonical": "--consumer",
       "aliases": [],
+      "canonical": "--consumer",
       "config_field_id": null,
       "metadata": {
         "choices": [],
@@ -10215,6 +10330,7 @@
       },
       "scope": "actions android unsigned-import",
       "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_import.consumer",
       "value_kind": "_StoreAction"
     },
     {
@@ -10379,9 +10495,8 @@
       "value_kind": "_StoreAction"
     },
     {
-      "stable_id": "cli.option.actions.android.unsigned_plan.consumer",
-      "canonical": "--consumer",
       "aliases": [],
+      "canonical": "--consumer",
       "config_field_id": null,
       "metadata": {
         "choices": [],
@@ -10398,6 +10513,7 @@
       },
       "scope": "actions android unsigned-plan",
       "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_plan.consumer",
       "value_kind": "_StoreAction"
     },
     {
@@ -10518,9 +10634,8 @@
       "value_kind": "_StoreAction"
     },
     {
-      "stable_id": "cli.option.actions.android.unsigned_run.consumer",
-      "canonical": "--consumer",
       "aliases": [],
+      "canonical": "--consumer",
       "config_field_id": null,
       "metadata": {
         "choices": [],
@@ -10537,6 +10652,7 @@
       },
       "scope": "actions android unsigned-run",
       "sensitive": false,
+      "stable_id": "cli.option.actions.android.unsigned_run.consumer",
       "value_kind": "_StoreAction"
     },
     {
@@ -64636,6 +64752,1266 @@
       "sensitive": false,
       "stable_id": "cli.option.yes",
       "value_kind": "bool"
+    },
+    {
+      "aliases": [],
+      "canonical": "--resume-if-existing",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "resume_if_existing",
+        "help": "Safely reuse an exact unresolved dispatch request; never POST twice",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.plan.resume_if_existing",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--resume-if-existing",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "resume_if_existing",
+        "help": "Safely reuse an exact unresolved dispatch request; never POST twice",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.run.resume_if_existing",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub repository",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "overview"
+        ],
+        "required": false
+      },
+      "scope": "actions overview",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.overview.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--live",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "live",
+        "help": "Opt in to credentialed read-only GitHub queries",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "overview"
+        ],
+        "required": false
+      },
+      "scope": "actions overview",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.overview.live",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--width",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "width",
+        "help": "Terminal width, minimum 40",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "overview"
+        ],
+        "required": false
+      },
+      "scope": "actions overview",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.overview.width",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Machine-readable state",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "overview"
+        ],
+        "required": false
+      },
+      "scope": "actions overview",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.overview.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Machine-readable capability report",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "capabilities"
+        ],
+        "required": false
+      },
+      "scope": "capabilities",
+      "sensitive": false,
+      "stable_id": "cli.option.capabilities.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "overview"
+        ],
+        "required": false
+      },
+      "scope": "actions overview",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.overview.help.h",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--help",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "overview"
+        ],
+        "required": false
+      },
+      "scope": "actions overview",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.overview.help.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "capabilities"
+        ],
+        "required": false
+      },
+      "scope": "capabilities",
+      "sensitive": false,
+      "stable_id": "cli.option.capabilities.help.h",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--help",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "capabilities"
+        ],
+        "required": false
+      },
+      "scope": "capabilities",
+      "sensitive": false,
+      "stable_id": "cli.option.capabilities.help.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-plan.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "auth",
+        "help": "Source-locked Android batch auth; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-plan.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Source-locked Android batch json; no GitHub signing keys",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-plan.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--consumers",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumers",
+        "help": "Source-locked Android batch consumers; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-plan.consumers",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ref",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ref",
+        "help": "Source-locked Android batch ref; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-plan.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--source-root",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "source_root",
+        "help": "Source-locked Android batch source_root; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-plan.source_root",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-run.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "auth",
+        "help": "Source-locked Android batch auth; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-run.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Source-locked Android batch json; no GitHub signing keys",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-run.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--consumers",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumers",
+        "help": "Source-locked Android batch consumers; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-run.consumers",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ref",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ref",
+        "help": "Source-locked Android batch ref; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-run.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--source-root",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "source_root",
+        "help": "Source-locked Android batch source_root; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-run.source_root",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Source-locked Android batch yes; no GitHub signing keys",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-run.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-check.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "auth",
+        "help": "Source-locked Android batch auth; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-check.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Source-locked Android batch json; no GitHub signing keys",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-check.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--consumers",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumers",
+        "help": "Source-locked Android batch consumers; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-check.consumers",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Source-locked Android batch run_id; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-check.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha",
+        "help": "Source-locked Android batch expected_sha; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-check.expected_sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--artifact",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "artifact",
+        "help": "Source-locked Android batch artifact; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-check.artifact",
+      "value_kind": "_AppendAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--download",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "download",
+        "help": "Source-locked Android batch download; no GitHub signing keys",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-check.download",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-import.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "auth",
+        "help": "Source-locked Android batch auth; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-import.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Source-locked Android batch json; no GitHub signing keys",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-import.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--consumers",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumers",
+        "help": "Source-locked Android batch consumers; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-import.consumers",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Source-locked Android batch run_id; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-import.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha",
+        "help": "Source-locked Android batch expected_sha; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-import.expected_sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--artifact",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "artifact",
+        "help": "Source-locked Android batch artifact; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-import.artifact",
+      "value_kind": "_AppendAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--download",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "download",
+        "help": "Source-locked Android batch download; no GitHub signing keys",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-import.download",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Source-locked Android batch yes; no GitHub signing keys",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-import.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-sign.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "auth",
+        "help": "Source-locked Android batch auth; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-sign.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Source-locked Android batch json; no GitHub signing keys",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-sign.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--consumers",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumers",
+        "help": "Source-locked Android batch consumers; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-sign.consumers",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--registry",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "registry",
+        "help": "Source-locked Android batch registry; no GitHub signing keys",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-sign.registry",
+      "value_kind": "_AppendAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Source-locked Android batch yes; no GitHub signing keys",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release-batch-sign.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_batch_plan.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_batch_run.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_batch_check.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_batch_import.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_batch_sign.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_batch_plan.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_batch_run.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-check",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_batch_check.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_batch_import.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-batch-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-batch-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_batch_sign.help",
+      "value_kind": "_HelpAction"
     }
   ],
   "parser": {
@@ -115200,6 +116576,718 @@
                             "subparsers": null,
                             "usage": null
                           }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "One hosted unsigned build; verified per-variant local LIFE: release-batch-plan",
+                          "help_present": true,
+                          "name": "release-batch-plan",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Source-locked Android batch auth; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Source-locked Android batch json; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumers",
+                                "group": null,
+                                "help": "Source-locked Android batch consumers; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumers"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "ref",
+                                "group": null,
+                                "help": "Source-locked Android batch ref; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--ref"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "source_root",
+                                "group": null,
+                                "help": "Source-locked Android batch source_root; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--source-root"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "One hosted unsigned build; verified per-variant local LIFE: release-batch-run",
+                          "help_present": true,
+                          "name": "release-batch-run",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Source-locked Android batch auth; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Source-locked Android batch json; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumers",
+                                "group": null,
+                                "help": "Source-locked Android batch consumers; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumers"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "ref",
+                                "group": null,
+                                "help": "Source-locked Android batch ref; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--ref"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "source_root",
+                                "group": null,
+                                "help": "Source-locked Android batch source_root; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--source-root"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Source-locked Android batch yes; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "One hosted unsigned build; verified per-variant local LIFE: release-batch-check",
+                          "help_present": true,
+                          "name": "release-batch-check",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Source-locked Android batch auth; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Source-locked Android batch json; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumers",
+                                "group": null,
+                                "help": "Source-locked Android batch consumers; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumers"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "run_id",
+                                "group": null,
+                                "help": "Source-locked Android batch run_id; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--run-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_sha",
+                                "group": null,
+                                "help": "Source-locked Android batch expected_sha; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-sha"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "append",
+                                "choices": null,
+                                "const": null,
+                                "default": [],
+                                "dest": "artifact",
+                                "group": null,
+                                "help": "Source-locked Android batch artifact; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--artifact"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "download",
+                                "group": null,
+                                "help": "Source-locked Android batch download; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--download"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "One hosted unsigned build; verified per-variant local LIFE: release-batch-import",
+                          "help_present": true,
+                          "name": "release-batch-import",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Source-locked Android batch auth; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Source-locked Android batch json; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumers",
+                                "group": null,
+                                "help": "Source-locked Android batch consumers; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumers"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "run_id",
+                                "group": null,
+                                "help": "Source-locked Android batch run_id; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--run-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_sha",
+                                "group": null,
+                                "help": "Source-locked Android batch expected_sha; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-sha"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "append",
+                                "choices": null,
+                                "const": null,
+                                "default": [],
+                                "dest": "artifact",
+                                "group": null,
+                                "help": "Source-locked Android batch artifact; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--artifact"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "download",
+                                "group": null,
+                                "help": "Source-locked Android batch download; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--download"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Source-locked Android batch yes; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "One hosted unsigned build; verified per-variant local LIFE: release-batch-sign",
+                          "help_present": true,
+                          "name": "release-batch-sign",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Source-locked Android batch github_repo; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Source-locked Android batch auth; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Source-locked Android batch json; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumers",
+                                "group": null,
+                                "help": "Source-locked Android batch consumers; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumers"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "append",
+                                "choices": null,
+                                "const": null,
+                                "default": [],
+                                "dest": "registry",
+                                "group": null,
+                                "help": "Source-locked Android batch registry; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--registry"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Source-locked Android batch yes; no GitHub signing keys",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
                         }
                       ],
                       "dest": "android_command",
@@ -118212,6 +120300,23 @@
                         "option_strings": [],
                         "required": true,
                         "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "resume_if_existing",
+                        "group": null,
+                        "help": "Safely reuse an exact unresolved dispatch request; never POST twice",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--resume-if-existing"
+                        ],
+                        "required": false,
+                        "type": null
                       }
                     ],
                     "add_help": true,
@@ -120632,6 +122737,23 @@
                         "option_strings": [],
                         "required": true,
                         "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "resume_if_existing",
+                        "group": null,
+                        "help": "Safely reuse an exact unresolved dispatch request; never POST twice",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--resume-if-existing"
+                        ],
+                        "required": false,
+                        "type": null
                       }
                     ],
                     "add_help": true,
@@ -121412,6 +123534,94 @@
                         "dest": "json",
                         "group": null,
                         "help": "Emit Actions response as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
+                        "type": null
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Read-only Actions control center and safe next step",
+                  "help_present": true,
+                  "name": "overview",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "github_repo",
+                        "group": null,
+                        "help": "Explicit GitHub repository",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--github-repo"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "live",
+                        "group": null,
+                        "help": "Opt in to credentialed read-only GitHub queries",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--live"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": 40,
+                        "dest": "width",
+                        "group": null,
+                        "help": "Terminal width, minimum 40",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--width"
+                        ],
+                        "required": false,
+                        "type": "int"
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Machine-readable state",
                         "metavar": null,
                         "mutex": null,
                         "nargs": 0,
@@ -122593,6 +124803,43 @@
               "metavar": null,
               "required": true
             },
+            "usage": null
+          }
+        },
+        {
+          "aliases": [],
+          "help": "Read-only repo target/workflow/wrapper/Actions capability inventory",
+          "help_present": true,
+          "name": "capabilities",
+          "parser": {
+            "actions": [
+              {
+                "action": "store_true",
+                "choices": null,
+                "const": true,
+                "default": false,
+                "dest": "json",
+                "group": null,
+                "help": "Machine-readable capability report",
+                "metavar": null,
+                "mutex": null,
+                "nargs": 0,
+                "option_strings": [
+                  "--json"
+                ],
+                "required": false,
+                "type": null
+              }
+            ],
+            "add_help": true,
+            "allow_abbrev": true,
+            "defaults": {},
+            "description": null,
+            "epilog": null,
+            "formatter": "HelpFormatter",
+            "groups": [],
+            "mutexes": [],
+            "subparsers": null,
             "usage": null
           }
         }

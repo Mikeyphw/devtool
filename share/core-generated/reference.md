@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `aeebe73c254ec8514394ca14a6ed406743cdda2103b3356da1721b03617e2ad1`
+Registry digest: `bc680cd19cfe950d24500566fb49b696e7b11f48144af3536709c7f3490fd8f1`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -390,6 +390,13 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
+- `actions overview` — Read-only Actions overview
+- `capabilities` — Source-aware capability inventory
+- `actions android release-batch-plan` — Source-bound unsigned Android release batch
+- `actions android release-batch-run` — Source-bound unsigned Android release batch
+- `actions android release-batch-check` — Source-bound unsigned Android release batch
+- `actions android release-batch-import` — Source-bound unsigned Android release batch
+- `actions android release-batch-sign` — Source-bound unsigned Android release batch
 
 ## Configuration documents
 

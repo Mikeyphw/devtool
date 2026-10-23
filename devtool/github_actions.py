@@ -451,8 +451,8 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "release local-evidence", "release local-handoff", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android release-plan", "android release-run", "android release-import", "android release-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect", "extensions metrics", "extensions runners", "extensions publish-plan", "extensions publish", "extensions gitlab-pipelines", "qualification report", "qualification check"],
-        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)", "android release-run (explicit --yes only)", "android release-sign (explicit --yes only)", "android aab-run (explicit --yes only)", "android aab-sign (explicit --yes only)", "ci run (explicit --yes only)"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "release local-evidence", "release local-handoff", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android release-plan", "android release-run", "android release-import", "android release-sign", "android release-batch-plan", "android release-batch-run", "android release-batch-check", "android release-batch-import", "android release-batch-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect", "extensions metrics", "extensions runners", "extensions publish-plan", "extensions publish", "extensions gitlab-pipelines", "qualification report", "qualification check"],
+        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)", "android release-run (explicit --yes only)", "android release-sign (explicit --yes only)", "android release-batch-run/import/sign (explicit --yes only)", "android aab-run (explicit --yes only)", "android aab-sign (explicit --yes only)", "ci run (explicit --yes only)"],
         "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
         "remote_execution": False,
@@ -463,7 +463,11 @@ def actions_baseline() -> dict[str, Any]:
 
 def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None) -> dict[str, Any]:
     action = str(getattr(args, "actions_command", "") or "")
-    if action == "lineage":
+    if action == 'overview':
+        from .actions_control_center import overview
+        return overview(local_root, str(getattr(args,'github_repo','') or ''),
+                        live=bool(getattr(args,'live',False)))
+    if action == 'lineage':
         from .actions_lineage import lineage_snapshot
         repo = resolve_repository(str(getattr(args, "github_repo", "") or ""), local_root)
         if not bool(getattr(args, 'live', False)):
@@ -588,6 +592,26 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
               target=str(getattr(args, 'policy_target', '') or ''),
               execute=bool(getattr(args, 'yes', False)),
               expected_sha256=str(getattr(args, 'expected_sha256', '') or ''))
+    if action == 'android' and str(getattr(args, 'android_command', '') or '') == 'release-batch-sign':
+        # Local batch LIFE authority does not use GitHub auth or its API.
+        from .actions_android_release import release_batch_sign
+        import re
+        ids=str(getattr(args,'consumers','') or '').split(',')
+        if not 2<=len(ids)<=16 or len(set(ids))!=len(ids) or any(
+                re.fullmatch(r'[A-Za-z0-9_.-]{1,100}',x) is None for x in ids):
+            raise GitHubActionsError('Specify 2–16 exact registered batch consumers')
+        receipts={}
+        for raw in getattr(args,'registry',[]) or []:
+            if '=' not in raw:raise GitHubActionsError('Specify --registry CONSUMER=IMMUTABLE_ID')
+            name,value=raw.split('=',1)
+            if name not in ids or name in receipts or not value:
+                raise GitHubActionsError('Batch registry map is duplicate or unregistered')
+            receipts[name]=value
+        if set(receipts)!=set(ids):
+            raise GitHubActionsError('Every batch consumer requires an explicit unsigned registry ID')
+        if not bool(getattr(args,'yes',False)):
+            raise GitHubActionsError('Batch LIFE signing requires explicit --yes')
+        return release_batch_sign(local_root,consumer_ids=ids,registry_ids=receipts,execute=True)
     if action == 'android' and str(getattr(args, 'android_command', '') or '') in ('unsigned-sign','release-sign'):
         # Offline LIFE signing never calls the GitHub API or requests a token.
         if str(getattr(args,'android_command','')) == 'release-sign':
@@ -714,6 +738,51 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
     if action == "android":
         from .actions_android import android_discover, android_plan, android_collect
         sub = str(getattr(args,"android_command","") or "")
+        if sub in ('release-batch-plan','release-batch-run','release-batch-check',
+                   'release-batch-import','release-batch-sign'):
+            from .actions_android_release import (release_batch_build, release_batch_import,
+                                                   release_batch_sign)
+            def ids():
+                import re
+                entries=str(getattr(args,'consumers','') or '').split(',')
+                if (not 2<=len(entries)<=16 or any(not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}',v) for v in entries)
+                        or len(set(entries))!=len(entries)):
+                    raise GitHubActionsError('Batch requires 2–16 unique comma-separated registered consumers')
+                return entries
+            def entries(name):
+                result={}
+                for raw in getattr(args,name,[]) or []:
+                    if '=' not in raw:raise GitHubActionsError('Batch IDs require CONSUMER=IDENTITY')
+                    key,value=raw.split('=',1)
+                    if key in result or key not in ids() or not value:
+                        raise GitHubActionsError('Duplicate or unexpected batch consumer identity')
+                    result[key]=value
+                if set(result)!=set(ids()):
+                    raise GitHubActionsError('Specify exact IDs for all batch consumers')
+                return result
+            if sub in ('release-batch-plan','release-batch-run'):
+                execute=sub.endswith('-run')
+                if execute and not bool(getattr(args,'yes',False)):
+                    raise GitHubActionsError('Batch dispatch requires explicit --yes')
+                source=str(getattr(args,'source_root','') or '')
+                return release_batch_build(client,slug,local_root,consumer_ids=ids(),
+                    ref=str(args.ref),execute=execute,
+                    source_root=Path(source) if source else None)
+            if sub in ('release-batch-check','release-batch-import'):
+                from .actions_runs import run_id
+                from .actions_artifacts import _artifact_id
+                execute=sub.endswith('-import')
+                if execute and not bool(getattr(args,'yes',False)):
+                    raise GitHubActionsError('Batch import requires explicit --yes')
+                pairs={key:_artifact_id(val) for key,val in entries('artifact').items()}
+                return release_batch_import(client,slug,local_root,consumer_ids=ids(),
+                    run_id=run_id(args.run_id),artifact_ids=pairs,
+                    expected_sha=str(args.expected_sha),
+                    download=bool(getattr(args,'download',False)),materialize=execute)
+            if not bool(getattr(args,'yes',False)):
+                raise GitHubActionsError('Batch LIFE signing requires explicit --yes')
+            return release_batch_sign(local_root,consumer_ids=ids(),
+                registry_ids=entries('registry'),execute=True)
         if sub in ('release-plan','release-run'):
             from .actions_android_release import release_build
             execute=sub=='release-run'
@@ -886,7 +955,8 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
         if action == "run" and not bool(getattr(args,"yes",False)):
             raise GitHubActionsError("Explicit --yes required to dispatch a workflow")
         values = _input_values(list(getattr(args,"input",[]) or []),str(getattr(args,"inputs_json","") or ""))
-        payload = dispatch_workflow(client,slug,str(args.workflow_id),str(args.ref),values,execute=action=="run")
+        payload = dispatch_workflow(client,slug,str(args.workflow_id),str(args.ref),values,
+            execute=action=="run",resume_if_existing=bool(getattr(args,"resume_if_existing",False)))
         return {"authentication": authentication, **payload}
     raise GitHubActionsError("Unknown GitHub Actions operation")
 
