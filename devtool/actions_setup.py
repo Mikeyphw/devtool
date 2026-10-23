@@ -106,7 +106,7 @@ def _keystore(path: str, root: Path) -> Path:
     return item
 
 
-def _signing_profile(root: Path, *, identity_id: str = '', target: str = 'android_hud'):
+def _signing_profile(root: Path, *, identity_id: str = '', target: str = 'android_hud', variant: str = 'release'):
     """Select a canonical Devtool Android/LIFE signing identity, never raw key fields.
 
     Target policy wins. An unconfigured target may use a unique pre-existing
@@ -126,7 +126,7 @@ def _signing_profile(root: Path, *, identity_id: str = '', target: str = 'androi
         records = SigningIdentityRegistry().list()
         suitable = [r for r in records if r.lifecycle == 'durable'
                     and (not r.purposes or set(r.purposes) & {'android','android-signing','release-signing'})
-                    and (not r.variants or 'release' in r.variants or '*' in r.variants)]
+                    and (not r.variants or variant in r.variants or 'release' in r.variants or '*' in r.variants)]
         if identity_id:
             matches = [r for r in suitable if str(r.identity_id) == identity_id]
         else:

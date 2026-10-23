@@ -60,21 +60,28 @@ def _artifact(path: str, root: Path, fmt: str) -> Path:
 def local_verify(root: Path, *, artifact: str, fmt: str = 'apk',
                  identity_id: str = '', target: str = 'android_hud',
                  application_id: str = '', minimum_version_code: int = 1,
-                 project_dir: str = 'android/devtool-live-hud', module: str = 'app') -> dict[str, Any]:
+                 project_dir: str = 'android/devtool-live-hud', module: str = 'app',
+                 registered_application_id: str = '', variant: str = 'release') -> dict[str, Any]:
     """Inspect file bytes and registered certificate. No CI/source attestation claims."""
     root = root.resolve()
     if fmt not in ('apk', 'aab') or type(minimum_version_code) is not int or minimum_version_code < 1:
         raise GitHubActionsError('Local package format and minimum version code are invalid')
     if not _MODULE.fullmatch(module):
         raise GitHubActionsError('Local Android module name is invalid')
-    profile = _signing_profile(root, identity_id=identity_id, target=target)
+    profile = _signing_profile(root, identity_id=identity_id, target=target, variant=variant)
     if profile.mode != 'devtool' or not profile.expected_cert_sha256 or not profile.alias:
         raise GitHubActionsError('Local verification requires a registered LIFE release signing identity')
     _keystore(profile.keystore, root)  # validate private identity file without accessing its password
     path = _artifact(artifact, root, fmt)
     from .actions_android import _inspect_apk, _inspect_aab
     details = _inspect_apk(path) if fmt == 'apk' else _inspect_aab(path)
-    expected_app = _application(root, project_dir, module, application_id)
+    if registered_application_id:
+        from .actions_android import _PACKAGE
+        if not _PACKAGE.fullmatch(registered_application_id) or application_id != registered_application_id:
+            raise GitHubActionsError('Registered external Android application ID mismatch')
+        expected_app = registered_application_id
+    else:
+        expected_app = _application(root, project_dir, module, application_id)
     if details['package'] != expected_app:
         raise GitHubActionsError('Local release application ID does not match the selected project')
     if details['signer_sha256'].lower() != profile.expected_cert_sha256.lower():
@@ -192,7 +199,8 @@ def _local_signing_password(profile):
 def local_build(root: Path, *, execute: bool = False, fmt: str = 'apk',
                 identity_id: str = '', target: str = 'android_hud',
                 application_id: str = '', minimum_version_code: int = 1,
-                project_dir: str = 'android/devtool-live-hud', module: str = 'app') -> dict[str, Any]:
+                project_dir: str = 'android/devtool-live-hud', module: str = 'app',
+                 registered_application_id: str = '', variant: str = 'release') -> dict[str, Any]:
     root = root.resolve()
     if fmt not in ('apk', 'aab') or not _MODULE.fullmatch(module):
         raise GitHubActionsError('Unsupported local package format or module')

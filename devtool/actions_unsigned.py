@@ -23,6 +23,7 @@ from .actions_artifacts import download_artifact, verify_download
 from .actions_runs import _normalize_run
 from .artifact_registry import load_registry, register_paths
 from .github_actions import GitHubActionsClient, GitHubActionsError, _slug
+from .actions_android_contracts import select_consumer, check_packaging, contract_sha256, check_native_library_pages
 
 WORKFLOW = 'devtool-android-unsigned-release.yml'
 WORKFLOW_PATH = '.github/workflows/' + WORKFLOW
@@ -166,11 +167,12 @@ def _no_apk_signatures(apk: Path) -> None:
         raise GitHubActionsError('Unsigned APK is not a valid inspectable archive') from None
 
 
-def inspect_unsigned(apk: Path) -> dict[str, Any]:
+def inspect_unsigned(apk: Path, *, expected_application: str = _EXPECTED_APPLICATION) -> dict[str, Any]:
     """Native Android tools establish release identity and lack of signature."""
     apk = Path(apk)
     size = _regular(apk, _MAX_PACKAGE)
     _no_apk_signatures(apk)
+    native_pages = check_native_library_pages(apk)
     try:
         signer = subprocess.run([_tool('apksigner'), 'verify', str(apk)],
                                 capture_output=True, timeout=45, check=False)
@@ -184,8 +186,8 @@ def inspect_unsigned(apk: Path) -> dict[str, Any]:
     except GitHubActionsError:
         raise  # never accept an APK without independent Android badging
     match = _BADGING.search(dump)
-    if not match or match.group(1) != _EXPECTED_APPLICATION:
-        raise GitHubActionsError('Unsigned candidate package identity does not match Devtool HUD')
+    if not match or match.group(1) != expected_application:
+        raise GitHubActionsError('Unsigned candidate package identity does not match registered Android application')
     if re.search(r'^application-debuggable\b', dump, re.M):
         raise GitHubActionsError('Unsigned release candidate must not be debuggable')
     if int(match.group(2)) < 1:
@@ -193,15 +195,35 @@ def inspect_unsigned(apk: Path) -> dict[str, Any]:
     return {'package': match.group(1), 'version_code': int(match.group(2)),
             'version_name': match.group(3), 'debuggable': False, 'signing_state': 'unsigned',
             'sha256': _hash(apk), 'size_bytes': size,
-            'qualified_release': False, 'signature_verified': False}
+            'qualified_release': False, 'signature_verified': False,
+            'native_page_alignment': native_pages}
 
 
-def emit_manifest(apk: Path, output: Path, env: dict[str, str]) -> dict[str, Any]:
+def _inspect_consumer(apk: Path, consumer: dict) -> dict[str, Any]:
+    if consumer['id'] == 'devtool-hud':
+        return inspect_unsigned(apk)
+    return inspect_unsigned(apk, expected_application=consumer['application_id'])
+
+
+def emit_manifest(apk: Path, output: Path, env: dict[str, str], *, consumer: dict | None = None) -> dict[str, Any]:
     """Run on GitHub runner only, never claim attestation/qualification."""
-    details = inspect_unsigned(apk)
+    if consumer is None:
+        try:
+            consumer = select_consumer(Path.cwd(), consumer_id=env.get('DEVTOOL_ANDROID_CONSUMER_ID', ''), repository=env.get('GITHUB_REPOSITORY', ''))
+        except GitHubActionsError:
+            raise GitHubActionsError('GitHub workflow environment has invalid source identity') from None
+    # Caller-supplied consumer objects are never authority: resolve the exact
+    # registered identity from tracked local policy before signing/attesting.
+    consumer_id = consumer.get('id', '') if isinstance(consumer, dict) else ''
+    reviewed = select_consumer(Path.cwd(), consumer_id=consumer_id or env.get('DEVTOOL_ANDROID_CONSUMER_ID', ''), repository=env.get('GITHUB_REPOSITORY', ''))
+    if consumer is not None and contract_sha256(consumer) != contract_sha256(reviewed):
+        raise GitHubActionsError('Unsigned producer supplied unregistered Android consumer contract')
+    consumer = reviewed
+    details = _inspect_consumer(apk, consumer)
+    check_packaging(apk, consumer)
     sha = env.get('GITHUB_SHA', '')
     repo = env.get('GITHUB_REPOSITORY', '')
-    if repo != 'Mikeyphw/devtool' or not _SHA40.fullmatch(sha):
+    if repo.casefold() != consumer['repository'].casefold() or not _SHA40.fullmatch(sha):
         raise GitHubActionsError('GitHub workflow environment has invalid source identity')
     try:
         run = int(env['GITHUB_RUN_ID']); attempt = int(env['GITHUB_RUN_ATTEMPT'])
@@ -212,11 +234,11 @@ def emit_manifest(apk: Path, output: Path, env: dict[str, str]) -> dict[str, Any
     manifest = {'schema_version': 1, 'kind': 'devtool.unsigned-android-apk',
                 'repository': repo, 'head_sha': sha.lower(), 'run_id': run,
                 'run_attempt': attempt, 'ref': env.get('GITHUB_REF', ''),
-                'workflow_path': WORKFLOW_PATH, 'artifact_name': ARTIFACT_NAME,
-                'apk_file': APK_NAME, 'apk_sha256': details['sha256'],
+                'workflow_path': '.github/workflows/' + consumer['workflow'], 'artifact_name': consumer['artifact'],
+                'apk_file': consumer['apk'], 'apk_sha256': details['sha256'],
                 'apk_size_bytes': details['size_bytes'],
                 'application_id': details['package'], 'version_code': details['version_code'],
-                'version_name': details['version_name'], 'variant': 'release',
+                'version_name': details['version_name'], 'variant': consumer['variant'],
                 'format': 'apk', 'debuggable': False, 'signing_state': 'unsigned',
                 'qualified_release': False, 'source_attested': False}
     Path(output).write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n', encoding='utf-8')
@@ -224,26 +246,26 @@ def emit_manifest(apk: Path, output: Path, env: dict[str, str]) -> dict[str, Any
 
 
 def unsigned_dispatch(client: GitHubActionsClient, slug: str, root: Path, *, ref: str,
-                      execute: bool = False) -> dict[str, Any]:
+                      execute: bool = False, consumer_id: str = '') -> dict[str, Any]:
     slug = _slug(slug)
-    if slug.casefold() != 'mikeyphw/devtool':
-        raise GitHubActionsError('Unsigned lane is dedicated to Mikeyphw/devtool')
-    project, relative = _project_root(root, 'android/devtool-live-hud')
-    if relative != 'android/devtool-live-hud' or 'app' not in _gradle_modules(project):
-        raise GitHubActionsError('Unsigned lane requires the known Devtool HUD application')
-    _gradle_bootstrap(project)
+    consumer = select_consumer(root, consumer_id=consumer_id, repository=slug)
+    if consumer['id'] == 'devtool-hud':
+        project, relative = _project_root(root, consumer['project_dir'])
+        if relative != consumer['project_dir'] or consumer['module'] not in _gradle_modules(project):
+            raise GitHubActionsError('Unsigned lane requires the known Devtool HUD application')
+        _gradle_bootstrap(project)
     sha = _git(root, 'rev-parse', 'HEAD')
     if not _SHA40.fullmatch(sha) or _git(root, 'status', '--porcelain', '--untracked-files=normal'):
         raise GitHubActionsError('Unsigned CI dispatch requires clean committed local source')
-    workflow = dispatch_workflow(client, slug, WORKFLOW, ref, {}, execute=False)
-    if workflow.get('workflow_path') != WORKFLOW_PATH or workflow['pre_dispatch_sha'].lower() != sha.lower():
+    workflow = dispatch_workflow(client, slug, consumer['workflow'], ref, {}, execute=False)
+    if workflow.get('workflow_path') != '.github/workflows/' + consumer['workflow'] or workflow['pre_dispatch_sha'].lower() != sha.lower():
         raise GitHubActionsError('Unsigned CI workflow or remote Git SHA differs from local HEAD')
     report = {'phase': 'ACTIONS-10', 'operation': 'unsigned-build',
-              'repository': slug, 'workflow': WORKFLOW, 'source_sha': sha,
+              'repository': slug, 'workflow': consumer['workflow'], 'source_sha': sha, 'consumer_id': consumer['id'], 'variant': consumer['variant'],
               'ref': ref, 'dispatched': False, 'qualified_release': False,
               'workflow_plan': workflow}
     if execute:
-        result = dispatch_workflow(client, slug, WORKFLOW, ref, {}, execute=True)
+        result = dispatch_workflow(client, slug, consumer['workflow'], ref, {}, execute=True)
         report['dispatch'] = result
         report['dispatched'] = True
         if result.get('pre_dispatch_sha', '').lower() != sha.lower():
@@ -252,18 +274,19 @@ def unsigned_dispatch(client: GitHubActionsClient, slug: str, root: Path, *, ref
 
 
 def _manifest(archive: Path, remote: dict[str, Any], artifact: dict[str, Any],
-              *, expected_sha: str) -> tuple[dict[str, Any], bytes]:
+              *, expected_sha: str, consumer: dict | None = None) -> tuple[dict[str, Any], bytes]:
     if not _SHA40.fullmatch(expected_sha):
         raise GitHubActionsError('An exact 40-character expected source SHA is required')
+    consumer = consumer or select_consumer(Path.cwd(), consumer_id='devtool-hud')
     from .actions_artifacts import check_zip
     check_zip(archive)
     with zipfile.ZipFile(archive) as z:
         infos = {x.filename: x for x in z.infolist() if not x.is_dir()}
-        if set(infos) != {MANIFEST_NAME, APK_NAME} or len(z.infolist()) != 2:
+        if set(infos) != {MANIFEST_NAME, consumer['apk']} or len(z.infolist()) != 2:
             raise GitHubActionsError('Unsigned candidate artifact must contain exactly APK and manifest')
         if infos[MANIFEST_NAME].file_size > _MAX_MANIFEST:
             raise GitHubActionsError('Unsigned candidate manifest is too large')
-        if infos[APK_NAME].file_size > _MAX_PACKAGE:
+        if infos[consumer['apk']].file_size > _MAX_PACKAGE:
             raise GitHubActionsError('Unsigned candidate APK exceeds size limit')
         try:
             data = json.loads(z.read(MANIFEST_NAME).decode('utf-8'))
@@ -272,11 +295,11 @@ def _manifest(archive: Path, remote: dict[str, Any], artifact: dict[str, Any],
         if not isinstance(data, dict):
             raise GitHubActionsError('Unsigned candidate manifest must be an object')
         required = {'schema_version': 1, 'kind': 'devtool.unsigned-android-apk',
-                    'repository': 'Mikeyphw/devtool', 'head_sha': expected_sha.lower(),
+                    'repository': consumer['repository'], 'head_sha': expected_sha.lower(),
                     'run_id': remote['id'], 'run_attempt': remote['run_attempt'],
-                    'workflow_path': WORKFLOW_PATH, 'artifact_name': ARTIFACT_NAME,
-                    'apk_file': APK_NAME, 'application_id': _EXPECTED_APPLICATION,
-                    'variant': 'release', 'format': 'apk', 'debuggable': False,
+                    'workflow_path': '.github/workflows/' + consumer['workflow'], 'artifact_name': consumer['artifact'],
+                    'apk_file': consumer['apk'], 'application_id': consumer['application_id'],
+                    'variant': consumer['variant'], 'format': 'apk', 'debuggable': False,
                     'signing_state': 'unsigned', 'qualified_release': False,
                     'source_attested': False}
         for key, expected in required.items():
@@ -287,18 +310,18 @@ def _manifest(archive: Path, remote: dict[str, Any], artifact: dict[str, Any],
                 not isinstance(data.get('version_name'), str) or not data['version_name'] or
                 type(data.get('version_code')) is not int or data['version_code'] < 1 or
                 type(data.get('apk_size_bytes')) is not int or
-                data['apk_size_bytes'] != infos[APK_NAME].file_size or
+                data['apk_size_bytes'] != infos[consumer['apk']].file_size or
                 not isinstance(data.get('apk_sha256'), str) or
                 not _SHA.fullmatch(data['apk_sha256'])):
             raise GitHubActionsError('Unsigned candidate manifest has invalid package identity or checksum')
         branch = remote.get('head_branch')
         if isinstance(branch, str) and branch and data['ref'] not in ('refs/heads/' + branch, 'refs/tags/' + branch):
             raise GitHubActionsError('Unsigned candidate manifest ref differs from remote workflow branch')
-        if remote['head_sha'].lower() != expected_sha.lower() or artifact.get('name') != ARTIFACT_NAME:
+        if remote['head_sha'].lower() != expected_sha.lower() or artifact.get('name') != consumer['artifact']:
             raise GitHubActionsError('Unsigned candidate run source or artifact name differs from expectation')
         # ZIP member contents are hashed before any extraction or mutation.
         sha = hashlib.sha256()
-        with z.open(APK_NAME) as apk:
+        with z.open(consumer['apk']) as apk:
             while chunk := apk.read(1024 * 1024):
                 sha.update(chunk)
         if sha.hexdigest() != data['apk_sha256']:
@@ -308,35 +331,36 @@ def _manifest(archive: Path, remote: dict[str, Any], artifact: dict[str, Any],
 
 def unsigned_import(client: GitHubActionsClient, slug: str, root: Path, *, run_id: int,
                     artifact_id: int, expected_sha: str, download: bool = False,
-                    materialize: bool = True) -> dict[str, Any]:
+                    materialize: bool = True, consumer_id: str = '') -> dict[str, Any]:
     slug = _slug(slug)
-    if slug.casefold() != 'mikeyphw/devtool':
-        raise GitHubActionsError('Unsigned lane is restricted to the expected GitHub repository')
     run = _normalize_run(client.get_run(slug, run_id), slug, run_id)
     if (run['status'], run['conclusion'], run['event']) != ('completed', 'success', 'workflow_dispatch'):
         raise GitHubActionsError('Unsigned import requires successful workflow_dispatch completion')
-    workflow = client.workflow(slug, WORKFLOW)
-    if workflow.get('path') != WORKFLOW_PATH or run['workflow_id'] != workflow.get('id'):
+    from .actions_artifacts import _metadata
+    art = _metadata(client.get_artifact(slug, artifact_id), slug, run, exact_id=artifact_id)
+    consumer = select_consumer(root, consumer_id=consumer_id, repository=slug, artifact=art.get('name', ''))
+    workflow_path = '.github/workflows/' + consumer['workflow']
+    workflow = client.workflow(slug, consumer['workflow'])
+    if workflow.get('path') != workflow_path or run['workflow_id'] != workflow.get('id'):
         raise GitHubActionsError('Unsigned import workflow identity mismatch')
     if type(run.get('run_attempt')) is not int or run['run_attempt'] < 1:
         raise GitHubActionsError('Unsigned import requires a known run attempt')
     if download:
         result = download_artifact(client, slug, run_id, artifact_id, root)
     verified = verify_download(client, slug, run_id, artifact_id, root)
-    from .actions_artifacts import _metadata
-    art = _metadata(client.get_artifact(slug, artifact_id), slug, run, exact_id=artifact_id)
     archive = Path(verified['file'])
-    man, _ = _manifest(archive, run, art, expected_sha=expected_sha)
+    man, _ = _manifest(archive, run, art, expected_sha=expected_sha, consumer=consumer)
     with tempfile.TemporaryDirectory(prefix='devtool-unsigned-inspect-') as temp:
-        candidate = Path(temp) / APK_NAME
-        with zipfile.ZipFile(archive) as z, z.open(APK_NAME) as source, candidate.open('xb') as dest:
+        candidate = Path(temp) / consumer['apk']
+        with zipfile.ZipFile(archive) as z, z.open(consumer['apk']) as source, candidate.open('xb') as dest:
             copied = 0
             while block := source.read(1024 * 1024):
                 copied += len(block)
                 if copied > _MAX_PACKAGE:
                     raise GitHubActionsError('Unsigned package exceeds extraction bound')
                 dest.write(block)
-        details = inspect_unsigned(candidate)
+        details = _inspect_consumer(candidate, consumer)
+        check_packaging(candidate, consumer)
         if any((details['sha256'] != man['apk_sha256'],
                 details['size_bytes'] != man['apk_size_bytes'],
                 details['package'] != man['application_id'],
@@ -346,7 +370,8 @@ def unsigned_import(client: GitHubActionsClient, slug: str, root: Path, *, run_i
         result = {'phase': 'ACTIONS-10', 'operation': 'unsigned-import',
                   'repository': slug, 'run_id': run_id, 'run_attempt': run['run_attempt'],
                   'artifact_id': artifact_id, 'source_sha': expected_sha.lower(),
-                  'package': details, 'archive_verified': True,
+                  'package': details, 'consumer_id': consumer['id'], 'variant': consumer['variant'],
+                  'consumer_contract_sha256': contract_sha256(consumer), 'archive_verified': True,
                   'unsigned_verified': True, 'qualified_release': False,
                   'locally_signed': False}
         if not materialize:
@@ -363,7 +388,10 @@ def unsigned_import(client: GitHubActionsClient, slug: str, root: Path, *, run_i
         metadata = {'producer': 'github-actions', 'state': 'unsigned-release-unqualified',
                     'remote_repository': slug, 'remote_run_id': run_id,
                     'remote_run_attempt': run['run_attempt'], 'remote_workflow_id': run['workflow_id'],
-                    'remote_workflow_path': WORKFLOW_PATH, 'remote_head_sha': expected_sha.lower(),
+                    'remote_workflow_path': workflow_path, 'remote_head_sha': expected_sha.lower(),
+                    'consumer_id': consumer['id'], 'variant': consumer['variant'],
+                    'consumer_contract_sha256': contract_sha256(consumer),
+                    'remote_artifact_name': consumer['artifact'], 'signing_target': consumer['target'],
                     'remote_artifact_id': artifact_id, 'package_sha256': details['sha256'],
                     'package': details['package'], 'version_code': details['version_code'],
                     'signing_state': 'unsigned', 'signature_verified': False,
@@ -386,11 +414,14 @@ def _imported(root: Path, registry_id: str) -> tuple[Path, dict[str, Any]]:
         raise GitHubActionsError('Unsigned candidate registry ID is missing or ambiguous')
     item = items[0]
     meta = item.get('metadata')
+    consumer = select_consumer(root, consumer_id=str(meta.get('consumer_id') or 'devtool-hud') if isinstance(meta,dict) else 'devtool-hud')
+    if isinstance(meta, dict) and meta.get('consumer_id') and (meta.get('variant') != consumer['variant'] or meta.get('remote_artifact_name') != consumer['artifact'] or meta.get('consumer_contract_sha256') != contract_sha256(consumer)):
+        raise GitHubActionsError('Imported Android consumer/variant receipt does not match registration')
     if not isinstance(meta, dict) or any((
             meta.get('producer') != 'github-actions',
             meta.get('state') != 'unsigned-release-unqualified',
-            meta.get('remote_repository', '').casefold() != 'mikeyphw/devtool',
-            meta.get('remote_workflow_path') != WORKFLOW_PATH,
+            meta.get('remote_repository', '').casefold() != consumer['repository'].casefold(),
+            meta.get('remote_workflow_path') != '.github/workflows/' + consumer['workflow'],
             not _SHA40.fullmatch(str(meta.get('remote_head_sha', ''))),
             type(meta.get('remote_run_id')) is not int,
             type(meta.get('remote_run_attempt')) is not int,
@@ -399,7 +430,7 @@ def _imported(root: Path, registry_id: str) -> tuple[Path, dict[str, Any]]:
             meta.get('archive_verified') is not True,
             meta.get('signature_verified') is not False,
             meta.get('qualified_release') is not False,
-            meta.get('package') != _EXPECTED_APPLICATION,
+            meta.get('package') != consumer['application_id'],
             not isinstance(meta.get('package_sha256'), str),
             not _SHA.fullmatch(meta.get('package_sha256', '')))):
         raise GitHubActionsError('Registered unsigned candidate has invalid or insufficient provenance')
@@ -422,12 +453,23 @@ def unsigned_local_sign(root: Path, *, registry_id: str, identity_id: str = '',
     from .actions_local_release import _local_signing_password, local_verify
     root = root.resolve()
     candidate, metadata = _imported(root, registry_id)
-    unsigned = inspect_unsigned(candidate)
+    consumer = select_consumer(root, consumer_id=str(metadata.get('consumer_id') or 'devtool-hud'))
+    if consumer['id'] != 'devtool-hud' and target not in ('android_hud', consumer['target']):
+        raise GitHubActionsError('Selected signing target differs from registered Android consumer')
+    if consumer['id'] != 'devtool-hud':
+        target = consumer['target']
+        if identity_id and identity_id != consumer['signing_identity_id']:
+            raise GitHubActionsError('Requested LIFE identity is not authorized for consumer')
+        identity_id = consumer['signing_identity_id']
+    unsigned = _inspect_consumer(candidate, consumer)
+    check_packaging(candidate, consumer)
     if unsigned['sha256'] != metadata['package_sha256'] or unsigned['version_code'] != metadata['version_code']:
         raise GitHubActionsError('Candidate changed or no longer matches import metadata')
-    profile = _signing_profile(root, identity_id=identity_id, target=target)
+    profile = _signing_profile(root, identity_id=identity_id, target=target, variant=consumer['variant'])
     if profile.mode != 'devtool' or not profile.expected_cert_sha256 or not profile.alias:
         raise GitHubActionsError('Signing requires a registered canonical LIFE release identity')
+    if consumer['signer_sha256'] and profile.expected_cert_sha256.lower() != consumer['signer_sha256']:
+        raise GitHubActionsError('Registered consumer LIFE certificate authorization differs from selected signer')
     _keystore(profile.keystore, root)
     receipt = {'phase': 'ACTIONS-10', 'operation': 'local-sign',
                'mode': 'apply' if execute else 'plan', 'registry_id': registry_id,
@@ -436,6 +478,10 @@ def unsigned_local_sign(root: Path, *, registry_id: str, identity_id: str = '',
                'remote_run_id': metadata['remote_run_id'],
                'remote_run_attempt': metadata['remote_run_attempt'],
                'remote_head_sha': metadata['remote_head_sha'],
+               'consumer_id': consumer['id'], 'variant': consumer['variant'],
+               'consumer_contract_sha256': contract_sha256(consumer),
+               'remote_artifact_id': metadata.get('remote_artifact_id'),
+               'packaging': check_packaging(candidate, consumer),
                'signing_identity_id': profile.identity_id,
                'expected_signer_sha256': profile.expected_cert_sha256.lower(),
                'qualified_release': False, 'locally_signed': False,
@@ -448,7 +494,7 @@ def unsigned_local_sign(root: Path, *, registry_id: str, identity_id: str = '',
         if part.is_symlink():
             raise GitHubActionsError('Signing destination uses a symbolic link')
     storage.mkdir(mode=0o700, parents=True, exist_ok=True)
-    destination = storage / f'run{metadata["remote_run_id"]}-signed-{unsigned["sha256"][:16]}.apk'
+    destination = storage / f'run{metadata["remote_run_id"]}-{consumer["variant"]}-signed-{unsigned["sha256"][:16]}.apk'
     if destination.is_symlink() or destination.exists():
         raise GitHubActionsError('Signed output already exists; refusing overwrite')
     with _local_signing_password(profile):
@@ -461,7 +507,7 @@ def unsigned_local_sign(root: Path, *, registry_id: str, identity_id: str = '',
             try:
                 zipalign = _tool('zipalign')
                 for command, label in (
-                    ([zipalign, '-f', '-p', '4', str(candidate), str(aligned)], 'zipalign'),
+                    ([zipalign, '-P', '16', '-f', '4', str(candidate), str(aligned)], 'zipalign'),
                 ):
                     try:
                         proc = subprocess.run(command, capture_output=True, timeout=90, check=False)
@@ -491,15 +537,20 @@ def unsigned_local_sign(root: Path, *, registry_id: str, identity_id: str = '',
                 if proc.returncode:
                     raise GitHubActionsError('Local apksigner failed; private output withheld')
                 try:
-                    check = subprocess.run([zipalign, '-c', '-p', '4', str(signed)],
+                    check = subprocess.run([zipalign, '-c', '-P', '16', '4', str(signed)],
                                            capture_output=True, timeout=45, check=False)
                 except (OSError, subprocess.TimeoutExpired):
                     raise GitHubActionsError('Local signed APK alignment verification unavailable') from None
                 if check.returncode:
                     raise GitHubActionsError('Local signed APK alignment verification failed')
+                if consumer['required_files'] or consumer['forbidden_files']:
+                    check_packaging(signed, consumer)
+                signed_native_pages = check_native_library_pages(signed)
                 verification = local_verify(root, artifact=str(signed), fmt='apk',
                                             identity_id=profile.identity_id, target=target,
                                             application_id=unsigned['package'],
+                                            registered_application_id=(consumer['application_id'] if consumer['id'] != 'devtool-hud' else ''),
+                                            variant=consumer['variant'],
                                             minimum_version_code=unsigned['version_code'])
                 if verification['artifact_sha256'] != _hash(signed):
                     raise GitHubActionsError('Signed APK checksum changed during verification')
@@ -513,19 +564,26 @@ def unsigned_local_sign(root: Path, *, registry_id: str, identity_id: str = '',
                        'signature_verified': True, 'remote_repository': metadata['remote_repository'],
                        'remote_run_id': metadata['remote_run_id'],
                        'remote_run_attempt': metadata['remote_run_attempt'],
-                       'remote_workflow_path': WORKFLOW_PATH,
+                       'remote_workflow_path': '.github/workflows/' + consumer['workflow'],
+                       'consumer_id': consumer['id'], 'variant': consumer['variant'],
+                       'consumer_contract_sha256': contract_sha256(consumer),
+                       'remote_artifact_id': metadata.get('remote_artifact_id'),
                        'remote_head_sha': metadata['remote_head_sha'],
                        'unsigned_registry_id': registry_id, 'unsigned_sha256': unsigned['sha256'],
                        'signing_identity_id': profile.identity_id,
                        'signer_sha256': profile.expected_cert_sha256.lower(),
                        'package': unsigned['package'], 'version_code': unsigned['version_code'],
-                       'signed_sha256': verification['artifact_sha256']}
+                       'signed_sha256': verification['artifact_sha256'],
+                       'apk_16k_zipalign_verified': True,
+                       'native_page_alignment': signed_native_pages}
     records = register_paths(root, [destination], metadata=metadata_signed)
     if not records:
         raise GitHubActionsError('Locally signed APK produced but canonical registry did not accept it')
     receipt.update({'locally_signed': True, 'signature_verified': True,
                     'signed_package': str(destination),
                     'signed_sha256': verification['artifact_sha256'],
+                    'apk_16k_zipalign_verified': True,
+                    'native_page_alignment': signed_native_pages,
                     'signed_registry_id': records[0]['id'],
                     'verification': verification})
     return receipt

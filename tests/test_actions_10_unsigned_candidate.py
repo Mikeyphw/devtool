@@ -297,7 +297,7 @@ def test_local_life_sign_flow_publishes_without_hard_links_or_release_qualificat
         if 'zipalign' in cmd[0] and '-c' not in cmd:
             Path(cmd[-1]).write_bytes(Path(cmd[-2]).read_bytes())
         if 'apksigner' in cmd[0]:
-            Path(cmd[cmd.index('--out')+1]).write_bytes(b'signed bytes for unit test')
+            Path(cmd[cmd.index('--out')+1]).write_bytes(Path(cmd[-1]).read_bytes())
             assert 'private-pw' not in repr(cmd) and 'private-key-pw' not in repr(cmd)
             assert kwargs['env']['DEVTOOL_ANDROID_SIGNING_STORE_PASSWORD']=='private-pw'
         return SimpleNamespace(returncode=0,stdout=b'',stderr=b'')
@@ -315,7 +315,7 @@ def test_local_life_sign_flow_publishes_without_hard_links_or_release_qualificat
     result=unsigned_local_sign(root,registry_id='receipt',execute=True)
     assert result['locally_signed'] and result['signature_verified']
     assert result['qualified_release'] is False
-    assert Path(result['signed_package']).read_bytes()==b'signed bytes for unit test'
+    assert Path(result['signed_package']).read_bytes()==apk.read_bytes()
     assert registered[0]['unsigned_sha256']==unsigned['sha256']
     assert registered[0]['qualified_release'] is False
     assert registered[0]['remote_head_sha']==SHA

@@ -1456,6 +1456,18 @@
           "spellings": [
             "--run-id"
           ]
+        },
+        {
+          "choices": [],
+          "dest": "consumer",
+          "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+          "hidden": false,
+          "id": "cli.option.actions.android.unsigned_check.consumer",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--consumer"
+          ]
         }
       ],
       "path": [
@@ -1573,6 +1585,18 @@
           "spellings": [
             "--run-id"
           ]
+        },
+        {
+          "choices": [],
+          "dest": "consumer",
+          "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+          "hidden": false,
+          "id": "cli.option.actions.android.unsigned_import.consumer",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--consumer"
+          ]
         }
       ],
       "path": [
@@ -1653,6 +1677,18 @@
           "required": true,
           "spellings": [
             "--ref"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "consumer",
+          "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+          "hidden": false,
+          "id": "cli.option.actions.android.unsigned_plan.consumer",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--consumer"
           ]
         }
       ],
@@ -1746,6 +1782,18 @@
           "required": false,
           "spellings": [
             "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "consumer",
+          "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+          "hidden": false,
+          "id": "cli.option.actions.android.unsigned_run.consumer",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--consumer"
           ]
         }
       ],
@@ -37876,9 +37924,85 @@
       ],
       "stability": "stable",
       "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "actions",
+      "id": "cli.command.actions.android.options_repair",
+      "options": [
+        {
+          "choices": [],
+          "dest": "project_dir",
+          "help": "Gradle project root, repository relative",
+          "hidden": false,
+          "id": "cli.option.actions.android.options_repair.project_dir",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--project-dir"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "policy_target",
+          "help": "Canonical Devtool target owning the protected JVM policy",
+          "hidden": false,
+          "id": "cli.option.actions.android.options_repair.policy_target",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--policy-target"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "expected_sha256",
+          "help": "Exact preview SHA-256, required for apply",
+          "hidden": false,
+          "id": "cli.option.actions.android.options_repair.expected_sha256",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--expected-sha256"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit JSON",
+          "hidden": false,
+          "id": "cli.option.actions.android.options_repair.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.actions.android.options_repair.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "actions",
+        "android",
+        "options-repair"
+      ],
+      "stability": "experimental",
+      "summary": "Review or apply source-bound protected Gradle JVM property repair"
     }
   ],
-  "digest": "8177f01269499c173f19c0e3ef2ebe77c1efc96d5f220734f425ae795b380793",
+  "digest": "0725c24a7b531da49843a2addce0613c7a6ad7b13dbb9ee30bd6688db087b38b",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -37893,6 +38017,7 @@
       "actions android aab-sign",
       "actions android collect",
       "actions android discover",
+      "actions android options-repair",
       "actions android plan",
       "actions android run",
       "actions android unsigned-check",
@@ -38396,11 +38521,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 505,
-    "registry_command_count": 379
+    "parser_command_count": 506,
+    "registry_command_count": 380
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "f6c6e57d2722f372b56ba4ff3f4c51f92078407a8b9b7a0c22c8c79745d35320",
+  "registry_digest": "00498dbb4b51daef553cb720c7dbc331c7cf911b73fc59d771a19ca19d720322",
   "registry_schema_version": 1,
   "schema_version": 1
 }

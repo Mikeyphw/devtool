@@ -6598,6 +6598,23 @@
       },
       "options": [],
       "stable_id": "cli.command.wrapper.verify"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "options-repair"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Review or apply source-bound protected Gradle JVM property repair",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.options_repair"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -63246,6 +63263,206 @@
       "sensitive": false,
       "stable_id": "cli.option.actions.provider-doctor.provider_all_profiles",
       "value_kind": "_StoreTrueAction"
+    },
+    {
+      "stable_id": "cli.option.actions.android.unsigned_plan.consumer",
+      "canonical": "--consumer",
+      "aliases": [],
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-plan",
+      "sensitive": false,
+      "value_kind": "_StoreAction"
+    },
+    {
+      "stable_id": "cli.option.actions.android.unsigned_run.consumer",
+      "canonical": "--consumer",
+      "aliases": [],
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-run",
+      "sensitive": false,
+      "value_kind": "_StoreAction"
+    },
+    {
+      "stable_id": "cli.option.actions.android.unsigned_import.consumer",
+      "canonical": "--consumer",
+      "aliases": [],
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-import",
+      "sensitive": false,
+      "value_kind": "_StoreAction"
+    },
+    {
+      "stable_id": "cli.option.actions.android.unsigned_check.consumer",
+      "canonical": "--consumer",
+      "aliases": [],
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-check",
+      "sensitive": false,
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--project-dir",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "project_dir",
+        "help": "Gradle project root, repository relative",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "options-repair"
+        ],
+        "required": false
+      },
+      "scope": "actions android options-repair",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.options_repair.project_dir",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--policy-target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "policy_target",
+        "help": "Canonical Devtool target owning the protected JVM policy",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "options-repair"
+        ],
+        "required": false
+      },
+      "scope": "actions android options-repair",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.options_repair.policy_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-sha256",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha256",
+        "help": "Exact preview SHA-256, required for apply",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "options-repair"
+        ],
+        "required": false
+      },
+      "scope": "actions android options-repair",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.options_repair.expected_sha256",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "options-repair"
+        ],
+        "required": false
+      },
+      "scope": "actions android options-repair",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.options_repair.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "options-repair"
+        ],
+        "required": false
+      },
+      "scope": "actions android options-repair",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.options_repair.help",
+      "value_kind": "_HelpAction"
     }
   ],
   "parser": {
@@ -111629,6 +111846,23 @@
                                 ],
                                 "required": true,
                                 "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumer",
+                                "group": null,
+                                "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumer"
+                                ],
+                                "required": false,
+                                "type": null
                               }
                             ],
                             "add_help": true,
@@ -111736,6 +111970,23 @@
                                 "nargs": 0,
                                 "option_strings": [
                                   "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumer",
+                                "group": null,
+                                "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumer"
                                 ],
                                 "required": false,
                                 "type": null
@@ -111863,6 +112114,23 @@
                                 "nargs": null,
                                 "option_strings": [
                                   "--expected-sha"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumer",
+                                "group": null,
+                                "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumer"
                                 ],
                                 "required": false,
                                 "type": null
@@ -112007,6 +112275,23 @@
                                 "nargs": 0,
                                 "option_strings": [
                                   "--download"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumer",
+                                "group": null,
+                                "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumer"
                                 ],
                                 "required": false,
                                 "type": null
@@ -112769,6 +113054,94 @@
                                 "nargs": 0,
                                 "option_strings": [
                                   "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Preview/apply exact protected Gradle JVM property migration",
+                          "help_present": true,
+                          "name": "options-repair",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": ".",
+                                "dest": "project_dir",
+                                "group": null,
+                                "help": "Gradle project root, repository relative",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--project-dir"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "policy_target",
+                                "group": null,
+                                "help": "Canonical Devtool target owning the protected JVM policy",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--policy-target"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_sha256",
+                                "group": null,
+                                "help": "Exact preview SHA-256, required for apply",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-sha256"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
                                 ],
                                 "required": false,
                                 "type": null
@@ -117379,7 +117752,7 @@
                         },
                         {
                           "aliases": [],
-                          "help": "Verify offline signed→unsigned registry lineage and LIFE identity without release promotion",
+                          "help": "Verify offline signed\u2192unsigned registry lineage and LIFE identity without release promotion",
                           "help_present": true,
                           "name": "local-evidence",
                           "parser": {

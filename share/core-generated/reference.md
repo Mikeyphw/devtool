@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `f6c6e57d2722f372b56ba4ff3f4c51f92078407a8b9b7a0c22c8c79745d35320`
+Registry digest: `00498dbb4b51daef553cb720c7dbc331c7cf911b73fc59d771a19ca19d720322`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -385,6 +385,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
+- `actions android options-repair` — Review or apply source-bound protected Gradle JVM property repair
 
 ## Configuration documents
 

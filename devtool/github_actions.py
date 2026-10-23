@@ -581,6 +581,13 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
             return local_verify(local_root, artifact=str(getattr(args, 'artifact', '') or ''), **kw)
         except AndroidSigningError:
             raise GitHubActionsError('Local Android signing identity or artifact verification failed') from None
+    if action == 'android' and str(getattr(args, 'android_command', '') or '') == 'options-repair':
+        from .gradle_options_repair import gradle_options_repair
+        return gradle_options_repair(local_root,
+              project_dir=str(getattr(args, 'project_dir', '.') or '.'),
+              target=str(getattr(args, 'policy_target', '') or ''),
+              execute=bool(getattr(args, 'yes', False)),
+              expected_sha256=str(getattr(args, 'expected_sha256', '') or ''))
     if action == 'android' and str(getattr(args, 'android_command', '') or '') == 'unsigned-sign':
         # Offline LIFE signing never calls the GitHub API or requests a token.
         from .actions_unsigned import unsigned_local_sign
@@ -720,7 +727,7 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
             if sub == 'unsigned-run' and not bool(getattr(args, 'yes', False)):
                 raise GitHubActionsError('Explicit --yes is required for unsigned CI dispatch')
             result = unsigned_dispatch(client, slug, local_root, ref=str(getattr(args, 'ref', '') or ''),
-                                       execute=sub == 'unsigned-run')
+                                       execute=sub == 'unsigned-run', consumer_id=str(getattr(args, 'consumer', '') or ''))
             if sub == 'unsigned-run' and observation_callback is not None:
                 # Only the actual correlated dispatch receipt may supply the run
                 # identity. Never infer the latest run on a mutable branch.
@@ -747,7 +754,7 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
                 run_id=run_id(args.run_id), artifact_id=_artifact_id(args.artifact_id),
                 expected_sha=str(args.expected_sha),
                 download=bool(getattr(args, 'download', False)),
-                materialize=sub == 'unsigned-import')
+                materialize=sub == 'unsigned-import', consumer_id=str(getattr(args, 'consumer', '') or ''))
         if sub == "discover":
             return android_discover(local_root,str(getattr(args,"project_dir","") or ""))
         if sub in ("plan", "run"):
