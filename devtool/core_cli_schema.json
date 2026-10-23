@@ -187,6 +187,23 @@
       "canonical_path": [
         "actions",
         "android",
+        "options-repair"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Review or apply source-bound protected Gradle JVM property repair",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.options_repair"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
         "plan"
       ],
       "metadata": {
@@ -198,6 +215,74 @@
       },
       "options": [],
       "stable_id": "cli.command.actions.android.plan"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "release-import"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Unified Android release: import with registered ACTIONS-10 LIFE authority",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.release_import"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "release-plan"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Unified Android release: plan with registered ACTIONS-10 LIFE authority",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.release_plan"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "release-run"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Unified Android release: run with registered ACTIONS-10 LIFE authority",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.release_run"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "actions",
+        "android",
+        "release-sign"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "actions",
+        "stability": "experimental",
+        "summary": "Unified Android release: sign with registered ACTIONS-10 LIFE authority",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.actions.android.release_sign"
     },
     {
       "aliases": [],
@@ -1898,6 +1983,30 @@
     {
       "aliases": [
         [
+          "apply-overlays"
+        ],
+        [
+          "aos"
+        ]
+      ],
+      "canonical_path": [
+        "apply",
+        "overlays"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "compatibility_aliases": true,
+        "domain": "artifact",
+        "stability": "stable",
+        "summary": "",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.apply.bundle"
+    },
+    {
+      "aliases": [
+        [
           "apply-overlay"
         ],
         [
@@ -1921,30 +2030,6 @@
         "cli.option.yes"
       ],
       "stable_id": "cli.command.apply.overlay"
-    },
-    {
-      "aliases": [
-        [
-          "apply-overlays"
-        ],
-        [
-          "aos"
-        ]
-      ],
-      "canonical_path": [
-        "apply",
-        "overlays"
-      ],
-      "metadata": {
-        "authority": "canonical-schema",
-        "compatibility_aliases": true,
-        "domain": "artifact",
-        "stability": "stable",
-        "summary": "",
-        "wrapper_native": false
-      },
-      "options": [],
-      "stable_id": "cli.command.apply.bundle"
     },
     {
       "aliases": [
@@ -6598,23 +6683,6 @@
       },
       "options": [],
       "stable_id": "cli.command.wrapper.verify"
-    },
-    {
-      "aliases": [],
-      "canonical_path": [
-        "actions",
-        "android",
-        "options-repair"
-      ],
-      "metadata": {
-        "authority": "canonical-schema",
-        "domain": "actions",
-        "stability": "experimental",
-        "summary": "Review or apply source-bound protected Gradle JVM property repair",
-        "wrapper_native": false
-      },
-      "options": [],
-      "stable_id": "cli.command.actions.android.options_repair"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -8035,6 +8103,31 @@
     },
     {
       "aliases": [],
+      "canonical": "--discovery-mode",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "static",
+          "gradle"
+        ],
+        "dest": "discovery_mode",
+        "help": "Static read-only model or explicit execution of reviewed Gradle project code",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "discover"
+        ],
+        "required": false
+      },
+      "scope": "actions android discover",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.discover.discovery_mode",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
       "canonical": "--github-repo",
       "config_field_id": null,
       "metadata": {
@@ -8148,6 +8241,118 @@
     },
     {
       "aliases": [],
+      "canonical": "--expected-sha256",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha256",
+        "help": "Exact preview SHA-256, required for apply",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "options-repair"
+        ],
+        "required": false
+      },
+      "scope": "actions android options-repair",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.options_repair.expected_sha256",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "options-repair"
+        ],
+        "required": false
+      },
+      "scope": "actions android options-repair",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.options_repair.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "options-repair"
+        ],
+        "required": false
+      },
+      "scope": "actions android options-repair",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.options_repair.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--policy-target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "policy_target",
+        "help": "Canonical Devtool target owning the protected JVM policy",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "options-repair"
+        ],
+        "required": false
+      },
+      "scope": "actions android options-repair",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.options_repair.policy_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--project-dir",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "project_dir",
+        "help": "Gradle project root, repository relative",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "options-repair"
+        ],
+        "required": false
+      },
+      "scope": "actions android options-repair",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.options_repair.project_dir",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
       "canonical": "--auth",
       "config_field_id": null,
       "metadata": {
@@ -8171,6 +8376,31 @@
       "scope": "actions android plan",
       "sensitive": false,
       "stable_id": "cli.option.actions.android.plan.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--discovery-mode",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "static",
+          "gradle"
+        ],
+        "dest": "discovery_mode",
+        "help": "Static read-only model or explicit execution of reviewed Gradle project code",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.plan.discovery_mode",
       "value_kind": "_StoreAction"
     },
     {
@@ -8425,6 +8655,992 @@
     },
     {
       "aliases": [],
+      "canonical": "--artifact-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "artifact_id",
+        "help": "Exact GitHub artifact ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_import.artifact_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_import.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "stable_id": "cli.option.actions.android.release_import.consumer",
+      "canonical": "--consumer",
+      "aliases": [],
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-import",
+      "sensitive": false,
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--download",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "download",
+        "help": "Download the archive first, instead of verifying an existing archive",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_import.download",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_sha",
+        "help": "Expected GitHub commit SHA (40 hex characters)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_import.expected_sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_import.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_import.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_import.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--run-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "run_id",
+        "help": "Exact GitHub Actions run ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-import",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_import.run_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--consumer",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Registered Android consumer (required to advance through LIFE)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.consumer",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--discovery-mode",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "static",
+          "gradle"
+        ],
+        "dest": "discovery_mode",
+        "help": "Static read-only model or explicit execution of reviewed Gradle project code",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.discovery_mode",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-package",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_package",
+        "help": "Expected package/application ID, if dynamic Gradle sources",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.expected_package",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--format",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "apk",
+          "aab"
+        ],
+        "dest": "format",
+        "help": "Android output format",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.format",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--module",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "module",
+        "help": "Gradle application module, e.g. app",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.module",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--project-dir",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "project_dir",
+        "help": "Gradle project directory; auto-discovered if omitted",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.project_dir",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ref",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ref",
+        "help": "Exact GitHub branch/tag to dispatch",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": true
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--variant",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "variant",
+        "help": "Reviewed Android variant, including registered flavorRelease",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_plan.variant",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--consumer",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Registered Android consumer (required to advance through LIFE)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.consumer",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--discovery-mode",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "static",
+          "gradle"
+        ],
+        "dest": "discovery_mode",
+        "help": "Static read-only model or explicit execution of reviewed Gradle project code",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.discovery_mode",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-package",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_package",
+        "help": "Expected package/application ID, if dynamic Gradle sources",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.expected_package",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--format",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "apk",
+          "aab"
+        ],
+        "dest": "format",
+        "help": "Android output format",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.format",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--module",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "module",
+        "help": "Gradle application module, e.g. app",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.module",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--project-dir",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "project_dir",
+        "help": "Gradle project directory; auto-discovered if omitted",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.project_dir",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--ref",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "ref",
+        "help": "Exact GitHub branch/tag to dispatch",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": true
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.ref",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--variant",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "variant",
+        "help": "Reviewed Android variant, including registered flavorRelease",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.variant",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly authorize remote workflow dispatch",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_run.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "Credentials source: auto, env, gh, or none",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_sign.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--consumer",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Exact imported consumer identity",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_sign.consumer",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--github-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "github_repo",
+        "help": "Explicit GitHub owner/repository slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_sign.github_repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_sign.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit Actions response as JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_sign.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--registry-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "registry_id",
+        "help": "Exact imported unsigned registry ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_sign.registry_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-identity",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_identity",
+        "help": "Canonical registered LIFE signing identity (optional)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_sign.signing_identity",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--signing-target",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "signing_target",
+        "help": "Devtool Android signing target",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "release-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_sign.signing_target",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly authorize remote workflow dispatch",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "android",
+          "release-sign"
+        ],
+        "required": false
+      },
+      "scope": "actions android release-sign",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.release_sign.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
       "canonical": "--auth",
       "config_field_id": null,
       "metadata": {
@@ -8448,6 +9664,31 @@
       "scope": "actions android run",
       "sensitive": false,
       "stable_id": "cli.option.actions.android.run.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--discovery-mode",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "static",
+          "gradle"
+        ],
+        "dest": "discovery_mode",
+        "help": "Static read-only model or explicit execution of reviewed Gradle project code",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions android run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.run.discovery_mode",
       "value_kind": "_StoreAction"
     },
     {
@@ -8772,6 +10013,28 @@
       "value_kind": "_StoreAction"
     },
     {
+      "stable_id": "cli.option.actions.android.unsigned_check.consumer",
+      "canonical": "--consumer",
+      "aliases": [],
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-check"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-check",
+      "sensitive": false,
+      "value_kind": "_StoreAction"
+    },
+    {
       "aliases": [],
       "canonical": "--expected-sha",
       "config_field_id": null,
@@ -8930,6 +10193,28 @@
       "scope": "actions android unsigned-import",
       "sensitive": false,
       "stable_id": "cli.option.actions.android.unsigned_import.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "stable_id": "cli.option.actions.android.unsigned_import.consumer",
+      "canonical": "--consumer",
+      "aliases": [],
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-import"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-import",
+      "sensitive": false,
       "value_kind": "_StoreAction"
     },
     {
@@ -9094,6 +10379,28 @@
       "value_kind": "_StoreAction"
     },
     {
+      "stable_id": "cli.option.actions.android.unsigned_plan.consumer",
+      "canonical": "--consumer",
+      "aliases": [],
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-plan",
+      "sensitive": false,
+      "value_kind": "_StoreAction"
+    },
+    {
       "aliases": [],
       "canonical": "--github-repo",
       "config_field_id": null,
@@ -9208,6 +10515,28 @@
       "scope": "actions android unsigned-run",
       "sensitive": false,
       "stable_id": "cli.option.actions.android.unsigned_run.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "stable_id": "cli.option.actions.android.unsigned_run.consumer",
+      "canonical": "--consumer",
+      "aliases": [],
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "consumer",
+        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "unsigned-run"
+        ],
+        "required": false
+      },
+      "scope": "actions android unsigned-run",
+      "sensitive": false,
       "value_kind": "_StoreAction"
     },
     {
@@ -13767,6 +15096,27 @@
     },
     {
       "aliases": [],
+      "canonical": "--all",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "provider_all_profiles",
+        "help": "Include all reviewed hosted/local profiles and installed toolchain status",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "provider-doctor"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-doctor",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-doctor.provider_all_profiles",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
       "canonical": "--target",
       "config_field_id": null,
       "metadata": {
@@ -13874,12 +15224,12 @@
     },
     {
       "aliases": [],
-      "canonical": "--verify",
+      "canonical": "--cache-locks",
       "config_field_id": null,
       "metadata": {
         "choices": [],
-        "dest": "verify",
-        "help": "Verify already generated adoption files",
+        "dest": "provider_cache_locks",
+        "help": "Opt in to pinned cache of trusted Go compiler outputs only; multi-job only",
         "hidden": false,
         "nargs": 0,
         "path": [
@@ -13890,19 +15240,19 @@
       },
       "scope": "actions provider-export",
       "sensitive": false,
-      "stable_id": "cli.option.actions.provider-export.verify",
+      "stable_id": "cli.option.actions.provider-export.provider_cache_locks",
       "value_kind": "_StoreTrueAction"
     },
     {
       "aliases": [],
-      "canonical": "--yes",
+      "canonical": "--host-profiles",
       "config_field_id": null,
       "metadata": {
         "choices": [],
-        "dest": "yes",
-        "help": "Write new reviewed hosted workflow (no commit/dispatch)",
+        "dest": "provider_host_profiles",
+        "help": "Comma-separated reviewed hosted profile IDs (bounded fanout; multi-job only)",
         "hidden": false,
-        "nargs": 0,
+        "nargs": null,
         "path": [
           "actions",
           "provider-export"
@@ -13911,8 +15261,8 @@
       },
       "scope": "actions provider-export",
       "sensitive": false,
-      "stable_id": "cli.option.actions.provider-export.yes",
-      "value_kind": "_StoreTrueAction"
+      "stable_id": "cli.option.actions.provider-export.provider_host_profiles",
+      "value_kind": "_StoreAction"
     },
     {
       "aliases": [],
@@ -13957,6 +15307,48 @@
       "scope": "actions provider-export",
       "sensitive": false,
       "stable_id": "cli.option.actions.provider-export.provider_review_plan",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--verify",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "verify",
+        "help": "Verify already generated adoption files",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "provider-export"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-export",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-export.verify",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Write new reviewed hosted workflow (no commit/dispatch)",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "provider-export"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-export",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-export.yes",
       "value_kind": "_StoreTrueAction"
     },
     {
@@ -31753,6 +33145,27 @@
     },
     {
       "aliases": [],
+      "canonical": "--receipt",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "receipt",
+        "help": "ArtifactReceiptV2 file (instead of registry selector)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "artifacts",
+          "verify"
+        ],
+        "required": false
+      },
+      "scope": "artifacts.verify",
+      "sensitive": false,
+      "stable_id": "cli.option.artifacts.verify.receipt",
+      "value_kind": "store"
+    },
+    {
+      "aliases": [],
       "canonical": "--repository",
       "config_field_id": null,
       "metadata": {
@@ -31791,27 +33204,6 @@
       "scope": "artifacts.verify",
       "sensitive": false,
       "stable_id": "cli.option.artifacts.verify.run_id",
-      "value_kind": "store"
-    },
-    {
-      "aliases": [],
-      "canonical": "--receipt",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "receipt",
-        "help": "ArtifactReceiptV2 file (instead of registry selector)",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "artifacts",
-          "verify"
-        ],
-        "required": false
-      },
-      "scope": "artifacts.verify",
-      "sensitive": false,
-      "stable_id": "cli.option.artifacts.verify.receipt",
       "value_kind": "store"
     },
     {
@@ -37152,6 +38544,29 @@
       "value_kind": "store"
     },
     {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "evidence",
+          "merge-tests"
+        ],
+        "required": false
+      },
+      "scope": "evidence.merge-tests",
+      "sensitive": false,
+      "stable_id": "cli.option.evidence.merge-tests.help",
+      "value_kind": "_HelpAction"
+    },
+    {
       "aliases": [],
       "canonical": "--json",
       "config_field_id": null,
@@ -37213,29 +38628,6 @@
       "sensitive": false,
       "stable_id": "cli.option.evidence.merge-tests.run_id",
       "value_kind": "store"
-    },
-    {
-      "aliases": [
-        "--help"
-      ],
-      "canonical": "-h",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "help",
-        "help": "show this help message and exit",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "evidence",
-          "merge-tests"
-        ],
-        "required": false
-      },
-      "scope": "evidence.merge-tests",
-      "sensitive": false,
-      "stable_id": "cli.option.evidence.merge-tests.help",
-      "value_kind": "_HelpAction"
     },
     {
       "aliases": [],
@@ -63244,269 +64636,6 @@
       "sensitive": false,
       "stable_id": "cli.option.yes",
       "value_kind": "bool"
-    },
-    {
-      "aliases": [],
-      "canonical": "--host-profiles",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "provider_host_profiles",
-        "help": "Comma-separated reviewed hosted profile IDs (bounded fanout; multi-job only)",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "provider-export"
-        ],
-        "required": false
-      },
-      "scope": "actions provider-export",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.provider-export.provider_host_profiles",
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--cache-locks",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "provider_cache_locks",
-        "help": "Opt in to pinned cache of trusted Go compiler outputs only; multi-job only",
-        "hidden": false,
-        "nargs": 0,
-        "path": [
-          "actions",
-          "provider-export"
-        ],
-        "required": false
-      },
-      "scope": "actions provider-export",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.provider-export.provider_cache_locks",
-      "value_kind": "_StoreTrueAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--all",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "provider_all_profiles",
-        "help": "Include all reviewed hosted/local profiles and installed toolchain status",
-        "hidden": false,
-        "nargs": 0,
-        "path": [
-          "actions",
-          "provider-doctor"
-        ],
-        "required": false
-      },
-      "scope": "actions provider-doctor",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.provider-doctor.provider_all_profiles",
-      "value_kind": "_StoreTrueAction"
-    },
-    {
-      "stable_id": "cli.option.actions.android.unsigned_plan.consumer",
-      "canonical": "--consumer",
-      "aliases": [],
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "consumer",
-        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "android",
-          "unsigned-plan"
-        ],
-        "required": false
-      },
-      "scope": "actions android unsigned-plan",
-      "sensitive": false,
-      "value_kind": "_StoreAction"
-    },
-    {
-      "stable_id": "cli.option.actions.android.unsigned_run.consumer",
-      "canonical": "--consumer",
-      "aliases": [],
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "consumer",
-        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "android",
-          "unsigned-run"
-        ],
-        "required": false
-      },
-      "scope": "actions android unsigned-run",
-      "sensitive": false,
-      "value_kind": "_StoreAction"
-    },
-    {
-      "stable_id": "cli.option.actions.android.unsigned_import.consumer",
-      "canonical": "--consumer",
-      "aliases": [],
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "consumer",
-        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "android",
-          "unsigned-import"
-        ],
-        "required": false
-      },
-      "scope": "actions android unsigned-import",
-      "sensitive": false,
-      "value_kind": "_StoreAction"
-    },
-    {
-      "stable_id": "cli.option.actions.android.unsigned_check.consumer",
-      "canonical": "--consumer",
-      "aliases": [],
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "consumer",
-        "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "android",
-          "unsigned-check"
-        ],
-        "required": false
-      },
-      "scope": "actions android unsigned-check",
-      "sensitive": false,
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--project-dir",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "project_dir",
-        "help": "Gradle project root, repository relative",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "android",
-          "options-repair"
-        ],
-        "required": false
-      },
-      "scope": "actions android options-repair",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.android.options_repair.project_dir",
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--policy-target",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "policy_target",
-        "help": "Canonical Devtool target owning the protected JVM policy",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "android",
-          "options-repair"
-        ],
-        "required": false
-      },
-      "scope": "actions android options-repair",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.android.options_repair.policy_target",
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--expected-sha256",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "expected_sha256",
-        "help": "Exact preview SHA-256, required for apply",
-        "hidden": false,
-        "nargs": null,
-        "path": [
-          "actions",
-          "android",
-          "options-repair"
-        ],
-        "required": false
-      },
-      "scope": "actions android options-repair",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.android.options_repair.expected_sha256",
-      "value_kind": "_StoreAction"
-    },
-    {
-      "aliases": [],
-      "canonical": "--json",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "json",
-        "help": "Emit JSON",
-        "hidden": false,
-        "nargs": 0,
-        "path": [
-          "actions",
-          "android",
-          "options-repair"
-        ],
-        "required": false
-      },
-      "scope": "actions android options-repair",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.android.options_repair.json",
-      "value_kind": "_StoreTrueAction"
-    },
-    {
-      "aliases": [
-        "--help"
-      ],
-      "canonical": "-h",
-      "config_field_id": null,
-      "metadata": {
-        "choices": [],
-        "dest": "help",
-        "help": "show this help message and exit",
-        "hidden": false,
-        "nargs": 0,
-        "path": [
-          "actions",
-          "android",
-          "options-repair"
-        ],
-        "required": false
-      },
-      "scope": "actions android options-repair",
-      "sensitive": false,
-      "stable_id": "cli.option.actions.android.options_repair.help",
-      "value_kind": "_HelpAction"
     }
   ],
   "parser": {
@@ -110783,6 +111912,26 @@
                                 ],
                                 "required": false,
                                 "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "static",
+                                  "gradle"
+                                ],
+                                "const": null,
+                                "default": "static",
+                                "dest": "discovery_mode",
+                                "group": null,
+                                "help": "Static read-only model or explicit execution of reviewed Gradle project code",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--discovery-mode"
+                                ],
+                                "required": false,
+                                "type": null
                               }
                             ],
                             "add_help": true,
@@ -110998,6 +112147,26 @@
                                 "nargs": null,
                                 "option_strings": [
                                   "--expected-package"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "static",
+                                  "gradle"
+                                ],
+                                "const": null,
+                                "default": "static",
+                                "dest": "discovery_mode",
+                                "group": null,
+                                "help": "Static read-only model or explicit execution of reviewed Gradle project code",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--discovery-mode"
                                 ],
                                 "required": false,
                                 "type": null
@@ -111233,6 +112402,26 @@
                                 "nargs": 0,
                                 "option_strings": [
                                   "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "static",
+                                  "gradle"
+                                ],
+                                "const": null,
+                                "default": "static",
+                                "dest": "discovery_mode",
+                                "group": null,
+                                "help": "Static read-only model or explicit execution of reviewed Gradle project code",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--discovery-mode"
                                 ],
                                 "required": false,
                                 "type": null
@@ -113220,6 +114409,781 @@
                                 "nargs": 0,
                                 "option_strings": [
                                   "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Validate source parity and Android workflow inputs without dispatch",
+                          "help_present": true,
+                          "name": "release-plan",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "project_dir",
+                                "group": null,
+                                "help": "Gradle project directory; auto-discovered if omitted",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--project-dir"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "app",
+                                "dest": "module",
+                                "group": null,
+                                "help": "Gradle application module, e.g. app",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--module"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "release",
+                                "dest": "variant",
+                                "group": null,
+                                "help": "Reviewed Android variant, including registered flavorRelease",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--variant"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "apk",
+                                  "aab"
+                                ],
+                                "const": null,
+                                "default": "apk",
+                                "dest": "format",
+                                "group": null,
+                                "help": "Android output format",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--format"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "ref",
+                                "group": null,
+                                "help": "Exact GitHub branch/tag to dispatch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--ref"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_package",
+                                "group": null,
+                                "help": "Expected package/application ID, if dynamic Gradle sources",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-package"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "static",
+                                  "gradle"
+                                ],
+                                "const": null,
+                                "default": "static",
+                                "dest": "discovery_mode",
+                                "group": null,
+                                "help": "Static read-only model or explicit execution of reviewed Gradle project code",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--discovery-mode"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumer",
+                                "group": null,
+                                "help": "Registered Android consumer (required to advance through LIFE)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumer"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Dispatch an Android build only with explicit --yes",
+                          "help_present": true,
+                          "name": "release-run",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "project_dir",
+                                "group": null,
+                                "help": "Gradle project directory; auto-discovered if omitted",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--project-dir"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "app",
+                                "dest": "module",
+                                "group": null,
+                                "help": "Gradle application module, e.g. app",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--module"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "release",
+                                "dest": "variant",
+                                "group": null,
+                                "help": "Reviewed Android variant, including registered flavorRelease",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--variant"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "apk",
+                                  "aab"
+                                ],
+                                "const": null,
+                                "default": "apk",
+                                "dest": "format",
+                                "group": null,
+                                "help": "Android output format",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--format"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "ref",
+                                "group": null,
+                                "help": "Exact GitHub branch/tag to dispatch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--ref"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_package",
+                                "group": null,
+                                "help": "Expected package/application ID, if dynamic Gradle sources",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-package"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Explicitly authorize remote workflow dispatch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "static",
+                                  "gradle"
+                                ],
+                                "const": null,
+                                "default": "static",
+                                "dest": "discovery_mode",
+                                "group": null,
+                                "help": "Static read-only model or explicit execution of reviewed Gradle project code",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--discovery-mode"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumer",
+                                "group": null,
+                                "help": "Registered Android consumer (required to advance through LIFE)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumer"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Download, validate and register unsigned GitHub APK",
+                          "help_present": true,
+                          "name": "release-import",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "run_id",
+                                "group": null,
+                                "help": "Exact GitHub Actions run ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--run-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "artifact_id",
+                                "group": null,
+                                "help": "Exact GitHub artifact ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--artifact-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "expected_sha",
+                                "group": null,
+                                "help": "Expected GitHub commit SHA (40 hex characters)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-sha"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "download",
+                                "group": null,
+                                "help": "Download the archive first, instead of verifying an existing archive",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--download"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumer",
+                                "group": null,
+                                "help": "Exact registered Android consumer ID (required if repository has multiple variants)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumer"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Locally align, LIFE-sign and verify imported candidate (requires --yes)",
+                          "help_present": true,
+                          "name": "release-sign",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "github_repo",
+                                "group": null,
+                                "help": "Explicit GitHub owner/repository slug",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--github-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "Credentials source: auto, env, gh, or none",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit Actions response as JSON",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "registry_id",
+                                "group": null,
+                                "help": "Exact imported unsigned registry ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--registry-id"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "signing_identity",
+                                "group": null,
+                                "help": "Canonical registered LIFE signing identity (optional)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-identity"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "android_hud",
+                                "dest": "signing_target",
+                                "group": null,
+                                "help": "Devtool Android signing target",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-target"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Explicitly authorize remote workflow dispatch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "consumer",
+                                "group": null,
+                                "help": "Exact imported consumer identity",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--consumer"
                                 ],
                                 "required": false,
                                 "type": null

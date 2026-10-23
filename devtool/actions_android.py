@@ -75,16 +75,21 @@ def _project_root(root: Path, project_dir: str = "") -> tuple[Path, str]:
     return project, project.relative_to(base).as_posix() if project != base else "."
 
 
-def _gradle_modules(root: Path) -> dict[str, dict[str, Any]]:
-    from .actions_android_model import discover_modules
-    return discover_modules(root)
+def _gradle_modules(root: Path, *, discovery_mode: str = 'static', repository: Path | None = None) -> dict[str, dict[str, Any]]:
+    if discovery_mode == 'static':
+        from .actions_android_model import discover_modules
+        return discover_modules(root)
+    if discovery_mode == 'gradle':
+        from .actions_android_runtime import discover_runtime
+        return discover_runtime(root, repository=repository or root)
+    raise GitHubActionsError('Android discovery mode must be static or explicitly reviewed gradle')
 
 
-def android_discover(root: Path, project_dir: str = "") -> dict[str, Any]:
+def android_discover(root: Path, project_dir: str = "", *, discovery_mode: str = "static") -> dict[str, Any]:
     project, project_relative = _project_root(root, project_dir)
     return {"phase": "ACTIONS-05", "repo_root": str(root.resolve()),
-            "project_dir":project_relative, "modules": list(_gradle_modules(project).values()),
-            "note": "Static Gradle inspection only; dynamic Gradle variants/IDs need runtime verification"}
+            "project_dir":project_relative, "modules": list(_gradle_modules(project, discovery_mode=discovery_mode, repository=root).values()),
+            "discovery_mode":discovery_mode,"note": "Gradle runtime executes explicitly reviewed repository code, never a sandbox" if discovery_mode=="gradle" else "Static Gradle inspection only; use explicit runtime discovery for evaluated convention plugins"}
 
 
 def _gradle_bootstrap(project: Path) -> dict[str, str]:
@@ -165,7 +170,7 @@ def _reviewed_variant_override(root: Path, module: str, variant: str) -> dict[st
         raise GitHubActionsError('Explicit ACTIONS-05 variant override requires build_type, flavor and module')
     profile = resolve_android_variant(ProjectConfig(repo_root=root,kind='android',variant=variant,
                               runner_options={'android':android}), variant)
-    if (profile.module != module or profile.build_type not in ('debug','release') or
+    if (profile.module != module or not re.fullmatch(r'[a-z][A-Za-z0-9]{0,40}',profile.build_type) or
         not re.fullmatch(r'[a-z][A-Za-z0-9]{0,40}',profile.flavor) or
         variant != profile.flavor + profile.build_type.title()):
         raise GitHubActionsError('Reviewed variant override mismatches module, flavor or build type')
@@ -175,7 +180,7 @@ def _reviewed_variant_override(root: Path, module: str, variant: str) -> dict[st
 def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: str,
                  variant: str, fmt: str, ref: str, workflow: str = _WORKFLOW,
                  execute: bool = False, expected_package: str = "", project_dir: str = "",
-                 signing_mode: str = "local") -> dict[str, Any]:
+                 signing_mode: str = "local", discovery_mode: str = "static") -> dict[str, Any]:
     slug = _slug(slug)
     if not _MODULE.fullmatch(module) or not re.fullmatch(r"[a-z][A-Za-z0-9]{0,60}", variant) or fmt not in ("apk", "aab"):
         raise GitHubActionsError("Android module, variant, or output format is invalid")
@@ -184,7 +189,7 @@ def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: 
     if signing_mode not in ('local','github'):
         raise GitHubActionsError('Android signing mode must be local or github')
     project, project_relative = _project_root(root, project_dir)
-    modules = _gradle_modules(project)
+    modules = _gradle_modules(project, discovery_mode=discovery_mode, repository=root)
     if module not in modules:
         raise GitHubActionsError("Requested Android application module is not statically discoverable")
     declared = modules[module].get('variants', {'debug': {}, 'release': {}})
@@ -196,9 +201,9 @@ def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: 
             raise GitHubActionsError('Unknown or unreviewed Android variant; register its model/profile')
         source = 'reviewed-profile'
     if workflow == _WORKFLOW and (variant not in ('debug', 'release') or
-                                   (spec['build_type'] == 'release' and signing_mode == 'local')):
+                                   (spec['build_type'] != 'debug' and signing_mode == 'local')):
         workflow = 'devtool-android-variants.yml'
-    if (spec['build_type'] == 'release' and signing_mode == 'local' and
+    if (spec['build_type'] != 'debug' and signing_mode == 'local' and
         workflow != 'devtool-android-variants.yml'):
         raise GitHubActionsError('Local signing requires unsigned-capable reviewed Android workflow')
     gradle_bootstrap = _gradle_bootstrap(project)
@@ -212,14 +217,16 @@ def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: 
     inputs = {"module":module, "variant":variant, "format":fmt, "project_dir":project_relative}
     if workflow == 'devtool-android-variants.yml':
         inputs['signing_mode'] = signing_mode
+        if spec['build_type'] not in ('debug','release'):
+            inputs['build_type'] = spec['build_type']
     remote_plan = dispatch_workflow(client, slug, workflow, ref, inputs, execute=False)
     if remote_plan.get("pre_dispatch_sha", "").lower() != local_sha:
         raise GitHubActionsError("Local HEAD differs from GitHub selected ref; push the commit or select the correct ref")
     package = expected_package or modules[module]["application_id"]
     result = {"phase":"ACTIONS-05", "repository":slug, "module":module,
               "variant":variant, "build_type":spec["build_type"], "flavor":spec["flavor"],
-              "variant_source":source, "signing_mode":signing_mode,
-              "signing_state":("unsigned-candidate" if spec["build_type"]=="release" and signing_mode=="local" else "hosted-signing-requested" if spec["build_type"]=="release" else "debug"), "format":fmt,"project_dir":project_relative,"gradle_bootstrap":gradle_bootstrap,"expected_package":package,
+              "variant_source":source if discovery_mode=="static" else "reviewed-gradle-execution", "discovery_mode":discovery_mode, "signing_mode":signing_mode,
+              "signing_state":("unsigned-candidate" if spec["build_type"]!="debug" and signing_mode=="local" else "hosted-signing-requested" if spec["build_type"]!="debug" else "debug"), "format":fmt,"project_dir":project_relative,"gradle_bootstrap":gradle_bootstrap,"expected_package":package,
               "expected_package_source": "explicit" if expected_package else ("static-gradle" if package else "unresolved"),
               "local_head_sha": local_sha, "workflow":workflow,"ref":ref,
               "workflow_plan":remote_plan, "dispatched":False, "qualified_release":False}
@@ -524,6 +531,14 @@ def inspect_android_zip(archive: Path, *, fmt: str, variant: str, expected_packa
                 raise GitHubActionsError('Missing custom Android variant member hash')
             if hashlib.sha256(z.read(info)).hexdigest() != identity['sha256']:
                 raise GitHubActionsError('Custom Android variant artifact bytes differ from identity manifest')
+            if not variant.lower().endswith('release'):
+                declared_build_type=identity.get('build_type')
+                if not isinstance(declared_build_type,str) or not re.fullmatch(r'[a-z][A-Za-z0-9]{0,40}',declared_build_type) or not (variant==declared_build_type or variant.endswith(declared_build_type.title())):
+                    raise GitHubActionsError('Custom Android variant requires an exact reviewed build-type manifest')
+                if declared_build_type != 'debug' and not expected_cert:
+                    raise GitHubActionsError('Non-debug Android output requires stable expected signing certificate')
+                if declared_build_type != 'debug' and not expected_package:
+                    raise GitHubActionsError('Non-debug Android output requires expected application identity')
         if info.file_size <= 0 or info.file_size > _MAX_PACKAGE:
             raise GitHubActionsError("Android package size is invalid or exceeds 256 MiB")
         with tempfile.TemporaryDirectory(prefix="devtool-android-inspect-") as folder:

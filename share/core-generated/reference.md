@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `1b36c1aacc73092b62bf236a5a0e105bf82fcc264e543c7079f41d6e49ee925d`
+Registry digest: `aeebe73c254ec8514394ca14a6ed406743cdda2103b3356da1721b03617e2ad1`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -17,7 +17,12 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions android aab-sign` — Locally sign imported AAB using LIFE (requires --yes)
 - `actions android collect` — Fetch or verify and inspect an APK/AAB, registering output as unqualified
 - `actions android discover` — Discover statically declared Android app modules
+- `actions android options-repair` — Review or apply source-bound protected Gradle JVM property repair
 - `actions android plan` — Validate source parity and Android workflow inputs without dispatch
+- `actions android release-import` — Unified Android release: import with registered ACTIONS-10 LIFE authority
+- `actions android release-plan` — Unified Android release: plan with registered ACTIONS-10 LIFE authority
+- `actions android release-run` — Unified Android release: run with registered ACTIONS-10 LIFE authority
+- `actions android release-sign` — Unified Android release: sign with registered ACTIONS-10 LIFE authority
 - `actions android run` — Dispatch an Android build only with explicit --yes
 - `actions android unsigned-check` — Verify exact GitHub unsigned archive and APK (read-only)
 - `actions android unsigned-import` — Download, validate and register unsigned GitHub APK
@@ -121,8 +126,8 @@ This file is generated from the CORE command/config registry and the canonical C
 - `android uninstall`
 - `android-hud-bridge`
 - `apply`
-- `apply overlay`
 - `apply overlays`
+- `apply overlay`
 - `apply snapshot`
 - `artifact`
 - `artifact inspect`
@@ -385,7 +390,6 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
-- `actions android options-repair` — Review or apply source-bound protected Gradle JVM property repair
 
 ## Configuration documents
 

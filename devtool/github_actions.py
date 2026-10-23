@@ -451,8 +451,8 @@ def actions_baseline() -> dict[str, Any]:
         "provider": "github-actions",
         "api_origin": API_ORIGIN,
         "api_version": API_VERSION,
-        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "release local-evidence", "release local-handoff", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect", "extensions metrics", "extensions runners", "extensions publish-plan", "extensions publish", "extensions gitlab-pipelines", "qualification report", "qualification check"],
-        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)", "android aab-run (explicit --yes only)", "android aab-sign (explicit --yes only)", "ci run (explicit --yes only)"],
+        "operations": ["baseline", "status", "workflows", "workflow", "plan", "run", "diagnose", "runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify", "android discover", "android plan", "android run", "android collect", "android verify", "pipeline plan", "pipeline run", "pipeline status", "pipeline resume", "release verify", "release setup", "release readiness", "release local-build", "release local-verify", "release local-evidence", "release local-handoff", "android unsigned-plan", "android unsigned-run", "android unsigned-import", "android unsigned-check", "android unsigned-sign", "android release-plan", "android release-run", "android release-import", "android release-sign", "android aab-plan", "android aab-run", "android aab-check", "android aab-import", "android aab-sign", "ci plan", "ci run", "ci check", "ci collect", "extensions metrics", "extensions runners", "extensions publish-plan", "extensions publish", "extensions gitlab-pipelines", "qualification report", "qualification check"],
+        "mutation_operations": ["run (explicit --yes only)", "cancel (explicit --yes only)", "rerun (explicit --yes only)", "android run (explicit --yes only)", "pipeline run/resume (explicit --yes only)", "android unsigned-run (explicit --yes only)", "android unsigned-sign (explicit --yes only)", "android release-run (explicit --yes only)", "android release-sign (explicit --yes only)", "android aab-run (explicit --yes only)", "android aab-sign (explicit --yes only)", "ci run (explicit --yes only)"],
         "execution_integration": "bounded foreground DAG coordinator over native invoke and GitHub Actions; private restart-safe journals, no daemon",
         "canonical_logs": "Devtool XDG state; phone mirror removed in V4",
         "remote_execution": False,
@@ -588,8 +588,14 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
               target=str(getattr(args, 'policy_target', '') or ''),
               execute=bool(getattr(args, 'yes', False)),
               expected_sha256=str(getattr(args, 'expected_sha256', '') or ''))
-    if action == 'android' and str(getattr(args, 'android_command', '') or '') == 'unsigned-sign':
+    if action == 'android' and str(getattr(args, 'android_command', '') or '') in ('unsigned-sign','release-sign'):
         # Offline LIFE signing never calls the GitHub API or requests a token.
+        if str(getattr(args,'android_command','')) == 'release-sign':
+            from .actions_android_release import release_sign
+            return release_sign(local_root, registry_id=str(args.registry_id),
+                consumer_id=str(getattr(args,'consumer','') or ''),
+                identity_id=str(getattr(args,'signing_identity','') or ''),
+                execute=bool(getattr(args,'yes',False)))
         from .actions_unsigned import unsigned_local_sign
         from .android.signing import AndroidSigningError
         try:
@@ -708,6 +714,27 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
     if action == "android":
         from .actions_android import android_discover, android_plan, android_collect
         sub = str(getattr(args,"android_command","") or "")
+        if sub in ('release-plan','release-run'):
+            from .actions_android_release import release_build
+            execute=sub=='release-run'
+            if execute and not bool(getattr(args,'yes',False)):
+                raise GitHubActionsError('Release dispatch requires explicit --yes')
+            return release_build(client,slug,local_root,
+                consumer_id=str(getattr(args,'consumer','') or ''),
+                module=str(args.module),variant=str(args.variant),
+                fmt=str(args.format),ref=str(args.ref),execute=execute,
+                project_dir=str(getattr(args,'project_dir','') or ''),
+                discovery_mode=str(getattr(args,'discovery_mode','static') or 'static'),
+                expected_package=str(getattr(args,'expected_package','') or ''))
+        if sub == 'release-import':
+            from .actions_android_release import release_import
+            from .actions_runs import run_id
+            from .actions_artifacts import _artifact_id
+            return release_import(client,slug,local_root,
+                consumer_id=str(getattr(args,'consumer','') or ''),
+                run_id=run_id(args.run_id),artifact_id=_artifact_id(args.artifact_id),
+                expected_sha=str(args.expected_sha),
+                download=bool(getattr(args,'download',False)))
         if sub in ('aab-plan', 'aab-run'):
             from .actions_aab import aab_dispatch
             execute = sub == 'aab-run'
@@ -756,7 +783,7 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
                 download=bool(getattr(args, 'download', False)),
                 materialize=sub == 'unsigned-import', consumer_id=str(getattr(args, 'consumer', '') or ''))
         if sub == "discover":
-            return android_discover(local_root,str(getattr(args,"project_dir","") or ""))
+            return android_discover(local_root,str(getattr(args,"project_dir","") or ""), discovery_mode=str(getattr(args,"discovery_mode","static") or "static"))
         if sub in ("plan", "run"):
             execute = sub == "run"
             if execute and not bool(getattr(args,"yes",False)):
@@ -765,7 +792,8 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
                                 fmt=str(args.format),ref=str(args.ref),workflow=str(args.workflow),
                                 expected_package=str(getattr(args,"expected_package","") or ""),execute=execute,
                                 project_dir=str(getattr(args,"project_dir","") or ""),
-                                signing_mode=str(getattr(args,"signing_mode","local") or "local"))
+                                signing_mode=str(getattr(args,"signing_mode","local") or "local"),
+                                discovery_mode=str(getattr(args,"discovery_mode","static") or "static"))
         if sub in ("collect", "verify"):
             from .actions_runs import run_id
             from .actions_artifacts import _artifact_id

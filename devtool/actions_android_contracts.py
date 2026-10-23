@@ -53,10 +53,10 @@ def load_consumers(root: Path) -> list[dict]:
                 raise GitHubActionsError(f'Invalid Android consumer {key}')
         if not item['workflow'].endswith(('.yml', '.yaml')) or not item['apk'].endswith('.apk'):
             raise GitHubActionsError('Consumer workflow/APK extension mismatch')
-        if item['build_type'] not in ('release', 'debug') or not isinstance(item['signing_identity_id'], str) or not isinstance(item['signer_sha256'], str):
+        if not isinstance(item['build_type'], str) or not re.fullmatch(r'[a-z][A-Za-z0-9]{0,40}',item['build_type']) or not isinstance(item['signing_identity_id'], str) or not isinstance(item['signer_sha256'], str):
             raise GitHubActionsError('Invalid consumer signing/build-type policy')
-        if item['build_type'] != 'release':
-            raise GitHubActionsError('Unsigned release registration requires release build type')
+        if item['build_type'] == 'debug':
+            raise GitHubActionsError('Unsigned LIFE signing registration cannot target debug build type')
         if not _FILE.fullmatch(item['signing_identity_id']) or not re.fullmatch(r'[0-9a-f]{64}', item['signer_sha256']):
             raise GitHubActionsError('External consumer requires exact LIFE identity and certificate SHA-256')
         for key in ('project_dir', 'module'):

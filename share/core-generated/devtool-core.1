@@ -41,8 +41,23 @@ Fetch or verify and inspect an APK/AAB, registering output as unqualified
 .B actions android discover
 Discover statically declared Android app modules
 .TP
+.B actions android options\\-repair
+Review or apply source\\-bound protected Gradle JVM property repair
+.TP
 .B actions android plan
 Validate source parity and Android workflow inputs without dispatch
+.TP
+.B actions android release\\-import
+Unified Android release: import with registered ACTIONS\\-10 LIFE authority
+.TP
+.B actions android release\\-plan
+Unified Android release: plan with registered ACTIONS\\-10 LIFE authority
+.TP
+.B actions android release\\-run
+Unified Android release: run with registered ACTIONS\\-10 LIFE authority
+.TP
+.B actions android release\\-sign
+Unified Android release: sign with registered ACTIONS\\-10 LIFE authority
 .TP
 .B actions android run
 Dispatch an Android build only with explicit \\-\\-yes
@@ -356,13 +371,13 @@ Aliases: termux\\-hud\\-bridge
 .B apply
 Canonical Devtool command.
 .TP
-.B apply overlay
-Canonical Devtool command.
-Aliases: apply\\-overlay, ao
-.TP
 .B apply overlays
 Canonical Devtool command.
 Aliases: apply\\-overlays, aos
+.TP
+.B apply overlay
+Canonical Devtool command.
+Aliases: apply\\-overlay, ao
 .TP
 .B apply snapshot
 Canonical Devtool command.
@@ -1247,10 +1262,7 @@ Canonical Devtool command.
 .TP
 .B wrapper verify
 Canonical Devtool command.
-.TP
-.B actions android options\\-repair
-Review or apply source\\-bound protected Gradle JVM property repair
 .SH GENERATED CONTRACT
-Registry digest: 1b36c1aacc73092b62bf236a5a0e105bf82fcc264e543c7079f41d6e49ee925d
+Registry digest: aeebe73c254ec8514394ca14a6ed406743cdda2103b3356da1721b03617e2ad1
 .SH SEE ALSO
 devtool(1)

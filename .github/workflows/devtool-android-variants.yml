@@ -21,6 +21,11 @@ on:
         required: true
         type: choice
         options: [apk, aab]
+      build_type:
+        description: 'Explicit reviewed build type for custom variants; debug/release may be inferred'
+        required: false
+        type: string
+        default: ''
       signing_mode:
         description: 'local publishes unsigned output for Devtool LIFE signing; github uses protected GitHub signing secrets'
         required: true
@@ -54,12 +59,20 @@ jobs:
           DT_VARIANT: ${{ inputs.variant }}
           DT_FORMAT: ${{ inputs.format }}
           DT_SIGNING_MODE: ${{ inputs.signing_mode }}
+          DT_REQUESTED_BUILD_TYPE: ${{ inputs.build_type }}
         run: |
           set -euo pipefail
           if [[ ! "$DT_MODULE" =~ ^[A-Za-z][A-Za-z0-9_-]*(:[A-Za-z][A-Za-z0-9_-]*){0,7}$ ]]; then exit 2; fi
           if [[ ! "$DT_VARIANT" =~ ^[a-z][A-Za-z0-9]{0,60}$ ]]; then exit 2; fi
           case "$DT_FORMAT" in apk|aab) ;; *) exit 2 ;; esac
-          if [[ "$DT_VARIANT" == release || "$DT_VARIANT" == *Release ]]; then
+          if [[ -n "${DT_REQUESTED_BUILD_TYPE:-}" ]]; then
+            if [[ ! "$DT_REQUESTED_BUILD_TYPE" =~ ^[a-z][A-Za-z0-9]{0,40}$ ]]; then exit 2; fi
+            title="${DT_REQUESTED_BUILD_TYPE^}"
+            if [[ "$DT_VARIANT" != "$DT_REQUESTED_BUILD_TYPE" && "$DT_VARIANT" != *"$title" ]]; then
+              echo 'Declared build type conflicts with variant identity' >&2; exit 2
+            fi
+            DT_BUILD_TYPE="$DT_REQUESTED_BUILD_TYPE"
+          elif [[ "$DT_VARIANT" == release || "$DT_VARIANT" == *Release ]]; then
             DT_BUILD_TYPE=release
           elif [[ "$DT_VARIANT" == debug || "$DT_VARIANT" == *Debug ]]; then
             DT_BUILD_TYPE=debug
@@ -82,7 +95,7 @@ jobs:
           task+="${DT_VARIANT^}"
           echo "TASK_NAME=$task" >> "$GITHUB_ENV"
       - name: Build Android debug output
-        if: ${{ inputs.variant == 'debug' || endsWith(inputs.variant, 'Debug') }}
+        if: ${{ inputs.build_type == 'debug' || (inputs.build_type == '' && (inputs.variant == 'debug' || endsWith(inputs.variant, 'Debug'))) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -91,7 +104,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon ":${TASK_MODULE}:${TASK_NAME}"
       - name: Build Android release output without GitHub signing secrets
-        if: ${{ (inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) && inputs.signing_mode == 'local' }}
+        if: ${{ inputs.signing_mode == 'local' && inputs.build_type != 'debug' && (inputs.build_type != '' || inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -101,7 +114,7 @@ jobs:
           # Producer must honor this reviewed project-side property by avoiding release signingConfig.
           ./gradlew --no-daemon -Pdevtool.unsignedReleaseCandidate=true ":${TASK_MODULE}:${TASK_NAME}"
       - name: Build Android signed release output
-        if: ${{ (inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) && inputs.signing_mode == 'github' }}
+        if: ${{ inputs.signing_mode == 'github' && inputs.build_type != 'debug' && (inputs.build_type != '' || inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) }}
         shell: bash
         env:
           DT_KEYSTORE_B64: ${{ secrets.DEVTOOL_RELEASE_KEYSTORE_B64 }}
@@ -146,8 +159,8 @@ jobs:
           if [[ "$TASK_VARIANT" == "$TASK_BUILD_TYPE" ]]; then
             folder="$TASK_VARIANT"
           else
-            flavor="${TASK_VARIANT%Release}"
-            if [[ "$TASK_BUILD_TYPE" == "debug" ]]; then flavor="${TASK_VARIANT%Debug}"; fi
+            suffix="${TASK_BUILD_TYPE^}"
+            flavor="${TASK_VARIANT%"$suffix"}"
             folder="${flavor,}/$TASK_BUILD_TYPE"
           fi
           if [[ "$TASK_FORMAT" == "apk" ]]; then dir="$root/apk/$folder"; else dir="$root/bundle/$folder"; fi
@@ -211,18 +224,18 @@ jobs:
                     'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
                     'build_type':os.environ['TASK_BUILD_TYPE'],
                     'signing_mode':os.environ['DT_SIGNING_MODE'],
-                    'signing_state':('unsigned' if os.environ['TASK_BUILD_TYPE']=='release' and os.environ['DT_SIGNING_MODE']=='local' else 'debug-unverified' if os.environ['TASK_BUILD_TYPE']=='debug' else 'signed'),
+                    'signing_state':('unsigned' if os.environ['TASK_BUILD_TYPE']!='debug' and os.environ['DT_SIGNING_MODE']=='local' else 'debug-unverified' if os.environ['TASK_BUILD_TYPE']=='debug' else 'signed'),
                     'qualified_release':False,
                     'sha256':hashlib.sha256(result.read_bytes()).hexdigest()}
           (result.parent/'android-variant-manifest.json').write_text(json.dumps(manifest,sort_keys=True)+'\n')
           PY
       - name: Attest signed release provenance
-        if: ${{ (inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) && inputs.signing_mode == 'github' }}
+        if: ${{ inputs.signing_mode == 'github' && inputs.build_type != 'debug' && (inputs.build_type != '' || inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) }}
         uses: actions/attest@v4
         with:
           subject-path: ${{ steps.package.outputs.package }}
       - name: Attest unsigned candidate (not release qualification)
-        if: ${{ (inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) && inputs.signing_mode == 'local' }}
+        if: ${{ inputs.signing_mode == 'local' && inputs.build_type != 'debug' && (inputs.build_type != '' || inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) }}
         uses: actions/attest@v4
         with:
           subject-path: ${{ steps.package.outputs.package }}
