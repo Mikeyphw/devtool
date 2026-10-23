@@ -6799,6 +6799,21 @@
       },
       "options": [],
       "stable_id": "cli.command.actions.android.release-batch-sign"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "onboard"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "adoption",
+        "stability": "experimental",
+        "summary": "In-place whole-repository review, ownership and source-bound onboarding",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.onboard"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -66075,6 +66090,88 @@
       "sensitive": false,
       "stable_id": "cli.option.actions.android.release_batch_sign.help",
       "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--reviewed-sha256",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "reviewed_sha256",
+        "help": "Source-and-ownership-bound review SHA-256 from plan",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "onboard"
+        ],
+        "required": false
+      },
+      "scope": "onboard",
+      "sensitive": false,
+      "stable_id": "cli.option.onboard.reviewed_sha256",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly authorize single-file onboarding commit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "onboard"
+        ],
+        "required": false
+      },
+      "scope": "onboard",
+      "sensitive": false,
+      "stable_id": "cli.option.onboard.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit structured JSON",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "onboard"
+        ],
+        "required": false
+      },
+      "scope": "onboard",
+      "sensitive": false,
+      "stable_id": "cli.option.onboard.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "-h"
+      ],
+      "canonical": "--help",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "onboard"
+        ],
+        "required": false
+      },
+      "scope": "onboard",
+      "sensitive": false,
+      "stable_id": "cli.option.onboard.help",
+      "value_kind": "_HelpAction"
     }
   ],
   "parser": {
@@ -124957,6 +125054,96 @@
             "allow_abbrev": true,
             "defaults": {},
             "description": null,
+            "epilog": null,
+            "formatter": "HelpFormatter",
+            "groups": [],
+            "mutexes": [],
+            "subparsers": null,
+            "usage": null
+          }
+        },
+        {
+          "aliases": [],
+          "help": "RM20 review-first whole-repository in-place onboarding and ownership inventory",
+          "help_present": true,
+          "name": "onboard",
+          "parser": {
+            "actions": [
+              {
+                "action": "store",
+                "choices": [
+                  "inventory",
+                  "plan",
+                  "apply"
+                ],
+                "const": null,
+                "default": null,
+                "dest": "onboard_operation",
+                "group": null,
+                "help": "Read-only inventory, reviewed proposal, or guarded in-place application",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [],
+                "required": true,
+                "type": null
+              },
+              {
+                "action": "store",
+                "choices": null,
+                "const": null,
+                "default": "",
+                "dest": "reviewed_sha256",
+                "group": null,
+                "help": "Source-and-ownership-bound review SHA-256 from plan",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [
+                  "--reviewed-sha256"
+                ],
+                "required": false,
+                "type": null
+              },
+              {
+                "action": "store_true",
+                "choices": null,
+                "const": true,
+                "default": false,
+                "dest": "yes",
+                "group": null,
+                "help": "Explicitly authorize single-file onboarding commit",
+                "metavar": null,
+                "mutex": null,
+                "nargs": 0,
+                "option_strings": [
+                  "--yes"
+                ],
+                "required": false,
+                "type": null
+              },
+              {
+                "action": "store_true",
+                "choices": null,
+                "const": true,
+                "default": false,
+                "dest": "json",
+                "group": null,
+                "help": "Emit structured JSON",
+                "metavar": null,
+                "mutex": null,
+                "nargs": 0,
+                "option_strings": [
+                  "--json"
+                ],
+                "required": false,
+                "type": null
+              }
+            ],
+            "add_help": true,
+            "allow_abbrev": true,
+            "defaults": {},
+            "description": "Source-locked multi-repository adoption; commits are per checkout, never globally atomic",
             "epilog": null,
             "formatter": "HelpFormatter",
             "groups": [],

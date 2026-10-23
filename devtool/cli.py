@@ -13311,6 +13311,27 @@ def _main_impl(argv: list[str] | None = None) -> int:
     console.quiet = bool(getattr(args, "quiet", False))
     configure_event_console(console, enabled=bool((getattr(args, "verbose", False) or getattr(args, "trace", False)) and not getattr(args, "quiet", False) and not universal_json))
 
+    # RM20 is deliberately read-only during inventory/plan. Avoid creating
+    # Devtool execution catalogs inside a repository that is not onboarded yet.
+    # Apply uses its own reviewed one-file Git transaction.
+    if getattr(args, 'command', '') == 'onboard':
+            from .onboarding import inventory as onboarding_inventory, apply as onboarding_apply, OnboardingBlocked
+            try:
+                root = Path(str(getattr(args, "repo", "") or Path.cwd()))
+                if args.onboard_operation == "apply":
+                    payload = onboarding_apply(root, reviewed_sha256=str(args.reviewed_sha256 or ""),
+                                               yes=bool(getattr(args, "yes", False)))
+                else:
+                    payload = onboarding_inventory(root)
+                    payload['ok'] = True
+            except (OnboardingBlocked, OSError, ValueError) as exc:
+                payload = {'schema': 'devtool.whole-repository-onboarding.v1',
+                           'ok': False, 'status': 'BLOCKED', 'reason': str(exc),
+                           'in_place': True, 'release_qualified': False}
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
+            return 0 if payload.get('ok') else 2
+
+
     # PRES-H02: a real Textual terminal driver must own the main interpreter
     # thread. Interactive artifact apply therefore runs the canonical Devtool
     # invocation as a managed child while the parent/main process owns Textual.

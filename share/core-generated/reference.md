@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `6b76d13fbb3a0a125a581facbe1f44ea974568c40e06ea78b2f796cda05b8bbc`
+Registry digest: `c8722bd524cdfd93dd15002d6fdd82523060bb62359b058841b30d4a840ae208`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -397,6 +397,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions android release-batch-check` — Source-bound unsigned Android release batch
 - `actions android release-batch-import` — Source-bound unsigned Android release batch
 - `actions android release-batch-sign` — Source-bound unsigned Android release batch
+- `onboard` — In-place whole-repository review, ownership and source-bound onboarding
 
 ## Configuration documents
 
