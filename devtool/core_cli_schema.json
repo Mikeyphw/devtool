@@ -8356,15 +8356,37 @@
     },
     {
       "aliases": [],
-      "canonical": "--variant",
+      "canonical": "--signing-mode",
       "config_field_id": null,
       "metadata": {
         "choices": [
-          "debug",
-          "release"
+          "local",
+          "github"
         ],
+        "dest": "signing_mode",
+        "help": "Release signing route: local unsigned LIFE (default) or explicit protected GitHub signing",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions android plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.plan.signing_mode",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--variant",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
         "dest": "variant",
-        "help": "Android build variant",
+        "help": "Reviewed Android variant, including registered flavorRelease",
         "hidden": false,
         "nargs": null,
         "path": [
@@ -8611,15 +8633,37 @@
     },
     {
       "aliases": [],
-      "canonical": "--variant",
+      "canonical": "--signing-mode",
       "config_field_id": null,
       "metadata": {
         "choices": [
-          "debug",
-          "release"
+          "local",
+          "github"
         ],
+        "dest": "signing_mode",
+        "help": "Release signing route: local unsigned LIFE (default) or explicit protected GitHub signing",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "android",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions android run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.android.run.signing_mode",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--variant",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
         "dest": "variant",
-        "help": "Android build variant",
+        "help": "Reviewed Android variant, including registered flavorRelease",
         "hidden": false,
         "nargs": null,
         "path": [
@@ -110852,15 +110896,12 @@
                               },
                               {
                                 "action": "store",
-                                "choices": [
-                                  "debug",
-                                  "release"
-                                ],
+                                "choices": null,
                                 "const": null,
                                 "default": "debug",
                                 "dest": "variant",
                                 "group": null,
-                                "help": "Android build variant",
+                                "help": "Reviewed Android variant, including registered flavorRelease",
                                 "metavar": null,
                                 "mutex": null,
                                 "nargs": null,
@@ -110886,6 +110927,26 @@
                                 "nargs": null,
                                 "option_strings": [
                                   "--format"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "local",
+                                  "github"
+                                ],
+                                "const": null,
+                                "default": "local",
+                                "dest": "signing_mode",
+                                "group": null,
+                                "help": "Release signing route: local unsigned LIFE (default) or explicit protected GitHub signing",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-mode"
                                 ],
                                 "required": false,
                                 "type": null
@@ -111053,15 +111114,12 @@
                               },
                               {
                                 "action": "store",
-                                "choices": [
-                                  "debug",
-                                  "release"
-                                ],
+                                "choices": null,
                                 "const": null,
                                 "default": "debug",
                                 "dest": "variant",
                                 "group": null,
-                                "help": "Android build variant",
+                                "help": "Reviewed Android variant, including registered flavorRelease",
                                 "metavar": null,
                                 "mutex": null,
                                 "nargs": null,
@@ -111087,6 +111145,26 @@
                                 "nargs": null,
                                 "option_strings": [
                                   "--format"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "local",
+                                  "github"
+                                ],
+                                "const": null,
+                                "default": "local",
+                                "dest": "signing_mode",
+                                "group": null,
+                                "help": "Release signing route: local unsigned LIFE (default) or explicit protected GitHub signing",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--signing-mode"
                                 ],
                                 "required": false,
                                 "type": null
@@ -117752,7 +117830,7 @@
                         },
                         {
                           "aliases": [],
-                          "help": "Verify offline signed\u2192unsigned registry lineage and LIFE identity without release promotion",
+                          "help": "Verify offline signed→unsigned registry lineage and LIFE identity without release promotion",
                           "help_present": true,
                           "name": "local-evidence",
                           "parser": {

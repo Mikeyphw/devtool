@@ -125,22 +125,82 @@ def _gradle_bootstrap(project: Path) -> dict[str, str]:
             "checksum": digest.group(1).lower()}
 
 
+def _reviewed_variant_override(root: Path, module: str, variant: str) -> dict[str, str] | None:
+    """Project-owned canonical Android variant profile for static discovery gaps.
+
+    Profile selection is *exact* and never infers an unreviewed Gradle task.
+    The canonical config document and android/variants.py resolver own policy.
+    """
+    from .config import load_repository_document
+    from .models import ProjectConfig
+    from .android.variants import resolve_android_variant
+    path = root / '.devtool.toml'
+    if not path.is_file() or path.is_symlink():
+        return None
+    try:
+        _git(root, 'ls-files', '--error-unmatch', '.devtool.toml')
+    except GitHubActionsError:
+        raise GitHubActionsError('Reviewed Android variant profile must be a tracked repository document') from None
+    try:
+        doc = load_repository_document(path, required=True)
+    except (ValueError, OSError, SystemExit) as exc:
+        raise GitHubActionsError('Cannot load reviewed Android variant profile') from exc
+    android = doc.get('android', {})
+    if not isinstance(android, dict):
+        raise GitHubActionsError('Android variant profiles must be a TOML table')
+    # The global Android table is the canonical profile namespace. Target-local
+    # variant policy is merged only when the module is the selected target.
+    targets = doc.get('targets', {})
+    target = targets.get(module, {}) if isinstance(targets, dict) else {}
+    if isinstance(target, dict):
+        entry = target.get('variants', {}).get(variant) if isinstance(target.get('variants', {}),dict) else None
+        if isinstance(entry, dict) and isinstance(entry.get('android'), dict):
+            android = {**android, **entry['android']}
+            android['variants'] = {**(android.get('variants', {}) if isinstance(android.get('variants'),dict) else {}), variant:entry['android']}
+    profiles = android.get('variants', android.get('variant_profiles', {}))
+    if not isinstance(profiles, dict) or variant not in profiles or not isinstance(profiles[variant], dict):
+        return None
+    selected = profiles[variant]
+    if not {'build_type', 'flavor', 'module'} <= selected.keys():
+        raise GitHubActionsError('Explicit ACTIONS-05 variant override requires build_type, flavor and module')
+    profile = resolve_android_variant(ProjectConfig(repo_root=root,kind='android',variant=variant,
+                              runner_options={'android':android}), variant)
+    if (profile.module != module or profile.build_type not in ('debug','release') or
+        not re.fullmatch(r'[a-z][A-Za-z0-9]{0,40}',profile.flavor) or
+        variant != profile.flavor + profile.build_type.title()):
+        raise GitHubActionsError('Reviewed variant override mismatches module, flavor or build type')
+    return {'build_type':profile.build_type, 'flavor':profile.flavor}
+
+
 def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: str,
                  variant: str, fmt: str, ref: str, workflow: str = _WORKFLOW,
-                 execute: bool = False, expected_package: str = "", project_dir: str = "") -> dict[str, Any]:
+                 execute: bool = False, expected_package: str = "", project_dir: str = "",
+                 signing_mode: str = "local") -> dict[str, Any]:
     slug = _slug(slug)
     if not _MODULE.fullmatch(module) or not re.fullmatch(r"[a-z][A-Za-z0-9]{0,60}", variant) or fmt not in ("apk", "aab"):
         raise GitHubActionsError("Android module, variant, or output format is invalid")
     if expected_package and not _PACKAGE.fullmatch(expected_package):
         raise GitHubActionsError("Expected Android application ID is invalid")
+    if signing_mode not in ('local','github'):
+        raise GitHubActionsError('Android signing mode must be local or github')
     project, project_relative = _project_root(root, project_dir)
     modules = _gradle_modules(project)
     if module not in modules:
         raise GitHubActionsError("Requested Android application module is not statically discoverable")
-    if variant not in modules[module].get('variants', {'debug': {}, 'release': {}}):
-        raise GitHubActionsError('Unknown or unreviewed Android variant; register its model/profile')
-    if variant not in ('debug', 'release') and workflow == _WORKFLOW:
+    declared = modules[module].get('variants', {'debug': {}, 'release': {}})
+    spec = declared.get(variant)
+    source = 'static-gradle'
+    if spec is None:
+        spec = _reviewed_variant_override(root, module, variant)
+        if spec is None:
+            raise GitHubActionsError('Unknown or unreviewed Android variant; register its model/profile')
+        source = 'reviewed-profile'
+    if workflow == _WORKFLOW and (variant not in ('debug', 'release') or
+                                   (spec['build_type'] == 'release' and signing_mode == 'local')):
         workflow = 'devtool-android-variants.yml'
+    if (spec['build_type'] == 'release' and signing_mode == 'local' and
+        workflow != 'devtool-android-variants.yml'):
+        raise GitHubActionsError('Local signing requires unsigned-capable reviewed Android workflow')
     gradle_bootstrap = _gradle_bootstrap(project)
     if not ref:
         raise GitHubActionsError("Android CI requires an explicit --ref branch or tag")
@@ -149,14 +209,17 @@ def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: 
         raise GitHubActionsError("Local Android source commit is invalid")
     if _git(root, "status", "--porcelain", "--untracked-files=normal"):
         raise GitHubActionsError("Android CI requires a clean local Git checkout; commit and push changes first")
-    spec = modules[module].get('variants', {}).get(variant, {'build_type':variant, 'flavor':''})
     inputs = {"module":module, "variant":variant, "format":fmt, "project_dir":project_relative}
+    if workflow == 'devtool-android-variants.yml':
+        inputs['signing_mode'] = signing_mode
     remote_plan = dispatch_workflow(client, slug, workflow, ref, inputs, execute=False)
     if remote_plan.get("pre_dispatch_sha", "").lower() != local_sha:
         raise GitHubActionsError("Local HEAD differs from GitHub selected ref; push the commit or select the correct ref")
     package = expected_package or modules[module]["application_id"]
     result = {"phase":"ACTIONS-05", "repository":slug, "module":module,
-              "variant":variant, "build_type":spec["build_type"], "flavor":spec["flavor"], "format":fmt,"project_dir":project_relative,"gradle_bootstrap":gradle_bootstrap,"expected_package":package,
+              "variant":variant, "build_type":spec["build_type"], "flavor":spec["flavor"],
+              "variant_source":source, "signing_mode":signing_mode,
+              "signing_state":("unsigned-candidate" if spec["build_type"]=="release" and signing_mode=="local" else "hosted-signing-requested" if spec["build_type"]=="release" else "debug"), "format":fmt,"project_dir":project_relative,"gradle_bootstrap":gradle_bootstrap,"expected_package":package,
               "expected_package_source": "explicit" if expected_package else ("static-gradle" if package else "unresolved"),
               "local_head_sha": local_sha, "workflow":workflow,"ref":ref,
               "workflow_plan":remote_plan, "dispatched":False, "qualified_release":False}

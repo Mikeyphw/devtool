@@ -866,3 +866,17 @@ Implementation: durable source/graph/host/input/output fingerprints; canonical C
 - **Evidence:** Tests exercise native Bash and POSIX syntax execution, hostile quoted argv, symlink/traversal/source drift, Linux/Android host confusion, fake native ShellCheck and Bats CLI exit/report paths, zero/failing/tampered JUnit, exact transfer ownership, and previous provider/exporter compatibility. A fake Bats shim is *not* a live Bats tool qualification.
 - **Open external gates:** Native Termux execution with installed ShellCheck, shfmt, Zsh and Bats; independent authenticated GitHub hosted runs. Release authority not implied by local job success.
 - **Preserved prior findings:** RM-13 failed-on-Termux remains unresolved. RM-06–RM-09 engineering debt and RM-15 consumer/device signing evidence still require their own closure; this change does not claim to close them.
+
+### RM15-HF01 — Android release candidates must never depend on GitHub signing secrets (2026-10-23)
+
+- **Evidence:** RM15 `.github/workflows/devtool-android-variants.yml` required GitHub keystore secrets and a protected ref for every `*Release`, conflicting with registered ACTIONS-10 unsigned download and local LIFE signing. ACTIONS-05 also refused unknown static variants without consulting canonical Android variant profiles; CLI choices were limited to `debug`/`release`.
+- **Affected:** Devtool ACTIONS-05/RM15, `github_actions.py` dispatch, checked-in Android Actions workflow, canonical CLI schema/surfaces; BKX Embedded/Lite hosted Android candidates and other registered Android consumers.
+- **Remediation:** default `--signing-mode local`, optional explicit protected `github` signing, unqualified unsigned artifact receipt with source/attempt/hash, tracked reviewed profile override through canonical Android resolver, independent retained ACTIONS-10 LIFE signer/consumer manifest boundary.
+- **Status:** implemented and behaviorally tested locally; real authenticated BKX workflow, locally authorized signing identity and Skybind device evidence remain separate qualification.
+- **Caution:** generic variant artifact is NOT an ACTIONS-10 import manifest; BKX must use its dedicated registered unsigned producer workflow and exact two-member manifest. Do not weaken package/signature checks or quietly turn GitHub secrets back into mandatory dependencies.
+
+### RM19 disposition — cancelled by user (2026-10-23)
+
+- **Decision:** Do not implement repository splitting, code extraction, dependency relocation or extraction-oriented cleanup in RM19. RM17/RM18/RM20 remain focused on existing repositories and in-place adoption; do not reintroduce extraction as a hidden dependency. Status: **CANCELLED BY USER**.
+
+- **Unsigned producer guard:** custom-variant local release explicitly passes `-Pdevtool.unsignedReleaseCandidate=true`; the registered consumer must honor that property and emit a valid unsigned package. The workflow refuses unexpectedly signed APK bytes instead of weakening the local LIFE import contract.

@@ -764,7 +764,8 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
             return android_plan(client,slug,local_root,module=str(args.module),variant=str(args.variant),
                                 fmt=str(args.format),ref=str(args.ref),workflow=str(args.workflow),
                                 expected_package=str(getattr(args,"expected_package","") or ""),execute=execute,
-                                project_dir=str(getattr(args,"project_dir","") or ""))
+                                project_dir=str(getattr(args,"project_dir","") or ""),
+                                signing_mode=str(getattr(args,"signing_mode","local") or "local"))
         if sub in ("collect", "verify"):
             from .actions_runs import run_id
             from .actions_artifacts import _artifact_id

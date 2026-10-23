@@ -1,5 +1,5 @@
-# Devtool ACTIONS-08: signed release and verifiable GitHub provenance.
-# Release secrets must be configured in protected GitHub settings and are never workflow inputs.
+# Devtool ACTIONS-08: unsigned-first Android builds. Local LIFE signing never needs GitHub secrets.
+# Optional GitHub signing is an explicit protected-ref choice; never a dependency of unsigned releases.
 name: Devtool Android Build
 on:
   workflow_dispatch:
@@ -21,6 +21,12 @@ on:
         required: true
         type: choice
         options: [apk, aab]
+      signing_mode:
+        description: 'local publishes unsigned output for Devtool LIFE signing; github uses protected GitHub signing secrets'
+        required: true
+        default: local
+        type: choice
+        options: [local, github]
 permissions:
   contents: read
   id-token: write
@@ -47,6 +53,7 @@ jobs:
           DT_MODULE: ${{ inputs.module }}
           DT_VARIANT: ${{ inputs.variant }}
           DT_FORMAT: ${{ inputs.format }}
+          DT_SIGNING_MODE: ${{ inputs.signing_mode }}
         run: |
           set -euo pipefail
           if [[ ! "$DT_MODULE" =~ ^[A-Za-z][A-Za-z0-9_-]*(:[A-Za-z][A-Za-z0-9_-]*){0,7}$ ]]; then exit 2; fi
@@ -63,8 +70,9 @@ jobs:
           if [[ "$DT_PROJECT" != "." && ! "$DT_PROJECT" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ ]]; then exit 2; fi
           if [[ "$DT_PROJECT" == *".."* ]]; then exit 2; fi
           test -d "$DT_PROJECT" && test ! -L "$DT_PROJECT"
-          if [[ "$DT_BUILD_TYPE" == "release" && "${GITHUB_REF_PROTECTED:-false}" != "true" ]]; then
-            echo 'Release builds require a protected GitHub ref' >&2; exit 2
+          case "$DT_SIGNING_MODE" in local|github) ;; *) echo 'Unreviewed signing mode' >&2; exit 2 ;; esac
+          if [[ "$DT_BUILD_TYPE" == "release" && "$DT_SIGNING_MODE" == "github" && "${GITHUB_REF_PROTECTED:-false}" != "true" ]]; then
+            echo 'Hosted signing requires a protected GitHub ref' >&2; exit 2
           fi
           echo "TASK_PROJECT=$DT_PROJECT" >> "$GITHUB_ENV"
           echo "TASK_MODULE=$DT_MODULE" >> "$GITHUB_ENV"
@@ -82,8 +90,18 @@ jobs:
           test -f ./gradlew && test ! -L ./gradlew
           chmod +x ./gradlew
           ./gradlew --no-daemon ":${TASK_MODULE}:${TASK_NAME}"
+      - name: Build Android release output without GitHub signing secrets
+        if: ${{ (inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) && inputs.signing_mode == 'local' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$TASK_PROJECT"
+          test -f ./gradlew && test ! -L ./gradlew
+          chmod +x ./gradlew
+          # Producer must honor this reviewed project-side property by avoiding release signingConfig.
+          ./gradlew --no-daemon -Pdevtool.unsignedReleaseCandidate=true ":${TASK_MODULE}:${TASK_NAME}"
       - name: Build Android signed release output
-        if: ${{ inputs.variant == 'release' || endsWith(inputs.variant, 'Release') }}
+        if: ${{ (inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) && inputs.signing_mode == 'github' }}
         shell: bash
         env:
           DT_KEYSTORE_B64: ${{ secrets.DEVTOOL_RELEASE_KEYSTORE_B64 }}
@@ -116,6 +134,7 @@ jobs:
         id: package
         shell: bash
         env:
+          DT_SIGNING_MODE: ${{ inputs.signing_mode }}
           DT_KEYSTORE_B64: ${{ secrets.DEVTOOL_RELEASE_KEYSTORE_B64 }}
           DT_STORE_PASSWORD: ${{ secrets.DEVTOOL_RELEASE_STORE_PASSWORD }}
           DT_KEY_ALIAS: ${{ secrets.DEVTOOL_RELEASE_KEY_ALIAS }}
@@ -141,9 +160,25 @@ jobs:
           if [[ "$TASK_BUILD_TYPE" == "debug" ]]; then
             out="$staging/debug.$TASK_FORMAT"
             cp -- "${packages[0]}" "$out"
+          elif [[ "$DT_SIGNING_MODE" == "local" ]]; then
+            out="$staging/unsigned.$TASK_FORMAT"
+            cp -- "${packages[0]}" "$out"
+            unzip -tqq "$out" >/dev/null
+            # Explicitly refuse already signed Gradle output in the local LIFE lane.
+            if [[ "$TASK_FORMAT" == "apk" ]]; then
+              tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+              test -n "$tools" && test -x "$tools/apksigner"
+              if "$tools/apksigner" verify "$out" >/dev/null 2>&1; then
+                echo 'Local candidate was unexpectedly signed by Gradle' >&2; exit 2
+              fi
+            else
+              if unzip -Z1 "$out" | grep -Eqi '^META-INF/[^/]+\.(RSA|DSA|EC)$'; then
+                echo 'Local AAB candidate already contains a signature block' >&2; exit 2
+              fi
+            fi
           else
-            if [[ -z "$DT_KEYSTORE_B64" || -z "$DT_STORE_PASSWORD" || -z "$DT_KEY_ALIAS" || -z "$DT_KEY_PASSWORD" ]]; then
-              echo 'Release signing secrets missing; refusing unsigned release' >&2; exit 2
+            if [[ "$DT_SIGNING_MODE" != "github" || -z "$DT_KEYSTORE_B64" || -z "$DT_STORE_PASSWORD" || -z "$DT_KEY_ALIAS" || -z "$DT_KEY_PASSWORD" ]]; then
+              echo 'Explicit GitHub signing requires protected credentials' >&2; exit 2
             fi
             store="$RUNNER_TEMP/devtool-release-keystore.p12"
             trap 'rm -f "$store"' EXIT
@@ -174,11 +209,20 @@ jobs:
                     'format':os.environ['DT_FORMAT'],'apk_file':result.name,
                     'head_sha':os.environ['GITHUB_SHA'].lower(),
                     'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
+                    'build_type':os.environ['TASK_BUILD_TYPE'],
+                    'signing_mode':os.environ['DT_SIGNING_MODE'],
+                    'signing_state':('unsigned' if os.environ['TASK_BUILD_TYPE']=='release' and os.environ['DT_SIGNING_MODE']=='local' else 'debug-unverified' if os.environ['TASK_BUILD_TYPE']=='debug' else 'signed'),
+                    'qualified_release':False,
                     'sha256':hashlib.sha256(result.read_bytes()).hexdigest()}
           (result.parent/'android-variant-manifest.json').write_text(json.dumps(manifest,sort_keys=True)+'\n')
           PY
       - name: Attest signed release provenance
-        if: ${{ inputs.variant == 'release' || endsWith(inputs.variant, 'Release') }}
+        if: ${{ (inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) && inputs.signing_mode == 'github' }}
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.package.outputs.package }}
+      - name: Attest unsigned candidate (not release qualification)
+        if: ${{ (inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) && inputs.signing_mode == 'local' }}
         uses: actions/attest@v4
         with:
           subject-path: ${{ steps.package.outputs.package }}
