@@ -276,7 +276,13 @@ def unsigned_dispatch(client: GitHubActionsClient, slug: str, root: Path, *, ref
         result = dispatch_workflow(client, slug, consumer['workflow'], ref, {},
                                    execute=True, **dispatch_opts)
         report['dispatch'] = result
-        report['dispatched'] = True
+        # RM-16 resume does not issue a new GitHub dispatch. Carry through the
+        # dispatcher's actual POST outcome instead of treating execute=True as
+        # evidence that a POST was sent.
+        if type(result.get('dispatched')) is not bool:
+            raise GitHubActionsError('Unsigned dispatch result lacks verified POST outcome')
+        report['dispatched'] = result['dispatched']
+        report['resume_existing'] = result.get('resume_existing') is True
         if result.get('pre_dispatch_sha', '').lower() != sha.lower():
             report['warning'] = 'Remote source moved between checks; do not import until source is reconciled'
     return report

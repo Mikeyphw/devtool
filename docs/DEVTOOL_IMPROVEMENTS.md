@@ -896,3 +896,37 @@ Implementation: durable source/graph/host/input/output fingerprints; canonical C
 - **Small Android batch add-on:** one registered unsigned producer workflow, independent Embedded/Lite artifact IDs, full preflight of every import before mutation, separate existing LIFE sign operations, same authorized signer/run/source, explicit `--yes`, production producer checkout supplied via `--source-root`, no GitHub signing secrets or release qualification promotion. Code: `actions_android_release.py`, `actions_unsigned.py`, `github_actions.py`, CLI schema. Tests: `test_rm16_batch.py`, `test_rm16_controls.py`. Details in `docs/RM16_BATCH_PROMISE_AUDIT.md`.
 - **Partial-batch caveat:** imports and signatures have immutable per-candidate receipts, **not** cross-candidate atomic rollback. If the second operation fails, the first stays on disk and the user must reconcile its exact registry ID. This is intentional and not represented as a successful batch.
 - **External evidence:** real BKX registered unsigned workflow producing two artifacts, authenticated GitHub correlation, existing LIFE certificate on Termux, and Skybind device qualification still pending. RM-13 Termux failure and RM-06–RM-09 earlier gaps remain open; RM-19 stays cancelled.
+
+## RM16-DR01 — Real dispatch count propagation (2026-10-23)
+
+- Evidence: `unsigned_dispatch` previously returned `dispatched=True` on `execute=True` even when `dispatch_workflow` returned `dispatched=False`, `resume_existing=True`. `release_batch_build` overreported `dispatch_count=1` for a reused request.
+- Scope: ACTIONS-10/RM-16 Android batch dispatch receipt.
+- Fix: use the underlying dispatcher's verified `dispatched` boolean and preserve explicit resume identity; reject malformed results. Keep the one-workflow dispatch and dispatch journal unchanged.
+- Behavioral gate: `test_batch_resume_propagates_real_dispatch_count` exercises actual unsigned dispatch routing for resumed/new/plan results; native batch and ACTIONS-02 regression tests remain required.
+- State: source implemented; local regression and Termux transaction acceptance separate.
+
+
+## Consolidated RM06–RM09 + RM16-DR01 engineering closure (2026-10-23)
+
+- RM06: Conservative source-ownership affected-target selector/compiled target set
+  now uses `devtool.affected` target and dependent closure. Ambiguous, shared,
+  unowned and empty change lists fall back to full configured workflow scope;
+  never an optimistic empty hosted plan. Explicit target-local native DAG intact.
+- RM07: Windows Actions bridge is opt-in only for reviewed .NET; runtime uses
+  Git Bash and `Scripts/python.exe`. Other providers remain rejected. Python
+  wheel-content and NuGet package-content cache paths are fixed under runner.temp
+  with reviewed tracked source/lock hashes in keys. Read-only doctor unchanged.
+- RM08: Native *uv* opt-in with exact executable version preflight, source/lock
+  hash equality, frozen+offline sync, no interpreter/bootstrap download, and
+  failure before native target execution/handoff. Pip-export default is retained.
+  **OPEN:** Poetry/PDM native installers still require enforceable no-network
+  policy; existing pip export is not their native execution.
+- RM09: Reviewed Windows host eligibility, cross-host RID validation, explicit
+  multi-TFM selection, native collector Cobertura promotion with node identity,
+  exact TRX ownership, byte-hashed portable publish receipts, and collision-safe
+  selected-solution/lock-bound NuGet caches. Hosted Windows proof remains external.
+- RM16-DR01: Propagates actual dispatched flag and accurately reports resume.
+
+Qualification boundaries: local regressions and source-bound transaction checks
+are engineering evidence; remote Windows Actions, authenticated artifacts, real
+.NET workloads and device/release qualification must be separately established.

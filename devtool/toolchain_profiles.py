@@ -47,8 +47,8 @@ PROFILES = {
     p.identifier: p for p in (
         ToolchainProfile('ubuntu-24.04-x64','linux','x86_64','ubuntu-24.04',True,('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci'),'3.12',60),
         ToolchainProfile('macos-15-intel','macos','x86_64','macos-15-intel',True,('go','python-shell','node','jvm'),'3.12',60),
-        ToolchainProfile('windows-2022-x64','windows','x86_64','windows-2022',False,('go','python-shell','node','jvm','shell-ci'),'3.12',60,
-                         'RM-06 POSIX artifact/runtime bridge is not portable to Windows'),
+        ToolchainProfile('windows-2022-x64','windows','x86_64','windows-2022',True,('dotnet',),'3.12',60,
+                         'Reviewed Bash/Git-for-Windows .NET bridge only; other providers refused'),
         ToolchainProfile('termux-android-arm64','android','aarch64',None,False,('go','python-shell','node','jvm','shell-ci'),'3.12',60,
                          'native Termux is a local host, not a GitHub-hosted runner'),
     )
@@ -170,8 +170,45 @@ def cache_policy(root: Path, row: dict[str, Any], profile: ToolchainProfile, *, 
                 'path':'${{ runner.temp }}/devtool-node-store/'+manager,
                 'key':'devtool-rm11-'+profile.identifier+'-node-'+str(row['version'])+'-'+manager+'-'+digest,
                 'contains_credentials':False,'scope':'reviewed package-manager content store only'}
+    if row['provider']=='dotnet':
+        graph=row.get('graph')
+        selected=row.get('selected')
+        if not isinstance(graph,dict) or selected not in list(graph.get('projects',{}))+list(graph.get('solutions',{})):
+            raise ProfileError('RM-09 missing selected tracked .NET solution identity')
+        sources=graph.get('sources',{})
+        if (not isinstance(sources,dict) or not sources or len(sources)>128 or
+                any(not _tracked_regular(root,n) or hashlib.sha256((root/n).read_bytes()).hexdigest()!=digest
+                    for n,digest in sources.items())):
+            raise ProfileError('RM-09 untrusted .NET restore/cache source identity')
+        digest=hashlib.sha256(json.dumps({'selected':selected,'sources':sources,'sdk':row['version']},
+            sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        return {'enabled':True,'action_sha':CACHE_ACTION_SHA,
+                'path':'${{ runner.temp }}/devtool-nuget-store',
+                'key':f'devtool-rm09-nuget-{profile.identifier}-{digest}',
+                'source_sha256':sources,'restore_keys':[],'contains_credentials':False,
+                'scope':'fixed NuGet global package content only, no configs or credentials'}
+    if row['provider']=='python-shell':
+        project=row.get('project')
+        if not isinstance(project,dict) or not project.get('project_present'):
+            return {'enabled':False,'reason':'no reviewed Python packaging project'}
+        sources=project.get('source_files',[])
+        if (not isinstance(sources,list) or not sources or len(sources)>8 or
+                len(set(sources))!=len(sources) or
+                any(not _tracked_regular(root,n) for n in sources)):
+            raise ProfileError('RM-07 Python cache refuses untracked, secret or unsafe project/lock input')
+        if project.get('manager') not in ('pip','uv','poetry','pdm'):
+            raise ProfileError('RM-07 Python cache refuses unknown manager')
+        digests={name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in sorted(sources)}
+        source=hashlib.sha256(json.dumps(digests,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        # Cache only a fixed wheel content store, never venvs, source, dotfiles,
+        # user-supplied cache paths, pip configuration, tokens or credentials.
+        return {'enabled':True,'action_sha':CACHE_ACTION_SHA,
+                'path':'${{ runner.temp }}/devtool-python-wheel-store',
+                'key':f'devtool-rm07-python-{profile.identifier}-py{row["version"]}-{project["manager"]}-{source}',
+                'source_sha256':digests,'restore_keys':[],'contains_credentials':False,
+                'scope':'fixed ephemeral wheel-content store (no project or credentials)'}
     if row['provider']!='go':
-        return {'enabled':False,'reason':'reviewed Python cache policy not yet available'}
+        return {'enabled':False,'reason':'no reviewed cache store for this provider'}
     locks=row.get('lockfiles',[])
     if (not isinstance(locks,list) or 'go.mod' not in locks or 'go.sum' not in locks
             or len(locks)>4 or len(set(locks))!=len(locks)):

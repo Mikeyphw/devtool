@@ -190,7 +190,7 @@ def solution_graph(root: Path, *, selected: str = '') -> dict:
             'source_bound':True,'execution_performed':False,'release_qualified':False}
 
 
-def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict) -> dict:
+def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict, *, host_os: str = 'linux') -> dict:
     if len(argv)<3 or argv[0]!='dotnet' or argv[1] not in ('restore','build','test','pack','publish'):
         raise DotNetError('RM-09 requires direct dotnet restore/build/test/pack/publish')
     if any(not isinstance(x,str) or len(x)>160 or '\\' in x or '$' in x or (';' in x and x!='trx;LogFileName=results.trx') for x in argv):
@@ -202,7 +202,7 @@ def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict) -> dict:
         if arg in ('--locked-mode','--no-restore','--no-build'):
             if arg in opts:raise DotNetError('RM-09 duplicate .NET switch')
             opts[arg]=True;i+=1;continue
-        if arg in ('--configuration','--framework','--runtime','--output','--logger','--results-directory'):
+        if arg in ('--configuration','--framework','--runtime','--output','--logger','--results-directory','--collect'):
             if arg in opts or i+1>=len(argv):raise DotNetError('RM-09 missing or duplicate argument')
             opts[arg]=argv[i+1];i+=2;continue
         raise DotNetError('RM-09 refuses unreviewed .NET argument: '+arg[:80])
@@ -217,6 +217,13 @@ def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict) -> dict:
         raise DotNetError('RM-09 package output must be within dist/')
     if '--logger' in opts and opts['--logger'] not in ('trx;LogFileName=results.trx',):
         raise DotNetError('RM-09 requires fixed TRX logger name')
+    coverage=metadata.get('ci_dotnet_coverage',False)
+    if type(coverage) is not bool:
+        raise DotNetError('RM-09 coverage opt-in must be boolean')
+    if coverage and (command!='test' or opts.get('--collect')!='XPlat Code Coverage'):
+        raise DotNetError('RM-09 native coverage requires --collect XPlat Code Coverage on test')
+    if '--collect' in opts and (command!='test' or not coverage or opts['--collect']!='XPlat Code Coverage'):
+        raise DotNetError('RM-09 unreviewed coverage collector')
     if command=='restore' and (opts.get('--locked-mode') is not True or len(opts)!=1):
         raise DotNetError('RM-09 restore must use locked-mode only')
     if command!='restore':
@@ -229,14 +236,25 @@ def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict) -> dict:
         raise DotNetError('RM-09 test requires fixed TRX logger and dist results directory')
     graph=solution_graph(root,selected=selected)
     members=graph['solutions'].get(selected,[selected])
-    if graph['windows_only']:
+    if graph['windows_only'] and host_os!='windows':
         raise DotNetError('RM-09 Windows-only APIs/workloads cannot run on reviewed Linux host')
+    if host_os not in ('windows','linux'):
+        raise DotNetError('RM-09 no reviewed .NET host bridge for '+str(host_os))
     tfms={x for p in members for x in graph['projects'][p]['tfms']}
-    if '--framework' in opts and opts['--framework'] not in tfms:
-        raise DotNetError('RM-09 framework not declared by selected projects')
+    if '--framework' in opts and any(opts['--framework'] not in graph['projects'][p]['tfms'] for p in members):
+        raise DotNetError('RM-09 framework not declared by every selected project')
+    if len(tfms)>1 and '--framework' not in opts and command in ('build','test','publish'):
+        raise DotNetError('RM-09 multi-TFM execution requires explicit --framework per native job')
+    if graph['windows_only'] and '--framework' in opts and '-windows' not in opts['--framework']:
+        # Dependent portable class-library projects are allowed only through a
+        # Windows-only entry point; a bare portable TFM is not sufficient.
+        raise DotNetError('RM-09 Windows entry point must select a Windows TFM')
     rids={x for p in members for x in graph['projects'][p]['rids']}
-    if '--runtime' in opts and (opts['--runtime'] not in rids or opts['--runtime'].startswith(('win','osx'))):
-        raise DotNetError('RM-09 incompatible or undeclared Linux runtime identifier')
+    if '--runtime' in opts and (opts['--runtime'] not in rids or
+            not opts['--runtime'].startswith('win-' if host_os=='windows' else 'linux-')):
+        raise DotNetError('RM-09 incompatible or undeclared host runtime identifier')
+    if '--runtime' in opts and '--framework' not in opts and len(tfms)>1:
+        raise DotNetError('RM-09 runtime requires explicit compatible TFM')
     package=None
     if command=='pack':
         if selected not in graph['projects']:
@@ -252,6 +270,8 @@ def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict) -> dict:
             'package':package,'provider':'dotnet','toolchain':'dotnet' ,'version':graph['sdk_version'],
             'matrix_versions':[graph['sdk_version']], 'version_source':'global.json',
             'graph':graph,'command':command,'selected':selected,'lockfiles':list(graph['sources']),
+            'coverage':coverage,'framework':opts.get('--framework',''),'runtime':opts.get('--runtime',''),
+            'publish_output':opts.get('--output',''), 'host_os':host_os,
             'cache_enabled':False,'report_adapter':'trx','output_role':'local-bytes-only',
             'release_qualified':False}
 
@@ -325,3 +345,71 @@ def verify_nupkg(path: Path, *, package_id: str, version: str, tfm: str, rid: st
     return {'kind':'devtool.dotnet.nupkg-verification','package_id':package_id,'version':version,
             'tfm':tfm,'rid':rid,'sha256':sha256(path.read_bytes()).hexdigest(),
             'bytes_verified':True,'signer_authenticated':False,'release_qualified':False}
+
+
+def collect_dotnet_coverage(root: Path, node: str) -> dict:
+    """Promote one native coverlet collector output to the declared owned path.
+
+    The collector writes a random GUID subtree below dist/. Only this native
+    test node can promote its exact one, verified XML report for byte handoff.
+    """
+    destination=_path(root,'dist/coverage.cobertura.xml',existing=False)
+    if destination.exists() or destination.is_symlink():
+        raise DotNetError('RM-09 native coverage destination already exists')
+    directory=root/'dist'
+    if not directory.is_dir() or directory.is_symlink():
+        raise DotNetError('RM-09 native coverage output directory missing')
+    choices=[]
+    for path in directory.glob('*/coverage.cobertura.xml'):
+        if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+            raise DotNetError('RM-09 unsafe coverage collector file')
+        if not re.fullmatch(r'[0-9a-fA-F-]{36}',path.parent.name):
+            raise DotNetError('RM-09 unexpected collector directory')
+        choices.append(path)
+    if len(choices)!=1:
+        raise DotNetError('RM-09 requires exactly one native coverage collector output')
+    raw=choices[0].read_bytes()
+    if not raw or len(raw)>8_000_000 or b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
+        raise DotNetError('RM-09 unsafe native coverage XML')
+    xml=_xml(raw,choices[0].as_posix())
+    if xml.tag!='coverage' or not xml.attrib.get('line-rate'):
+        raise DotNetError('RM-09 native coverage report is not Cobertura')
+    try:
+        rate=float(xml.attrib['line-rate'])
+    except ValueError:
+        raise DotNetError('RM-09 malformed Cobertura line rate') from None
+    if not 0<=rate<=1 or not list(xml.iter('class')):
+        raise DotNetError('RM-09 native coverage has no verified class data')
+    destination.write_bytes(raw)
+    return {'schema_version':1,'kind':'devtool.rm09-native-coverage','node':node,
+            'path':'dist/coverage.cobertura.xml','sha256':sha256(raw).hexdigest(),
+            'size':len(raw),'line_rate':rate,'release_qualified':False}
+
+
+def make_publish_receipt(root: Path, outputs: list[str], selected: str,
+                         sources: dict, node: str) -> dict:
+    """Byte-bound publish receipt for all owned outputs (never claims signing)."""
+    if not outputs or len(outputs)>48 or len(set(outputs))!=len(outputs):
+        raise DotNetError('RM-09 publish file inventory missing/duplicated')
+    entries={}
+    for rel in sorted(outputs):
+        if not rel.startswith('dist/'):
+            raise DotNetError('RM-09 publish output must be beneath dist/')
+        path=_path(root,rel,existing=False)
+        if not path.is_file() or path.stat().st_size>512*1024*1024:
+            raise DotNetError('RM-09 publish file missing, unsafe or oversized: '+rel)
+        payload=path.read_bytes()
+        entries[rel]={'size':len(payload),'sha256':sha256(payload).hexdigest()}
+    digest=sha256(json.dumps(sources,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    return {'schema_version':1,'kind':'devtool.rm09-publish-bytes','node':node,'selected':selected,
+            'source_sha256':digest,'files':entries,'signed':False,'release_qualified':False}
+
+
+def verify_publish_receipt(root: Path, receipt: dict) -> bool:
+    if receipt.get('kind')!='devtool.rm09-publish-bytes' or not receipt.get('files'):
+        raise DotNetError('RM-09 publish receipt has invalid identity')
+    for rel,record in receipt['files'].items():
+        path=_path(root,rel,existing=False)
+        if not path.is_file() or path.stat().st_size!=record['size'] or sha256(path.read_bytes()).hexdigest()!=record['sha256']:
+            raise DotNetError('RM-09 publish bytes mutated or removed: '+rel)
+    return True

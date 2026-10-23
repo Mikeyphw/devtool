@@ -222,7 +222,7 @@ def test_unsigned_dispatch_ref_source_bound_no_token_or_secrets(monkeypatch,tmp_
     calls=[]
     def send(client,slug,wf,ref,inputs,*,execute):
         calls.append((wf,ref,inputs,execute))
-        return {'workflow_path':WORKFLOW_PATH,'pre_dispatch_sha':SHA,'request_id':'test'}
+        return {'workflow_path':WORKFLOW_PATH,'pre_dispatch_sha':SHA,'request_id':'test','dispatched':execute}
     monkeypatch.setattr('devtool.actions_unsigned.dispatch_workflow',send)
     result=unsigned_dispatch(object(),REPO,tmp_path,ref='main',execute=True)
     assert result['dispatched'] and result['qualified_release'] is False

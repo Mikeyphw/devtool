@@ -15,7 +15,7 @@ def test_profiles_explicit_hosted_and_local_rejection():
     assert [x.identifier for x in select_profiles('')] == ['ubuntu-24.04-x64']
     assert [x.identifier for x in select_profiles('ubuntu-24.04-x64,macos-15-intel')] == ['ubuntu-24.04-x64','macos-15-intel']
     assert PROFILES['termux-android-arm64'].hosted_runner is None
-    for bad in ['unknown','windows-2022-x64','termux-android-arm64',
+    for bad in ['unknown','termux-android-arm64',
                 'ubuntu-24.04-x64,ubuntu-24.04-x64',
                 'ubuntu-24.04-x64,macos-15-intel,windows-2022-x64',
                 'ubuntu-24.04-x64,$(echo hi)','', 'a'*161]:
@@ -47,7 +47,7 @@ def test_hosted_profile_refuses_single_job_and_windows(tmp_path):
     root=fixture(tmp_path)
     with pytest.raises(ProviderError,match='multi-job'):
         provider_export(root,target='app',workflow='ci',devtool_sha=PIN,host_profiles='macos-15-intel')
-    with pytest.raises(ProviderError,match='Windows'):
+    with pytest.raises(ProviderError,match='windows-2022-x64'):
         compile_graph(root,target='app',workflow='ci',devtool_sha=PIN,host_profiles='windows-2022-x64')
 
 

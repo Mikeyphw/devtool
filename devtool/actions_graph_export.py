@@ -74,10 +74,13 @@ def _regular(root: Path, rel: str, *, must_exist: bool = True) -> Path:
 def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                   host_profiles: str = '', cache_locks: bool = False) -> dict[str, Any]:
     """Deterministic compiler; each reviewed host cell gets isolated jobs and handoffs."""
-    plan = provider_plan(root, target=target, workflow=workflow, devtool_sha=devtool_sha)
-    rows = plan['nodes']
     try:
         profiles=select_profiles(host_profiles)
+        if len({p.os for p in profiles})>1 and any(p.os=='windows' for p in profiles):
+            raise ProfileError('RM-07 mixed Windows/POSIX native plans are not yet portable')
+        plan = provider_plan(root, target=target, workflow=workflow, devtool_sha=devtool_sha,
+                             host_os=profiles[0].os, host_arch=profiles[0].arch)
+        rows = plan['nodes']
         validate_versions([row['provider'] for row in rows],profiles)
     except ProfileError as exc: raise ProviderError(str(exc)) from None
     versions=rows[0]['provider']['matrix_versions']
@@ -152,6 +155,8 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'go_command':list(row['command']) if row['provider']['provider']=='go' else [],
                          'go_env':dict(row['env']) if row['provider']['provider']=='go' else {},
                          'python_install_lock':(row['provider'].get('project') or {}).get('install_lock',''),
+                         'python_project':row['provider'].get('project'),
+                         'python_native_version':row['provider'].get('native_manager_version',''),
                          'auto_coverage':row['auto_coverage'],
                           'rust_command':row['provider'].get('command','') if row['provider']['provider']=='rust-cargo' else '',
                          'rust_target':row['provider'].get('target_triple',''),
@@ -180,6 +185,8 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'dotnet_command':row['provider'].get('command',''),
                          'dotnet_selected':row['provider'].get('selected',''),
                          'dotnet_package':row['provider'].get('package'),
+                         'dotnet_coverage':row['provider'].get('coverage',False),
+                         'dotnet_graph':row['provider'].get('graph'),
                          'coverage_report':row['auto_coverage'] or (row['provider']['provider']=='python-shell' and row['command'][2:]==['coverage','xml','-o','dist/coverage.xml']),
                          'needs':[],'handoffs':[]})
     owners: dict[tuple[str,str],str] = {}
@@ -221,6 +228,51 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
             'fallback':'single-job', 'read_only':True, 'authenticated_remote':False,
             'release_qualified':False, 'consumer_commit':plan['consumer_commit'],
             'consumer_tree':plan['consumer_tree'], 'provider_plan':plan}
+
+
+def compile_affected_graphs(root: Path, *, workflow: str, devtool_sha: str,
+                            changed_paths: list[str] | tuple[str, ...] | None = None,
+                            host_profiles: str = '', cache_locks: bool = False) -> dict[str, Any]:
+    """Fail-conservative source-ownership planning over already configured targets.
+
+    A changed path must have exactly one configured owner for reduced selection.
+    Paths with zero/multiple owners or no changes force full candidate builds.
+    The existing affected subsystem supplies reverse target dependency closure.
+    The native DAG inside every selected target is always preserved unchanged.
+    """
+    from .affected import analyze_affected_targets, _target_match_reasons
+    cfg=load_wrapper_project_config(str(root.resolve()),None)
+    candidates=tuple(sorted(name for name,t in cfg.targets.items() if workflow in t.workflows))
+    if not candidates:
+        raise ProviderError('RM-06 affected plan has no configured workflow candidates')
+    if changed_paths is None:
+        # An absent explicit Git range is not evidence that nothing changed.
+        changed=()
+    else:
+        if not isinstance(changed_paths,(tuple,list)) or len(changed_paths)>4096:
+            raise ProviderError('RM-06 affected path list is unbounded')
+        changed=tuple(sorted(set(changed_paths)))
+    for path in changed:
+        if (not isinstance(path,str) or not path or len(path)>240 or
+                path.startswith('/') or '\\' in path or any(x in ('','.','..') for x in path.split('/'))):
+            raise ProviderError('RM-06 unsafe changed source path')
+    uncertain=[]
+    for path in changed:
+        owners=[name for name in cfg.targets if _target_match_reasons(cfg,name,path)]
+        if len(owners)!=1:
+            uncertain.append(path)
+    affected=analyze_affected_targets(cfg,changed_paths=changed,candidate_targets=candidates)
+    fallback=bool(uncertain) or not changed or not affected.targets
+    targets=candidates if fallback else tuple(sorted(affected.targets))
+    if not targets: raise ProviderError('RM-06 refuses optimistic empty hosted selection')
+    graphs={name:compile_graph(root,target=name,workflow=workflow,devtool_sha=devtool_sha,
+             host_profiles=host_profiles,cache_locks=cache_locks) for name in targets}
+    record={'schema_version':1,'kind':'devtool.actions.affected-multi-job',
+            'workflow':workflow,'selected_targets':list(targets),'changed_paths':list(changed),
+            'ambiguous_paths':uncertain,'fallback_full':fallback,
+            'reason':'unowned/shared/empty changes' if fallback else 'exclusive ownership + dependent closure',
+            'graphs':{key:graphs[key]['graph_sha256'] for key in sorted(graphs)}}
+    return {**record,'selection_sha256':_digest(record),'compiled_graphs':graphs}
 
 
 def _artifact_name(namespace: str, jid: str) -> str:
@@ -343,11 +395,17 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                     '        with:\n'
                     f'          path: {cache["path"]}\n'
                     f'          key: {cache["key"]}\n') if cache['enabled'] else ''
+        py_native=bool(job['python_native_version'])
+        py_verify=(('      - name: Verify preinstalled pinned uv (no automatic bootstrap)\n'
+                   '        shell: bash\n        run: |\n'
+                   '          set -euo pipefail\n'
+                   f'          test "$(uv --version)" = "uv {job["python_native_version"]}"\n')
+                   if py_native else '')
         py_requirements=(('      - name: Install tracked hash-locked Python build requirements\n'
                           '        shell: bash\n        run: |\n'
                           '          set -euo pipefail\n'
                           f'          python3 -m pip install --disable-pip-version-check --require-hashes -r {job["python_install_lock"] or "requirements.txt"}\n')
-                         if job['python_package'] else '')
+                         if job['python_package'] and not py_native else '')
         upload=''
         if job['outputs']:
             upload=(f'      - name: Upload {jid} declared bytes (not authenticated)\n'
@@ -359,6 +417,9 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                     '          include-hidden-files: false\n'
                     '          if-no-files-found: error\n'
                     '          retention-days: 7\n')
+        is_windows=job['profile_id']=='windows-2022-x64'
+        python_bootstrap='python' if is_windows else 'python3'
+        venv_python='"$RUNNER_TEMP/devtool-venv/Scripts/python.exe"' if is_windows else '"$RUNNER_TEMP/devtool-venv/bin/python"'
         # Runtime downloads pinned commit before any handoff touches the workspace.
         entry=(f'  {jid}:\n{dep_str}'
                f'    runs-on: {job["runner"]}\n    timeout-minutes: {job["timeout_minutes"]}\n'
@@ -367,6 +428,8 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      PYTHONDONTWRITEBYTECODE: "1"\n'
                '      GOTOOLCHAIN: local\n'
                '      RUSTUP_AUTO_INSTALL: "0"\n'
+               '      NUGET_PACKAGES: ${{ runner.temp }}/devtool-nuget-store\n'
+               '      PIP_CACHE_DIR: ${{ runner.temp }}/devtool-python-wheel-store\n'
                '      CARGO_NET_OFFLINE: "true"\n'
                '    steps:\n'
                '      - name: Checkout consumer commit\n'
@@ -375,7 +438,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
-               f'{setup_go}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{shell_setup}{cache_step}'
+               f'{setup_go}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{shell_setup}{cache_step}{py_verify}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -383,13 +446,13 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '          git clone --no-checkout https://github.com/Mikeyphw/devtool.git "$RUNNER_TEMP/devtool-source"\n'
                '          git -C "$RUNNER_TEMP/devtool-source" checkout --detach "$DEVTOOL_SOURCE_SHA"\n'
                '          test "$(git -C "$RUNNER_TEMP/devtool-source" rev-parse HEAD)" = "$DEVTOOL_SOURCE_SHA"\n'
-               '          python3 -m venv "$RUNNER_TEMP/devtool-venv"\n'
-               '          "$RUNNER_TEMP/devtool-venv/bin/python" -m pip install --disable-pip-version-check "$RUNNER_TEMP/devtool-source"\n'
+               f'          {python_bootstrap} -m venv "$RUNNER_TEMP/devtool-venv"\n'
+               f'          {venv_python} -m pip install --disable-pip-version-check "$RUNNER_TEMP/devtool-source"\n'
                f'{downloads}{py_requirements}'
                '      - name: Verify dependencies and run native target-local node\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
-               '          "$RUNNER_TEMP/devtool-venv/bin/python" -m devtool.actions_graph_export run-node '
+               f'          {venv_python} -m devtool.actions_graph_export run-node '
                f'--root "$GITHUB_WORKSPACE" --target {target} --workflow {workflow} '
                f'--devtool-sha {pin} --graph-sha {digest} --job-id {jid} '
                f' --host-profiles {",".join(graph.get("toolchain_profiles",[]))}'
@@ -520,10 +583,14 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     if selected is None:
         raise ProviderError('RM-06 unknown compiled GitHub node')
     if os.environ.get('GITHUB_ACTIONS') == 'true':
-        expected={'ubuntu-24.04-x64':'Linux','macos-15-intel':'macOS'}[selected['profile_id']]
+        expected={'ubuntu-24.04-x64':'Linux','macos-15-intel':'macOS','windows-2022-x64':'Windows'}[selected['profile_id']]
         if os.environ.get('RUNNER_OS')!=expected or os.environ.get('RUNNER_ARCH')!='X64':
             raise ProviderError('RM-07 selected hosted profile does not match runner OS/architecture')
     consume_handoffs(root,inputs,graph,selected,source,run,attempt)
+    if selected['dotnet_coverage']:
+        dist=root/'dist'
+        if dist.is_symlink() or (dist.exists() and any(dist.glob('*/coverage.cobertura.xml'))):
+            raise ProviderError('RM-09 existing collector coverage may not be reused as native evidence')
     for path in selected['outputs']:
         out=_regular(root,path,must_exist=False)
         if out.exists() or out.is_symlink():
@@ -597,6 +664,53 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
         if not installed or any(r.returncode!=0 or r.skipped for r in installed):
             raise ProviderError('RM-11 frozen dependency install failed')
         specs=[replace(specs[0],env=env)]
+    if selected['python_native_version']:
+        from .actions_rm08_projects import python_project_manifest, ProjectReviewError
+        from dataclasses import replace
+        import re as _re
+        import subprocess as _subprocess
+        import tempfile as _tempfile
+        if selected['provider']!='python-shell' or len(specs)!=1 or specs[0].argv[:2] not in (['python','-m'],['python3','-m']):
+            raise ProviderError('RM-08 native manager requires one reviewed Python module job')
+        try:
+            current=python_project_manifest(root,require_package=True,native_manager=True)
+        except ProjectReviewError as exc:
+            raise ProviderError(str(exc)) from None
+        if current['source_sha256']!=selected['python_project']['source_sha256']:
+            raise ProviderError('RM-08 native manager project/lock identity drifted')
+        pin=selected['python_native_version']
+        try:
+            installed=_subprocess.run(['uv','--version'],capture_output=True,text=True,timeout=12)
+        except (OSError,_subprocess.TimeoutExpired):
+            raise ProviderError('RM-08 pinned uv executable unavailable') from None
+        if installed.returncode or installed.stdout.strip()!='uv '+pin:
+            raise ProviderError('RM-08 installed uv version differs from exact reviewed pin')
+        # Writable venv outside source tree. The manager itself is never fetched.
+        manager_dir=Path(os.environ.get('RUNNER_TEMP') or _tempfile.gettempdir())/('devtool-rm08-'+selected['id'])
+        if manager_dir.exists() or manager_dir.is_symlink():
+            raise ProviderError('RM-08 manager environment already exists')
+        manager_env=dict(os.environ)
+        manager_env.update({'UV_PROJECT_ENVIRONMENT':str(manager_dir), 'UV_OFFLINE':'true',
+                            'UV_PYTHON_DOWNLOADS':'never','UV_NO_PROGRESS':'true',
+                            'PIP_NO_INDEX':'1','PIP_DISABLE_PIP_VERSION_CHECK':'1'})
+        # uv sync --frozen refuses resolver/lock edits; --offline refuses index
+        # and wheel download. Explicit Python prevents implicit interpreter fetch.
+        command=['uv','sync','--frozen','--offline','--no-install-project',
+                 '--python',sys.executable]
+        try:
+            installed=_subprocess.run(command,cwd=root,env=manager_env,
+                                      capture_output=True,text=True,timeout=240)
+        except (OSError,_subprocess.TimeoutExpired):
+            raise ProviderError('RM-08 native uv sync unavailable or timed out') from None
+        if installed.returncode:
+            raise ProviderError('RM-08 native frozen/offline uv sync failed; no owned output accepted')
+        exe=manager_dir/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
+        if not exe.is_file() or exe.is_symlink():
+            raise ProviderError('RM-08 native uv environment missing interpreter')
+        updated=dict(specs[0].env)
+        updated.update({'UV_OFFLINE':'true','UV_PYTHON_DOWNLOADS':'never','PIP_NO_INDEX':'1',
+                        'UV_PROJECT_ENVIRONMENT':str(manager_dir)})
+        specs=[replace(specs[0],argv=[str(exe),*specs[0].argv[1:]],env=updated)]
     if selected['provider']=='jvm':
         from .actions_rm12_jvm import jvm_project, JvmError
         import subprocess as _subprocess
@@ -734,6 +848,19 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
             raise ProviderError('RM-08 coverage reporter must declare its output')
         coverage.append(merge_coverage_xml(root,['dist/coverage.xml']))
     if selected['provider']=='dotnet':
+        from .actions_rm09_dotnet import (merge_trx, DotNetError, collect_dotnet_coverage,
+                                          verify_publish_receipt, make_publish_receipt)
+        if selected['dotnet_coverage']:
+            try:
+                coverage.append(collect_dotnet_coverage(root,selected['node']))
+            except DotNetError as exc:raise ProviderError(str(exc)) from None
+        if selected['dotnet_command']=='publish':
+            try:
+                receipt=make_publish_receipt(root,selected['outputs'],
+                    selected['dotnet_selected'],selected['dotnet_graph']['sources'],selected['node'])
+                verify_publish_receipt(root,receipt)
+                node_receipts.append(receipt)
+            except DotNetError as exc:raise ProviderError(str(exc)) from None
         from .actions_rm09_dotnet import merge_trx, DotNetError
         trx=[p for p in selected['outputs'] if p.endswith('.trx')]
         if selected['dotnet_command']=='test':
@@ -774,6 +901,53 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
         try:shell_receipts.append(verify_bats_report(root))
         except ShellError as exc:raise ProviderError('RM-14 shell native node '+selected['node']+': '+str(exc)) from None
     jvm_receipts=[]
+    if selected['python_native_version']:
+        from .actions_rm08_projects import python_project_manifest, ProjectReviewError
+        from dataclasses import replace
+        import re as _re
+        import subprocess as _subprocess
+        import tempfile as _tempfile
+        if selected['provider']!='python-shell' or len(specs)!=1 or specs[0].argv[:2] not in (['python','-m'],['python3','-m']):
+            raise ProviderError('RM-08 native manager requires one reviewed Python module job')
+        try:
+            current=python_project_manifest(root,require_package=True,native_manager=True)
+        except ProjectReviewError as exc:
+            raise ProviderError(str(exc)) from None
+        if current['source_sha256']!=selected['python_project']['source_sha256']:
+            raise ProviderError('RM-08 native manager project/lock identity drifted')
+        pin=selected['python_native_version']
+        try:
+            installed=_subprocess.run(['uv','--version'],capture_output=True,text=True,timeout=12)
+        except (OSError,_subprocess.TimeoutExpired):
+            raise ProviderError('RM-08 pinned uv executable unavailable') from None
+        if installed.returncode or installed.stdout.strip()!='uv '+pin:
+            raise ProviderError('RM-08 installed uv version differs from exact reviewed pin')
+        # Writable venv outside source tree. The manager itself is never fetched.
+        manager_dir=Path(os.environ.get('RUNNER_TEMP') or _tempfile.gettempdir())/('devtool-rm08-'+selected['id'])
+        if manager_dir.exists() or manager_dir.is_symlink():
+            raise ProviderError('RM-08 manager environment already exists')
+        manager_env=dict(os.environ)
+        manager_env.update({'UV_PROJECT_ENVIRONMENT':str(manager_dir), 'UV_OFFLINE':'true',
+                            'UV_PYTHON_DOWNLOADS':'never','UV_NO_PROGRESS':'true',
+                            'PIP_NO_INDEX':'1','PIP_DISABLE_PIP_VERSION_CHECK':'1'})
+        # uv sync --frozen refuses resolver/lock edits; --offline refuses index
+        # and wheel download. Explicit Python prevents implicit interpreter fetch.
+        command=['uv','sync','--frozen','--offline','--no-install-project',
+                 '--python',sys.executable]
+        try:
+            installed=_subprocess.run(command,cwd=root,env=manager_env,
+                                      capture_output=True,text=True,timeout=240)
+        except (OSError,_subprocess.TimeoutExpired):
+            raise ProviderError('RM-08 native uv sync unavailable or timed out') from None
+        if installed.returncode:
+            raise ProviderError('RM-08 native frozen/offline uv sync failed; no owned output accepted')
+        exe=manager_dir/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
+        if not exe.is_file() or exe.is_symlink():
+            raise ProviderError('RM-08 native uv environment missing interpreter')
+        updated=dict(specs[0].env)
+        updated.update({'UV_OFFLINE':'true','UV_PYTHON_DOWNLOADS':'never','PIP_NO_INDEX':'1',
+                        'UV_PROJECT_ENVIRONMENT':str(manager_dir)})
+        specs=[replace(specs[0],argv=[str(exe),*specs[0].argv[1:]],env=updated)]
     if selected['provider']=='jvm':
         from .actions_rm12_jvm import aggregate_junit, verify_jar, verify_desktop_bundle, JvmError
         from .actions_rm12_jvm import materialize_jvm_package

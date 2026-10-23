@@ -155,8 +155,17 @@ class PythonShellProvider:
         strict=meta.get('ci_python_policy', '')=='reviewed'
         if meta.get('ci_python_policy','') not in ('','reviewed'):
             raise ProviderError('RM-08 unknown Python dependency policy')
+        native=meta.get('ci_python_manager_native',False)
+        if type(native) is not bool:
+            raise ProviderError('RM-08 manager-native opt-in must be boolean')
+        manager_pin=meta.get('ci_python_manager_version','')
+        if native and (not strict or not isinstance(manager_pin,str) or
+                not re.fullmatch(r'0\.[0-9]{1,3}\.[0-9]{1,3}',manager_pin)):
+            raise ProviderError('RM-08 native uv requires reviewed policy and exact 0.x.y version pin')
+        if not native and manager_pin:
+            raise ProviderError('RM-08 unused native-manager pin requires native opt-in')
         try:
-            project=python_project_manifest(root,require_package=strict) if strict else None
+            project=python_project_manifest(root,require_package=strict,native_manager=native) if strict else None
         except (ProjectReviewError,OSError,UnicodeError) as exc:
             raise ProviderError('RM-08 Python project: '+str(exc)[:200]) from None
         if strict and not project['dependency_install_supported']:
@@ -172,12 +181,14 @@ class PythonShellProvider:
                 'toolchain':'python','version':version,'matrix_versions':variants,
                 'version_source':'native-job-ci_python_version' if 'ci_python_version' in meta else 'bounded-next03-host-profile',
                 'project':project, 'lockfiles':lockfiles,'cache_enabled':False,
+                'native_manager_version':manager_pin if native else '',
                 'report_adapter':'pytest-junit','output_role':'source-only-unverified',
                 'release_qualified':False}
 
 
 @dataclass(frozen=True)
 class DotNetProvider:
+    host_os: str = 'linux'
     api_version: int = SCHEMA_VERSION
     provider_id: str = 'dotnet'
 
@@ -185,7 +196,7 @@ class DotNetProvider:
         # The reviewed .NET logger contains a literal semicolon; generic Go/Python
         # argv grammar intentionally refuses that token. Use the dedicated parser.
         from .actions_rm09_dotnet import inspect_dotnet_job, DotNetError
-        try: return {'api_version':self.api_version, **inspect_dotnet_job(root,argv,job.metadata or {})}
+        try: return {'api_version':self.api_version, **inspect_dotnet_job(root,argv,job.metadata or {},host_os=getattr(self,'host_os','linux'))}
         except DotNetError as exc: raise ProviderError(str(exc)) from None
 
 
@@ -303,7 +314,7 @@ def _provider_for(job: Any) -> LanguageProvider:
 
 
 def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
-                  expect_plan_sha: str = '') -> dict[str, Any]:
+                  expect_plan_sha: str = '', host_os: str = 'linux', host_arch: str = 'x86_64') -> dict[str, Any]:
     root = root.resolve()
     target = _safe_slug(target, role='Target')
     workflow = _safe_slug(workflow, role='Workflow')
@@ -323,7 +334,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         raise ProviderError(str(exc)) from None
     if not (1 <= len(graph.nodes) <= MAX_NODES):
         raise ProviderError('NEXT-03 DAG size must be between 1 and 32 nodes')
-    admission = graph_host_admission(cfg, graph, host_os='linux', host_arch='x86_64',
+    admission = graph_host_admission(cfg, graph, host_os=host_os, host_arch=host_arch,
                                      toolchains=('go', 'python-shell','dotnet','rust-cargo','node','jvm','shell-ci'))
     if not admission['all_eligible']:
         reasons = [r['node']+':'+','.join(r['eligibility']['reasons']) for r in admission['nodes'] if not r['eligibility']['eligible']]
@@ -340,7 +351,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if 'ci_host_requirements' in meta:
             try:
                 host_result = host_eligibility_v2(meta['ci_host_requirements'],
-                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci'))
+                    host_os=host_os, host_arch=host_arch, toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci'))
             except ContractError as exc:
                 raise ProviderError('Invalid ci_host_requirements: ' + str(exc)) from None
             if not host_result['eligible']:
@@ -354,6 +365,8 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
             raise ProviderError('Device, root, Termux and signing cannot be hosted')
         argv = list(job.command or [])
         provider = _provider_for(job)
+        if provider.provider_id=='dotnet':
+            provider=DotNetProvider(host_os=host_os)
         declaration = provider.inspect(root, job, argv)
         if job.env:
             if declaration['provider'] != 'go' or set(job.env)-{'GOOS','GOARCH','CGO_ENABLED'}:
@@ -448,15 +461,21 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 raise ProviderError('RM-10 fmt/Clippy/test must not claim unverified generated output')
         if declaration['provider']=='dotnet':
             operation=declaration['command']
-            if operation=='test' and (len(job.outputs)!=1 or job.outputs[0]!=declaration['trx_path']):
-                raise ProviderError('RM-09 test must declare exact owned TRX logger output')
+            if operation=='test':
+                expected=[declaration['trx_path']]
+                if declaration['coverage']:
+                    expected+=['dist/coverage.cobertura.xml']
+                if list(job.outputs)!=expected:
+                    raise ProviderError('RM-09 test must declare exact owned TRX and optional coverage output')
             if operation=='pack':
                 package=declaration['package']
                 expected=package['package_id']+'.'+package['version']+'.nupkg'
                 if len(job.outputs)!=1 or job.outputs[0] != 'dist/'+expected:
                     raise ProviderError('RM-09 pack must declare exact dist/package-id.version.nupkg output')
-            if operation=='publish' and not job.outputs:
-                raise ProviderError('RM-09 publish job must declare output manifest bytes')
+            if operation=='publish' and (not job.outputs or len(job.outputs)>48 or
+                    any(not rel.startswith('dist/') or rel.endswith('/') for rel in job.outputs) or
+                    len(set(job.outputs))!=len(job.outputs)):
+                raise ProviderError('RM-09 portable publish requires explicit bounded dist/ byte outputs')
         if declaration['provider']=='python-shell' and argv[2:]==['coverage','xml','-o','dist/coverage.xml'] and 'dist/coverage.xml' not in job.outputs:
             raise ProviderError('RM-08 coverage reporter must declare dist/coverage.xml output')
         rows.append({'node':node.key, 'job':local, 'depends_on':list(node.depends_on),

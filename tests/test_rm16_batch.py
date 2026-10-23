@@ -53,6 +53,42 @@ def test_batch_one_dispatch_two_distinct_artifacts(tmp_path,monkeypatch):
     assert len({x['contract_sha256'] for x in result['consumers']})==2
 
 
+
+def test_batch_resume_propagates_real_dispatch_count(tmp_path,monkeypatch):
+    # Exercise unsigned_dispatch itself, not a replacement mock for the
+    # wrapper: the bug was between the durable dispatcher and batch reporting.
+    root,producer,sha=fixtures(tmp_path)
+    from devtool import actions_unsigned
+    calls=[]
+    def lower_dispatch(client,repo,workflow,ref,inputs,*,execute,**options):
+        calls.append(execute)
+        return {'workflow_path':'.github/workflows/bkx-unsigned.yml',
+                'pre_dispatch_sha':sha,'dispatched':execute and False,
+                'resume_existing':execute,'request_id':'existing-1',
+                'state':'accepted-correlated','run_id':51}
+    monkeypatch.setattr(actions_unsigned,'dispatch_workflow',lower_dispatch)
+    reused=release_batch_build(object(),'Mikeyphw/bkx',root,consumer_ids=IDS,
+        ref='main',execute=True,source_root=producer)
+    assert calls==[False,True]
+    assert reused['dispatch_count']==0
+    assert reused['dispatch']['dispatched'] is False
+    assert reused['dispatch']['resume_existing'] is True
+    assert reused['dispatch']['dispatch']['request_id']=='existing-1'
+    # The same outer wrapper must report a new POST as one dispatch.
+    def new_dispatch(client,repo,workflow,ref,inputs,*,execute,**options):
+        return {'workflow_path':'.github/workflows/bkx-unsigned.yml',
+                'pre_dispatch_sha':sha,'dispatched':execute,
+                'request_id':'new-2','state':'accepted-correlated','run_id':52}
+    monkeypatch.setattr(actions_unsigned,'dispatch_workflow',new_dispatch)
+    sent=release_batch_build(object(),'Mikeyphw/bkx',root,consumer_ids=IDS,
+        ref='main',execute=True,source_root=producer)
+    assert sent['dispatch_count']==1 and sent['dispatch']['dispatched'] is True
+    # A read-only plan must never count as a dispatch either.
+    planned=release_batch_build(object(),'Mikeyphw/bkx',root,consumer_ids=IDS,
+        ref='main',execute=False,source_root=producer)
+    assert planned['dispatch_count']==0
+
+
 def test_batch_rejects_mismatched_workflow_or_signer_before_dispatch(tmp_path,monkeypatch):
     root,_,_=fixtures(tmp_path)
     p=root/'config/android-consumers.json';info=json.loads(p.read_text())

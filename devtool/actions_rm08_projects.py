@@ -235,7 +235,7 @@ def go_workspace_manifest(root: Path, *, directory: str = '.') -> dict[str, Any]
             'release_qualified':False}
 
 
-def python_project_manifest(root: Path, *, require_package: bool = False) -> dict[str, Any]:
+def python_project_manifest(root: Path, *, require_package: bool = False, native_manager: bool = False) -> dict[str, Any]:
     root=root.resolve()
     raw=_trusted(root,'pyproject.toml',required=require_package)
     if raw is None:
@@ -262,11 +262,11 @@ def python_project_manifest(root: Path, *, require_package: bool = False) -> dic
     if len(present)!=1:
         raise ProjectReviewError('Python packaging requires exactly one reviewed dependency policy lock')
     manager,path=next(iter(present.items()))
-    # Manager-native lockfiles are never executed as shell commands. Their
-    # pinned package hashes are reviewed and a tracked pip hash export is used
-    # as the cross-platform reproducible installer contract. No implicit uv /
-    # Poetry / PDM bootstrap, mutable resolver or cache is authorized.
+    # Default pip hash-export policy remains backward compatible. Explicit
+    # manager-native uv mode uses the tracked uv.lock directly, without export.
     install_lock=path
+    if native_manager and manager!='uv':
+        raise ProjectReviewError('RM-08 native offline execution currently admits only uv; Poetry/PDM need a verified network-denial mechanism')
     if manager!='pip':
         try:locked=tomllib.loads((_trusted(root,path) or b'').decode('utf-8'))
         except (ValueError, UnicodeError):
@@ -279,20 +279,27 @@ def python_project_manifest(root: Path, *, require_package: bool = False) -> dic
                 raise ProjectReviewError('Unpinned manager lock entry')
             if not re.fullmatch(r'[A-Za-z0-9_.-]{1,128}',package['name']) or not re.fullmatch(r'[0-9][A-Za-z0-9_.+!-]{0,80}',package['version']):
                 raise ProjectReviewError('Unsafe manager package pin')
-            if package.get('source') and (not isinstance(package['source'],dict) or
-                 any(key in package['source'] for key in ('git','url','path','editable','registry-url'))):
-                raise ProjectReviewError('Manager lock contains nonregistry source')
+            source=package.get('source',{})
+            own_name=data.get('project',{}).get('name','')
+            own_name=own_name.lower().replace('_','-') if isinstance(own_name,str) else ''
+            is_root=(native_manager and package['name'].lower().replace('_','-')==own_name
+                     and source=={'editable':'.'})
+            if source and not is_root and (not isinstance(source,dict) or
+                    any(key in source for key in ('git','url','path','editable','registry-url')) or
+                    (source.get('registry') not in (None,'https://pypi.org/simple'))):
+                raise ProjectReviewError('Manager lock contains unreviewed registry/local/remote source')
             files=package.get('files',[])  # Poetry/PDM (uv has wheels/sdist)
             archives=files if files else package.get('wheels',[])
-            if not isinstance(archives,list):raise ProjectReviewError('Manager lock archive list malformed')
+            if not isinstance(archives,list) or (native_manager and not is_root and not archives):
+                raise ProjectReviewError('Native manager lock archive hashes missing')
             # Require integrity information for every archive candidate.
             for item in archives:
                 if not isinstance(item,dict) or not re.fullmatch(r'(?:sha256:)?[0-9a-f]{64}',str(item.get('hash',''))):
                     raise ProjectReviewError('Manager lock archive missing SHA-256')
         # CI export must be explicitly hash-pinned independently of the
         # manager's own mutable installation/frontend behavior.
-        install_lock='requirements-ci.txt'
-        if _trusted(root,install_lock,required=False) is None:
+        install_lock=path if native_manager else 'requirements-ci.txt'
+        if not native_manager and _trusted(root,install_lock,required=False) is None:
             raise ProjectReviewError('Manager lock requires tracked requirements-ci.txt hash export')
     if manager=='pip':
         from .actions_distributions import _python_source, DistributionError
@@ -302,7 +309,7 @@ def python_project_manifest(root: Path, *, require_package: bool = False) -> dic
         backend_pkg=_BACKENDS[backend]
         if not re.search(r'(?m)^'+re.escape(backend_pkg)+r'==[^\s]+\s+--hash=sha256:[a-f0-9]{64}',requirements_text):
             raise ProjectReviewError('Python backend must be hash-pinned in pip build requirements')
-    else:
+    elif not native_manager:
         # Full hash policy on the tracked pip export; no trusted installer
         # equivalence is inferred without matching each locked package pin.
         export=(_trusted(root,install_lock) or b'').decode('utf-8')
@@ -325,6 +332,9 @@ def python_project_manifest(root: Path, *, require_package: bool = False) -> dic
     return {'schema_version':1,'kind':'devtool.python-project-manifest',
             'project_present':True,'backend':backend,'build_requirements':requirements,
             'manager':manager,'lockfile':path,'install_lock':install_lock,
+            'native_manager':native_manager,
+            'source_sha256':{name:__import__('hashlib').sha256(_trusted(root,name) or b'').hexdigest()
+                             for name in ['pyproject.toml',path]+([install_lock] if install_lock!=path else [])},
             'source_files':['pyproject.toml',path]+([install_lock] if install_lock!=path else []),
             'dependency_install_supported':True,
             'python_versions':['3.11','3.12','3.13'], 'release_qualified':False}
