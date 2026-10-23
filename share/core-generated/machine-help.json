@@ -5574,11 +5574,11 @@
         {
           "choices": [],
           "dest": "adopt_target",
-          "help": "Target with native target-local jobs",
+          "help": "Required for one target; omit with --affected for workspace selection",
           "hidden": false,
           "id": "cli.option.actions.provider-export.adopt_target",
           "nargs": null,
-          "required": true,
+          "required": false,
           "spellings": [
             "--target"
           ]
@@ -5630,6 +5630,42 @@
           "required": false,
           "spellings": [
             "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "provider_affected",
+          "help": "Conservatively select all affected configured targets (multi-job only)",
+          "hidden": false,
+          "id": "cli.option.actions.provider-export.provider_affected",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--affected"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "provider_affected_base",
+          "help": "Explicit Git merge base for affected source ownership",
+          "hidden": false,
+          "id": "cli.option.actions.provider-export.provider_affected_base",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--affected-base"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "provider_affected_head",
+          "help": "Git head for affected selection; with no base use head^..head",
+          "hidden": false,
+          "id": "cli.option.actions.provider-export.provider_affected_head",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--affected-head"
           ]
         },
         {
@@ -39479,7 +39515,7 @@
       "summary": "Source-bound unsigned Android release batch"
     }
   ],
-  "digest": "986be2edeb65ba7c5530cad5eb81521cf7e62a60dac4e9bc6cc488e0d9e10173",
+  "digest": "dfc5ea26b3a3ad6a0d78dffe210c624290c538d7d2b7a284d078be4fac1d7f1b",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -40013,7 +40049,7 @@
     "registry_command_count": 391
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "bc680cd19cfe950d24500566fb49b696e7b11f48144af3536709c7f3490fd8f1",
+  "registry_digest": "6b76d13fbb3a0a125a581facbe1f44ea974568c40e06ea78b2f796cda05b8bbc",
   "registry_schema_version": 1,
   "schema_version": 1
 }

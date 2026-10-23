@@ -160,14 +160,19 @@ class PythonShellProvider:
             raise ProviderError('RM-08 manager-native opt-in must be boolean')
         manager_pin=meta.get('ci_python_manager_version','')
         if native and (not strict or not isinstance(manager_pin,str) or
-                not re.fullmatch(r'0\.[0-9]{1,3}\.[0-9]{1,3}',manager_pin)):
-            raise ProviderError('RM-08 native uv requires reviewed policy and exact 0.x.y version pin')
+                not re.fullmatch(r'(?:0\.[0-9]{1,3}\.[0-9]{1,3}|2\.[0-9]{1,3}\.[0-9]{1,3})',manager_pin)):
+            raise ProviderError('RM-08 native manager requires reviewed policy and exact uv 0.x.y or Poetry/PDM 2.x.y pin')
         if not native and manager_pin:
             raise ProviderError('RM-08 unused native-manager pin requires native opt-in')
         try:
             project=python_project_manifest(root,require_package=strict,native_manager=native) if strict else None
         except (ProjectReviewError,OSError,UnicodeError) as exc:
             raise ProviderError('RM-08 Python project: '+str(exc)[:200]) from None
+        if native:
+            manager=project['manager']
+            if ((manager=='uv' and not manager_pin.startswith('0.')) or
+                (manager in ('poetry','pdm') and not manager_pin.startswith('2.'))):
+                raise ProviderError('RM-08 native manager pin incompatible with lock type')
         if strict and not project['dependency_install_supported']:
             raise ProviderError('RM-08 package lacks a reviewed hash installer policy')
         lockfiles=[name for name in ('uv.lock','poetry.lock','requirements.txt','pdm.lock') if _tracked(root,name)]
@@ -785,7 +790,82 @@ jobs:
 
 def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
                     write: bool = False, verify: bool = False, mode: str = 'single-job',
-                    host_profiles: str = '', cache_locks: bool = False) -> dict[str, Any]:
+                    host_profiles: str = '', cache_locks: bool = False,
+                    affected: bool = False, affected_base: str = '',
+                    affected_head: str = '') -> dict[str, Any]:
+    if affected or affected_base or affected_head:
+        if not affected or mode != 'multi-job' or target:
+            raise ProviderError('RM-06 --affected requires --mode multi-job and no --target')
+        if write and verify:
+            raise ProviderError('RM-06 --yes and --verify are mutually exclusive')
+        from .actions_graph_export import compile_affected_graphs, workflow_yaml
+        from .affected import git_changed_paths, AffectedSelectionError
+        # Without an explicit revision selection, conservative full export is
+        # required; an empty/dirty working-tree diff is not proof of no changes.
+        try:
+            changed = (git_changed_paths(root, base=affected_base, head=affected_head)
+                       if affected_base or affected_head else None)
+        except (AffectedSelectionError, OSError, ValueError) as exc:
+            raise ProviderError('RM-06 affected Git range refused: '+str(exc)[:180]) from None
+        selection = compile_affected_graphs(root, workflow=workflow,
+                       devtool_sha=devtool_sha, changed_paths=changed,
+                       host_profiles=host_profiles, cache_locks=cache_locks)
+        generated = {}
+        for name, graph in sorted(selection['compiled_graphs'].items()):
+            relative = f'.github/workflows/devtool-{name}-{workflow}-providers-multi.yml'
+            try:
+                destination = _inside_repo(root.resolve(), relative)
+            except AdoptionError as exc:
+                raise ProviderError(str(exc)) from None
+            content = workflow_yaml(graph).encode()
+            generated[name] = (destination, relative, content, graph['graph_sha256'])
+        result = {key:value for key,value in selection.items() if key != 'compiled_graphs'}
+        result.update({'workflow_paths':{name:row[1] for name,row in generated.items()},
+                       'workflow_sha256':{name:hashlib.sha256(row[2]).hexdigest()
+                                         for name,row in generated.items()},
+                       'writes_performed':False,'remote_dispatch':False})
+        if verify:
+            for name,(path,rel,content,digest) in generated.items():
+                if not path.is_file() or path.is_symlink() or path.read_bytes()!=content:
+                    raise ProviderError('RM-06 selected workflow absent or changed: '+rel)
+            return {**result,'status':'LOCAL_AFFECTED_WORKFLOW_BYTES_VERIFIED_NOT_REMOTE'}
+        # All destinations checked before any filesystem mutation, including
+        # the review-only mode (which refuses overwrite rather than concealing it).
+        for path,rel,content,digest in generated.values():
+            if path.exists() or path.is_symlink():
+                raise ProviderError('RM-06 refusing existing generated workflow: '+rel)
+        if not write:
+            return {**result,'status':'REVIEW_ONLY'}
+        root=root.resolve()
+        if _git(root,'status','--porcelain','--untracked-files=all'):
+            raise ProviderError('RM-06 affected export requires clean Git source')
+        commits={graph['consumer_commit'] for graph in selection['compiled_graphs'].values()}
+        trees={graph['consumer_tree'] for graph in selection['compiled_graphs'].values()}
+        if len(commits)!=1 or len(trees)!=1 or _git(root,'rev-parse','HEAD') not in commits or _git(root,'rev-parse','HEAD^{tree}') not in trees:
+            raise ProviderError('RM-06 cross-target source identity mismatch')
+        # Recompute ownership and every frozen native graph immediately before
+        # writing; Git range and sources may have drifted since initial plan.
+        try:
+            changed_now=(git_changed_paths(root,base=affected_base,head=affected_head)
+                         if affected_base or affected_head else None)
+        except (AffectedSelectionError, OSError, ValueError) as exc:
+            raise ProviderError('RM-06 Git range drift/refusal: '+str(exc)[:180]) from None
+        again=compile_affected_graphs(root,workflow=workflow,devtool_sha=devtool_sha,
+                      changed_paths=changed_now,host_profiles=host_profiles,cache_locks=cache_locks)
+        if again['selection_sha256']!=selection['selection_sha256']:
+            raise ProviderError('RM-06 affected selection drift before export')
+        created=[]
+        try:
+            for path,rel,content,digest in generated.values():
+                _atomic(path,content)
+                created.append(path)
+        except (OSError, AdoptionError):
+            for path in created:
+                path.unlink(missing_ok=True)
+            raise ProviderError('RM-06 atomic affected export failed and new files were removed') from None
+        return {**result,'writes_performed':True,'status':'LOCAL_AFFECTED_WORKFLOWS_WRITTEN_NOT_REMOTE'}
+    if not target:
+        raise ProviderError('Provider export requires --target unless --affected is selected')
     if write and verify:
         raise ProviderError('Export --yes and --verify are mutually exclusive')
     if mode not in ('single-job', 'multi-job'):

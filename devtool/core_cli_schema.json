@@ -15238,14 +15238,14 @@
       "metadata": {
         "choices": [],
         "dest": "adopt_target",
-        "help": "Target with native target-local jobs",
+        "help": "Required for one target; omit with --affected for workspace selection",
         "hidden": false,
         "nargs": null,
         "path": [
           "actions",
           "provider-export"
         ],
-        "required": true
+        "required": false
       },
       "scope": "actions provider-export",
       "sensitive": false,
@@ -15337,6 +15337,69 @@
       "sensitive": false,
       "stable_id": "cli.option.actions.provider-export.json",
       "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--affected",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "provider_affected",
+        "help": "Conservatively select all affected configured targets (multi-job only)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "provider-export"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-export",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-export.provider_affected",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--affected-base",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "provider_affected_base",
+        "help": "Explicit Git merge base for affected source ownership",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "provider-export"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-export",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-export.provider_affected_base",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--affected-head",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "provider_affected_head",
+        "help": "Git head for affected selection; with no base use head^..head",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "provider-export"
+        ],
+        "required": false
+      },
+      "scope": "actions provider-export",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.provider-export.provider_affected_head",
+      "value_kind": "_StoreAction"
     },
     {
       "aliases": [],
@@ -120498,20 +120561,20 @@
                   "parser": {
                     "actions": [
                       {
-                        "action": "store",
+                        "action": "store_true",
                         "choices": null,
-                        "const": null,
-                        "default": "",
-                        "dest": "adopt_target",
+                        "const": true,
+                        "default": false,
+                        "dest": "provider_affected",
                         "group": null,
-                        "help": "Target with native target-local jobs",
+                        "help": "Conservatively select all affected configured targets (multi-job only)",
                         "metavar": null,
                         "mutex": null,
-                        "nargs": null,
+                        "nargs": 0,
                         "option_strings": [
-                          "--target"
+                          "--affected"
                         ],
-                        "required": true,
+                        "required": false,
                         "type": null
                       },
                       {
@@ -120519,16 +120582,50 @@
                         "choices": null,
                         "const": null,
                         "default": "",
-                        "dest": "adopt_workflow",
+                        "dest": "provider_affected_base",
                         "group": null,
-                        "help": "Workflow under the target",
+                        "help": "Explicit Git merge base for affected source ownership",
                         "metavar": null,
                         "mutex": null,
                         "nargs": null,
                         "option_strings": [
-                          "--workflow"
+                          "--affected-base"
                         ],
-                        "required": true,
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "provider_affected_head",
+                        "group": null,
+                        "help": "Git head for affected selection; with no base use head^..head",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--affected-head"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "provider_cache_locks",
+                        "group": null,
+                        "help": "Opt in to pinned cache of trusted Go compiler outputs only; multi-job only",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--cache-locks"
+                        ],
+                        "required": false,
                         "type": null
                       },
                       {
@@ -120546,6 +120643,40 @@
                           "--devtool-sha"
                         ],
                         "required": true,
+                        "type": null
+                      },
+                      {
+                        "action": "store",
+                        "choices": null,
+                        "const": null,
+                        "default": "",
+                        "dest": "provider_host_profiles",
+                        "group": null,
+                        "help": "Comma-separated reviewed hosted profile IDs (bounded fanout; multi-job only)",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": null,
+                        "option_strings": [
+                          "--host-profiles"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "json",
+                        "group": null,
+                        "help": "Emit result as JSON",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--json"
+                        ],
+                        "required": false,
                         "type": null
                       },
                       {
@@ -120586,18 +120717,18 @@
                         "type": null
                       },
                       {
-                        "action": "store_true",
+                        "action": "store",
                         "choices": null,
-                        "const": true,
-                        "default": false,
-                        "dest": "yes",
+                        "const": null,
+                        "default": "",
+                        "dest": "adopt_target",
                         "group": null,
-                        "help": "Write new reviewed hosted workflow (no commit/dispatch)",
+                        "help": "Required for one target; omit with --affected for workspace selection",
                         "metavar": null,
                         "mutex": null,
-                        "nargs": 0,
+                        "nargs": null,
                         "option_strings": [
-                          "--yes"
+                          "--target"
                         ],
                         "required": false,
                         "type": null
@@ -120620,37 +120751,20 @@
                         "type": null
                       },
                       {
-                        "action": "store_true",
-                        "choices": null,
-                        "const": true,
-                        "default": false,
-                        "dest": "json",
-                        "group": null,
-                        "help": "Emit result as JSON",
-                        "metavar": null,
-                        "mutex": null,
-                        "nargs": 0,
-                        "option_strings": [
-                          "--json"
-                        ],
-                        "required": false,
-                        "type": null
-                      },
-                      {
                         "action": "store",
                         "choices": null,
                         "const": null,
                         "default": "",
-                        "dest": "provider_host_profiles",
+                        "dest": "adopt_workflow",
                         "group": null,
-                        "help": "Comma-separated reviewed hosted profile IDs (bounded fanout; multi-job only)",
+                        "help": "Workflow under the target",
                         "metavar": null,
                         "mutex": null,
                         "nargs": null,
                         "option_strings": [
-                          "--host-profiles"
+                          "--workflow"
                         ],
-                        "required": false,
+                        "required": true,
                         "type": null
                       },
                       {
@@ -120658,14 +120772,14 @@
                         "choices": null,
                         "const": true,
                         "default": false,
-                        "dest": "provider_cache_locks",
+                        "dest": "yes",
                         "group": null,
-                        "help": "Opt in to pinned cache of trusted Go compiler outputs only; multi-job only",
+                        "help": "Write new reviewed hosted workflow (no commit/dispatch)",
                         "metavar": null,
                         "mutex": null,
                         "nargs": 0,
                         "option_strings": [
-                          "--cache-locks"
+                          "--yes"
                         ],
                         "required": false,
                         "type": null

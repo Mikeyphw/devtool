@@ -82,6 +82,10 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                              host_os=profiles[0].os, host_arch=profiles[0].arch)
         rows = plan['nodes']
         validate_versions([row['provider'] for row in rows],profiles)
+        if any(row['provider'].get('native_manager_version') and
+               (row['provider'].get('project') or {}).get('manager') in ('poetry','pdm')
+               for row in rows) and any(profile.os!='linux' for profile in profiles):
+            raise ProfileError('RM-08 Poetry/PDM native offline execution requires Linux network namespace')
     except ProfileError as exc: raise ProviderError(str(exc)) from None
     versions=rows[0]['provider']['matrix_versions']
     # Do not infer a shared toolchain from a mixed set of node profiles.
@@ -396,10 +400,11 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                     f'          path: {cache["path"]}\n'
                     f'          key: {cache["key"]}\n') if cache['enabled'] else ''
         py_native=bool(job['python_native_version'])
-        py_verify=(('      - name: Verify preinstalled pinned uv (no automatic bootstrap)\n'
+        py_command={'uv':'uv','poetry':'poetry','pdm':'pdm'}.get((job['python_project'] or {}).get('manager',''))
+        py_verify=(('      - name: Verify preinstalled pinned Python manager (no automatic bootstrap)\n'
                    '        shell: bash\n        run: |\n'
                    '          set -euo pipefail\n'
-                   f'          test "$(uv --version)" = "uv {job["python_native_version"]}"\n')
+                   f'          test "$({py_command} --version)" = "{("uv " if py_command=="uv" else "Poetry (version " if py_command=="poetry" else "PDM, version ")}{job["python_native_version"]}{")" if py_command=="poetry" else ""}"\n')
                    if py_native else '')
         py_requirements=(('      - name: Install tracked hash-locked Python build requirements\n'
                           '        shell: bash\n        run: |\n'
@@ -665,52 +670,8 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
             raise ProviderError('RM-11 frozen dependency install failed')
         specs=[replace(specs[0],env=env)]
     if selected['python_native_version']:
-        from .actions_rm08_projects import python_project_manifest, ProjectReviewError
-        from dataclasses import replace
-        import re as _re
-        import subprocess as _subprocess
-        import tempfile as _tempfile
-        if selected['provider']!='python-shell' or len(specs)!=1 or specs[0].argv[:2] not in (['python','-m'],['python3','-m']):
-            raise ProviderError('RM-08 native manager requires one reviewed Python module job')
-        try:
-            current=python_project_manifest(root,require_package=True,native_manager=True)
-        except ProjectReviewError as exc:
-            raise ProviderError(str(exc)) from None
-        if current['source_sha256']!=selected['python_project']['source_sha256']:
-            raise ProviderError('RM-08 native manager project/lock identity drifted')
-        pin=selected['python_native_version']
-        try:
-            installed=_subprocess.run(['uv','--version'],capture_output=True,text=True,timeout=12)
-        except (OSError,_subprocess.TimeoutExpired):
-            raise ProviderError('RM-08 pinned uv executable unavailable') from None
-        if installed.returncode or installed.stdout.strip()!='uv '+pin:
-            raise ProviderError('RM-08 installed uv version differs from exact reviewed pin')
-        # Writable venv outside source tree. The manager itself is never fetched.
-        manager_dir=Path(os.environ.get('RUNNER_TEMP') or _tempfile.gettempdir())/('devtool-rm08-'+selected['id'])
-        if manager_dir.exists() or manager_dir.is_symlink():
-            raise ProviderError('RM-08 manager environment already exists')
-        manager_env=dict(os.environ)
-        manager_env.update({'UV_PROJECT_ENVIRONMENT':str(manager_dir), 'UV_OFFLINE':'true',
-                            'UV_PYTHON_DOWNLOADS':'never','UV_NO_PROGRESS':'true',
-                            'PIP_NO_INDEX':'1','PIP_DISABLE_PIP_VERSION_CHECK':'1'})
-        # uv sync --frozen refuses resolver/lock edits; --offline refuses index
-        # and wheel download. Explicit Python prevents implicit interpreter fetch.
-        command=['uv','sync','--frozen','--offline','--no-install-project',
-                 '--python',sys.executable]
-        try:
-            installed=_subprocess.run(command,cwd=root,env=manager_env,
-                                      capture_output=True,text=True,timeout=240)
-        except (OSError,_subprocess.TimeoutExpired):
-            raise ProviderError('RM-08 native uv sync unavailable or timed out') from None
-        if installed.returncode:
-            raise ProviderError('RM-08 native frozen/offline uv sync failed; no owned output accepted')
-        exe=manager_dir/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
-        if not exe.is_file() or exe.is_symlink():
-            raise ProviderError('RM-08 native uv environment missing interpreter')
-        updated=dict(specs[0].env)
-        updated.update({'UV_OFFLINE':'true','UV_PYTHON_DOWNLOADS':'never','PIP_NO_INDEX':'1',
-                        'UV_PROJECT_ENVIRONMENT':str(manager_dir)})
-        specs=[replace(specs[0],argv=[str(exe),*specs[0].argv[1:]],env=updated)]
+        from .actions_rm08_native import provision_python_manager
+        specs=provision_python_manager(root,selected,specs)
     if selected['provider']=='jvm':
         from .actions_rm12_jvm import jvm_project, JvmError
         import subprocess as _subprocess
@@ -901,53 +862,6 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
         try:shell_receipts.append(verify_bats_report(root))
         except ShellError as exc:raise ProviderError('RM-14 shell native node '+selected['node']+': '+str(exc)) from None
     jvm_receipts=[]
-    if selected['python_native_version']:
-        from .actions_rm08_projects import python_project_manifest, ProjectReviewError
-        from dataclasses import replace
-        import re as _re
-        import subprocess as _subprocess
-        import tempfile as _tempfile
-        if selected['provider']!='python-shell' or len(specs)!=1 or specs[0].argv[:2] not in (['python','-m'],['python3','-m']):
-            raise ProviderError('RM-08 native manager requires one reviewed Python module job')
-        try:
-            current=python_project_manifest(root,require_package=True,native_manager=True)
-        except ProjectReviewError as exc:
-            raise ProviderError(str(exc)) from None
-        if current['source_sha256']!=selected['python_project']['source_sha256']:
-            raise ProviderError('RM-08 native manager project/lock identity drifted')
-        pin=selected['python_native_version']
-        try:
-            installed=_subprocess.run(['uv','--version'],capture_output=True,text=True,timeout=12)
-        except (OSError,_subprocess.TimeoutExpired):
-            raise ProviderError('RM-08 pinned uv executable unavailable') from None
-        if installed.returncode or installed.stdout.strip()!='uv '+pin:
-            raise ProviderError('RM-08 installed uv version differs from exact reviewed pin')
-        # Writable venv outside source tree. The manager itself is never fetched.
-        manager_dir=Path(os.environ.get('RUNNER_TEMP') or _tempfile.gettempdir())/('devtool-rm08-'+selected['id'])
-        if manager_dir.exists() or manager_dir.is_symlink():
-            raise ProviderError('RM-08 manager environment already exists')
-        manager_env=dict(os.environ)
-        manager_env.update({'UV_PROJECT_ENVIRONMENT':str(manager_dir), 'UV_OFFLINE':'true',
-                            'UV_PYTHON_DOWNLOADS':'never','UV_NO_PROGRESS':'true',
-                            'PIP_NO_INDEX':'1','PIP_DISABLE_PIP_VERSION_CHECK':'1'})
-        # uv sync --frozen refuses resolver/lock edits; --offline refuses index
-        # and wheel download. Explicit Python prevents implicit interpreter fetch.
-        command=['uv','sync','--frozen','--offline','--no-install-project',
-                 '--python',sys.executable]
-        try:
-            installed=_subprocess.run(command,cwd=root,env=manager_env,
-                                      capture_output=True,text=True,timeout=240)
-        except (OSError,_subprocess.TimeoutExpired):
-            raise ProviderError('RM-08 native uv sync unavailable or timed out') from None
-        if installed.returncode:
-            raise ProviderError('RM-08 native frozen/offline uv sync failed; no owned output accepted')
-        exe=manager_dir/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
-        if not exe.is_file() or exe.is_symlink():
-            raise ProviderError('RM-08 native uv environment missing interpreter')
-        updated=dict(specs[0].env)
-        updated.update({'UV_OFFLINE':'true','UV_PYTHON_DOWNLOADS':'never','PIP_NO_INDEX':'1',
-                        'UV_PROJECT_ENVIRONMENT':str(manager_dir)})
-        specs=[replace(specs[0],argv=[str(exe),*specs[0].argv[1:]],env=updated)]
     if selected['provider']=='jvm':
         from .actions_rm12_jvm import aggregate_junit, verify_jar, verify_desktop_bundle, JvmError
         from .actions_rm12_jvm import materialize_jvm_package

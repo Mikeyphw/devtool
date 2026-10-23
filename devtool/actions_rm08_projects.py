@@ -265,8 +265,28 @@ def python_project_manifest(root: Path, *, require_package: bool = False, native
     # Default pip hash-export policy remains backward compatible. Explicit
     # manager-native uv mode uses the tracked uv.lock directly, without export.
     install_lock=path
-    if native_manager and manager!='uv':
-        raise ProjectReviewError('RM-08 native offline execution currently admits only uv; Poetry/PDM need a verified network-denial mechanism')
+    if native_manager and manager not in ('uv','poetry','pdm'):
+        raise ProjectReviewError('RM-08 native offline execution requires a reviewed uv/Poetry/PDM lock')
+    if native_manager and manager=='pip':
+        raise ProjectReviewError('RM-08 pip hash export is not a manager-native mode')
+    if native_manager:
+        # No editable/direct URL/path source can be introduced through metadata
+        # independent of the reviewed lock; manager hooks remain untrusted.
+        def check_sources(value):
+            if isinstance(value,dict):
+                for key,item in value.items():
+                    if key in ('source','sources','repositories','plugins','plugin') and isinstance(item,(dict,list)):
+                        raise ProjectReviewError('Native manager unreviewed source/plugin configuration')
+                    if key in ('git','url','path','develop'):
+                        raise ProjectReviewError('Native manager local/remote source declaration')
+                    check_sources(item)
+            elif isinstance(value,list):
+                for item in value:check_sources(item)
+            elif isinstance(value,str) and re.search(r'(?i)(?:git\+|https?://|file://)',value):
+                raise ProjectReviewError('Native manager remote or file URL dependency')
+        check_sources(data.get('tool',{}))
+        check_sources(data.get('project',{}).get('dependencies',[]))
+        check_sources(data.get('dependency-groups',{}))
     if manager!='pip':
         try:locked=tomllib.loads((_trusted(root,path) or b'').decode('utf-8'))
         except (ValueError, UnicodeError):

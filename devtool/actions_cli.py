@@ -60,7 +60,10 @@ def run_actions_command(args: Any) -> int:
                             verify=bool(getattr(args,'verify',False)),
                             mode=str(getattr(args,'provider_mode','single-job') or 'single-job'),
                             host_profiles=str(getattr(args,'provider_host_profiles','') or ''),
-                            cache_locks=bool(getattr(args,'provider_cache_locks',False)))
+                            cache_locks=bool(getattr(args,'provider_cache_locks',False)),
+                            affected=bool(getattr(args,'provider_affected',False)),
+                            affected_base=str(getattr(args,'provider_affected_base','') or ''),
+                            affected_head=str(getattr(args,'provider_affected_head','') or ''))
             except (ProviderError, AdoptionError, ValueError) as exc:
                 print(f'ACTIONS_NEXT03_PROVIDER_REFUSED: {exc}', file=sys.stderr)
                 return 1

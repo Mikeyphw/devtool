@@ -930,3 +930,21 @@ Implementation: durable source/graph/host/input/output fingerprints; canonical C
 Qualification boundaries: local regressions and source-bound transaction checks
 are engineering evidence; remote Windows Actions, authenticated artifacts, real
 .NET workloads and device/release qualification must be separately established.
+
+## RM06–RM09 remaining source promises — final supplement (2026-10-23)
+
+- RM06 source-owner affected selection was API-only despite the roadmap CLI promise. Added source-bound `actions provider-export --affected --affected-base/--affected-head` with conservative complete fallback, multi-target immutable graph compilation, plan/verify and all-destination preflight. Status: engineering implemented, hosted invocation not authenticated.
+- RM08 native uv code was accidentally provisioned twice inside `run_node`, causing an apparently successful native Python job to fail afterward on pre-existing environment. Folded into one pre-native provisioning function. `test_uv_success_runs_one_native_job_and_one_sync` verifies 1 install and 1 native execution. Status: locally passed.
+- RM08 Poetry/PDM native installation was absent. Added opt-in exact preinstalled binary pin + source/lock SHA review, Linux network-namespace-enforced sync, isolated venv and all-failure refusal; remote sources/plugins denied. No automatic bootstraps. Limit: an unprivileged host without a working network namespace refuses, rather than silently reaching PyPI or dropping to pip export. Status: local policy/negative tests passed, real capable-host sync evidence pending.
+- RM07 and RM09 source-level Windows bridge/coverage/publish work from the previous consolidated overlay retained without promoting mock/local results to hosted proof. Status: live authenticated Windows GitHub runs and .NET collector evidence still pending independent authority.
+- CLI mutation also regenerated canonical machine help/completions/reference/manpage from the checked-in canonical parser schema. Drift tests retained.
+
+Complete matrix and truthful outstanding external gates: `docs/RM06_RM09_ENGINEERING_CLOSURE_20261023.md`.
+
+## RM06–RM09 supplement Termux regression portability hotfix (2026-10-23)
+
+- **Evidence:** User Termux `apply-overlay` run `d695ca6bea794abf8c6d261dfe27e701` failed in `test_poetry_pdm_native_network_denial_and_fail_closed[poetry]`: expected `offline provisioning failed`, received `RM-08 Poetry/PDM require supported Linux network namespace`. Preflight passed; the validator aborted at the second test.
+- **Root cause:** The test assumed its Linux-specific positive capability gate held on any pytest host, so the Termux host refusal short-circuited the intentionally mocked `unshare` denial branch. Runtime rejection itself was correct.
+- **Fix:** Introduce a narrow host-gate seam; explicitly force only that seam to `True` for the mocked Linux namespace command test and to `False` for Android/unsupported-host refusal checks. Never replace the real policy, skip tests, or weaken network isolation.
+- **Affected:** Devtool RM08 Python native manager and RM06–RM09 overlay validator.
+- **Status:** Source fixed and local validation pending; device must re-run the corrected full source-bound overlay. No claims of real Poetry/PDM hosted qualification.
