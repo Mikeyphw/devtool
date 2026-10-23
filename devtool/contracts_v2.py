@@ -85,6 +85,8 @@ _REVIEWED: Mapping[str, ProviderDescriptor] = MappingProxyType({
     'jvm': ProviderDescriptor('jvm', 1, ('test','check','jar','distribution'),
                              ('ubuntu-24.04-x86_64','macos-15-x86_64'),
                              'reviewed-offline-maven-gradle-v1',('local-bytes-only',)),
+    'shell-ci': ProviderDescriptor('shell-ci', 1, ('syntax','lint','format','test'),
+                             ('ubuntu-24.04-x86_64',), 'tracked-shell-exact-argv-v1',('local-bytes-only',)),
     'dotnet': ProviderDescriptor('dotnet', 1, ('restore','build','test','pack','publish'),
                              ('ubuntu-24.04-x86_64',), 'bounded-dotnet-argv-v1',
                              ('local-bytes-only',)),

@@ -219,8 +219,18 @@ class JvmProvider:
         try:return {'api_version':self.api_version, **inspect_jvm_job(root,argv,job.metadata or {})}
         except JvmError as exc:raise ProviderError(str(exc)) from None
 
+@dataclass(frozen=True)
+class ShellCIProvider:
+    api_version: int = SCHEMA_VERSION
+    provider_id: str = 'shell-ci'
+
+    def inspect(self, root: Path, job: Any, argv: list[str]) -> dict[str, Any]:
+        from .actions_rm14_shell import inspect_shell_job, ShellError
+        try:return inspect_shell_job(root,argv,job.metadata or {})
+        except ShellError as exc:raise ProviderError(str(exc)) from None
+
 # The only provider registry: immutable built-ins, no entry-point/network/plugin loading.
-PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider(), 'node': NodeProvider(), 'jvm': JvmProvider()})
+PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider(), 'node': NodeProvider(), 'jvm': JvmProvider(), 'shell-ci': ShellCIProvider()})
 # V1 adapter behavior is preserved; V2 review metadata must match the exact built-ins.
 for _id, _adapter in PROVIDERS.items():
     resolve_provider(_id, api_version=_adapter.api_version)
@@ -257,6 +267,10 @@ def _provider_for(job: Any) -> LanguageProvider:
     flag = meta.get('ci_toolchain')
     argv = list(job.command or [])
     name = Path(argv[0]).name if argv else ''
+    if flag == 'shell-ci' or name in ('shellcheck','shfmt','bats','bash','sh','zsh'):
+        if name not in ('shellcheck','shfmt','bats','bash','sh','zsh') or flag not in (None,'shell-ci'):
+            raise ProviderError('RM-14 shell provider/argv mismatch')
+        return PROVIDERS['shell-ci']
     if flag == 'jvm' or name in ('mvn','gradle'):
         if name not in ('mvn','gradle') or flag not in (None,'jvm'):
             raise ProviderError('RM-12 JVM provider/argv mismatch')
@@ -274,7 +288,7 @@ def _provider_for(job: Any) -> LanguageProvider:
             raise ProviderError('RM-09 dotnet provider/argv mismatch')
         return PROVIDERS['dotnet']
     go = (flag == 'go' or job.runner == 'go' or name == 'go' or 'go.mod' in job.inputs)
-    if flag not in (None, 'go', 'python-shell', 'dotnet', 'rust-cargo', 'node', 'jvm'):
+    if flag not in (None, 'go', 'python-shell', 'dotnet', 'rust-cargo', 'node', 'jvm', 'shell-ci'):
         raise ProviderError('No reviewed language provider for ci_toolchain ' + str(flag)[:50])
     if go and flag == 'python-shell':
         raise ProviderError('Go source declaration conflicts with Python toolchain')
@@ -310,7 +324,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
     if not (1 <= len(graph.nodes) <= MAX_NODES):
         raise ProviderError('NEXT-03 DAG size must be between 1 and 32 nodes')
     admission = graph_host_admission(cfg, graph, host_os='linux', host_arch='x86_64',
-                                     toolchains=('go', 'python-shell','dotnet','rust-cargo','node','jvm'))
+                                     toolchains=('go', 'python-shell','dotnet','rust-cargo','node','jvm','shell-ci'))
     if not admission['all_eligible']:
         reasons = [r['node']+':'+','.join(r['eligibility']['reasons']) for r in admission['nodes'] if not r['eligibility']['eligible']]
         raise ProviderError('Hosted node admission blocked: ' + '; '.join(reasons)[:320])
@@ -326,7 +340,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if 'ci_host_requirements' in meta:
             try:
                 host_result = host_eligibility_v2(meta['ci_host_requirements'],
-                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm'))
+                    host_os='linux', host_arch='x86_64', toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci'))
             except ContractError as exc:
                 raise ProviderError('Invalid ci_host_requirements: ' + str(exc)) from None
             if not host_result['eligible']:
@@ -382,6 +396,9 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
             if not re.search(r'(?m)^coverage==[0-9][A-Za-z0-9_.+!-]*\s+--hash=sha256:[a-f0-9]{64}\s*$',
                              (root/declaration['project']['install_lock']).read_text()):
                 raise ProviderError('RM-08 automatic coverage requires hash-pinned coverage dependency')
+        if declaration['provider']=='shell-ci':
+            if list(job.outputs) != (['dist/report.xml'] if declaration['operation']=='test' else []):
+                raise ProviderError('RM-14 shell output ownership must match Bats JUnit or be empty')
         if declaration['provider']=='jvm':
             from .actions_rm12_jvm import JvmError
             m=declaration['project']['modules'][declaration['selected']]
@@ -766,7 +783,7 @@ def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
         dest = f'.github/workflows/devtool-{target}-{workflow}-providers-multi.yml'
     else:
         plan = provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
-        if 'dotnet' in plan['providers'] or 'rust-cargo' in plan['providers'] or 'node' in plan['providers'] or 'jvm' in plan['providers']:
+        if 'dotnet' in plan['providers'] or 'rust-cargo' in plan['providers'] or 'node' in plan['providers'] or 'jvm' in plan['providers'] or 'shell-ci' in plan['providers']:
             raise ProviderError('RM-09–RM-12 reviewed .NET/Rust/Node/JVM require native multi-job export with reviewed toolchain preflight')
         frozen_sha = plan['plan_sha256']
         content = _workflow_yaml(plan).encode()

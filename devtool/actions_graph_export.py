@@ -109,7 +109,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     graph=graph_from_workflow(plan['target'],cfg.targets[plan['target']].workflows[plan['workflow']])
     for profile in profiles:
         admission=graph_host_admission(cfg,graph,host_os=profile.os,
-                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm'))
+                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci'))
         if not admission['all_eligible']:
             failures=[item['node']+':'+','.join(item['eligibility']['reasons'])
                       for item in admission['nodes'] if not item['eligibility']['eligible']]
@@ -168,6 +168,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'jvm_artifact_name':row['provider'].get('artifact_name',''),
                          'jvm_desktop_bundle':row['provider'].get('desktop_bundle',False),
                          'jvm_base_argv':list(row['command']) if row['provider']['provider']=='jvm' else [],
+                         'shell_review':row['provider'] if row['provider']['provider']=='shell-ci' else None,
                          'node_manager':row['provider'].get('manager',''),
                          'node_manager_version':row['provider'].get('manager_version',''),
                          'node_kind':row['provider'].get('kind',''),
@@ -206,7 +207,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 raise ProviderError('RM-06 generated input requires direct producer dependency: '+inp)
         if job['race'] and job['runner']!='ubuntu-24.04':
             raise ProviderError('RM-08 Go race profile requires reviewed Linux amd64 runner')
-        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo','node','jvm'):
+        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci'):
             raise ProviderError('RM-06 refuses unreviewed hosted provider')
     immutable = {'schema_version': SCHEMA, 'kind': 'devtool.actions.export-graph',
                  'provider_plan_sha256':plan['plan_sha256'], 'target':plan['target'],
@@ -287,6 +288,39 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                          f'        with:\n          gradle-version: "{job["jvm_tool_version"]}"\n'
                          '          cache-disabled: true\n')
             jvm_setup=gradle_step+jvm_setup
+        shell_setup=''
+        if job['provider']=='shell-ci':
+            operation=job['shell_review']['operation']
+            tool={'syntax':{'bash':'bash','posix':'sh','zsh':'zsh'}[job['shell_review']['dialect']],
+                  'lint':'shellcheck','format':'shfmt','test':'bats'}[operation]
+            shell_setup=('      - name: Verify preinstalled reviewed shell toolchain\n'
+                         '        shell: bash\n        run: |\n'
+                         '          set -euo pipefail\n'
+                         f'          command -v {tool} >/dev/null\n')
+            # Ubuntu 24.04 has Bash and ShellCheck, but not guaranteed Bats,
+            # shfmt or Zsh. Provision only reviewed Ubuntu noble .deb pins:
+            # never execute downloaded scripts, npm install or floating tags.
+            deb={'bats':('bats','1.10.0-1'),
+                 'shfmt':('shfmt','3.8.0-1'),
+                 'zsh':('zsh','5.9-6ubuntu2')}
+            if tool in deb:
+                name,pin=deb[tool]
+                shell_setup += ('          sudo apt-get update -qq\n'
+                                '          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends '
+                                f'{name}={pin}\n'
+                                f'          test "$(dpkg-query -W -f=\'${{Version}}\' {name})" = "{pin}"\n')
+            if job['shell_review']['dialect']=='bash':
+                shell_setup += '          bash --version | head -1 | grep -E "^GNU bash, version 5\\."\n'
+            elif job['shell_review']['dialect']=='zsh':
+                shell_setup += '          zsh --version | grep -E "^zsh 5\\."\n'
+            else:
+                shell_setup += '          sh -n /dev/null\n'
+            if tool=='shellcheck':
+                shell_setup += '          shellcheck --version | grep -E "version: 0\\.9\\.0"\n'
+            if tool=='shfmt':
+                shell_setup += '          shfmt --version | grep -F "v3.8.0"\n'
+            if tool=='bats':
+                shell_setup += '          bats --version | grep -F "Bats 1.10.0"\n'
         rust_setup=('      - name: Verify preinstalled pinned Rust toolchain (no network installation)\n'
                     '        shell: bash\n        run: |\n'
                     '          set -euo pipefail\n'
@@ -341,7 +375,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
-               f'{setup_go}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{cache_step}'
+               f'{setup_go}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{shell_setup}{cache_step}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -501,6 +535,28 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     if not specs:
         raise ProviderError('RM-06 native job resolver returned no executable specs')
     node_receipts=[]
+    if selected['provider']=='shell-ci':
+        import subprocess as _subprocess
+        dialect=selected['shell_review']['dialect']
+        if dialect!='posix':
+            try:
+                check=_subprocess.run([dialect,'--version'],capture_output=True,text=True,timeout=8)
+            except (OSError,_subprocess.TimeoutExpired):
+                raise ProviderError('RM-14 reviewed shell executable unavailable') from None
+            import re as _re
+            if check.returncode or not _re.search((r'GNU bash, version 5\.' if dialect=='bash' else r'zsh 5\.'),check.stdout+' '+check.stderr):
+                raise ProviderError('RM-14 actual shell major version differs from reviewed pin')
+        from .actions_rm14_shell import inspect_shell_job, ShellError
+        if len(specs)!=1 or specs[0].argv!=selected['shell_review']['argv']:
+            raise ProviderError('RM-14 native shell job diverged from reviewed argv')
+        try:again=inspect_shell_job(root,specs[0].argv,
+              cfg.targets[target].jobs[selected['job']].metadata or {})
+        except ShellError as exc:raise ProviderError(str(exc)) from None
+        if again['source_digest']!=selected['shell_review']['source_digest']:
+            raise ProviderError('RM-14 shell source bytes changed after review')
+        if selected['shell_review']['operation']=='test':
+            folder=_regular(root,'dist/report.xml',must_exist=False).parent
+            folder.mkdir(parents=True,exist_ok=True)
     if selected['provider']=='node':
         # Repo scripts and tool configuration are executable code. Enforce the
         # checkout's exact Git source before any dependency installation.
@@ -642,6 +698,9 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     else:
         results,_=run_specs(cfg,specs,verbose=True,dry_run=False,continue_on_error=False)
     if any(result.returncode!=0 or result.skipped for result in results):
+        if selected['provider']=='shell-ci':
+            raise ProviderError('RM-14 shell native node '+selected['node']+' ('+
+                                selected['shell_review']['operation']+') did not succeed')
         raise ProviderError('RM-06 native target-local job did not succeed')
     smoke=[]
     if selected['sdist_smoke']:
@@ -709,6 +768,11 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
                 node_receipts+=verify_js_artifacts(root,selected['outputs'],selected['node_kind'],
                                                    selected['node_workspace'],selected['node_package_path'])
         except NodeError as exc:raise ProviderError(str(exc)) from None
+    shell_receipts=[]
+    if selected['provider']=='shell-ci' and selected['shell_review']['operation']=='test':
+        from .actions_rm14_shell import verify_bats_report, ShellError
+        try:shell_receipts.append(verify_bats_report(root))
+        except ShellError as exc:raise ProviderError('RM-14 shell native node '+selected['node']+': '+str(exc)) from None
     jvm_receipts=[]
     if selected['provider']=='jvm':
         from .actions_rm12_jvm import aggregate_junit, verify_jar, verify_desktop_bundle, JvmError
@@ -753,7 +817,7 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     stage_outputs(root,outputs,graph,selected,source,run,attempt)
     return {'status':'LOCAL_JOB_SUCCEEDED', 'node':selected['node'], 'job_id':job_id,
             'graph_sha256':graph_sha, 'workflow_sha256':hashlib.sha256(workflow_yaml(graph).encode()).hexdigest(), 'github_source':source,'run_id':run,'attempt':attempt,
-            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'node_receipts':node_receipts,'jvm_receipts':jvm_receipts,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
+            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'node_receipts':node_receipts,'shell_receipts':shell_receipts,'jvm_receipts':jvm_receipts,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
 
 
 def main(argv: list[str] | None = None) -> int:
