@@ -16,6 +16,8 @@ from typing import Any
 import xml.etree.ElementTree as ET
 import zipfile
 
+from .gradle_identity import gradle_identity, GradleIdentityError
+
 
 class JvmError(ValueError):
     pass
@@ -166,6 +168,7 @@ def _gradle(root:Path) -> dict[str,Any]:
         try:tomllib.loads(_decode(raw))
         except (ValueError,UnicodeError):raise JvmError('RM-12 malformed Gradle version catalog') from None
     modules={};edges={}
+    tracked=set(subprocess.check_output(['git','-C',str(root),'ls-files','-z'], timeout=10).decode().strip('\0').split('\0'))
     for name in names:
         directory='/'.join(name[1:].split(':')) if name!=':' else ''
         path=directory+'/build.gradle.kts' if directory else 'build.gradle.kts'
@@ -173,6 +176,10 @@ def _gradle(root:Path) -> dict[str,Any]:
         if not (root/path).is_file():path=alt
         data=_decode(_source(root,path));sources[path]=hashlib.sha256(data.encode()).hexdigest()
         if _ANDROID.search(data):raise JvmError('RM-12 Android plugin must use Android provider')
+        try: identity, reason = gradle_identity(root, path, tracked)
+        except GradleIdentityError as exc: raise JvmError('RM-12 Gradle plugin identity requires review: '+str(exc)) from exc
+        if identity == 'android':raise JvmError('RM-12 Android Gradle project must route to Android provider: '+reason)
+        if identity != 'jvm':raise JvmError('RM-12 ambiguous/dynamic Gradle plugin requires review: '+reason)
         if re.search(r'java\.installations\.auto-download|org\.gradle\.java\.home|toolchain\s*\{\s*[^}]*vendor',data,re.S):
             raise JvmError('RM-12 unreviewed Gradle toolchain provisioning')
         pins=re.findall(r'(?:JavaLanguageVersion\.of|jvmToolchain)\(\s*([0-9]+)\s*\)',data)

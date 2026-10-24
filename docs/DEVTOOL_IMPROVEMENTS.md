@@ -1089,3 +1089,26 @@ historical failures or treat selected local tests as hosted authority.
 - **Root cause:** the hardlink-free production fix was correct to remove the `os.link()` requirement, but its regression fixture still implicitly required the `os.link` attribute. Termux's Python 3.14 may omit that API entirely, rather than exposing a callable which fails.
 - **Correction:** parametrize the adversarial late-edit/escrow preservation test for **both** an absent `os.link` attribute and a present-but-denied `os.link` callable. Use `monkeypatch.delattr(..., raising=False)` and `monkeypatch.setattr(..., raising=False)` respectively. All original assertions remain: partial-publication refusal, live worktree bytes restored, retained escrow original and single-link file metadata. No production worktree, Git CAS, journal, recovery, or safety policy was weakened.
 - **Acceptance:** focused and full RM17/RM18/RM20/NEXT-05 source regressions locally pass, while native device retry is still required. Keep this failed receipt in the cumulative audit.
+
+## FC-03 — RM11/RM12/RM20 conservative discovery and affected selection
+
+- **Status:** Engineering implemented; native user Termux and consumer admission evidence pending.
+- **Previous audit:** RM11 root-level JS/TS changes silently selected zero workspace packages. RM12 Android plugin version-catalog aliases were admitted as JVM. RM20 assumed every Gradle file was Android and omitted .NET, CMake, Meson, Maven, and shell-only repositories; mixed Go+.NET+CMake inventory could incorrectly claim READY.
+- **Affected paths:** `devtool/actions_rm11_node.py`, `devtool/actions_rm12_jvm.py`, `devtool/onboarding.py`, `devtool/gradle_identity.py` and `tests/test_fc03_provider_selection.py`.
+- **Implementation:** Unknown or root-owned changed paths now select the complete reviewed JS/TS workspace (never unjustified empty selection); literal version-catalog aliases resolve to static plugin IDs with tracked, symlink-refusing and size-bounded catalog reads; Android aliases route away from RM12, pure-JVM roots stay Gradle/JVM, unknown/dynamic convention/plugin references demand review. RM20 explicitly inventories CMake, Meson, .NET projects/solutions, Maven and shell-only candidates and does not offer a READY plan when it sees unrecognized or overlapping roots. No Gradle script, shell project hook or plugin is executed during discovery.
+- **Boundary:** Complete job, wrapper, Actions and resource proposals remain FC-05; this only repairs conservative discovery and affected selection. Mixed projects cannot claim release qualification from static identification. Future conditional Gradle logic, unreviewed convention plugin resolution or unknown build markers still require manual review. No RM19 extraction is reintroduced.
+- **Acceptance:** `tests/test_fc03_provider_selection.py` plus existing RM11/RM12/RM20 and FC-02 suites; source-bound native transaction checks. Do not call the user-device gate passed without a Termux receipt.
+
+
+### FC03 Termux npm live-smoke gate / 2026-10-24
+- **Evidence**: Devtool apply run `bcafe53cb7044141b364d4ae1a1fa749`; 28 tests passed before a real npm `ci` fixture failed with `RM-11 frozen dependency install failed`. The original test did not propagate the npm debug error, so the external cause is unknown. Same fixture passed with npm 10.9.2 under a Linux test host.
+- **Affected**: RM11 Node native smoke, FC03 package validation on Android Termux.
+- **Remedy**: On Termux, keep host-dependent live npm-ci qualification separate from deterministic source installation; explicitly print `PENDING_RM11_TERMUX_NATIVE_NPM_CI`; ship a network-free npm diagnostic probe. On normal hosts, run full mandatory native suite. No fallback from npm-ci to npm install and no weakened production admission.
+- **Status**: Source installation gate remediation locally tested; RM11 Termux npm native CI **OPEN** awaiting a genuine device result and npm diagnostics.
+
+## FC03-TERMUX-NPM-PACK-002 — Native npm pack and source-gate conflation
+
+- **Status:** Source-regression separation implemented; actual Termux npm pack root cause and runtime qualification **OPEN**.
+- **Evidence:** User device Devtool run `7e6fe3acae754861a82ad30363515c5a` failed after 33 passes, 1 deselected; `tests/test_rm11_node.py::test_real_npm_pack_and_tar_traversal_refusal` invoked real `npm pack --offline`, which exited 1 and reported only a private npm debug-log path. Earlier `npm ci` failure in `bcafe53cb7044141b364d4ae1a1fa749` remains open. No npm debug log was supplied, so no root cause is established.
+- **Change:** Preserve real npm tests as independent native qualification; ensure mandatory archive verifier regression uses stdlib tar construction and tests valid identity, traversal and symlink refusal even on hosts with broken npm. The Termux source-install validator reports both external gates explicitly; diagnostic probe captures both commands plus npm log tails. Production lock/manager/output verification is not weakened.
+- **Next:** Run optional offline device probe and attach diagnostic evidence; qualify actual npm operations and consumer workflows independently.

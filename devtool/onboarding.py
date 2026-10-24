@@ -17,16 +17,24 @@ from typing import Any
 from .affected import _target_match_reasons, target_dependencies
 from .config import load_project_config
 from . import guarded_git as gg
+from .gradle_identity import gradle_identity, GradleIdentityError
 
 SCHEMA = 'devtool.whole-repository-onboarding.v1'
 _MARKERS = {
     'pyproject.toml': ('python', 'server'),
     'go.mod': ('go', 'server'),
-    'Cargo.toml': ('rust', 'server'),
+    'Cargo.toml': ('rust', 'native'),
     'package.json': ('node', 'web'),
-    'build.gradle': ('android', 'android'),
-    'build.gradle.kts': ('android', 'android'),
+    'pom.xml': ('maven', 'jvm'),
+    'CMakeLists.txt': ('cmake', 'native'),
+    'meson.build': ('meson', 'native'),
+    'build.gradle': ('gradle', 'jvm'),
+    'build.gradle.kts': ('gradle', 'jvm'),
+    '.shellcheckrc': ('command', 'terminal'),
 }
+_UNKNOWN_BUILD_MARKERS = {'build.sbt','pubspec.yaml','composer.json','mix.exs',
+                         'Package.swift','Makefile.am','WORKSPACE','WORKSPACE.bazel','MODULE.bazel'}
+
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _TARGET = re.compile(r'[a-z][a-z0-9_-]{0,47}\Z')
 
@@ -95,36 +103,61 @@ def _name(path: str) -> str:
     return slug
 
 
-def _discovery(paths: list[str]) -> tuple[list[dict[str, str]], list[str]]:
+def _discovery(root: Path, paths: list[str]) -> tuple[list[dict[str, str]], list[str]]:
+    """Inventory tracked build roots without executing project configuration.
+
+    Unresolved Gradle plugins or unknown build roots force review: a partially
+    discovered polyglot repository must never be proposed as complete.
+    """
     found: dict[str, set[tuple[str, str]]] = {}
+    issues: list[str] = []
+    tracked=set(paths)
     for path in paths:
         marker = PurePosixPath(path).name
-        if marker in _MARKERS:
-            folder = str(PurePosixPath(path).parent)
-            found.setdefault(folder, set()).add(_MARKERS[marker])
+        folder = str(PurePosixPath(path).parent)
+        kind = _MARKERS.get(marker)
+        if marker in ('build.gradle','build.gradle.kts'):
+            try:
+                identity, reason=gradle_identity(root,path,tracked)
+            except GradleIdentityError as exc:
+                identity,reason='review',str(exc)
+            if identity=='android':kind=('android','android')
+            elif identity=='jvm':kind=('gradle','jvm')
+            else:
+                issues.append('unreviewed Gradle plugin identity at '+path+': '+reason)
+                kind=None
+        elif marker.endswith(('.csproj','.fsproj','.vbproj','.sln','.slnx')):
+            kind=('dotnet','desktop')
+        elif marker in _UNKNOWN_BUILD_MARKERS:
+            issues.append('unrecognized build-system root requires review: '+path)
+        if kind:
+            found.setdefault(folder,set()).add(kind)
+    # A shell-only repository is a candidate, but executable commands and
+    # package ownership require explicit review (FC-05) before application.
+    if not found and any(p.endswith(('.sh','.bash','.zsh')) for p in paths):
+        found.setdefault('.',set()).add(('command','terminal'))
+        issues.append('shell-only repository requires reviewed commands and ownership')
     if not found:
-        return [], ['no known language manifest; author a reviewed config manually']
-    issues: list[str] = []
-    for root, values in found.items():
-        if len(values) != 1:
-            issues.append('conflicting language markers at '+root)
-    roots = sorted(found)
-    if len(roots) > 1 and '.' in roots:
+        issues.append('no supported build-system root can be qualified for automatic onboarding')
+    for folder, values in found.items():
+        if len(values)>1:
+            issues.append('conflicting language markers at '+folder)
+    roots=sorted(found)
+    if len(roots)>1 and '.' in roots:
         issues.append('root manifest overlaps subprojects; explicit ownership required')
-    for i, left in enumerate(roots):
+    for i,left in enumerate(roots):
         for right in roots[i+1:]:
-            if right.startswith(left.rstrip('/') + '/'):
+            if right.startswith(left.rstrip('/')+'/'):
                 issues.append('nested project roots need manual ownership: '+left+' -> '+right)
-    rows = []
-    names: set[str] = set()
+    rows=[];names=set()
     for folder in roots:
-        runner, platform = sorted(found[folder])[0]
-        name = _name('repo' if folder == '.' else folder)
+        runner,platform=sorted(found[folder])[0]
+        name=_name('repo' if folder=='.' else folder)
         if name in names:
             issues.append('target names collide: '+name)
         names.add(name)
-        rows.append({'name': name, 'root': folder, 'runner': runner, 'platform': platform})
-    return rows, sorted(set(issues))
+        rows.append({'name':name,'root':folder,'runner':runner,'platform':platform})
+    return rows,sorted(set(issues))
 
 
 def _generate(rows: list[dict[str, str]]) -> bytes:
@@ -151,7 +184,7 @@ def inventory(repo: Path) -> dict[str, Any]:
     cfg_exists = cfgfile.exists() or cfgfile.is_symlink()
     if cfgfile.is_symlink():
         raise OnboardingBlocked('existing Devtool config is a symlink')
-    rows, issues = _discovery(paths)
+    rows, issues = _discovery(root, paths)
     ownership: dict[str, list[str]] = {}
     if cfg_exists:
         # Loading the canonical repository model prevents treating a detected

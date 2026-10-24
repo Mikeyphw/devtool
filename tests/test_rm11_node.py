@@ -388,21 +388,52 @@ def test_mixed_managers_only_when_explicitly_selected(tmp_path):
     with pytest.raises(NodeError,match='differs'):node_workspace(root,manager_selection='pnpm')
 
 
-def test_real_npm_pack_and_tar_traversal_refusal(tmp_path):
+def test_pack_tar_identity_and_traversal_refusal_without_npm(tmp_path):
+    """Always exercise the byte verifier; no native npm prerequisite.
+
+    Archive verification must remain an admission gate even when a host's npm
+    pack implementation cannot run. A valid tar and hostile tar are built
+    directly with Python's stdlib, never extracted or trusted as production
+    npm output.
+    """
+    root=fixture(tmp_path)
+    out=root/'dist';out.mkdir()
+    packed=out/'mono-1.0.0.tgz'
+    manifest=b'{"name":"mono","version":"1.0.0"}'
+    with tarfile.open(packed,'w:gz') as archive:
+        info=tarfile.TarInfo('package/package.json')
+        info.size=len(manifest)
+        archive.addfile(info,io.BytesIO(manifest))
+    assert verify_js_artifacts(root,['dist/'+packed.name],'pack',node_workspace(root),'')[0]['size']>0
+    for bad in ('package/../../escape','package/../escape'):
+        with tarfile.open(packed,'w:gz') as archive:
+            for name in ('package/package.json',bad):
+                info=tarfile.TarInfo(name);info.size=len(manifest)
+                archive.addfile(info,io.BytesIO(manifest))
+        with pytest.raises(NodeError,match='unsafe'):
+            verify_js_artifacts(root,['dist/'+packed.name],'pack',node_workspace(root),'')
+    with tarfile.open(packed,'w:gz') as archive:
+        info=tarfile.TarInfo('package/package.json');info.size=len(manifest)
+        archive.addfile(info,io.BytesIO(manifest))
+        link=tarfile.TarInfo('package/link');link.type=tarfile.SYMTYPE;link.linkname='../../outside'
+        archive.addfile(link)
+    with pytest.raises(NodeError,match='unsafe'):
+        verify_js_artifacts(root,['dist/'+packed.name],'pack',node_workspace(root),'')
+
+
+def test_real_npm_pack_native_artifact(tmp_path):
+    """Real npm pack is a separate host-runtime qualification, not tar admission."""
     import shutil
-    if not shutil.which('npm'):pytest.skip('npm not installed')
+    if not shutil.which('npm'):
+        pytest.skip('native npm unavailable; external runtime qualification remains open')
     root=fixture(tmp_path);(root/'dist').mkdir()
-    result=subprocess.run(['npm','pack','--pack-destination','dist','--ignore-scripts','--offline'],cwd=root,capture_output=True,text=True,timeout=30)
-    assert result.returncode==0,(result.stderr,result.stdout)
+    result=subprocess.run(['npm','pack','--pack-destination','dist','--ignore-scripts','--offline'],
+                          cwd=root,capture_output=True,text=True,timeout=45)
+    assert result.returncode==0,('native npm pack failed; real runtime gate remains open; '
+                                 'stdout='+result.stdout[-2000:]+' stderr='+result.stderr[-3000:])
     paths=list((root/'dist').glob('*.tgz'))
     assert len(paths)==1
-    name='dist/'+paths[0].name
-    assert verify_js_artifacts(root,[name],'pack',node_workspace(root),'')[0]['size']>0
-    with tarfile.open(paths[0],'w:gz') as archive:
-        data=b'{"name":"mono","version":"1.0.0"}'
-        for path in ('package/package.json','package/../../escape'):
-            info=tarfile.TarInfo(path);info.size=len(data);archive.addfile(info,io.BytesIO(data))
-    with pytest.raises(NodeError,match='unsafe'):verify_js_artifacts(root,[name],'pack',node_workspace(root),'')
+    assert verify_js_artifacts(root,['dist/'+paths[0].name],'pack',node_workspace(root),'')[0]['size']>0
 
 
 def test_refuse_changed_tracked_script_before_native_install(tmp_path,monkeypatch):

@@ -223,12 +223,22 @@ def node_workspace(root:Path, *, manager_selection:str='')->dict[str,Any]:
 def affected_packages(workspace:dict, changed_paths:list[str])->list[str]:
     if not isinstance(changed_paths,list) or len(changed_paths)>500 or any(not _safe_path(p) for p in changed_paths):
         raise NodeError('RM-11 invalid changed path inventory')
+    if not changed_paths:
+        return []
+    packages=workspace['packages']
+    # A file directly under the workspace root, or a path not attributable to
+    # any reviewed workspace member, can affect every package. Never return
+    # an unjustified empty set for root sources or shared TS/JS configurations.
     selected=set()
-    if any(p in workspace['source_files'] and '/' not in p for p in changed_paths):
-        selected=set(workspace['packages'])
-    else:
-        for path in workspace['packages']:
-            if path and any(p.startswith(path+'/') for p in changed_paths):selected.add(path)
+    shared=False
+    for name in changed_paths:
+        owners=[path for path in packages if path and name.startswith(path+'/')]
+        if owners:
+            selected.update(owners)
+        else:
+            shared=True
+    if shared:
+        selected=set(packages)
     changed=True
     while changed:
         prev=len(selected)
