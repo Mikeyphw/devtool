@@ -1007,3 +1007,41 @@ Complete matrix and truthful outstanding external gates: `docs/RM06_RM09_ENGINEE
 - **Affected project:** Devtool RM13 C++ provider regression fixture, not the production compiler refusal path. The failing Meson test is intentionally a mocked report handoff, not proof of running a real Meson/GCC toolchain.
 - **Fix:** Mock **only** exact `['gcc-14','--version']` and `['meson','--version']` probes in that simulated test, keep and assert exact `CC=gcc-14`, `CXX=g++-14`, `MESON_WRAP_MODE=nodownload` and `CCACHE_DISABLE=1`; require both probe calls. Add two independent negative regressions demonstrating production `run_node` refuses missing GCC 14 or mismatched GCC version **before** running any job or creating output.
 - **Status:** Engineering fixture fix and mandatory source tests locally passing. Final native transaction/rollback evidence recorded in the replacement bundle. Android Termux successful application and real Meson/native GCC 14 and hosted MSVC execution remain **unqualified** pending receipts. No provider admission relaxation, host fallback or skipped test is introduced.
+
+
+## FC-01 RM01 output ownership and crash recovery closure (2026-10-24)
+
+- **Audited defects:** `cleanup_owned_temp` checked inode then called
+  pathname `shutil.rmtree`; `hash_owned_output` validated pathname parents
+  and opened the final file by pathname. Deterministic path-replacement tests
+  reproduced foreign-data deletion and foreign-file hashing. Process SIGKILL
+  left no durable ownership record, preventing safe recovery.
+- **Affected:** `devtool/output_scopes.py`, `workflow_scheduler.py`, RM01 docs,
+  `tests/test_fc01_safety_closure.py`; consumer workflows producing run-temp
+  files (Devtool and configured consumers).
+- **Remedy:** anchored dirfd no-follow lifecycle and hashing, fsynced exclusive
+  lease journal, `flock` live owner guard, explicit orphan enumeration and
+  conservative post-crash reclamation, cleanup result metadata and positive /
+  negative adversarial tests. No foreign inode may be hashed as owned or
+  deleted through a replacement path.
+- **Boundary:** unregistered partial-provision roots and malformed/replaced
+  records are preserved for operator review; not forcibly garbage-collected.
+  The owned scope is not a sandbox for an untrusted job process. Linux local
+  tests do not establish Termux device or independent consumer qualification.
+- **Status:** implementation candidate; local source-bound transaction,
+  rollback and actual Termux evidence tracked in FC-01 acceptance report.
+
+## FC-01 Termux ancestor-descriptor permission regression (2026-10-24)
+
+- **Evidence:** Real ARM64 Termux `apply-overlay` run `aea717e2f5c54eaeb2ac0f5446593c56` passed exact-tree preflight and overlay extraction, then failed before its first safety test: `PermissionError: [Errno 13] Permission denied: '/'` from `_open_dir()` opening `/` with `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`.
+- **Root cause:** On Android, application access may permit pathname traversal but deny directory *read* access to `/` and system ancestors. Descriptor anchoring had wrongly required read permissions for every ancestor. This is an execution portability bug, not grounds to revert to pathname-based recursive deletion.
+- **Fix:** Walk ancestors using `O_PATH|O_DIRECTORY|O_NOFOLLOW` on supporting Linux/Android hosts, open only the final owned directory with `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`. Retain no-follow protection, private-owner checks, inode verification, receipt/refusal semantics and fsynced journal. Other hosts retain safe read descriptors and fail closed if permission/capability is insufficient.
+- **Tests:** `tests/test_fc01_safety_closure.py` includes simulated Android denial of `O_RDONLY` on `/`/ancestors, real descriptor-open functionality, symlink refusal during search-only traversal and hashing/recovery/cleanup with root read denied.
+- **Status:** local regression evidence confirmed; real device retry of the source-bound replacement is still required. Preserve the failed device receipt in history.
+
+## FC-01 Termux Python 3.14 hardlink test portability (2026-10-24)
+
+- **Evidence:** real Android Termux `apply-overlay` run `882477d5e9e84fff926e2b640fef892b` passed source preflight and descriptor path tests, then failed in `tests/test_fc01_safety_closure.py::test_hash_rejects_root_replacement_and_hardlink`: `pathlib.UnsupportedOperation: PosixPath.hardlink_to() is unsupported on this system`. One test passed; no source transaction was committed.
+- **Cause:** mandatory adversarial fixture assumed every host Python exposes hardlink creation; Android/Termux Python 3.14 can disallow it. The failure occurred before the hardlink rejection implementation was exercised and is **not** evidence that the verifier accepted a hardlinked file.
+- **Correction:** split hardlink refusal from root replacement checks. Model only `fstat().st_nlink=2` on the actual opened regular-file descriptor, assert exact `unsupported/not_private_regular_file` response and prove the descriptor was inspected; keep root replacement as an independent mandatory physical symlink race test. No skip and no production policy relaxation, with explicit distinction between simulated hardlink metadata and independently untested physical hardlink creation on the ARM64 host.
+- **Qualification boundary:** local simulation cannot establish on-device physical hardlink creation support. Native Termux completion remains pending; preserve the failed receipt.

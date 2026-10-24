@@ -65,3 +65,57 @@ RM-00 contract files and target configuration. Post-apply validation is run
 in-process for the native `devtool` target (no nested CLI), followed by
 `test_rm01_output_scopes.py`, the pre-existing MP09 scheduler regression suite,
 and `test_rm00_shared_contracts.py`. Failed validation rolls back the overlay.
+
+
+## FC-01 safety closure (2026-10-24)
+
+The historical limitation above is superseded **only for declared owned
+run-temp roots** by `devtool/output_scopes.py`: individual path components
+are opened through anchored directory descriptors using `O_NOFOLLOW`,
+`fstat`/inode identity checks, and descriptor-relative `unlink`/`rmdir`.
+No pathname `shutil.rmtree` is used. A swapped root or child refuses deletion,
+and hashing refuses directory escapes, special files, symlinks, hardlinks
+(`st_nlink != 1`), and mutable files. An unprovable identity yields an
+unavailable/refused receipt, never a digest of outside bytes.
+
+Each provisioned root gets a private `.owner-<node>.json` lease record alongside
+the owned root, exclusive-created, checksum-free but inode-bound, and fsynced
+before a job is spawned. The owning process holds an exclusive kernel `flock`.
+`recover_orphaned_temps(repo_root, dry_run=True)` enumerates known records
+and returns `orphan_candidate`, `preserved` or `refused`. With `dry_run=False`
+it reclaims **only** an unlocked, correctly formed record whose exact root
+inode still exists. The provisioner calls that conservative recovery before
+starting a new run. **Automatic reclamation requires proof that the journal
+belongs to a previous boot**, because after SIGKILL a subprocess may still be
+writing outputs even when the supervisor's lock has been released. Same-boot
+crash roots require explicit approval through
+`python3 -m devtool.output_scopes --repo REPO --recover --approve-same-boot`
+after checking descendants. Read-only inspection uses `--repo REPO` alone.
+Corrupt/missing journals, swapped inodes and live leases
+are *never* authority to delete. A process killed during initial creation
+before journal durability may leave an **unregistered** root: this is surfaced
+as an `orphan_candidate`, intentionally preserved for operator review.
+
+The scheduler includes a `workflow_temporary_cleanup` result with `cleaned` or
+`refused` and the owned inode pair. `workflow_temporary_output_hashes` retain
+individual per-file proofs or explicit unavailability. No command process
+is sandboxed: an adversary with write access *inside an actively owned* root
+can interfere with its content; descriptor anchoring limits the authority of
+outside pathname swaps but is not a kernel filesystem sandbox. On a platform
+without POSIX descriptor/no-follow locking semantics, provisioning must refuse.
+
+Safety regression tests: `tests/test_fc01_safety_closure.py` plus the original
+RM01 scheduler suite. Linux and Termux acceptance are separate evidence gates.
+
+### FC-01 Android/Termux traversal portability correction (2026-10-24)
+
+Ancestor directories, including `/`, may be searchable but not readable by
+Termux under Android SELinux. FC-01 therefore pins ancestors with Linux
+`O_PATH|O_DIRECTORY|O_NOFOLLOW` and opens **only** its final owned directory
+for reading and listing. `O_NOFOLLOW` stays in force throughout; neither
+hashing nor cleanup falls back to a pathname-based recursive operation.
+On platforms without `O_PATH`, pre-existing no-follow read-descriptor traversal
+remains available only when permitted. If descriptor traversal cannot be
+established, the operation fails closed. This addresses device run
+`aea717e2f5c54eaeb2ac0f5446593c56`, which failed reading `/` before
+any RM01 test ran; real-device acceptance remains a separate gate.

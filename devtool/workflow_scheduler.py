@@ -822,12 +822,18 @@ def run_workflow_specs(
                         continue
                     if scope.hash_retention == "on-success" and _node_terminal_state(results) != "passed":
                         continue
-                    proof = hash_owned_output(root_path, scope.path)
+                    proof = hash_owned_output(root_path, scope.path, identity=identity)
                     proof["policy"] = scope.hash_retention
                     retained.append(proof)
                 for result in results:
                     result.metadata["workflow_temporary_output_hashes"] = retained
-            cleanup_owned_temp(root_path, identity)
+            cleaned = cleanup_owned_temp(root_path, identity)
+            for result in results:
+                result.metadata["workflow_temporary_cleanup"] = {
+                    "status": "cleaned" if cleaned else "refused",
+                    "root_identity": [int(identity[0]), int(identity[1])],
+                    "reason": "" if cleaned else "ownership_or_concurrent_mutation",
+                }
 
     if plan is None or (not plan.parallel_requested and node_observer is None) or (len(plan.nodes) < 2 and node_observer is None) or dry_run:
         try:
