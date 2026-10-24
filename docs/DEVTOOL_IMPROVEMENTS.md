@@ -1045,3 +1045,47 @@ Complete matrix and truthful outstanding external gates: `docs/RM06_RM09_ENGINEE
 - **Cause:** mandatory adversarial fixture assumed every host Python exposes hardlink creation; Android/Termux Python 3.14 can disallow it. The failure occurred before the hardlink rejection implementation was exercised and is **not** evidence that the verifier accepted a hardlinked file.
 - **Correction:** split hardlink refusal from root replacement checks. Model only `fstat().st_nlink=2` on the actual opened regular-file descriptor, assert exact `unsupported/not_private_regular_file` response and prove the descriptor was inspected; keep root replacement as an independent mandatory physical symlink race test. No skip and no production policy relaxation, with explicit distinction between simulated hardlink metadata and independently untested physical hardlink creation on the ARM64 host.
 - **Qualification boundary:** local simulation cannot establish on-device physical hardlink creation support. Native Termux completion remains pending; preserve the failed receipt.
+
+## FC-02 — 2026-10-24 — RM17/RM18/RM20 guarded publication and recovery
+
+**Status:** Source engineering candidate; require qualified source-bound
+installation and real-consumer evidence before release closure.
+
+**Evidence / root causes:** RM18's `_materialize` performed a pathname-based
+check followed by Git `read-tree --reset -u`, which could overwrite a late edit.
+A `PREPARING` journal could become stranded, while a locally writable prepared
+ref and matching altered journal could change approved bytes. RM20 staged an
+exclusive config via an unchecked `os.replace`, then made a regular Git commit
+without a source HEAD compare-and-swap. All were reproduced in disposable Git
+repositories during the 2026-10-24 audit.
+
+**Resolution:** Shared `devtool/guarded_git.py` implements isolated-index
+candidate construction, approved blob/tree verification, expected-ref CAS and
+no-follow, escrow-preserving worktree reconciliation. RM18 independently derives
+approved changes from source Git objects and pinned archives on publication;
+`PREPARING` can resume or abort, and an interrupted escrow is handled
+conservatively. RM20 now publishes a pinned candidate with exclusive
+`.devtool.toml` creation and branch lease. Tests cover the original race and
+journal tamper counterexamples and independent negative control.
+
+**Affected projects:** Devtool producer, RM17 upgrade path, RM18 multi-repo
+adopters, RM20 onboarding consumers (Telegram/Studyflow remain unqualified).
+**Follow-up:** FC-03/FC-05 classification and proposal completeness; FC-08
+real-consumer runs and FC-09 repository-wide seal. Do not silently erase
+historical failures or treat selected local tests as hosted authority.
+
+
+## FC-02 Termux late-edit escrow restoration portability — 2026-10-24
+
+- **Device evidence:** `apply-overlay` run `053020117aec429d9253dd43ec180411` accepted the clean post-FC-01 tree and extracted the overlay; its native test `test_late_edit_after_check_moved_to_escrow_not_destroyed` failed with `FileNotFoundError` on the root `README` after escrow handling (1 passed, 1 failed). The transaction was not committed.
+- **Defect:** a late modification moved to durable escrow was restored via `os.link()`. This assumes filesystem/runtime hardlink availability, already known to be restricted on Termux Python 3.14. An unavailable hardlink left the worktree path absent during a `PARTIAL_COMMIT` failure. The receipt itself does not include the low-level `os.link` failure; that causal explanation follows from the source path and regression reproduction.
+- **Correction:** replace hardlink restoration with verified regular-file bytes read from the pinned escrow file descriptor and exclusive `O_CREAT|O_EXCL|O_NOFOLLOW` output through the pinned worktree parent descriptor. Retain the original escrow copy and preserve competing new files. Never use destructive `os.replace` or unlink a concurrent worktree entry. Preserve partial states for explicit recovery.
+- **Tests:** force `os.link()` unavailable and verify byte-identical worktree restoration and persisted escrow; adversarially create a competing file between escrow rename and restoration and require both byte sequences survive. Include existing staged/adoption/onboarding regressions, exact source refusal and rollback tests.
+- **Status:** source correction locally verified; actual ARM64 Termux installation and real-consumer publication remain separate qualification gates.
+
+## FC-02 Termux missing `os.link` regression fixture — 2026-10-24
+
+- **Device evidence:** native `apply-overlay` run `67f3c95290fc4effb918441054e756f0` passed exact clean post-FC-01 preflight and six-path manifest verification, then failed in `test_late_edit_after_check_moved_to_escrow_not_destroyed` while executing `monkeypatch.setattr(staged.gg.os, 'link', hardlink_forbidden)`: `AttributeError: module os has no attribute link`. One test passed; the source transaction did not commit.
+- **Root cause:** the hardlink-free production fix was correct to remove the `os.link()` requirement, but its regression fixture still implicitly required the `os.link` attribute. Termux's Python 3.14 may omit that API entirely, rather than exposing a callable which fails.
+- **Correction:** parametrize the adversarial late-edit/escrow preservation test for **both** an absent `os.link` attribute and a present-but-denied `os.link` callable. Use `monkeypatch.delattr(..., raising=False)` and `monkeypatch.setattr(..., raising=False)` respectively. All original assertions remain: partial-publication refusal, live worktree bytes restored, retained escrow original and single-link file metadata. No production worktree, Git CAS, journal, recovery, or safety policy was weakened.
+- **Acceptance:** focused and full RM17/RM18/RM20/NEXT-05 source regressions locally pass, while native device retry is still required. Keep this failed receipt in the cumulative audit.

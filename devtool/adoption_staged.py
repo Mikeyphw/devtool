@@ -15,6 +15,7 @@ import tempfile
 from typing import Any
 
 from . import adoption_batch as ab
+from . import guarded_git as gg
 
 SCHEMA = 'devtool.multi-repo-adoption-staged.v2'
 ZERO = '0' * 40
@@ -43,25 +44,84 @@ def _safe_checkout(repo: Path, record: dict[str, Any]) -> None:
     changed = ab._changed_paths(repo)
     if changed - allowed or set(_git(repo, 'diff', '--cached', '--name-only').splitlines()) - allowed:
         raise ab.AdoptionBlocked('checkout advanced or has unrelated/staged changes; do not overwrite')
-    for rel, digest in record['hashes'].items():
+    for index, (rel, digest) in enumerate(sorted(record['hashes'].items())):
         path = ab._path(repo, rel)
         cur = path.read_bytes() if path.is_file() else None
         curhash = ab._sha(cur) if cur is not None else None
         # The worktree is allowed to be at its original preimage or its candidate;
         # never rewrite a third-party edit even to a touched path.
         if curhash not in (record['preimages'][rel], digest):
-            raise ab.AdoptionBlocked(f'unexpected touched-file change during publish: {rel}')
+            escrow = Path(record.get('escrow','')) / 'publish' / f'{index:04d}.original'
+            # Crash between moving the reviewed preimage into escrow and
+            # exclusive creation of the candidate. Resumption is permissible
+            # only when the immutable old bytes still exist and target is absent.
+            if not (cur is None and record['preimages'][rel] is not None and
+                    escrow.is_file() and not escrow.is_symlink() and
+                    ab._sha(escrow.read_bytes()) == record['preimages'][rel]):
+                raise ab.AdoptionBlocked(f'unexpected touched-file change during publish: {rel}')
 
 
 def _materialize(repo: Path, record: dict[str, Any], target: str) -> None:
+    """FC-02: no destructive Git worktree synchronization, even after branch CAS."""
     _safe_checkout(repo, record)
-    # This updates only the index/worktree, never HEAD or branch refs. The branch
-    # is already at the lease-verified commit and all paths are source-owned.
-    _git(repo, 'read-tree', '--reset', '-u', target)
-    if not ab._clean(repo):
-        raise ab.AdoptionBlocked('checkout is not clean after candidate materialization')
+    reversed_direction = target == record['source']
+    after = record['preimages'] if reversed_direction else record['hashes']
+    before = record['hashes'] if reversed_direction else record['preimages']
+    if target not in (record['source'], record['prepared_commit']):
+        raise ab.AdoptionBlocked('unapproved reconciliation target')
+    escrow_base = record.get('escrow')
+    if not escrow_base:
+        raise ab.AdoptionBlocked('durable reconciliation escrow missing')
+    try:
+        gg.reconcile(repo, record['source'], target, after, before,
+                     Path(escrow_base) / ('compensate' if reversed_direction else 'publish'), ab._path)
+    except gg.GuardedGitError as exc:
+        raise ab.AdoptionBlocked(str(exc)) from exc
     if _git(repo, 'rev-parse', 'HEAD^{tree}') != _git(repo, 'rev-parse', target + '^{tree}'):
         raise ab.AdoptionBlocked('checkout tree verification mismatch')
+
+
+def _rederive(repo: Path, row: dict[str, Any]) -> tuple[dict[str, bytes | None], dict[str, bytes | None]]:
+    """Derive approved bytes from immutable source objects + pinned overlay, not journal."""
+    import zipfile
+    source = row['source_head']
+    with tempfile.TemporaryDirectory(prefix='devtool-fc02-review-') as tmp:
+        root = Path(tmp)
+        with zipfile.ZipFile(row['overlay']) as archive:
+            metadata = json.loads(archive.read('.devtool-artifact.json'))
+        required = {str(e['path']) for e in metadata['inventory']['entries']}
+        required.update(('.devtool.toml','.gitignore',*ab.WRAPPER))
+        for rel in required:
+            ab._path(root, rel)
+            result = subprocess.run(['git','-C',str(repo),'show',source+':'+rel],
+                                    capture_output=True, timeout=30)
+            if result.returncode == 0:
+                dest = ab._path(root, rel)
+                dest.parent.mkdir(parents=True,exist_ok=True)
+                dest.write_bytes(result.stdout)
+                # Native launcher mode is relevant to reviewed wrapper migration.
+                mode = _git(repo,'ls-tree',source,'--',rel)
+                if mode.startswith('100755'):
+                    dest.chmod(0o755)
+        return ab._desired(root, row)
+
+
+def _verify_record(repo: Path, row: dict[str, Any], record: dict[str, Any]) -> None:
+    expected, before = _rederive(repo, row)
+    hashes = {k: ab._sha(v) if v is not None else None for k,v in sorted(expected.items())}
+    preimages = {k: ab._sha(before.get(k)) if before.get(k) is not None else None for k in sorted(expected)}
+    if record.get('source') != row['source_head'] or record.get('source_tree') != row['source_tree']:
+        raise ab.AdoptionBlocked('journal source identity differs from reviewed manifest')
+    if record.get('hashes') != hashes or record.get('preimages') != preimages:
+        raise ab.AdoptionBlocked('prepared journal bytes differ from independently reviewed overlay')
+    if _git(repo,'rev-parse',row['source_head']+'^{tree}') != row['source_tree']:
+        raise ab.AdoptionBlocked('source Git tree changed')
+    try:
+        gg.verify_candidate(repo, row['source_head'], record['prepared_commit'],
+                            record['prepared_tree'], hashes, preimages)
+    except gg.GuardedGitError as exc:
+        raise ab.AdoptionBlocked(str(exc)) from exc
+
 
 
 def _candidate(repo: Path, row: dict[str, Any]) -> dict[str, Any]:
@@ -77,7 +137,8 @@ def _candidate(repo: Path, row: dict[str, Any]) -> dict[str, Any]:
     desired, before = ab._desired(repo, row)
     _, _, native = ab._archive(repo, row)
     ab._verify_head_preimages(repo, native)
-    if all(before.get(k) == v for k, v in desired.items()):
+    desired = {k: v for k, v in desired.items() if before.get(k) != v}
+    if not desired:
         raise ab.AdoptionBlocked('no candidate changes: already applied or unreviewed source')
     candidate = dict(id=row['id'], repo=str(repo), source=identity['head'], source_tree=identity['tree'],
                 branch=identity['branch'], remote=identity['remote'],
@@ -89,45 +150,27 @@ def _candidate(repo: Path, row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _prepare_commit(repo: Path, row: dict[str, Any], item: dict[str, Any], digest: str) -> dict[str, Any]:
-    # Build a complete tree in a private index. No checkout or branch changes.
-    fd, idx = tempfile.mkstemp(prefix='devtool-rm18-index-')
-    os.close(fd)
-    Path(idx).unlink()
-    env = {**os.environ, 'GIT_INDEX_FILE': idx}
     try:
-        _git(repo, 'read-tree', item['source'], env=env)
-        for rel, raw in sorted(item['desired'].items()):
-            if raw is None:
-                _git(repo, 'update-index', '--force-remove', '--', rel, env=env)
-            else:
-                obj = _git(repo, 'hash-object', '-w', '--stdin', input=raw)
-                # Preserve tracked executable mode; new launcher needs executable mode.
-                old = _git(repo, 'ls-tree', item['source'], '--', rel)
-                mode = old.split()[0] if old else ('100755' if rel == 'devtoolw' else '100644')
-                if mode not in ('100644', '100755'):
-                    raise ab.AdoptionBlocked(f'unsupported Git mode: {rel}')
-                _git(repo, 'update-index', '--add', '--cacheinfo', mode, obj, rel, env=env)
-        tree = _git(repo, 'write-tree', env=env)
-        if tree == item['source_tree']:
-            raise ab.AdoptionBlocked('candidate tree equals source')
-        # Require explicit local Git identity; never synthesize a release signer.
-        _git(repo, 'var', 'GIT_AUTHOR_IDENT')
-        _git(repo, 'var', 'GIT_COMMITTER_IDENT')
-        commit = _git(repo, 'commit-tree', tree, '-p', item['source'], input=(f'devtool: adopt {row["id"]}\n').encode())
-        # Hold prepared commits in a durable, namespaced ref without modifying HEAD.
-        ref = f'refs/devtool/adoption-prepared/{digest[:32]}/{row["id"]}'
-        existing = ab._git(repo, 'rev-parse', '--verify', ref, check=False)
-        if existing and existing != commit:
-            old_tree = _git(repo, 'rev-parse', existing + '^{tree}')
-            if old_tree != tree or _git(repo, 'rev-parse', existing + '^') != item['source']:
-                raise ab.AdoptionBlocked('prepared-ref collision: manual review required')
-            commit = existing
-        elif not existing:
-            _git(repo, 'update-ref', ref, commit, ZERO)
-        return {k: v for k, v in item.items() if k != 'desired'} | {
-            'prepared_commit': commit, 'prepared_tree': tree, 'prepared_ref': ref, 'state': 'PREPARED'}
-    finally:
-        Path(idx).unlink(missing_ok=True)
+        commit, tree = gg.pinned_commit(repo, item['source'], item['desired'],
+                     (f'devtool: adopt {row["id"]}\n').encode(),
+                     mode_for=lambda rel: '100755' if rel == 'devtoolw' else '100644')
+    except gg.GuardedGitError as exc:
+        raise ab.AdoptionBlocked(str(exc)) from exc
+    if tree == item['source_tree']:
+        raise ab.AdoptionBlocked('candidate tree equals source')
+    ref = f'refs/devtool/adoption-prepared/{digest[:32]}/{row["id"]}'
+    existing = ab._git(repo, 'rev-parse', '--verify', ref, check=False)
+    if existing:
+        old_tree = _git(repo, 'rev-parse', existing+'^{tree}')
+        if old_tree != tree or _git(repo,'rev-parse',existing+'^') != item['source']:
+            raise ab.AdoptionBlocked('prepared-ref collision: manual review required')
+        commit = existing
+    else:
+        _git(repo, 'update-ref', ref, commit, ZERO)
+    record = {k:v for k,v in item.items() if k != 'desired'} | {
+        'prepared_commit':commit,'prepared_tree':tree,'prepared_ref':ref,'state':'PREPARED'}
+    _verify_record(repo,row,record)
+    return record
 
 
 
@@ -238,7 +281,8 @@ def recovery_plan(manifest: Path, state_dir: Path) -> dict[str, Any]:
         if saved and ref not in (saved['source'], saved['prepared_commit']):
             blockers.append('branch advanced outside staged transaction')
         action = ('review native recovery before any staged mutation' if blockers else
-                  'adopt-batch recover --yes' if data['overall']=='PARTIAL_COMMIT' else
+                  'adopt-batch recover --yes or resume-staged --yes after review' if data['overall']=='PARTIAL_COMMIT' else
+                  'adopt-batch resume-staged --yes or recover --yes to abort' if data['overall']=='PREPARING' else
                   'adopt-batch resume-staged --yes' if data['overall'] in ('PREPARED','PUBLISHING') else
                   'no action')
         rows.append({'id':row['id'],'head':ref,'staged_state':saved.get('state') if saved else 'NONE',
@@ -298,11 +342,12 @@ def prepare(manifest: Path, state_dir: Path, *, yes: bool = False) -> dict[str, 
                 saved = data['repositories'].get(row['id'])
                 if not saved or _git(Path(row['path']), 'rev-parse', saved['prepared_ref']) != saved['prepared_commit']:
                     raise ab.AdoptionBlocked('missing/mismatched durable prepared commit')
+                _verify_record(Path(row['path']), row, saved)
                 head = _identity(Path(row['path']), row)['head']
                 if head not in (saved['source'], saved['prepared_commit']):
                     raise ab.AdoptionBlocked('prepared repository HEAD advanced')
             return data
-        if data['overall'] not in ('NEW','PREPARE_FAILED'):
+        if data['overall'] not in ('NEW','PREPARE_FAILED','PREPARING'):
             raise ab.AdoptionBlocked('staged transaction cannot be prepared in this state')
         # GLOBAL READ-ONLY PREFLIGHT: before the first object or prepared-ref write.
         candidates = [_candidate(Path(row['path']), row) for row in source['repositories']]
@@ -335,6 +380,7 @@ def _publication_preflight(source: dict[str, Any], data: dict[str, Any]) -> None
             raise ab.AdoptionBlocked(f'{row["id"]}: HEAD moved since prepare')
         if _git(repo, 'rev-parse', record['prepared_ref']) != record['prepared_commit']:
             raise ab.AdoptionBlocked(f'{row["id"]}: prepared ref replaced')
+        _verify_record(repo, row, record)
         if head == record['source'] and not ab._clean(repo):
             raise ab.AdoptionBlocked(f'{row["id"]}: checkout dirty after prepare')
         if head == record['prepared_commit']:
@@ -361,8 +407,13 @@ def publish(manifest: Path, state_dir: Path, *, yes: bool = False) -> dict[str, 
                     if not ab._clean(repo):
                         raise ab.AdoptionBlocked('checkout changed during publication')
                     # Compare-and-swap is the only operation that changes the branch.
-                    _git(repo, 'update-ref', 'refs/heads/' + row['branch'], record['prepared_commit'], record['source'])
+                    try:
+                        gg.cas_branch(repo, 'refs/heads/' + row['branch'], record['prepared_commit'], record['source'])
+                    except gg.GuardedGitError as exc:
+                        raise ab.AdoptionBlocked(str(exc)) from exc
                     record['state'] = 'REF_PUBLISHED'; ab._save(journal, data)
+                record.setdefault('escrow',str(state_dir / 'fc02-escrow' / digest / row['id']))
+                ab._save(journal, data)
                 _materialize(repo, record, record['prepared_commit'])
                 record['state'] = 'PUBLISHED'
                 ab._save(journal, data)
@@ -381,6 +432,17 @@ def recover(manifest: Path, state_dir: Path, *, yes: bool = False) -> dict[str, 
         raise ab.AdoptionBlocked('compensating branch rollback requires --yes')
     with ab._lock(state_dir):
         source, digest, journal, data = _get(manifest, state_dir)
+        if data['overall'] in ('PREPARING','PREPARE_FAILED','PREPARED'):
+            for row in source['repositories']:
+                record = data['repositories'].get(row['id'])
+                if _identity(Path(row['path']),row)['head'] != row['source_head']:
+                    raise ab.AdoptionBlocked('branch advanced; cannot abort prepare')
+                if record:
+                    _verify_record(Path(row['path']), row, record)
+            data['overall'] = 'ROLLED_BACK'
+            data['recovery'] = 'aborted prepare without branch publication'
+            ab._save(journal,data)
+            return data
         if data['overall'] not in ('PARTIAL_COMMIT', 'PUBLISHING', 'COMPLETE'):
             raise ab.AdoptionBlocked('nothing published to recover')
         # GLOBAL PRECHECK prevents rolling back earlier repos if a later HEAD moved.
@@ -391,7 +453,7 @@ def recover(manifest: Path, state_dir: Path, *, yes: bool = False) -> dict[str, 
             if head == record['source']:
                 record['state'] = 'COMPENSATED'; continue
             try:
-                _git(repo, 'update-ref', 'refs/heads/' + row['branch'], record['source'], record['prepared_commit'])
+                gg.cas_branch(repo, 'refs/heads/' + row['branch'], record['source'], record['prepared_commit'])
                 record['state'] = 'REF_COMPENSATED'; ab._save(journal, data)
                 _materialize(repo, record, record['source'])
                 record['state'] = 'COMPENSATED'; ab._save(journal, data)

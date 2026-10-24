@@ -16,6 +16,7 @@ from typing import Any
 
 from .affected import _target_match_reasons, target_dependencies
 from .config import load_project_config
+from . import guarded_git as gg
 
 SCHEMA = 'devtool.whole-repository-onboarding.v1'
 _MARKERS = {
@@ -220,34 +221,52 @@ def apply(repo: Path, *, reviewed_sha256: str, yes: bool) -> dict[str, Any]:
         raise OnboardingBlocked('.devtool.toml is ignored by Git')
     if ignored.returncode != 1:
         raise OnboardingBlocked('cannot establish Git ignore status')
-    fd, temporary = tempfile.mkstemp(prefix='.devtool-onboard-', dir=root.parent)
+    # Build the reviewed commit off-checkout, from the exact approved parent.
+    # Neither Git staging nor an ordinary `git commit` may move HEAD.
+    payload = report['proposal_text'].encode()
     try:
-        with os.fdopen(fd, 'wb') as out:
-            out.write(report['proposal_text'].encode())
+        candidate, candidate_tree = gg.pinned_commit(root, before['head'],
+                    {'.devtool.toml': payload},
+                    b'feat(devtool): onboard whole repository in place\n')
+        gg.verify_candidate(root, before['head'], candidate, candidate_tree,
+                            {'.devtool.toml': gg.digest(payload)}, {'.devtool.toml': None})
+    except gg.GuardedGitError as exc:
+        raise OnboardingBlocked(str(exc)) from exc
+    if _source(root) != before or _git(root, 'status', '--porcelain=v1', '--untracked-files=all'):
+        raise OnboardingBlocked('Git source changed before publication')
+    # Exclusive creation protects against a second process creating the config
+    # after the last scan. No os.replace()/unlink of an unknown path.
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(target, flags, 0o600)
+    except FileExistsError as exc:
+        raise OnboardingBlocked('concurrent config creation refused; file preserved') from exc
+    created_inode = os.fstat(fd).st_ino
+    try:
+        with os.fdopen(fd,'wb') as out:
+            out.write(payload)
             out.flush()
             os.fsync(out.fileno())
-        if _source(root) != before or _git(root, 'status', '--porcelain=v1', '--untracked-files=all'):
-            raise OnboardingBlocked('Git source changed before publication')
-        # Git write is intentionally one-file-only and creates exactly one commit.
-        os.replace(temporary, target)
         try:
-            _git(root, 'add', '--', '.devtool.toml')
-            _git(root, '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false',
-                 'commit', '--no-verify', '-m', 'feat(devtool): onboard whole repository in place', '--', '.devtool.toml')
-        except Exception:
-            # Not a destructive repo-wide reset. Exact clean-source precondition
-            # guarantees there was no pre-existing staged or dirty work.
-            subprocess.run(['git', '-C', str(root), 'reset', '-q', '--', '.devtool.toml'],
-                           capture_output=True, timeout=10)
-            target.unlink(missing_ok=True)
-            raise
+            gg.cas_branch(root, before['branch'], candidate, before['head'])
+        except gg.GuardedGitError as exc:
+            # A failed lease can have a concurrent editor touching this file.
+            # Preserve it for manual review instead of an unsafe check-then-unlink.
+            raise OnboardingBlocked('source HEAD lease rejected; local config preserved for manual review: '+str(exc)) from exc
+        # Index-only operation: never let Git touch the new filesystem file.
+        try:
+            gg.reconcile_index_locked(root, candidate)
+        except gg.GuardedGitError as exc:
+            raise OnboardingBlocked('branch published, index reconciliation pending: '+str(exc)) from exc
         after = _source(root)
-        if after == before or _git(root, 'status', '--porcelain=v1', '--untracked-files=all'):
-            raise OnboardingBlocked('post-commit source unexpectedly dirty; manual recovery required')
-        return {'schema': SCHEMA, 'status': 'APPLIED', 'ok': True, 'in_place': True,
-                'source_before': before, 'source_after': after,
-                'proposal_sha256': reviewed_sha256,
-                'commit_count': 1, 'cross_repository_atomic': False,
-                'release_qualified': False}
-    finally:
-        Path(temporary).unlink(missing_ok=True)
+        if after['head'] != candidate or after['tree'] != candidate_tree or _git(root, 'status', '--porcelain=v1', '--untracked-files=all'):
+            raise OnboardingBlocked('branch published but worktree changed; manual reconciliation required')
+        return {'schema':SCHEMA, 'status':'APPLIED','ok':True,'in_place':True,
+                'source_before':before,'source_after':after,
+                'proposal_sha256':reviewed_sha256,'commit_count':1,
+                'cross_repository_atomic':False,'release_qualified':False}
+    except Exception:
+        # After publication, never remove the candidate file or reset refs.
+        raise
