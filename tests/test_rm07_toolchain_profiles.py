@@ -15,6 +15,7 @@ def test_profiles_explicit_hosted_and_local_rejection():
     assert [x.identifier for x in select_profiles('')] == ['ubuntu-24.04-x64']
     assert [x.identifier for x in select_profiles('ubuntu-24.04-x64,macos-15-intel')] == ['ubuntu-24.04-x64','macos-15-intel']
     assert PROFILES['termux-android-arm64'].hosted_runner is None
+    assert {'dotnet','cpp'}.issubset(set(select_profiles('windows-2022-x64')[0].supported_providers))
     for bad in ['unknown','termux-android-arm64',
                 'ubuntu-24.04-x64,ubuntu-24.04-x64',
                 'ubuntu-24.04-x64,macos-15-intel,windows-2022-x64',

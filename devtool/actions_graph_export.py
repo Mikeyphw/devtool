@@ -27,6 +27,7 @@ _SETUP_BUN_SHA = '0c5077e51419868618aeaa5fe8019c62421857d6' # oven-sh/setup-bun 
 _SETUP_NODE_SHA = '49933ea5288caeca8642d1e84afbd3f7d6820020' # actions/setup-node v4.4.0
 _SETUP_GRADLE_SHA = 'ed408507eac070d1f99cc633dbcf757c94c7933a'  # gradle/actions/setup-gradle v4
 _SETUP_JAVA_SHA = 'cf277c60eb25467037889841efdb72551f06f6c3'  # actions/setup-java v4
+_MSVC_ENV_SHA = '0b201ec74fa43914dc39ae48a89fd1d8cb592756' # ilammy/msvc-dev-cmd 1.13.0
 _SETUP_DOTNET_SHA = '67a3573c9a986a3f9c594539f4ab511d57bb3ce9'  # actions/setup-dotnet v4.3.1
 SCHEMA = 2
 MAX_NODES = 24
@@ -76,24 +77,37 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     """Deterministic compiler; each reviewed host cell gets isolated jobs and handoffs."""
     try:
         profiles=select_profiles(host_profiles)
-        if len({p.os for p in profiles})>1 and any(p.os=='windows' for p in profiles):
-            raise ProfileError('RM-07 mixed Windows/POSIX native plans are not yet portable')
         plan = provider_plan(root, target=target, workflow=workflow, devtool_sha=devtool_sha,
                              host_os=profiles[0].os, host_arch=profiles[0].arch)
         rows = plan['nodes']
-        validate_versions([row['provider'] for row in rows],profiles)
+        cpp_only=bool(rows) and all(row['provider']['provider']=='cpp' for row in rows)
+        if not cpp_only and len({p.os for p in profiles})>1 and any(p.os=='windows' for p in profiles):
+            raise ProfileError('RM-07 mixed Windows/POSIX native plans are not yet portable')
+        if not cpp_only:
+            validate_versions([row['provider'] for row in rows],profiles)
+        else:
+            variants=rows[0]['provider']['compiler_matrix']
+            if any(row['provider']['compiler_matrix']!=variants for row in rows):
+                raise ProfileError('RM-13 all native C/C++ DAG nodes require identical compiler matrices')
+            for item in variants:
+                compiler,version=item.split(':')
+                eligible=[p for p in profiles if (p.os=='windows')==(compiler=='msvc') and
+                         (compiler=='msvc' or p.os=='linux') ]
+                if len(eligible)!=1:
+                    raise ProfileError('RM-13 each requested compiler matrix cell requires exactly one eligible selected host')
+                validate_versions([{**rows[0]['provider'],'compiler':compiler,'version':version}],tuple(eligible))
         if any(row['provider'].get('native_manager_version') and
                (row['provider'].get('project') or {}).get('manager') in ('poetry','pdm')
                for row in rows) and any(profile.os!='linux' for profile in profiles):
             raise ProfileError('RM-08 Poetry/PDM native offline execution requires Linux network namespace')
     except ProfileError as exc: raise ProviderError(str(exc)) from None
-    versions=rows[0]['provider']['matrix_versions']
+    versions=(rows[0]['provider']['compiler_matrix'] if all(r['provider']['provider']=='cpp' for r in rows) else rows[0]['provider']['matrix_versions'])
     # Do not infer a shared toolchain from a mixed set of node profiles.
-    if any(row['provider']['matrix_versions']!=versions for row in rows):
+    if not cpp_only and any(row['provider']['matrix_versions']!=versions for row in rows):
         if any(len(row['provider']['matrix_versions'])>1 for row in rows):
             raise ProviderError('RM-08 matrix versions differ across DAG nodes')
         versions=['']  # independent pinned node versions, no fanout
-    elif len(versions)==1:
+    elif len(versions)==1 and not all(r['provider']['provider']=='cpp' for r in rows):
         versions=['']  # retain original graph/job IDs exactly
     rust_rows=[row for row in rows if row['provider']['provider']=='rust-cargo']
     feature_sets=['none']
@@ -116,7 +130,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     graph=graph_from_workflow(plan['target'],cfg.targets[plan['target']].workflows[plan['workflow']])
     for profile in profiles:
         admission=graph_host_admission(cfg,graph,host_os=profile.os,
-                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci'))
+                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp'))
         if not admission['all_eligible']:
             failures=[item['node']+':'+','.join(item['eligibility']['reasons'])
                       for item in admission['nodes'] if not item['eligibility']['eligible']]
@@ -126,10 +140,14 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     for profile in profiles:
       for version in versions:
        for feature_index,feature_set in enumerate(feature_sets):
+        if cpp_only and version:
+            matrix_compiler,matrix_version=version.split(':')
+            if (matrix_compiler=='msvc')!=(profile.os=='windows') or (matrix_compiler!='msvc' and profile.os!='linux'):
+                continue
         cell=profile.identifier+(':'+version if version else '')+((':f'+str(feature_index)) if len(feature_sets)>1 else '')
         for index,row in enumerate(rows,1):
             jid=(f'node-{index:02d}' if len(profiles)==1 and profile.identifier=='ubuntu-24.04-x64' else f'node-{index:02d}-{profile.identifier.replace(".","-")}')
-            if version:jid+='-v'+version.replace('.','-')
+            if version:jid+='-v'+version.replace('.','-').replace(':','-')
             if len(feature_sets)>1:jid+='-f'+str(feature_index)
             node_to_id[(row['node'],cell)]=jid
             outs=list(row['outputs'])
@@ -141,7 +159,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 if _tracked(root,path):
                     raise ProviderError('RM-06 output must not overwrite tracked source: '+path)
             try:
-                cache=cache_policy(root,{**row['provider'],'version':version or row['provider']['version']},profile,enabled=cache_locks)
+                cache=cache_policy(root,{**row['provider'],'version':matrix_version if cpp_only else (version or row['provider']['version'])},profile,enabled=cache_locks)
             except ProfileError as exc: raise ProviderError(str(exc)) from None
             jobs.append({'id':jid,'node':row['node'],'job':row['job'],
                          'depends_on':list(row['depends_on']), 'profile_id':profile.identifier,
@@ -150,7 +168,18 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'timeout_minutes':profile.timeout_minutes, 'cache_policy':cache,
                          'outputs':sorted(outs),'inputs':list(native_jobs[row['job']].inputs),
                          'provider':row['provider']['provider'],
-                         'toolchain_version':version or row['provider']['version'],
+                         'cpp_compiler':matrix_compiler if cpp_only else row['provider'].get('compiler',''),
+                         'cpp_version':matrix_version if cpp_only else row['provider'].get('compiler_version',''),
+                         'cpp_manager_version':row['provider'].get('manager_version',''),
+                         'cpp_sanitizer':row['provider'].get('sanitizer',''),
+                         'cpp_manager':row['provider'].get('manager','') if row['provider']['provider']=='cpp' else '',
+                         'cpp_project':row['provider'].get('project') if row['provider']['provider']=='cpp' else None,
+                         'cpp_operation':row['provider'].get('command','') if row['provider']['provider']=='cpp' else '',
+                         'cpp_abi':('pe-x86_64' if matrix_compiler=='msvc' else 'elf-x86_64') if cpp_only else row['provider'].get('abi',''),
+                         'cpp_symbols':row['provider'].get('symbols',[]),
+                         'cpp_binary_name':row['provider'].get('binary_name',''),
+                         'cpp_base_argv':list(row['command']) if row['provider']['provider']=='cpp' else [],
+                         'toolchain_version':matrix_version if cpp_only else (version or row['provider']['version']),
                          'go_manifest':row['provider'].get('version_source','go.mod'),
                          'race':('-race' in row['command']),
                          'python_package':row['provider']['provider']=='python-shell' and bool(row['provider'].get('project')),
@@ -218,7 +247,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 raise ProviderError('RM-06 generated input requires direct producer dependency: '+inp)
         if job['race'] and job['runner']!='ubuntu-24.04':
             raise ProviderError('RM-08 Go race profile requires reviewed Linux amd64 runner')
-        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci'):
+        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp'):
             raise ProviderError('RM-06 refuses unreviewed hosted provider')
     immutable = {'schema_version': SCHEMA, 'kind': 'devtool.actions.export-graph',
                  'provider_plan_sha256':plan['plan_sha256'], 'target':plan['target'],
@@ -377,6 +406,22 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                 shell_setup += '          shfmt --version | grep -F "v3.8.0"\n'
             if tool=='bats':
                 shell_setup += '          bats --version | grep -F "Bats 1.10.0"\n'
+        cpp_setup=''
+        if job['provider']=='cpp':
+            if job['cpp_compiler']=='msvc':
+                cpp_setup=(f'      - name: Load pinned MSVC developer environment\n'
+                           f'        uses: ilammy/msvc-dev-cmd@{_MSVC_ENV_SHA}\n'
+                           '        with:\n          arch: amd64\n')
+            else:
+                cc='gcc' if job['cpp_compiler']=='gcc' else 'clang'
+                build_manager=job['cpp_manager']
+                version_probe=('cmake --version' if build_manager=='cmake' else 'meson --version')
+                cpp_setup=('      - name: Verify native compiler tools\n'
+                           '        shell: bash\n        run: |\n'
+                           '          set -euo pipefail\n'
+                           f'          command -v {cc}-{job["cpp_version"]}\n'
+                           f'          {version_probe} | grep -F {job["cpp_manager_version"]}\n'
+                           '          ninja --version\n')
         rust_setup=('      - name: Verify preinstalled pinned Rust toolchain (no network installation)\n'
                     '        shell: bash\n        run: |\n'
                     '          set -euo pipefail\n'
@@ -426,6 +471,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
         python_bootstrap='python' if is_windows else 'python3'
         venv_python='"$RUNNER_TEMP/devtool-venv/Scripts/python.exe"' if is_windows else '"$RUNNER_TEMP/devtool-venv/bin/python"'
         # Runtime downloads pinned commit before any handoff touches the workspace.
+        py_exec=('Scripts/python.exe' if job['profile_id']=='windows-2022-x64' else 'bin/python')
         entry=(f'  {jid}:\n{dep_str}'
                f'    runs-on: {job["runner"]}\n    timeout-minutes: {job["timeout_minutes"]}\n'
                '    env:\n'
@@ -443,7 +489,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
-               f'{setup_go}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{shell_setup}{cache_step}{py_verify}'
+               f'{setup_go}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{shell_setup}{cpp_setup}{cache_step}{py_verify}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -629,6 +675,69 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
         if selected['shell_review']['operation']=='test':
             folder=_regular(root,'dist/report.xml',must_exist=False).parent
             folder.mkdir(parents=True,exist_ok=True)
+    if selected['provider']=='cpp':
+        from .actions_rm13_cpp import cpp_project, CppError
+        from dataclasses import replace as _replace
+        from .runners import run_specs as _run
+        import re as _re
+        if len(specs)!=1 or specs[0].argv!=selected['cpp_base_argv']:
+            raise ProviderError('RM-13 native C/C++ direct-job command diverges from reviewed plan')
+        try:reviewed=cpp_project(root,manager=selected['cpp_manager'],preset=selected['cpp_project']['preset'],
+                                 build_type=selected['cpp_project']['build_type'])
+        except CppError as exc:raise ProviderError(str(exc)) from None
+        if reviewed['source_digest']!=selected['cpp_project']['source_digest']:
+            raise ProviderError('RM-13 reviewed C/C++ source changed before native execution')
+        cc=selected['cpp_compiler'];version=selected['cpp_version']
+        if cc=='msvc':
+            probe=['cl']
+        else:
+            probe=[cc+'-'+version,'--version']
+        import subprocess as _sp
+        try:p=_sp.run(probe,capture_output=True,text=True,timeout=12)
+        except (OSError,_sp.TimeoutExpired):raise ProviderError('RM-13 preinstalled compiler unavailable') from None
+        if cc=='msvc':
+            ok=('Version 19.4' in (p.stdout+p.stderr))
+        else:
+            ok=p.returncode==0 and bool(_re.search(r'\b'+_re.escape(version)+r'\.\d+\b',p.stdout+p.stderr))
+        if not ok:raise ProviderError('RM-13 compiler pin differs from installed compiler')
+        buildtool=selected['cpp_manager'];toolcmd=['cmake','--version'] if buildtool=='cmake' else ['meson','--version']
+        try:tool_result=_sp.run(toolcmd,capture_output=True,text=True,timeout=12)
+        except (OSError,_sp.TimeoutExpired):raise ProviderError('RM-13 missing declared native build system') from None
+        tool_version=selected['cpp_manager_version']
+        found=tool_result.stdout+tool_result.stderr
+        if tool_result.returncode or not _re.search(r'\b'+_re.escape(tool_version)+r'(?:\.|\s|$)',found):
+            raise ProviderError('RM-13 installed build system differs from reviewed version')
+        env=dict(specs[0].env)
+        if cc!='msvc':
+            env.update({'CC':cc+'-'+version,'CXX':('g++-' if cc=='gcc' else 'clang++-')+version})
+        env['CMAKE_BUILD_PARALLEL_LEVEL']='2'
+        env['MESON_WRAP_MODE']='nodownload'
+        env['CCACHE_DISABLE']='1'
+        if selected['cpp_sanitizer']!='none':
+            if cc=='msvc':env['CL']='/fsanitize=address'
+            else:
+                flags='-fsanitize='+selected['cpp_sanitizer']+' -fno-omit-frame-pointer'
+                env['CFLAGS']=env['CXXFLAGS']=env['LDFLAGS']=flags
+        spec=_replace(specs[0],env=env)
+        setup=(['cmake','--preset',reviewed['preset']] if selected['cpp_manager']=='cmake' else
+               ['meson','setup',reviewed['profile']['build_dir'],'--native-file','ci/meson-'+reviewed['preset']+'.ini',
+                '--buildtype',{'Debug':'debug','Release':'release','RelWithDebInfo':'debugoptimized'}[reviewed['build_type']]])
+        if selected['cpp_operation']!='configure':
+            cfg_spec=_replace(spec,name=spec.name+' [reviewed native configure]',argv=setup)
+            boot,_=_run(cfg,[cfg_spec],verbose=True,dry_run=False,continue_on_error=False)
+            if not boot or any(x.returncode!=0 or x.skipped for x in boot):
+                raise ProviderError('RM-13 native configure step failed; no artifact accepted')
+            if selected['cpp_operation']=='test':
+                cmd=(['cmake','--build',reviewed['profile']['build_dir']] if selected['cpp_manager']=='cmake' else
+                     ['meson','compile','-C',reviewed['profile']['build_dir']])
+                built,_=_run(cfg,[_replace(spec,name=spec.name+' [reviewed native build]',argv=cmd)],verbose=True,dry_run=False,continue_on_error=False)
+                if not built or any(x.returncode!=0 or x.skipped for x in built):
+                    raise ProviderError('RM-13 native build step failed before test/package')
+        if selected['cpp_operation']=='test' and selected['cpp_manager']=='cmake':
+            report=root/reviewed['profile']['build_dir']/'dist/cpp-tests.xml'
+            if report.exists() or report.is_symlink():raise ProviderError('RM-13 CTest report exists before test execution')
+            report.parent.mkdir(parents=True,exist_ok=True)
+        specs=[spec]
     if selected['provider']=='node':
         # Repo scripts and tool configuration are executable code. Enforce the
         # checkout's exact Git source before any dependency installation.
@@ -861,6 +970,54 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
         from .actions_rm14_shell import verify_bats_report, ShellError
         try:shell_receipts.append(verify_bats_report(root))
         except ShellError as exc:raise ProviderError('RM-14 shell native node '+selected['node']+': '+str(exc)) from None
+    cpp_receipts=[]
+    if selected['provider']=='cpp' and selected['cpp_operation'] in ('package','symbols'):
+        from .actions_rm13_cpp import verify_binary,CppError
+        import zipfile as _zipfile
+        binary_name=selected['cpp_binary_name']
+        fmt=selected['cpp_abi']
+        build=selected['cpp_project']['profile']['build_dir']
+        rel=build+'/'+(binary_name+'.exe' if fmt=='pe-x86_64' else binary_name)
+        candidate=_regular(root,rel)
+        try:cpp_receipts.append(verify_binary(candidate,abi=fmt,symbols=selected['cpp_symbols']))
+        except CppError as exc:raise ProviderError(str(exc)) from None
+        if selected['cpp_operation']=='symbols':
+            rel_out=selected['outputs'][0]
+            dest=_regular(root,rel_out,must_exist=False)
+            if dest.exists() or dest.is_symlink():raise ProviderError('RM-13 symbols artifact already exists')
+            dest.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(candidate,dest)
+            if _hash_file(candidate)!=_hash_file(dest):raise ProviderError('RM-13 copied symbol artifact differs')
+        else:
+            dest=_regular(root,'dist/'+binary_name+'.zip',must_exist=False)
+            if dest.exists() or dest.is_symlink():raise ProviderError('RM-13 package output already exists')
+            dest.parent.mkdir(parents=True,exist_ok=True)
+            with _zipfile.ZipFile(dest,'w',compression=_zipfile.ZIP_STORED) as out:
+                item=_zipfile.ZipInfo('bin/'+candidate.name,date_time=(1980,1,1,0,0,0))
+                item.external_attr=0o100755 << 16
+                out.writestr(item,candidate.read_bytes())
+                item=_zipfile.ZipInfo('byte-receipt.json',date_time=(1980,1,1,0,0,0))
+                item.external_attr=0o100644 << 16
+                out.writestr(item,json.dumps({'sha256':_hash_file(candidate),'source_digest':
+                    selected['cpp_project']['source_digest'],'abi':fmt},sort_keys=True)+'\n')
+    if selected['provider']=='cpp':
+        from .actions_rm13_cpp import normalize_ctest_report,verify_binary,verify_archive,CppError
+        try:
+            if selected['cpp_operation']=='test':
+                generated=_regular(root,selected['cpp_project']['profile']['build_dir']+
+                    ('/dist/cpp-tests.xml' if selected['cpp_manager']=='cmake' else '/meson-logs/testlog.junit.xml'))
+                cpp_receipts.append(normalize_ctest_report(generated))
+                final=_regular(root,'dist/cpp-tests.xml',must_exist=False)
+                if final.exists() or final.is_symlink():raise ProviderError('RM-13 CTest report would overwrite output')
+                final.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copyfile(generated,final)
+                if _hash_file(generated)!=_hash_file(final):raise ProviderError('RM-13 report staging changed bytes')
+            for path in selected['outputs']:
+                if path=='dist/cpp-tests.xml':continue
+                p=_regular(root,path)
+                if path.endswith(('.a','.zip')):cpp_receipts.append(verify_archive(p,expected_abi=selected['cpp_abi']))
+                else:cpp_receipts.append(verify_binary(p,abi=selected['cpp_abi'],symbols=selected['cpp_symbols']))
+        except CppError as exc:raise ProviderError(str(exc)) from None
     jvm_receipts=[]
     if selected['provider']=='jvm':
         from .actions_rm12_jvm import aggregate_junit, verify_jar, verify_desktop_bundle, JvmError
@@ -905,7 +1062,7 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     stage_outputs(root,outputs,graph,selected,source,run,attempt)
     return {'status':'LOCAL_JOB_SUCCEEDED', 'node':selected['node'], 'job_id':job_id,
             'graph_sha256':graph_sha, 'workflow_sha256':hashlib.sha256(workflow_yaml(graph).encode()).hexdigest(), 'github_source':source,'run_id':run,'attempt':attempt,
-            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'node_receipts':node_receipts,'shell_receipts':shell_receipts,'jvm_receipts':jvm_receipts,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
+            'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'node_receipts':node_receipts,'shell_receipts':shell_receipts,'cpp_receipts':cpp_receipts,'jvm_receipts':jvm_receipts,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
 
 
 def main(argv: list[str] | None = None) -> int:

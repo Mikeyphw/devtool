@@ -246,7 +246,19 @@ class ShellCIProvider:
         except ShellError as exc:raise ProviderError(str(exc)) from None
 
 # The only provider registry: immutable built-ins, no entry-point/network/plugin loading.
-PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider(), 'node': NodeProvider(), 'jvm': JvmProvider(), 'shell-ci': ShellCIProvider()})
+@dataclass(frozen=True)
+class NativeCppProvider:
+    api_version: int = SCHEMA_VERSION
+    provider_id: str = 'cpp'
+
+    def inspect(self, root: Path, job: Any, argv: list[str]) -> dict[str, Any]:
+        _argv(argv)
+        from .actions_rm13_cpp import inspect_cpp_job, CppError
+        try:return {'api_version':self.api_version, **inspect_cpp_job(root,argv,job.metadata or {})}
+        except CppError as exc:raise ProviderError(str(exc)) from None
+
+
+PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider(), 'node': NodeProvider(), 'jvm': JvmProvider(), 'shell-ci': ShellCIProvider(), 'cpp': NativeCppProvider()})
 # V1 adapter behavior is preserved; V2 review metadata must match the exact built-ins.
 for _id, _adapter in PROVIDERS.items():
     resolve_provider(_id, api_version=_adapter.api_version)
@@ -287,6 +299,10 @@ def _provider_for(job: Any) -> LanguageProvider:
         if name not in ('shellcheck','shfmt','bats','bash','sh','zsh') or flag not in (None,'shell-ci'):
             raise ProviderError('RM-14 shell provider/argv mismatch')
         return PROVIDERS['shell-ci']
+    if flag == 'cpp' or name in ('cmake','ctest','meson'):
+        if name not in ('cmake','ctest','meson') or flag not in (None,'cpp'):
+            raise ProviderError('RM-13 native C/C++ provider/argv mismatch')
+        return PROVIDERS['cpp']
     if flag == 'jvm' or name in ('mvn','gradle'):
         if name not in ('mvn','gradle') or flag not in (None,'jvm'):
             raise ProviderError('RM-12 JVM provider/argv mismatch')
@@ -304,7 +320,7 @@ def _provider_for(job: Any) -> LanguageProvider:
             raise ProviderError('RM-09 dotnet provider/argv mismatch')
         return PROVIDERS['dotnet']
     go = (flag == 'go' or job.runner == 'go' or name == 'go' or 'go.mod' in job.inputs)
-    if flag not in (None, 'go', 'python-shell', 'dotnet', 'rust-cargo', 'node', 'jvm', 'shell-ci'):
+    if flag not in (None, 'go', 'python-shell', 'dotnet', 'rust-cargo', 'node', 'jvm', 'shell-ci', 'cpp'):
         raise ProviderError('No reviewed language provider for ci_toolchain ' + str(flag)[:50])
     if go and flag == 'python-shell':
         raise ProviderError('Go source declaration conflicts with Python toolchain')
@@ -340,7 +356,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
     if not (1 <= len(graph.nodes) <= MAX_NODES):
         raise ProviderError('NEXT-03 DAG size must be between 1 and 32 nodes')
     admission = graph_host_admission(cfg, graph, host_os=host_os, host_arch=host_arch,
-                                     toolchains=('go', 'python-shell','dotnet','rust-cargo','node','jvm','shell-ci'))
+                                     toolchains=('go', 'python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp'))
     if not admission['all_eligible']:
         reasons = [r['node']+':'+','.join(r['eligibility']['reasons']) for r in admission['nodes'] if not r['eligibility']['eligible']]
         raise ProviderError('Hosted node admission blocked: ' + '; '.join(reasons)[:320])
@@ -356,7 +372,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if 'ci_host_requirements' in meta:
             try:
                 host_result = host_eligibility_v2(meta['ci_host_requirements'],
-                    host_os=host_os, host_arch=host_arch, toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci'))
+                    host_os=('windows' if meta.get('ci_toolchain')=='cpp' and meta.get('ci_cpp_compiler')=='msvc' else host_os), host_arch=host_arch, toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp'))
             except ContractError as exc:
                 raise ProviderError('Invalid ci_host_requirements: ' + str(exc)) from None
             if not host_result['eligible']:
@@ -417,6 +433,21 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if declaration['provider']=='shell-ci':
             if list(job.outputs) != (['dist/report.xml'] if declaration['operation']=='test' else []):
                 raise ProviderError('RM-14 shell output ownership must match Bats JUnit or be empty')
+        if declaration['provider']=='cpp':
+            op=declaration['command']
+            outputs=list(job.outputs)
+            if op in ('configure','build'):
+                if outputs:raise ProviderError('RM-13 configuration/build steps cannot assert unverified bytes')
+            elif op=='test':
+                if outputs!=['dist/cpp-tests.xml']:
+                    raise ProviderError('RM-13 CTest must own dist/cpp-tests.xml')
+            else:
+                if len(outputs)!=1 or not outputs[0].startswith('dist/') or not outputs[0].endswith(('.zip','.a','.so','.dll','.exe','.dylib','.elf')):
+                    raise ProviderError('RM-13 package/symbol jobs require bounded dist binary/archive outputs')
+            if op=='package' and outputs!=['dist/'+declaration['binary_name']+'.zip']:
+                raise ProviderError('RM-13 native package must declare exact owned zip archive')
+            if op=='symbols' and not declaration['symbols']:
+                raise ProviderError('RM-13 symbols job requires explicit required symbol names')
         if declaration['provider']=='jvm':
             from .actions_rm12_jvm import JvmError
             m=declaration['project']['modules'][declaration['selected']]
