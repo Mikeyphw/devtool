@@ -11579,7 +11579,7 @@ def _federation_command(args: argparse.Namespace) -> int:
             return 0 if payload.get("affected") else 1
         if action == "dag-contract":
             from .federation_dag_contract import (
-                FederationDAGContractError, project_dag_contract, render_dag_contract_ascii,
+                project_dag_contract, render_dag_contract_ascii,
             )
             workflow_name = str(getattr(args, "workflow", "") or "").strip()
             group_name = str(getattr(args, "group", "") or "").strip()

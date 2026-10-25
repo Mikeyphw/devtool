@@ -1,0 +1,221 @@
+{
+  "active": 160,
+  "cancelled": 8,
+  "historical_reports_immutable": true,
+  "milestones": [
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "tests/test_rm00_shared_contracts.py",
+      "milestone": "RM00",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "SOURCE_REPAIRED_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/DEVTOOL_IMPROVEMENTS.md",
+      "milestone": "RM01",
+      "release_qualified": false,
+      "repair_packages": "FC-01",
+      "superseding_source_docs": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ]
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM02_PROMISE_AUDIT.md",
+      "milestone": "RM02",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM03_PROMISE_AUDIT.md",
+      "milestone": "RM03",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM04_PROMISE_AUDIT.md",
+      "milestone": "RM04",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM05_PROMISE_AUDIT.md",
+      "milestone": "RM05",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM06_PROMISE_AUDIT.md",
+      "milestone": "RM06",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM07_PROMISE_AUDIT.md",
+      "milestone": "RM07",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM08_PROMISE_AUDIT.md",
+      "milestone": "RM08",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "SOURCE_REPAIRED_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM09_PROMISE_AUDIT.md",
+      "milestone": "RM09",
+      "release_qualified": false,
+      "repair_packages": "FC-06",
+      "superseding_source_docs": [
+        "docs/FC06_DOTNET_SHARED_RESTORE_CLOSURE.md"
+      ]
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM10_PROMISE_AUDIT.md",
+      "milestone": "RM10",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "SOURCE_REPAIRED_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM11_PROMISE_AUDIT.md",
+      "milestone": "RM11",
+      "release_qualified": false,
+      "repair_packages": "FC-03",
+      "superseding_source_docs": [
+        "docs/FC03_PROVIDER_SELECTION_CLOSURE.md"
+      ]
+    },
+    {
+      "engineering_status": "SOURCE_REPAIRED_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM12_PROMISE_AUDIT.md",
+      "milestone": "RM12",
+      "release_qualified": false,
+      "repair_packages": "FC-03/FC-04",
+      "superseding_source_docs": [
+        "docs/FC03_PROVIDER_SELECTION_CLOSURE.md",
+        "docs/FC04_ARTIFACT_VERIFIER_CLOSURE.md"
+      ]
+    },
+    {
+      "engineering_status": "SOURCE_REPAIRED_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM13_PROMISE_AUDIT.md",
+      "milestone": "RM13",
+      "release_qualified": false,
+      "repair_packages": "FC-04",
+      "superseding_source_docs": [
+        "docs/FC04_ARTIFACT_VERIFIER_CLOSURE.md"
+      ]
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM14_SHELL_TERMUX_PROMISE_AUDIT.md",
+      "milestone": "RM14",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM15_ANDROID_BKX_PROMISE_AUDIT.md",
+      "milestone": "RM15",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "LOCAL_SOURCE_TEST_COVERAGE_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM16_BATCH_PROMISE_AUDIT.md",
+      "milestone": "RM16",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "SOURCE_REPAIRED_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM17_RM18_STAGED_ADOPTION_PROMISE_AUDIT_20261023.md",
+      "milestone": "RM17",
+      "release_qualified": false,
+      "repair_packages": "FC-02",
+      "superseding_source_docs": [
+        "docs/FC02_GUARDED_GIT_TRANSACTIONS.md"
+      ]
+    },
+    {
+      "engineering_status": "SOURCE_REPAIRED_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM17_RM18_STAGED_ADOPTION_PROMISE_AUDIT_20261023.md",
+      "milestone": "RM18",
+      "release_qualified": false,
+      "repair_packages": "FC-02",
+      "superseding_source_docs": [
+        "docs/FC02_GUARDED_GIT_TRANSACTIONS.md"
+      ]
+    },
+    {
+      "engineering_status": "CANCELLED_BY_USER",
+      "external_gate": "NOT_APPLICABLE_CANCELLED",
+      "historical_reference": "docs/RM19_PROMISE_AUDIT.md",
+      "milestone": "RM19",
+      "release_qualified": false,
+      "repair_packages": "",
+      "superseding_source_docs": []
+    },
+    {
+      "engineering_status": "SOURCE_REPAIRED_REQUIRES_FINAL_REQUALIFICATION",
+      "external_gate": "PENDING_OR_UNVERIFIED_REAL_HOST_CONSUMER_DEVICE_AS_APPLICABLE",
+      "historical_reference": "docs/RM20_WHOLE_REPO_ONBOARDING_PROMISE_AUDIT_20261023.md",
+      "milestone": "RM20",
+      "release_qualified": false,
+      "repair_packages": "FC-02/FC-03/FC-05",
+      "superseding_source_docs": [
+        "docs/FC02_GUARDED_GIT_TRANSACTIONS.md",
+        "docs/FC03_PROVIDER_SELECTION_CLOSURE.md",
+        "docs/FC05_WHOLE_REPOSITORY_ONBOARDING_CLOSURE.md"
+      ]
+    }
+  ],
+  "original_plan": "docs/RM_ORIGINAL_PROMISE_LEDGER_20261024.json",
+  "original_total": 168,
+  "purpose": "Current engineering reconciliation only; per-promise final qualified state is FC-09, not this index.",
+  "schema": "devtool-rm-current-status-v1",
+  "source_baseline": "post-FC-06 commit/tree determined at runtime, not frozen into historical ledger",
+  "source_device_gate": "INSTALL_RECEIPT_PENDING_FOR_FC07"
+}

@@ -3620,6 +3620,17 @@ def run_specs(
                 source="runner",
                 metadata={"part_index": workflow_part_index, "part_total": workflow_part_total},
             ))
+        if command_part_node_id and workflow_part_index < workflow_part_total and returncode == 0:
+            # Preserve each successful command part's verified outputs in the
+            # parent aggregate without treating the parent as terminal early.
+            publish_event(NodeFinished(
+                run_id=event_run_id, node_id=event_node_id,
+                status="running", exit_code=0, source="runner",
+                metadata={key: result_metadata[key] for key in (
+                    "reuse_fingerprint", "reuse_output_manifest",
+                    "reuse_result_identity", "reuse_portability_class",
+                ) if key in result_metadata},
+            ))
         if not command_part_node_id or workflow_part_index == workflow_part_total or returncode != 0:
             publish_event(TaskFinished(
                     run_id=event_run_id,

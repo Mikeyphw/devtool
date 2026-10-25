@@ -19,7 +19,11 @@ from test_next02_evidence_kernel import receipt
 
 def test_registry_is_immutable_source_reviewed_and_compatible():
     assert CONTRACT_VERSION == 2
-    assert set(PROVIDERS) == set(reviewed_providers()) == {'go', 'python-shell'}
+    # RM00 records the source-reviewed registry, not its original two-provider snapshot.
+    expected = {'go', 'python-shell', 'rust-cargo', 'node', 'cpp', 'jvm', 'shell-ci', 'dotnet'}
+    assert set(PROVIDERS) == set(reviewed_providers()) == expected
+    assert {item.provider_id for item in reviewed_providers().values()} == expected
+    assert len({id(provider) for provider in PROVIDERS.values()}) == len(expected)
     for provider_id, adapter in PROVIDERS.items():
         descriptor = resolve_provider(provider_id, api_version=adapter.api_version)
         assert descriptor.provider_id == provider_id
@@ -33,6 +37,12 @@ def test_registry_is_immutable_source_reviewed_and_compatible():
         resolve_provider('unreviewed')
     with pytest.raises(ContractError, match='version'):
         resolve_provider('go', api_version=2)
+    # Provider admission must not use prefix matching or reflect arbitrary Python modules.
+    for unknown in ('Go', 'go-evil', 'dotnet-any', 'python-shell.extra', '__import__', 'missing'):
+        with pytest.raises(ContractError):
+            resolve_provider(unknown)
+    with pytest.raises(TypeError):
+        reviewed_providers()['fake-plugin'] = resolve_provider('go')
 
 
 @pytest.mark.parametrize('bad', ['Bad', '../oops', 'a b', '', 'a'*65])

@@ -88,10 +88,10 @@ def test_python_shell_workflow_sha_remains_unmodified(tmp_path: Path):
 
 
 @pytest.mark.parametrize('metadata,reason', [
-    ('read_only = true, ci_toolchain = "jdk"', 'unsupported'),
-    ('read_only = true, ci_toolchain = "android-sdk"', 'unsupported'),
-    ('read_only = true, ci_toolchain = "root"', 'unsupported'),
-    ('read_only = true, ci_toolchain = "$(shell)"', 'unsupported'),
+    ('read_only = true, ci_toolchain = "jdk"', 'not provisioned'),
+    ('read_only = true, ci_toolchain = "android-sdk"', 'not provisioned'),
+    ('read_only = true, ci_toolchain = "root"', 'not provisioned'),
+    ('read_only = true, ci_toolchain = "$(shell)"', 'not provisioned'),
     ('read_only = true, ci_toolchain = "python-shell"', 'conflicts'),
 ])
 def test_unsupported_or_opaque_host_is_refused_before_writes(tmp_path: Path, metadata: str, reason: str):

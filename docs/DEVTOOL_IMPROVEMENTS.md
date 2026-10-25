@@ -1135,3 +1135,17 @@ historical failures or treat selected local tests as hosted authority.
 - **Remediation:** opt-in two-or-more reviewed solution restore, single isolated NuGet store and SDK pin, source/lock/TFM/RID hashing, package ID+version+SHA-512 consistency, post-execution metadata **and actual restored `.nupkg` archive-byte hashing** with a bounded receipt, independent fallback left truthfully labelled.
 - **Negative evidence:** incompatible host, non-shared identities, conflicting SHA-512 for same id/version, changed lock, tampered package store, SDK mismatch, and failed restore block downstream acceptance. Stub native execution is *not* actual hosted SDK evidence.
 - **Status:** engineering implementation tested locally; native actual two-solution SDK acceptance and hosted producer/consumer/source/attempt authority `OPEN_EXTERNAL_GATE`, no release promotion.
+
+## FC-07 — source hygiene and regression authority (2026-10-25)
+
+- **RM00 regression failure:** `tests/test_rm00_shared_contracts.py` historically froze two providers despite six subsequently source-reviewed adapters. Replace with explicit eight-provider equality, immutability and unknown/reflection refusal. Do not treat the original failed test as an actual registry compromise.
+- **Full-suite gap:** Prior 154/162/336 selected regression runs did not inventory all tracked tests. Add deterministic exact-once test enumeration and bounded native pytest collection/shards with JSON exit/skip/timeout details. Any unfinished/failed shard remains a gate; do not rewrite as PASS.
+- **Authority drift:** Historical RM06–RM09 and other audits contain source-accurate conclusions at the time but were overtaken by repairs. Keep them immutable; add `docs/RM_CURRENT_STATUS.md`/JSON and the original 168-obligation planning ledger as a reconciliation source. All hosted/consumer/release gates remain outside local source evidence.
+- **Affected:** RM00, G0/G1 and FC-09 handoff. **Acceptance:** `tests/test_fc07_regression_authority.py`, RM00 originals, generated CLI surfaces, real bounded test inventory and native Devtool overlay rollback.
+
+### FC07-BROAD-001 — Broad shard results and remaining Surefire interaction
+
+- **Evidence:** Full pytest collection stalled; 12 bounded shards collected all 6,737 cases successfully. First execution shard originally had six failures; RM11 host-message fixtures, EXO output union and federation CLI import bug were repaired, with 46 targeted passes. Repeated shard printed 562 passed/1 failed/5 skipped without a final wrapper exit receipt; Surefire structured-evidence test passes in isolation but failed when run with other test modules.
+- **Status:** PARTIAL — broad execution gate remains open, **not silently skipped**. Source fix/test inventory and RM00 review are implemented; full suite and live host/device authority pending.
+- **Affected:** `devtool/cli.py`, `devtool/runners.py`, `tests/test_actions_r02_host_review.py`, `tests/test_exec_x02_reuse_qualification.py`, `tests/test_frx_x03_executable_federation_groups.py`, `tests/test_tsys02_adapters.py`.
+- **Recommendation:** Run 12 bounded pytest execution shards independently and investigate report timestamp/fixture interaction without loosening stale-report trust policy.
