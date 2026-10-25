@@ -267,10 +267,10 @@ def verify_archive(path:Path,*,expected_abi:str)->dict:
                     name=i.filename
                     if ('\\' in name or name.startswith('/') or name.endswith('/') or
                         any(x in ('','.','..') for x in name.split('/')) or
-                        i.file_size>32*1024*1024 or (i.external_attr>>16)&0o170000==0o120000):
+                        i.file_size>32*1024*1024 or i.flag_bits&1 or (i.external_attr>>16)&0o170000==0o120000):
                         raise CppError('RM-13 unsafe archive content')
                     names.append(name)
-                if len(names)!=len(set(names)):raise CppError('RM-13 duplicate archive entries')
+                if len(names)!=len(set(x.casefold() for x in names)):raise CppError('RM-13 duplicate archive entries')
                 total=0
                 for i in infos:
                     total+=i.file_size
@@ -278,13 +278,41 @@ def verify_archive(path:Path,*,expected_abi:str)->dict:
                         raise CppError('RM-13 archive decompression budget exceeded')
                     data=z.read(i)
                     if data[:4]==b'\x7fELF':
-                        if len(data)<64 or data[4:6]!=b'\x02\x01' or {62:'elf-x86_64',183:'elf-aarch64'}.get(struct.unpack_from('<H',data,18)[0])!=expected_abi:
+                        if len(data)<64 or data[4:6]!=b'\x02\x01' or struct.unpack_from('<H',data,16)[0] not in (1,2,3) or {62:'elf-x86_64',183:'elf-aarch64'}.get(struct.unpack_from('<H',data,18)[0])!=expected_abi:
                             raise CppError('RM-13 embedded ELF has wrong ABI')
                         abi_members+=1
                     elif data[:2]==b'MZ':
-                        if len(data)<128 or struct.unpack_from('<I',data,60)[0]+24>len(data) or data[struct.unpack_from('<I',data,60)[0]:struct.unpack_from('<I',data,60)[0]+4]!=b'PE\0\0' or expected_abi!='pe-x86_64':
+                        if len(data)<128:
+                            raise CppError('RM-13 embedded PE malformed')
+                        offset=struct.unpack_from('<I',data,60)[0]
+                        if (offset+24>len(data) or data[offset:offset+4]!=b'PE\0\0' or
+                            struct.unpack_from('<H',data,offset+4)[0]!=0x8664 or expected_abi!='pe-x86_64'):
                             raise CppError('RM-13 embedded PE has wrong ABI')
                         abi_members+=1
+                    elif data[:4] in (b'\xcf\xfa\xed\xfe',b'\xfe\xed\xfa\xcf'):
+                        if len(data)<32:raise CppError('RM-13 embedded Mach-O malformed')
+                        endian='<' if data[:4]==b'\xcf\xfa\xed\xfe' else '>'
+                        cpu=struct.unpack_from(endian+'I',data,4)[0]
+                        if cpu!=0x01000007 or expected_abi!='macho-x86_64':
+                            raise CppError('RM-13 embedded Mach-O has wrong ABI')
+                        abi_members+=1
+                    elif name.lower().endswith(('.elf','.so','.dll','.exe','.dylib','.o','.obj')):
+                        raise CppError('RM-13 purported native ZIP member cannot be ABI-verified')
+                if not abi_members:
+                    raise CppError('RM-13 native ZIP has no ABI-verified members')
+                if 'byte-receipt.json' in names:
+                    if abi_members!=1:raise CppError('RM-13 ambiguous ZIP byte receipt for multiple native members')
+                    try:
+                        receipt=json.loads(z.read('byte-receipt.json'))
+                    except (ValueError,UnicodeError):
+                        raise CppError('RM-13 invalid native ZIP byte receipt') from None
+                    if not isinstance(receipt,dict) or not re.fullmatch('[0-9a-f]{64}',str(receipt.get('sha256',''))) or receipt.get('abi')!=expected_abi:
+                        raise CppError('RM-13 invalid native ZIP byte receipt identity')
+                    native_hashes=[hashlib.sha256(z.read(i)).hexdigest() for i in names if i!='byte-receipt.json' and (
+                        z.read(i)[:4]==b'\x7fELF' or z.read(i)[:2]==b'MZ' or
+                        z.read(i)[:4] in (b'\xcf\xfa\xed\xfe',b'\xfe\xed\xfa\xcf'))]
+                    if native_hashes != [receipt['sha256']]:
+                        raise CppError('RM-13 native ZIP byte receipt differs from verified payload')
         except (zipfile.BadZipFile,RuntimeError) as exc:raise CppError('RM-13 corrupt archive') from exc
     elif path.suffix=='.a':
         data=path.read_bytes()
@@ -311,6 +339,7 @@ def verify_archive(path:Path,*,expected_abi:str)->dict:
     else:raise CppError('RM-13 only reviewed zip/ar archives supported')
     return {'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'size':path.stat().st_size,
             'format':path.suffix,'declared_abi':expected_abi,'abi_verified_member_count':abi_members,'archive_structure_verified':True,
+            'qualification':'ABI_VERIFIED',
             'release_qualified':False}
 
 

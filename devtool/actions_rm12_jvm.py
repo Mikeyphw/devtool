@@ -11,6 +11,8 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import struct
+import tempfile
 import tomllib
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -263,75 +265,159 @@ def inspect_jvm_job(root:Path,argv:list[str],meta:dict[str,Any]) -> dict[str,Any
             'output_role':'local-bytes-only','report_adapter':'junit-xml','release_qualified':False}
 
 
+def _checked_archive(z:zipfile.ZipFile, *,limit:int=256) -> zipfile.ZipFile:
+    """Apply the same bounded ZIP contract to disk archives and nested JAR bytes."""
+    try:
+        names=set();total=0
+        for item in z.infolist():
+            name=item.filename
+            if (not name or name.casefold() in names or len(names)>=limit or
+                    name.startswith('/') or '\\' in name or '..' in PurePosixPath(name).parts or
+                    item.flag_bits&1):
+                raise JvmError('RM-12 duplicate/unsafe/encrypted archive entry')
+            if (item.external_attr>>16)&0o170000==0o120000:
+                raise JvmError('RM-12 archive symlink refused')
+            names.add(name.casefold());total+=item.file_size
+            if item.file_size>16*1024*1024 or total>128*1024*1024:
+                raise JvmError('RM-12 archive expansion budget exceeded')
+        if z.testzip() is not None:
+            raise JvmError('RM-12 corrupt ZIP member')
+        return z
+    except (OSError, zipfile.BadZipFile, RuntimeError, EOFError) as exc:
+        z.close()
+        raise JvmError('RM-12 corrupt ZIP member') from exc
+    except BaseException:
+        z.close()
+        raise
+
+
 def _archive(path:Path, *,limit:int=256) -> zipfile.ZipFile:
     if path.is_symlink() or not path.is_file() or path.stat().st_size>128*1024*1024:
         raise JvmError('RM-12 missing/unbounded regular JVM artifact')
     try:z=zipfile.ZipFile(path)
     except (OSError,zipfile.BadZipFile):raise JvmError('RM-12 invalid ZIP/JAR') from None
-    names=set();total=0
-    for item in z.infolist():
-        name=item.filename
-        if not name or name.casefold() in names or len(names)>=limit or name.startswith('/') or '\\' in name or '..' in PurePosixPath(name).parts or item.flag_bits&1:
-            z.close();raise JvmError('RM-12 duplicate/unsafe/encrypted archive entry')
-        if (item.external_attr>>16)&0o170000==0o120000:
-            z.close();raise JvmError('RM-12 archive symlink refused')
-        names.add(name.casefold());total+=item.file_size
-        if item.file_size>16*1024*1024 or total>128*1024*1024:
-            z.close();raise JvmError('RM-12 archive expansion budget exceeded')
-    if z.testzip() is not None:
-        z.close();raise JvmError('RM-12 corrupt ZIP member')
-    return z
+    return _checked_archive(z,limit=limit)
+
+
+def _nested_jar(payload:bytes) -> zipfile.ZipFile:
+    if not payload or len(payload)>16*1024*1024:
+        raise JvmError('RM-12 empty/unbounded nested JAR')
+    try:z=zipfile.ZipFile(io.BytesIO(payload))
+    except (OSError,zipfile.BadZipFile):raise JvmError('RM-12 invalid nested JAR') from None
+    return _checked_archive(z)
+
+
+def _class_structure(data:bytes) -> bool:
+    """Boundedly walk constant pool and class member tables, not magic alone."""
+    if len(data)<24 or data[:4]!=b'\xca\xfe\xba\xbe':return False
+    minor,major,pool_count=struct.unpack_from('>HHH',data,4)
+    if not 45<=major<=70 or not 1<=pool_count<=4096:return False
+    pos=10; index=1
+    def take(n:int) -> bytes:
+        nonlocal pos
+        if n<0 or pos+n>len(data):raise ValueError('truncated class')
+        result=data[pos:pos+n];pos+=n;return result
+    def u2()->int:return struct.unpack('>H',take(2))[0]
+    def skip_attrs()->None:
+        for _ in range(u2()):
+            take(2)
+            length=struct.unpack('>I',take(4))[0]
+            take(length)
+    try:
+        while index<pool_count:
+            tag=take(1)[0]
+            if tag==1:take(u2())
+            elif tag in (3,4):take(4)
+            elif tag in (5,6):take(8);index+=1
+            elif tag in (7,8,16,19,20):take(2)
+            elif tag in (9,10,11,12,17,18):take(4)
+            elif tag==15:take(3)
+            else:return False
+            index+=1
+        take(2)  # access_flags
+        this_class=u2();super_class=u2()
+        if not 0<this_class<pool_count or not 0<=super_class<pool_count:return False
+        take(u2()*2)  # interfaces
+        for _ in range(u2()):take(6);skip_attrs()  # fields
+        for _ in range(u2()):take(6);skip_attrs()  # methods
+        skip_attrs()  # class attributes
+        return pos==len(data)
+    except (ValueError,IndexError,struct.error):return False
+
+
+def _verify_jar_contents(z:zipfile.ZipFile, *,signature_path:Path|None=None,
+                         nested_bytes:bytes|None=None) -> dict[str,Any]:
+    names=set(z.namelist());manifest=next((n for n in names if n.upper()=='META-INF/MANIFEST.MF'),None)
+    if not manifest:raise JvmError('RM-12 JAR lacks manifest')
+    raw=z.read(manifest)
+    if len(raw)>65536 or b'Manifest-Version:' not in raw or b'\x00' in raw:
+        raise JvmError('RM-12 malformed JAR manifest')
+    for field in raw.splitlines():
+        if field.startswith(b'Class-Path:'):
+            classpath=field.split(b':',1)[1].strip().split()
+            if any(not re.fullmatch(rb'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.jar',name)
+                       or b'..' in name for name in classpath):
+                raise JvmError('RM-12 unsafe JAR manifest classpath')
+    classes=[n for n in names if n.endswith('.class')]
+    if not classes:raise JvmError('RM-12 JAR contains no compiled class')
+    if any(not _class_structure(z.read(n)) for n in classes):
+        raise JvmError('RM-12 JAR class bytecode structure invalid')
+    sf=[n for n in names if re.fullmatch(r'META-INF/[^/]+\.SF',n,re.I)]
+    signatures=[n for n in names if re.fullmatch(r'META-INF/[^/]+\.(RSA|DSA|EC)',n,re.I)]
+    if bool(sf)!=bool(signatures) or any(n.rsplit('.',1)[0].upper() not in {x.rsplit('.',1)[0].upper() for x in signatures} for n in sf):
+        raise JvmError('RM-12 incomplete JAR signing structure')
+    if sf:
+        # Verification is local integrity, NOT signer authentication or release trust.
+        # For a nested signed JAR, materialize only to a private temporary file.
+        try:
+            if signature_path is not None:
+                res=subprocess.run(['jarsigner','-verify','-strict',str(signature_path)],capture_output=True,timeout=20)
+            else:
+                if nested_bytes is None:raise JvmError('RM-12 signed nested JAR has no verified bytes')
+                with tempfile.TemporaryDirectory(prefix='devtool-rm12-signed-') as directory:
+                    signed=Path(directory)/'nested.jar'
+                    signed.write_bytes(nested_bytes)
+                    res=subprocess.run(['jarsigner','-verify','-strict',str(signed)],capture_output=True,timeout=20)
+        except (OSError,subprocess.TimeoutExpired):raise JvmError('RM-12 cannot verify claimed JAR signature') from None
+        if res.returncode:raise JvmError('RM-12 JAR signature verification failed')
+    return {'classes':len(classes),'manifest':True,'signed_structure':bool(sf),
+            'signature_verified_locally':bool(sf),'signer_authenticated':False,'release_qualified':False}
 
 
 def verify_jar(path:Path, *,expected_name:str='') -> dict[str,Any]:
     with _archive(path) as z:
-        names=set(z.namelist());manifest=next((n for n in names if n.upper()=='META-INF/MANIFEST.MF'),None)
-        if not manifest:raise JvmError('RM-12 JAR lacks manifest')
-        raw=z.read(manifest)
-        if len(raw)>65536 or b'Manifest-Version:' not in raw or b'\x00' in raw:
-            raise JvmError('RM-12 malformed JAR manifest')
-        for field in raw.splitlines():
-            if field.startswith(b'Class-Path:'):
-                classpath=field.split(b':',1)[1].strip().split()
-                if any(not re.fullmatch(rb'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.jar',name)
-                           or b'..' in name for name in classpath):
-                    raise JvmError('RM-12 unsafe JAR manifest classpath')
-        classes=[n for n in names if n.endswith('.class')]
-        if not classes:raise JvmError('RM-12 JAR contains no compiled class')
-        if any(not z.read(n).startswith(b'\xca\xfe\xba\xbe') for n in classes):
-            raise JvmError('RM-12 JAR class bytecode magic mismatch')
-        sf=[n for n in names if re.fullmatch(r'META-INF/[^/]+\.SF',n,re.I)]
-        signatures=[n for n in names if re.fullmatch(r'META-INF/[^/]+\.(RSA|DSA|EC)',n,re.I)]
-        if bool(sf)!=bool(signatures) or any(n.rsplit('.',1)[0].upper() not in {x.rsplit('.',1)[0].upper() for x in signatures} for n in sf):
-            raise JvmError('RM-12 incomplete JAR signing structure')
-        if sf:
-            # jarsigner signature verification is not a trust-store, signer
-            # identity, certificate-validity, or release-qualification claim.
-            try:res=subprocess.run(['jarsigner','-verify','-strict',str(path)],capture_output=True,timeout=20)
-            except (OSError,subprocess.TimeoutExpired):raise JvmError('RM-12 cannot verify claimed JAR signature') from None
-            if res.returncode:raise JvmError('RM-12 JAR signature verification failed')
+        result=_verify_jar_contents(z,signature_path=path)
     if expected_name and path.name!=expected_name:raise JvmError('RM-12 JAR file identity mismatch')
-    return {'kind':'jvm-jar','sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'classes':len(classes),
-            'manifest':True,'signed_structure':bool(sf),'signature_verified_locally':bool(sf),
-            'signer_authenticated':False,'release_qualified':False}
+    return {'kind':'jvm-jar','sha256':hashlib.sha256(path.read_bytes()).hexdigest(),**result}
 
 
 def verify_desktop_bundle(path:Path) -> dict[str,Any]:
     if not path.name.endswith('.zip'):raise JvmError('RM-12 desktop distribution must be ZIP')
     with _archive(path) as z:
         members=z.namelist()
-        jars=[n for n in members if n.startswith('app/') and n.endswith('.jar')]
+        jars=[n for n in members if n.startswith('app/') and n.endswith('.jar') and n.count('/')==1]
         launchers=[n for n in members if n.startswith('bin/') and not n.endswith('/')]
-        if len(jars)!=1 or not launchers:raise JvmError('RM-12 desktop bundle needs app/*.jar and bin/launcher')
-        if any(not z.read(n) for n in jars+launchers):raise JvmError('RM-12 empty desktop payload')
-        nested=z.read(jars[0]);tmp=io.BytesIO(nested)
-        try:
-            with zipfile.ZipFile(tmp) as jar:
-                if 'META-INF/MANIFEST.MF' not in jar.namelist() or not any(n.endswith('.class') for n in jar.namelist()):
-                    raise JvmError('RM-12 invalid desktop JAR payload')
-        except zipfile.BadZipFile:raise JvmError('RM-12 invalid nested JAR') from None
+        if len(jars)!=1 or launchers!=['bin/start']:
+            raise JvmError('RM-12 desktop bundle needs one app/*.jar and bin/start')
+        launcher=z.read('bin/start')
+        mode=z.getinfo('bin/start').external_attr>>16
+        basename=jars[0].split('/')[-1]
+        expected=(b'#!/bin/sh\nset -eu\nexec java -jar "$(dirname "$0")/../app/'+
+                  basename.encode('utf-8')+b'" "$@"\n')
+        if not (mode&0o111) or (mode&0o170000)!=0o100000 or launcher!=expected:
+            raise JvmError('RM-12 desktop launcher identity/permissions invalid')
+        nested=z.read(jars[0])
+        with _nested_jar(nested) as jar:
+            verified=_verify_jar_contents(jar,nested_bytes=nested)
+            manifest=jar.read('META-INF/MANIFEST.MF')
+            entry=re.search(rb'(?m)^Main-Class:\s*([A-Za-z_$][A-Za-z0-9_$.]*)\s*$',manifest)
+            if not entry or entry.group(1).replace(b'.',b'/').decode('ascii')+'.class' not in jar.namelist():
+                raise JvmError('RM-12 desktop JAR lacks reviewed Main-Class payload')
     return {'kind':'jvm-desktop-zip','sha256':hashlib.sha256(path.read_bytes()).hexdigest(),
-            'launcher_count':len(launchers),'signer_authenticated':False,'release_qualified':False}
+            'launcher_count':1,'nested_jar_sha256':hashlib.sha256(nested).hexdigest(),
+            'nested_jar_classes_verified':verified['classes'],
+            'nested_jar_signature_verified_locally':verified['signature_verified_locally'],
+            'signer_authenticated':False,'release_qualified':False}
 
 
 def aggregate_junit(root:Path, project:dict[str,Any], selected:str, *, output:str='dist/jvm-tests.xml') -> dict[str,Any]:

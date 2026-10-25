@@ -126,11 +126,20 @@ def test_toolchain_mismatch_and_bad_native_argv(tmp_path):
 
 
 
+def valid_fixture_class() -> bytes:
+    """Minimal structurally complete Java class, no javac required."""
+    import struct
+    utf=lambda value:b'\x01'+struct.pack('>H',len(value))+value
+    pool=(utf(b'Demo')+b'\x07\x00\x01'+utf(b'java/lang/Object')+b'\x07\x00\x03')
+    return (b'\xca\xfe\xba\xbe'+struct.pack('>HHH',0,52,5)+pool+
+            struct.pack('>HHHHHHH',0x21,2,4,0,0,0,0))
+
+
 def jar(root,*,signed=False):
     jar=root/'demo.jar';jar.parent.mkdir(parents=True,exist_ok=True)
     with zipfile.ZipFile(jar,'w') as z:
         z.writestr('META-INF/MANIFEST.MF','Manifest-Version: 1.0\nMain-Class: Demo\n\n')
-        z.writestr('Demo.class',b'\xca\xfe\xba\xbe\x00\x00\x00\x34')
+        z.writestr('Demo.class',valid_fixture_class())
         if signed:z.writestr('META-INF/DEMO.SF','Signature-Version: 1.0')
     return jar
 
@@ -269,7 +278,7 @@ def test_native_package_jar_desktop_and_handoff(tmp_path,monkeypatch):
         source=root/'app/target/app-1.0.jar';source.parent.mkdir(parents=True)
         with zipfile.ZipFile(source,'w') as z:
             z.writestr('META-INF/MANIFEST.MF','Manifest-Version: 1.0\nMain-Class: Demo\n\n')
-            z.writestr('Demo.class',b'\xca\xfe\xba\xbe\x00\x00\x00\x34')
+            z.writestr('Demo.class',valid_fixture_class())
         return [SimpleNamespace(returncode=0,skipped=False,output='')],''
     monkeypatch.setattr(runners,'run_specs',run)
     result=run_node(root,target='app',workflow='ci',devtool_sha=PIN,graph_sha=graph['graph_sha256'],
@@ -290,7 +299,7 @@ def test_gradle_jdk_source_mismatch_and_manifest_classpath_refusal(tmp_path):
     bad=tmp_path/'bad-cp.jar'
     with zipfile.ZipFile(bad,'w') as z:
         z.writestr('META-INF/MANIFEST.MF','Manifest-Version: 1.0\nClass-Path: ../../secrets.jar\n')
-        z.writestr('Demo.class',b'\xca\xfe\xba\xbe\x00\x00\x00\x34')
+        z.writestr('Demo.class',valid_fixture_class())
     with pytest.raises(JvmError,match='classpath'):verify_jar(bad)
 
 

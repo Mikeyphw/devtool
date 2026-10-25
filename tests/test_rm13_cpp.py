@@ -172,7 +172,8 @@ def test_pe_macho_cross_abi_and_corruption(tmp_path):
 def test_zip_ar_and_traversal_refusal(tmp_path):
  p=tmp_path/'safe.zip'
  with zipfile.ZipFile(p,'w') as z:z.writestr('bin/demo','hello')
- assert verify_archive(p,expected_abi='elf-x86_64')['format']=='.zip'
+ with pytest.raises(CppError,match='no ABI-verified'):
+  verify_archive(p,expected_abi='elf-x86_64')
  with zipfile.ZipFile(p,'w') as z:z.writestr('../bad','x')
  with pytest.raises(CppError,match='unsafe'):verify_archive(p,expected_abi='elf-x86_64')
  p=tmp_path/'lib.a';p.write_bytes(b'!<arch>\n')
