@@ -39,7 +39,7 @@ def _gradle_repo(tmp_path,plugin, *, alias_id=None):
 def test_java_only_gradle_classified_jvm_not_android(tmp_path):
     root=_gradle_repo(tmp_path,'plugins { java }')
     plan=inventory(root)
-    assert plan['status']=='READY'
+    assert plan['status']=='REVIEW_REQUIRED' and not plan['safe_to_apply']
     assert plan['targets'][0]['runner']=='gradle'
     assert plan['targets'][0]['platform']=='jvm'
     assert jvm_project(root,manager='gradle')['manager']=='gradle'
@@ -48,7 +48,7 @@ def test_java_only_gradle_classified_jvm_not_android(tmp_path):
 def test_alias_android_plugin_routes_away_from_jvm(tmp_path):
     root=_gradle_repo(tmp_path,'plugins { alias(libs.plugins.android.application) }',alias_id='com.android.application')
     plan=inventory(root)
-    assert plan['status']=='READY'
+    assert plan['status']=='REVIEW_REQUIRED' and not plan['safe_to_apply']
     assert plan['targets'][0]['runner']=='android'
     with pytest.raises(JvmError,match='Android'):
         jvm_project(root,manager='gradle')
@@ -87,7 +87,7 @@ def test_dynamic_unknown_plugins_never_auto_admitted(tmp_path,plugin,catalog):
 def test_more_native_project_roots_present(tmp_path,files,runner):
     root=build_repo(tmp_path,files)
     plan=inventory(root)
-    assert plan['status']=='READY'
+    assert plan['status']=='REVIEW_REQUIRED' and not plan['safe_to_apply']
     assert plan['targets'][0]['runner']==runner
 
 
@@ -98,7 +98,7 @@ def test_polyglot_roots_cannot_omit_project(tmp_path):
         'c/CMakeLists.txt':'project(c)',
         'README.md':'hi'})
     report=inventory(root)
-    assert report['status']=='READY'
+    assert report['status']=='REVIEW_REQUIRED' and not report['safe_to_apply']
     assert set(x['runner'] for x in report['targets'])=={'go','dotnet','cmake'}
     assert report['inventory']['unowned_paths']==['README.md']
 

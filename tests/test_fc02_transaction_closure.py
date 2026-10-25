@@ -123,7 +123,9 @@ def test_preparing_abort_does_not_move_branch(tmp_path):
 
 
 def test_onboarding_concurrent_config_created_after_scan(tmp_path,monkeypatch):
-    root=onboarding_repo(tmp_path);plan=on.inventory(root)
+    root=onboarding_repo(tmp_path)
+    from tests.test_rm20_onboarding import reviewed
+    spec=reviewed(root);plan=on.inventory(root,review_spec=spec)
     real_open=on.os.open
     def intrude(path,flags,*args,**kwargs):
         if Path(path)==root/'.devtool.toml' and (flags & on.os.O_EXCL):
@@ -131,13 +133,15 @@ def test_onboarding_concurrent_config_created_after_scan(tmp_path,monkeypatch):
         return real_open(path,flags,*args,**kwargs)
     monkeypatch.setattr(on.os,'open',intrude)
     with pytest.raises(on.OnboardingBlocked,match='concurrent config'):
-        on.apply(root,reviewed_sha256=plan['review_sha256'],yes=True)
+        on.apply(root,reviewed_sha256=plan['review_sha256'],yes=True,review_spec=spec)
     assert (root/'.devtool.toml').read_text()=='foreign configuration\n'
     assert git(root,'rev-parse','HEAD')==plan['source']['head']
 
 
 def test_onboarding_unreviewed_head_update_cas_refuses(tmp_path,monkeypatch):
-    root=onboarding_repo(tmp_path);plan=on.inventory(root)
+    root=onboarding_repo(tmp_path)
+    from tests.test_rm20_onboarding import reviewed
+    spec=reviewed(root);plan=on.inventory(root,review_spec=spec)
     original=on.gg.cas_branch
     newer=[]
     def concurrent(repo,branch,new,old):
@@ -147,7 +151,7 @@ def test_onboarding_unreviewed_head_update_cas_refuses(tmp_path,monkeypatch):
         return original(repo,branch,new,old)
     monkeypatch.setattr(on.gg,'cas_branch',concurrent)
     with pytest.raises(on.OnboardingBlocked,match='lease rejected'):
-        on.apply(root,reviewed_sha256=plan['review_sha256'],yes=True)
+        on.apply(root,reviewed_sha256=plan['review_sha256'],yes=True,review_spec=spec)
     assert git(root,'rev-parse','HEAD')==newer[0]
     assert (root/'LICENSE').read_text()=='outside commit\n'
     # The owned candidate file is preserved for manual review, not accidentally

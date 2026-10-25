@@ -66093,6 +66093,26 @@
     },
     {
       "aliases": [],
+      "canonical": "--review-spec",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "review_spec",
+        "help": "Reviewed JSON job/DAG/CI/ownership specification",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "onboard"
+        ],
+        "required": false
+      },
+      "scope": "onboard",
+      "sensitive": false,
+      "stable_id": "cli.option.onboard.review_spec",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
       "canonical": "--reviewed-sha256",
       "config_field_id": null,
       "metadata": {
@@ -122110,7 +122130,7 @@
                         },
                         {
                           "aliases": [],
-                          "help": "Verify offline signed→unsigned registry lineage and LIFE identity without release promotion",
+                          "help": "Verify offline signed\u2192unsigned registry lineage and LIFE identity without release promotion",
                           "help_present": true,
                           "name": "local-evidence",
                           "parser": {
@@ -125086,6 +125106,23 @@
                 "nargs": null,
                 "option_strings": [],
                 "required": true,
+                "type": null
+              },
+              {
+                "action": "store",
+                "choices": null,
+                "const": null,
+                "default": "",
+                "dest": "review_spec",
+                "group": null,
+                "help": "Reviewed JSON job/DAG/CI/ownership specification",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [
+                  "--review-spec"
+                ],
+                "required": false,
                 "type": null
               },
               {

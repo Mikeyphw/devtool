@@ -13320,9 +13320,10 @@ def _main_impl(argv: list[str] | None = None) -> int:
                 root = Path(str(getattr(args, "repo", "") or Path.cwd()))
                 if args.onboard_operation == "apply":
                     payload = onboarding_apply(root, reviewed_sha256=str(args.reviewed_sha256 or ""),
-                                               yes=bool(getattr(args, "yes", False)))
+                                               yes=bool(getattr(args, "yes", False)),
+                                               review_spec=getattr(args, "review_spec", "") or None)
                 else:
-                    payload = onboarding_inventory(root)
+                    payload = onboarding_inventory(root, review_spec=getattr(args, "review_spec", "") or None)
                     payload['ok'] = True
             except (OnboardingBlocked, OSError, ValueError) as exc:
                 payload = {'schema': 'devtool.whole-repository-onboarding.v1',
