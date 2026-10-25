@@ -6,8 +6,9 @@ inferred from manifest parsing. Native target-local Devtool jobs remain owners.
 from __future__ import annotations
 
 from collections import defaultdict
-from hashlib import sha256
+from hashlib import sha256, sha512
 import json
+import base64
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -266,15 +267,130 @@ def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict, *, host_os: 
             raise DotNetError('RM-09 pack requires pinned project Version')
         if len(project['tfms'])!=1 and '--framework' not in opts:
             raise DotNetError('RM-09 multi-TFM pack requires explicit framework')
+    shared=review_shared_restore(root,graph,selected,metadata.get('ci_dotnet_shared_solutions'),
+                                 framework=opts.get('--framework',''),rid=opts.get('--runtime',''),
+                                 host_os=host_os) if metadata.get('ci_dotnet_shared_solutions') is not None else None
+    if shared and command=='restore':
+        raise DotNetError('FC-06 shared restore requires a non-restore native job for observed consumption')
     return {'trx_path':opts.get('--results-directory','')+'/results.trx' if command=='test' else '',
             'package':package,'provider':'dotnet','toolchain':'dotnet' ,'version':graph['sdk_version'],
             'matrix_versions':[graph['sdk_version']], 'version_source':'global.json',
             'graph':graph,'command':command,'selected':selected,'lockfiles':list(graph['sources']),
             'coverage':coverage,'framework':opts.get('--framework',''),'runtime':opts.get('--runtime',''),
             'publish_output':opts.get('--output',''), 'host_os':host_os,
+            'shared_restore':shared,
             'cache_enabled':False,'report_adapter':'trx','output_role':'local-bytes-only',
             'release_qualified':False}
 
+
+
+def review_shared_restore(root: Path, graph: dict, selected: str, requested,
+                          *, framework: str = '', rid: str = '', host_os: str = 'linux') -> dict:
+    """Review SAME-JOB restore reuse; this is not GitHub cross-job filesystem sharing.
+
+    Reject dynamic NuGet identities. SDK restores each solution with --locked-mode
+    into one per-job store. Only the native runner can attest the resulting bytes.
+    """
+    if (type(requested) is not list or not 2 <= len(requested) <= 8 or
+            any(not isinstance(x,str) or x not in graph['solutions'] for x in requested) or
+            len(set(requested)) != len(requested) or selected not in requested):
+        raise DotNetError('FC-06 requires 2–8 distinct reviewed solutions including the native selection')
+    packages={}; appearances=defaultdict(set)
+    for solution in requested:
+        members=graph['solutions'][solution]
+        if any(graph['projects'][p]['windows_only'] for p in members) and host_os!='windows':
+            raise DotNetError('FC-06 Windows-only sharing requires reviewed Windows host')
+        for project in members:
+            prop=graph['projects'][project]
+            if framework and framework not in prop['tfms']:
+                raise DotNetError('FC-06 shared solution has incompatible framework')
+            if rid and (rid not in prop['rids'] or not rid.startswith('win-' if host_os=='windows' else 'linux-')):
+                raise DotNetError('FC-06 shared solution has incompatible runtime identifier')
+            folder=project.rsplit('/',1)[0] if '/' in project else ''
+            rel=(folder+'/' if folder else '')+'packages.lock.json'
+            lock=json.loads(_source(root,rel))
+            dependencies=lock.get('dependencies')
+            if not isinstance(dependencies,dict) or not dependencies:
+                raise DotNetError('FC-06 requires nonempty hash-locked NuGet dependencies')
+            for tfm, entries in dependencies.items():
+                if framework and tfm!=framework:continue
+                if not isinstance(entries,dict):raise DotNetError('FC-06 invalid NuGet lock entries')
+                for name,item in entries.items():
+                    if not isinstance(item,dict):raise DotNetError('FC-06 malformed NuGet lock package')
+                    # Project dependencies have no NuGet contentHash; do not claim a reusable package.
+                    if item.get('type')=='Project':continue
+                    version=item.get('resolved'); content=item.get('contentHash')
+                    if (not isinstance(name,str) or not _NAME.fullmatch(name) or
+                        not isinstance(version,str) or not re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,3}(?:-[A-Za-z0-9.-]+)?',version) or
+                        not isinstance(content,str)):
+                        raise DotNetError('FC-06 requires pinned NuGet package identity and SHA-512 lock hash')
+                    try:raw=base64.b64decode(content,validate=True)
+                    except (ValueError,base64.binascii.Error):
+                        raise DotNetError('FC-06 malformed NuGet content hash') from None
+                    if len(raw)!=64:raise DotNetError('FC-06 NuGet lock hash must be SHA-512')
+                    key=(name.lower(),version.lower())
+                    if key in packages and packages[key]!=content:
+                        raise DotNetError('FC-06 conflicting NuGet content hashes for one id/version')
+                    packages[key]=content
+                    appearances[key].add(solution)
+    overlap=sorted(key for key,uses in appearances.items() if len(uses)>=2)
+    if not overlap:raise DotNetError('FC-06 requires a genuinely shared locked package across solutions')
+    locks={key:value for key,value in graph['sources'].items() if key.endswith('packages.lock.json')}
+    manifest={'schema_version':1,'kind':'devtool.rm09-reviewed-shared-restore',
+              'sdk_version':graph['sdk_version'],'solutions':list(requested),
+              'selected':selected,'host_os':host_os,'framework':framework,'rid':rid,
+              'source_hashes':dict(sorted(graph['sources'].items())),
+              'lock_hashes':dict(sorted(locks.items())),
+              'packages':[{'id':key[0],'version':key[1],'sha512':value}
+                          for key,value in sorted(packages.items())],
+              'shared_package_keys':[list(key) for key in overlap],
+              'cross_job_reuse':False,'runtime_verified':False,'release_qualified':False}
+    manifest['review_sha256']=sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    return manifest
+
+
+def verify_shared_restore_store(root: Path, review: dict, store: Path, *, sdk_version: str,
+                                restored_solutions: list[str]) -> dict:
+    """Verify actual NuGet package identity hashes AFTER locked restores; no signature claim."""
+    if sdk_version!=review['sdk_version'] or restored_solutions!=review['solutions']:
+        raise DotNetError('FC-06 restore execution differs from reviewed SDK/solution sequence')
+    if not store.is_dir() or store.is_symlink():
+        raise DotNetError('FC-06 isolated NuGet package store unavailable')
+    for rel,digest in review['source_hashes'].items():
+        if sha256(_source(root,rel)).hexdigest()!=digest:
+            raise DotNetError('FC-06 source/lock changed during native shared restore')
+    verified=[]; total_bytes=0
+    if len(review['packages'])>128:
+        raise DotNetError('FC-06 NuGet package evidence exceeds bounded inventory')
+    for pkg in review['packages']:
+        key=pkg['id'].lower();version=pkg['version'].lower()
+        folder=store/key/version
+        metadata=folder/(key+'.'+version+'.nupkg.sha512')
+        archive=folder/(key+'.'+version+'.nupkg')
+        if any(p.is_symlink() for p in (store/key,folder,metadata,archive)) or (
+                not metadata.is_file() or not archive.is_file()):
+            raise DotNetError('FC-06 restored NuGet package identity missing or symlinked: '+key)
+        size=archive.stat().st_size;total_bytes+=size
+        if not 0 < size <= 256*1024*1024 or total_bytes>1024*1024*1024:
+            raise DotNetError('FC-06 NuGet archive exceeds bounded byte budget')
+        if metadata.stat().st_size>256 or metadata.read_text(encoding='ascii').strip()!=pkg['sha512']:
+            raise DotNetError('FC-06 restored NuGet package SHA-512 metadata differs from tracked lock: '+key)
+        digest512=sha512();digest256=sha256()
+        with archive.open('rb') as stream:
+            for chunk in iter(lambda:stream.read(1024*1024),b''):
+                digest512.update(chunk);digest256.update(chunk)
+        if base64.b64encode(digest512.digest()).decode()!=pkg['sha512']:
+            raise DotNetError('FC-06 restored NuGet archive bytes differ from tracked SHA-512 lock: '+key)
+        verified.append({'id':key,'version':version,'sha512':pkg['sha512'],
+                         'archive_sha256':digest256.hexdigest(),'archive_size':size,
+                         'metadata_sha256':sha256(metadata.read_bytes()).hexdigest()})
+    return {'schema_version':1,'kind':'devtool.rm09-native-shared-restore-evidence',
+            'review_sha256':review['review_sha256'],'sdk_version':sdk_version,
+            'solutions':restored_solutions,'lock_hashes':review['lock_hashes'],
+            'verified_packages':verified,'verified_package_count':len(verified),
+            'verified_shared_package_count':len(review['shared_package_keys']),
+            'same_job_store':True,'cross_job_reuse':False,
+            'authenticated_host':False,'release_qualified':False}
 
 def merge_trx(root: Path, paths: list[str], *, expected_project: str) -> dict:
     if not paths or len(paths)>32 or len(set(paths))!=len(paths):raise DotNetError('RM-09 TRX shards missing/duplicate')

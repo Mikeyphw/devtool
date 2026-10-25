@@ -220,6 +220,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'dotnet_package':row['provider'].get('package'),
                          'dotnet_coverage':row['provider'].get('coverage',False),
                          'dotnet_graph':row['provider'].get('graph'),
+                         'dotnet_shared_restore':row['provider'].get('shared_restore'),
                          'coverage_report':row['auto_coverage'] or (row['provider']['provider']=='python-shell' and row['command'][2:]==['coverage','xml','-o','dist/coverage.xml']),
                          'needs':[],'handoffs':[]})
     owners: dict[tuple[str,str],str] = {}
@@ -818,20 +819,51 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
                            'GRADLE_OPTS':'-Dorg.gradle.java.installations.auto-download=false',
                            'MAVEN_OPTS':'-Djava.awt.headless=true'})
         specs=[_replace(specs[0],env=controlled)]
+    dotnet_shared_store=None
     if selected['provider']=='dotnet' and selected['dotnet_command']!='restore':
-        # GitHub jobs do not share obj/, project.assets.json or NuGet global
-        # package directories. A dependency edge is not restored filesystem
-        # state. Re-run the reviewed locked restore inside this SAME native
-        # node before its --no-restore build/test/pack/publish command.
+        # FC-06: each selected solution gets a real locked restore in ONE native
+        # job, with the SAME newly allocated package store. No GitHub `needs`
+        # edge is mistaken for shared filesystem state.
         from dataclasses import replace
         if len(specs)!=1 or specs[0].argv[:3]!=['dotnet',selected['dotnet_command'],selected['dotnet_selected']]:
             raise ProviderError('RM-09 native .NET job resolver changed after review')
-        selected_spec=specs[0]
-        bootstrap=replace(selected_spec,name=selected_spec.name+' [locked restore]',
-                          argv=['dotnet','restore',selected['dotnet_selected'],'--locked-mode'])
-        restored,_=run_specs(cfg,[bootstrap],verbose=True,dry_run=False,continue_on_error=False)
-        if not restored or any(x.returncode!=0 or x.skipped for x in restored):
-            raise ProviderError('RM-09 native locked restore failed; no downstream output accepted')
+        reviewed=selected.get('dotnet_shared_restore')
+        if reviewed:
+            import tempfile as _tempfile
+            import subprocess as _subprocess
+            from .actions_rm09_dotnet import (solution_graph as _solution_graph,
+                review_shared_restore as _review_shared_restore,DotNetError)
+            try:
+                candidate=_solution_graph(root,selected=reviewed['selected'])
+                again=_review_shared_restore(root,candidate,reviewed['selected'],reviewed['solutions'],
+                    framework=reviewed['framework'],rid=reviewed['rid'],host_os=reviewed['host_os'])
+            except DotNetError as exc:raise ProviderError(str(exc)) from None
+            if again['review_sha256']!=reviewed['review_sha256']:
+                raise ProviderError('FC-06 shared restore review changed before native execution')
+            try:
+                sdk=_subprocess.run(['dotnet','--version'],capture_output=True,text=True,timeout=12)
+            except (OSError,_subprocess.TimeoutExpired):
+                raise ProviderError('FC-06 pinned .NET SDK unavailable for shared restore') from None
+            if sdk.returncode or sdk.stdout.strip()!=reviewed['sdk_version']:
+                raise ProviderError('FC-06 actual .NET SDK differs from reviewed global.json pin')
+            dotnet_shared_store=Path(_tempfile.mkdtemp(prefix='devtool-fc06-nuget-'))
+            env={**specs[0].env,'NUGET_PACKAGES':str(dotnet_shared_store),
+                 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE':'1','NUGET_XMLDOC_MODE':'skip'}
+            specs=[replace(specs[0],env=env)]
+            for solution in reviewed['solutions']:
+                bootstrap=replace(specs[0],name=specs[0].name+' [locked shared restore '+solution+']',
+                                  argv=['dotnet','restore',solution,'--locked-mode'])
+                restored,_=run_specs(cfg,[bootstrap],verbose=True,dry_run=False,continue_on_error=False)
+                if not restored or any(x.returncode!=0 or x.skipped for x in restored):
+                    raise ProviderError('FC-06 shared locked restore failed; downstream job refused')
+        else:
+            # Compatibility path is correctly labelled repeated independent restore.
+            selected_spec=specs[0]
+            bootstrap=replace(selected_spec,name=selected_spec.name+' [locked restore]',
+                              argv=['dotnet','restore',selected['dotnet_selected'],'--locked-mode'])
+            restored,_=run_specs(cfg,[bootstrap],verbose=True,dry_run=False,continue_on_error=False)
+            if not restored or any(x.returncode!=0 or x.skipped for x in restored):
+                raise ProviderError('RM-09 native locked restore failed; no downstream output accepted')
     if selected['provider']=='rust-cargo':
         # Native runner receives an exact preinstalled toolchain selector. Cargo
         # is forbidden from fetching missing registries or toolchains.
@@ -886,6 +918,18 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
             raise ProviderError('RM-14 shell native node '+selected['node']+' ('+
                                 selected['shell_review']['operation']+') did not succeed')
         raise ProviderError('RM-06 native target-local job did not succeed')
+    if dotnet_shared_store is not None:
+        from .actions_rm09_dotnet import verify_shared_restore_store,DotNetError
+        try:
+            receipt=verify_shared_restore_store(root,selected['dotnet_shared_restore'],
+                dotnet_shared_store,sdk_version=selected['toolchain_version'],
+                restored_solutions=selected['dotnet_shared_restore']['solutions'])
+            receipt.update({'source_commit':source,'graph_sha256':graph_sha,
+                            'run_id':run,'attempt':attempt,'node':selected['node'],
+                            'store_identity_sha256':hashlib.sha256(str(dotnet_shared_store).encode()).hexdigest(),
+                            'store_isolation':'new per native job, shared only within this job'})
+            node_receipts.append(receipt)
+        except DotNetError as exc:raise ProviderError(str(exc)) from None
     smoke=[]
     if selected['sdist_smoke']:
         from .actions_distributions import distribution_contract, _python_source
