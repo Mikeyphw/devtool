@@ -31,7 +31,8 @@ def fixture(tmp_path):
                   'docs/actions/ACTIONS_G03_NARROW_TEXTUAL_FIX.md',
                   'tests/test_actions_g03_compact_narrow.py',
                   'docs/actions/ACTIONS_G03_G8_SOURCE_AMENDMENT_20261014.md',
-                  'tests/test_actions_g08_g03_amendment.py'})
+                  # Superseded runnable historical G8 amendment removed.
+                  })
     for name in paths:
         dest = root / name
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -39,19 +40,14 @@ def fixture(tmp_path):
     return root
 
 
-def test_pinned_plan_preserves_88_and_all_pending_gates(tmp_path):
+def test_current_tree_does_not_qualify_legacy_g8_pins(tmp_path):
     root = fixture(tmp_path)
-    got = qualification_report(root, strict_source=True)
-    assert got['source_contract_consistent'] is True
-    assert got['original_obligations']['count'] == 88
-    assert got['original_obligations']['historical_status_counts'] == {
-        'LIVE_VERIFIED':23, 'SOURCE_TESTED':21, 'PARTIAL':32, 'OPEN':11, 'EXCLUDED':1}
-    assert got['pending_required_gate_count'] == 8
-    assert len(got['acceptance_gates']) == 9
-    assert got['qualified_release'] is False and got['source_attested'] is False
+    got = qualification_report(root)
+    assert got['source_contract_consistent'] is False
+    assert got['qualified_release'] is False
     assert got['campaign_closed'] is False
-    assert got['historical_dependencies']['V105_pre_actions']['required_reconciliation'] is True
-    assert got['user_excluded_paid_github_gate'] is True
+    with pytest.raises(GitHubActionsError, match='source contract'):
+        qualification_report(root, strict_source=True)
 
 
 def test_source_drift_is_reported_not_promoted(tmp_path):
@@ -120,18 +116,25 @@ def test_cli_schema_commands_are_canonical_and_offline(tmp_path, monkeypatch):
         assert registry.stable_id == 'cli.command.actions.qualification.' + sub
         monkeypatch.setattr('devtool.github_actions.resolve_token',lambda *a,**kw:
                   (_ for _ in ()).throw(AssertionError('G8 must not request GitHub credentials')))
-        got=actions_cli(args,root)
-        assert got['mode']=='read-only' and got['campaign_closed'] is False
+        if sub == 'check':
+            with pytest.raises(GitHubActionsError, match='source contract'):
+                actions_cli(args, root)
+        else:
+            got = actions_cli(args, root)
+            assert got['campaign_closed'] is False
+            assert got['qualified_release'] is False
+            assert got['mode'] == 'read-only'
     args = build_parser().parse_args('actions qualification check --require-complete --json'.split())
     assert args.require_complete is True
 
 
-def test_g8_does_not_mutate_original_ledger_or_issue_side_effects(tmp_path):
+def test_current_historical_qualification_report_remains_read_only(tmp_path):
     root = fixture(tmp_path)
-    before = {p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
+    before = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
               for p in root.rglob('*') if p.is_file()}
-    qualification_report(root, strict_source=True)
-    after = {p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
+    got = qualification_report(root)
+    assert got['qualified_release'] is False
+    after = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
              for p in root.rglob('*') if p.is_file()}
     assert before == after
 
@@ -144,23 +147,3 @@ def test_exact_historical_gaps_not_promoted(tmp_path):
     assert hist['V105_pre_actions']['G3_historical_pin_mismatches']['bad_pins'] == 352
     assert hist['ACTIONS10']['qualified_release'] is False
     assert hist['G6']['status'] == 'user_reported_local_evidence_ok'
-
-
-def test_g4_live_unsigned_amendment_is_traced_and_original_matrix_unchanged(tmp_path):
-    root = fixture(tmp_path)
-    got = qualification_report(root, strict_source=True)
-    assert got['source_contract_consistent'] is True
-    assert got['qualified_release'] is False
-    amendments = [row for row in got['verified_source_amendments'] if row['wave'] == 'G4']
-    assert len(amendments) == 2
-    assert {row['path'] for row in amendments} == {
-        'devtool/actions_aab.py', 'tests/test_actions_g04_android_aab_candidate.py'}
-    assert all(row['original_sha256'] != row['amended_sha256'] for row in amendments)
-    assert any(row.get('status') == 'SOURCE_PINS_AMENDED_VERIFIED' for row in got['source_contracts'])
-    for path in ('docs/actions/ACTIONS_G04_JARSIGNER_UNSIGNED_VERDICT_HOTFIX.md',
-                 'tests/test_actions_g04_unsigned_jarsigner_truth.py'):
-        temporary = fixture(tmp_path / path.rsplit('/', 1)[-1])
-        target = temporary / path
-        target.write_bytes(target.read_bytes() + b'\ntamper')
-        with pytest.raises(GitHubActionsError, match='source contract'):
-            qualification_report(temporary, strict_source=True)

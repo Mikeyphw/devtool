@@ -9,6 +9,14 @@ from devtool.actions_language_providers import ProviderError,provider_plan,provi
 
 PIN='d'*40
 
+@pytest.fixture(autouse=True)
+def _isolate_disposable_repo_from_hosted_github_sha(monkeypatch):
+    # The fixture repositories have their own, explicitly checked-out HEAD.
+    # The Actions host checkout SHA is unrelated and must not be inherited.
+    # Production source-pin checks remain enforced for each disposable repo.
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+
+
 def git(root,*args):
     p=subprocess.run(['git','-C',str(root),*args],text=True,capture_output=True,check=True)
     return p.stdout.strip()

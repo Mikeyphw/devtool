@@ -16769,6 +16769,15 @@ def _main_after_parse(
                 delete_on_failure = bool(getattr(args, "delete_artifact_on_failure", False))
                 if (
                     not getattr(args, "dry_run", False)
+                    and not getattr(args, "preview", False)
+                    and not (getattr(args, "diff", False) and not getattr(args, "interactive", False))
+                    and not getattr(args, "validate_only", False)
+                    # A rebase applies an internally generated temporary overlay.
+                    # Its original source is NOT a consumed apply source, and the
+                    # rebase temp lifetime ends inside _run_apply. Never attempt
+                    # LIFE deletion after that temporary scope has been closed.
+                    and not getattr(args, "rebase", False)
+                    and not getattr(args, "_devtool_overlay_already_applied", False)
                     and not getattr(args, "keep_artifact", False)
                     and (not any(result.returncode != 0 for result in results) or delete_on_failure)
                 ):

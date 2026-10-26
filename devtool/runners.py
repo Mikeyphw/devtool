@@ -62,7 +62,7 @@ from .transaction_worktree import transaction_execution_root
 from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, redact_sensitive_value, write_log
 from .process_state import preserve_environment_keys
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
-from .core.events import NodeDiscovered, NodeFinished, NodeStarted, TaskFinished, TaskStarted, WarningDetected, publish_event
+from .core.events import NodeDiscovered, NodeFinished, NodeProgressChanged, NodeStarted, TaskFinished, TaskStarted, WarningDetected, publish_event
 from .core.execution_contract import NodeId, RunId
 from .xdg import state_dir
 from .project_runners import (
@@ -3631,9 +3631,10 @@ def run_specs(
         if command_part_node_id and workflow_part_index < workflow_part_total and returncode == 0:
             # Preserve each successful command part's verified outputs in the
             # parent aggregate without treating the parent as terminal early.
-            publish_event(NodeFinished(
+            publish_event(NodeProgressChanged(
                 run_id=event_run_id, node_id=event_node_id,
-                status="running", exit_code=0, source="runner",
+                current=workflow_part_index, total=workflow_part_total,
+                detail="command part completed; parent remains running", source="runner",
                 metadata={key: result_metadata[key] for key in (
                     "reuse_fingerprint", "reuse_output_manifest",
                     "reuse_result_identity", "reuse_portability_class",

@@ -1,3 +1,13 @@
+## G1-CURRENT-CONTRACT-REMEDIATION-20261026 — Hosted failures, real apply/rebase cleanup and EXO lineage
+
+- **Status:** Source-bound candidate implemented; targeted local regression passed, disposable overlay installation/forced-rollback acceptance and independent 24-shard GitHub rerun must be recorded separately. G1/FC09 and release qualification **OPEN**.
+- **Evidence:** GitHub run [40257036036](https://github.com/Mikeyphw/devtool/actions/runs/40257036036), source `64283e6ea3a404a1afed18fcd9d55ad6cda5c4de`, 39 failures in 6,758 tests. Local current-contract tests and classification documented in `docs/G1_CURRENT_CONTRACT_REMEDIATION_20261026.md`.
+- **Defects and fixes:** Post-apply consumed-source LIFE cleanup was invoked for read-only diff and rebased temporary input without a qualifying apply receipt; protect both paths and preserve original ZIP. Multi-command workflow parent emitted duplicate pseudo-terminal `NodeFinished(status=running)`; replace intermediate event with typed `NodeProgressChanged` while accumulating reuse metadata.
+- **Test-only obsolete material:** Remove superseded G8 post-G7 pinned amendment executable tests, rewrite historic source-SHA assertions, align registry/completion/guides with the active parser, and isolate fixture `GITHUB_SHA`. Do not resurrect retired behavior or weaken production source pins.
+- **Hosted prerequisites:** Explicit Python 3.13 `setuptools`, `wheel`, and `coverage` preinstallation for offline wheel/coverage test prerequisites. Hosted result not confirmed until the workflow runs.
+- **Destructive review:** 16 newly inventoried production modules / 30 primitive occurrences individually reviewed and expression-count pinned to disallow silent additions. A08 export's exception cleanup still deserves concurrency-focused inode-replacement testing/hardening; classification is *not* proof against an adversary swapping the output name after exclusive create. RM19 stays CANCELLED.
+- **Next:** clean source-bound overlay acceptance and 24-shard G1 rerun. Preserve all actual failures and evidence; FC09 remains blocked until current tests are green.
+
 # Devtool — Cumulative qualification workflow improvements
 
 Updated: 2026-10-16; expanded in QW03 performance repair. Protected audit anchor: `Mikeyphw/devtool`, branch `feature/g3r-current-source-evidence` at `f25196a297d42bc3a2ff36a03aa0411f89fe9d46`.
@@ -1167,3 +1177,27 @@ historical failures or treat selected local tests as hosted authority.
 - **Root cause:** The test asserted physical Linux admission rather than isolating the simulated host environment. This is a test portability defect, **not** permission to classify Android as a GitHub Linux runner.
 - **Fix:** Simulate Linux/Darwin/Android only within scoped `monkeypatch` unit tests. Assert wrong-host and mismatched-runner claims still refuse before executing probes; verify the accepted simulated result remains `OBSERVED_NOT_EXTERNALLY_VERIFIED` and never release qualified. Production `host_probe` and authenticated evidence verification remain unchanged.
 - **Status:** Source-test correction locally qualified; actual Termux overlay acceptance remains pending. Real hosted workloads, full G1 and consumer/device qualification remain OPEN.
+
+## G1 native R1 acceptance regression — batch dry-run host isolation (2026-10-26)
+
+- **Evidence:** Termux native Devtool run `4d87cfbdde03419c8bd4770b7e4e221b`, validating `G1_CURRENT_CONTRACT_REMEDIATION_R1_20261026.overlay.zip` on exact FC08 source, failed `tests/test_cli.py::CliTests::test_batch_dry_run` with `1 failed, 42 passed`. The nested dry-run planner had no explicit execution selector and auto-detected the diagnostic `host-android` substrate from its sanitized Android environment. The public selector normalizer deliberately refuses `host-android`. The displayed receipt stops at `BLOCKED_G1_MANDATORY_TESTS:1`; rollback/source restoration must be established by the final run receipt and Git status before applying the replacement.
+- **Classification:** CURRENT_TEST_FIXTURE_BUG; the test intends to verify batch dry-run planning, not unsupported host-substrate routing. Production selector rejection must not be relaxed; `host-android` is not an Android-device backend and not evidence of native-Termux eligibility.
+- **Remediation:** Preserve the current production resolver. The current-contract batch test explicitly chooses the supported `desktop-linux` simulated planning environment, while both observed-substrate functions are set to `host-android` during the call. This makes the reported regression deterministic on GitHub Linux and native Termux, without inventing a Termux prefix or changing system environment variables.
+- **Scope:** R1R2 replacement is **rebased onto FC08**, not layered on an uncommitted failed R1. Only this fixture and the cumulative finding change relative to R1. Continue to require full R1 mandatory source validation; full 24-shard GitHub G1 and FC09 seal remain OPEN.
+- **Status:** Implemented candidate; native Termux acceptance and hosted regression evidence pending.
+
+
+## G1 R1R2 native validation timeout — R1R3 remediation (2026-10-26)
+
+- **Evidence:** Native Termux run `ddf54a2fb05c4da384dbf22cd3f0b042` progressed through the current-contract mandatory suite without an assertion failure in its displayed output, then emitted `BLOCKED_G1_MANDATORY_TESTS:124`. Its R1R2 artifact validator imposed a 280-second `Popen.wait` deadline, explicitly sent SIGKILL to the pytest process group on expiry, and reported exit 124; the manifest's 390-second outer cap would independently reject some slow native Termux runs.
+- **Classification:** `VALIDATOR_EXECUTION_BUDGET_BUG`. Native host resource/speed variance is not a current-contract test failure, and no test should be dropped or downgraded merely to fit a Linux CI clock budget. The user's output is not a completed native validation receipt; transaction/rollback confirmation and source cleanliness remain required before a replacement apply.
+- **Correction:** Run the same 10 modules and pytest flags with output isolated in a temporary log; remove the premature inner kill, report elapsed time and bounded pytest-log progress every 30 seconds, return the complete test transcript after exit, forward interruption/timeout signals to the child process group, and raise the source-bound outer transaction timeout to 3600 seconds. Keep `-x` fail-fast and native rollback-on-failure. No test, fixture, CLI routing, or production safety behavior is relaxed relative to R1R2.
+- **Acceptance:** Exact-source bundle validation, disposable clone positive apply with all 238 mandatory checks, forced-validator-failure rollback, and refusal of dirty/wrong source must be separately evidenced. Actual Termux pass and 24-shard hosted full regression remain open until independently observed.
+
+
+## G1-R1R4-PY314-HELP-COLOR — Golden help must ignore SGR styling, never option identity (2026-10-26)
+
+- **Evidence:** Native Termux apply `a20dfbe470c144838a735e344221c3fc` completed 223 tests and 40 subtests before `tests/test_arch_final_seal.py::test_golden_cli_help_contract` failed: actual help starts with `\x1b[1;34musage: ...` but the current golden comparison expected `usage: devtool ...`.
+- **Affected:** Active golden help comparison on Python 3.14/Termux where argparse provides styled output, not canonical parser command identity.
+- **Recommendation / implementation:** In the test fixture only, remove SGR sequences from `format_help()` output before asserting current command synopsis and exact stable help body; retain the unstyled golden fixture and add a colored-help regression. Do not disable operator color globally or relax canonical CLI schema testing.
+- **Status:** R1R4 source candidate; local architecture tests (16) and mandatory selection (239 tests, 40 subtests) passed on Python 3.13 with injected ANSI regression. Native Termux and hosted full 24-shard acceptance **OPEN**.

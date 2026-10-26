@@ -76,6 +76,76 @@ CLASSIFIED_FILES: dict[str, str] = {
     "devtool/wrapper_launcher.py": "Wrapper launch temp/generated shim cleanup under wrapper lifecycle authority.",
 }
 
+# FC09/G1 review of NEW production deletion callsites. Unlike the historical
+# file-level classifications above, each newly observed primitive is pinned by
+# its exact source expression and occurrence count. Any added, changed, or
+# removed destructive call requires fresh review, without freezing unrelated
+# lines or resurrecting historical source SHA assertions.
+NEW_REVIEWED_DESTRUCTIVE_CALLS: dict[str, tuple[str, ...]] = {'devtool/actions_adoption.py': ('os.unlink(temp)', 'file.unlink()'),
+ 'devtool/actions_graph_export.py': ('item.unlink(missing_ok=True)',),
+ 'devtool/actions_language_providers.py': ('path.unlink(missing_ok=True)',),
+ 'devtool/actions_pipeline.py': ('handoff.unlink(missing_ok=True)',),
+ 'devtool/actions_private_handoff.py': ('destination.unlink()',),
+ 'devtool/actions_rm12_jvm.py': ("output.unlink(missing_ok=True);raise JvmError('RM-12 JAR changed during output "
+                                 "materialization')",),
+ 'devtool/actions_ux01_acceptance.py': ('if os.path.exists(name):os.unlink(name)',),
+ 'devtool/actions_ux02_acceptance.py': ('if os.path.exists(tmp):os.unlink(tmp)',),
+ 'devtool/adoption_batch.py': ('Path(path).unlink(missing_ok=True)',),
+ 'devtool/gradle_options_repair.py': ('Path(temporary).unlink(missing_ok=True)',),
+ 'devtool/guarded_git.py': ('Path(idx).unlink()', 'Path(idx).unlink(missing_ok=True)', 'lock.unlink()'),
+ 'devtool/output_scopes.py': ('os.rmdir(name, dir_fd=fd)',
+                              'os.unlink(name, dir_fd=fd)',
+                              'os.unlink(name, dir_fd=parent_fd)',
+                              'os.rmdir(root.name, dir_fd=parent_fd)',
+                              'os.unlink(name, dir_fd=parent_fd)',
+                              'os.rmdir(root.name, dir_fd=parent_fd)',
+                              'os.rmdir(path.name, dir_fd=parent_fd)',
+                              'os.unlink(journal, dir_fd=run_fd)'),
+ 'devtool/repository_extraction.py': ('if os.path.exists(tmp):os.unlink(tmp)',
+                                      'if temp.exists():shutil.rmtree(temp)',
+                                      'if target.exists():target.unlink()',
+                                      'if path.exists():path.unlink()'),
+ 'devtool/rmp_c03_acceptance.py': ('try: os.unlink(name)',),
+ 'devtool/ssh_r07_reliability.py': ('tmp.unlink()',),
+ 'devtool/workflow_retry.py': ("'ksud', 'fastboot', 'adb install', 'rm -rf', 'git reset', 'git push')",
+                               'if os.path.exists(name): os.unlink(name)')}
+
+NEW_REVIEWED_RATIONALES: dict[str, str] = {'devtool/actions_adoption.py': 'Exclusive atomic staging unlink plus rollback only for workflow bytes just created '
+                                'and verified against the attempted payload; not cleanup by name.',
+ 'devtool/actions_graph_export.py': 'Rollback of verified graph handoff files copied in the current operation after a '
+                                    'no-overwrite precheck; no broad evidence collection.',
+ 'devtool/actions_language_providers.py': 'RM-06 generated-workflow atomic-export rollback after '
+                                          'source-commit/selection and destination-absence verification.',
+ 'devtool/actions_pipeline.py': 'One-shot private capability handoff removal after invocation, including failed child '
+                                'launch; only own generated secret.',
+ 'devtool/actions_private_handoff.py': 'A08 user-requested signed APK/AAB export uses O_CREAT|O_EXCL|O_NOFOLLOW; '
+                                       'exception cleanup is destination-specific, not repository GC. Potential '
+                                       'concurrent pathname replacement warrants separate inode-guard hardening '
+                                       'review.',
+ 'devtool/actions_rm12_jvm.py': 'RM-12 non-overwriting JAR output only deleted after post-copy hash mismatch; not '
+                                'historical signing evidence cleanup.',
+ 'devtool/actions_ux01_acceptance.py': 'Acceptance JSON receipt private tempfile removed after atomic report '
+                                       'placement.',
+ 'devtool/actions_ux02_acceptance.py': 'Acceptance JSON receipt private tempfile removed after atomic report '
+                                       'placement.',
+ 'devtool/adoption_batch.py': 'Adoption batch report tempfile cleanup after atomic fsync/replace; no directory-wide '
+                              'artifact pruning.',
+ 'devtool/gradle_options_repair.py': 'Gradle options repair uses private mkstemp and cleans only unpromoted temporary '
+                                     'file.',
+ 'devtool/guarded_git.py': 'FC02 isolated temporary Git index cleanup plus private exclusive swap-lock cleanup; '
+                           'repository tree is guarded by explicit source pins.',
+ 'devtool/output_scopes.py': 'Owner-journal-locked output-scope temp subtree deletion with no-follow dirfd and inode '
+                             'rechecks; refuses stale, swapped and malformed ownership.',
+ 'devtool/repository_extraction.py': 'Optional explicitly source-pinned two-checkout extraction, private candidate '
+                                     'temp cleanup, and scoped source transfer/escrow cleanup; RM19 split remains '
+                                     'CANCELLED and is not activated by this inventory.',
+ 'devtool/rmp_c03_acceptance.py': 'C03 acceptance report exclusive tempfile cleanup after no-clobber JSON receipt '
+                                  'publication.',
+ 'devtool/ssh_r07_reliability.py': 'SSH reliability report private tempfile cleanup only, distinct from remote session '
+                                   'evidence retention.',
+ 'devtool/workflow_retry.py': 'Risk phrase rm -rf is denial vocabulary, not executed shell deletion; other hit is '
+                              'bounded atomic workflow-start record tempfile cleanup.'}
+
 HIGH_RISK_CLOSED_FILES = {
     "devtool/ssh_tmux_runner.py",
     "devtool/ssh_resilience.py",
@@ -96,7 +166,7 @@ def _destructive_hits() -> dict[str, list[tuple[int, str]]]:
 
 def test_r03b_destructive_fixed_point_has_no_unclassified_production_hits() -> None:
     hits = _destructive_hits()
-    unclassified = sorted(set(hits) - set(CLASSIFIED_FILES))
+    unclassified = sorted(set(hits) - set(CLASSIFIED_FILES) - set(NEW_REVIEWED_DESTRUCTIVE_CALLS))
     assert not unclassified, "unclassified destructive hits: " + ", ".join(unclassified)
 
 
@@ -114,3 +184,15 @@ def test_r03b_apply_source_worker_is_explicitly_classified_without_safety_waiver
     rationale = CLASSIFIED_FILES[key]
     assert "external" in rationale and "LIFE" in rationale
     assert "not caller authorization" in rationale
+
+
+def test_g1_new_destructive_calls_have_reviewed_exact_current_scope() -> None:
+    from collections import Counter
+
+    assert set(NEW_REVIEWED_RATIONALES) == set(NEW_REVIEWED_DESTRUCTIVE_CALLS)
+    hits = _destructive_hits()
+    for path, reviewed_lines in NEW_REVIEWED_DESTRUCTIVE_CALLS.items():
+        # A future callsite added in the same module cannot silently inherit
+        # this inventory classification; a reviewer must explain its authority.
+        assert Counter(line for _, line in hits.get(path, [])) == Counter(reviewed_lines), path
+        assert len(NEW_REVIEWED_RATIONALES[path]) >= 40

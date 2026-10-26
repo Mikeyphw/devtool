@@ -292,6 +292,27 @@ class ExecutionReducer:
         progress.unit = str(event.unit or "")
         progress.indeterminate = bool(event.indeterminate)
         progress.detail = str(event.detail or "")
+        # Multi-command workflow nodes attach reuse evidence incrementally to
+        # progress, not to a fictitious NodeFinished(status="running") event.
+        # Keep the same bounded, typed aggregate fields for the eventual terminal.
+        progress_metadata = dict(event.metadata or {})
+        for key in ("reuse_fingerprint", "reuse_output_manifest", "reuse_result_identity", "reuse_portability_class"):
+            if key in progress_metadata:
+                node.metadata[key] = progress_metadata[key]
+        reuse_fp = progress_metadata.get("reuse_fingerprint")
+        if isinstance(reuse_fp, dict):
+            rows = list(node.metadata.get("reuse_spec_fingerprints") or [])
+            digest = str(reuse_fp.get("digest") or "")
+            if not rows or str(rows[-1].get("digest") or "") != digest:
+                rows.append(dict(reuse_fp))
+            node.metadata["reuse_spec_fingerprints"] = rows
+        reuse_output = progress_metadata.get("reuse_output_manifest")
+        if isinstance(reuse_output, dict):
+            rows = list(node.metadata.get("reuse_spec_output_manifests") or [])
+            digest = str(reuse_output.get("digest") or "")
+            if not rows or str(rows[-1].get("digest") or "") != digest:
+                rows.append(dict(reuse_output))
+            node.metadata["reuse_spec_output_manifests"] = rows
 
     def _node_blocked(self, run: ExecutionRunState, event: "NodeBlocked") -> None:
         node = self._ensure_event_node(run, event, allow_active_match=True)

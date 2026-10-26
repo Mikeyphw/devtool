@@ -49,12 +49,12 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET] [--group GROUP]
                [--android-build-tools-provider {auto,commit451,none,sdk,termux}]
                [--aapt2-provider {auto,termux,sdk,revanced,none}]
                [--ui {compact,full,plain}]
-               {gradle,restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,delivery,repo-pack,signing-identity,tui,cleanup,batch,init-config,init,logs,runs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,audit,git,campaign,federation,fed,core,registry,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server,actions} ...
+               {gradle,restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,delivery,repo-pack,signing-identity,tui,cleanup,batch,init-config,init,logs,runs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,audit,git,campaign,federation,fed,core,registry,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server,actions,transaction,evidence,artifacts,adopt-batch,migration,workflow,capabilities,onboard} ...
 
 Apply artifacts, validate projects, and produce reviewable handoff commits.
 
 positional arguments:
-  {gradle,restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,delivery,repo-pack,signing-identity,tui,cleanup,batch,init-config,init,logs,runs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,audit,git,campaign,federation,fed,core,registry,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server,actions}
+  {gradle,restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,delivery,repo-pack,signing-identity,tui,cleanup,batch,init-config,init,logs,runs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,audit,git,campaign,federation,fed,core,registry,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server,actions,transaction,evidence,artifacts,adopt-batch,migration,workflow,capabilities,onboard}
     gradle              Inspect and control canonical Gradle execution
     variants            List Android variant execution profiles for the
                         selected target
@@ -162,6 +162,20 @@ positional arguments:
     ipc-server          Run or start the local Control Center IPC broker
     actions             GitHub Actions API: inspect, dispatch, monitor and
                         explicitly control runs
+    transaction         Inspect or explicitly escrow historic failed
+                        transaction markers
+    evidence            Typed evidence and report validation (read-only)
+    artifacts           Read-only artifact integrity (does not update
+                        registry)
+    adopt-batch         Source-locked multi-repository adoption, staged commit
+                        publication and guarded recovery
+    migration           Review or execute a source-locked two-repository
+                        extraction
+    workflow            Native-node recovery (source-locked and explicit)
+    capabilities        Read-only repo target/workflow/wrapper/Actions
+                        capability inventory
+    onboard             RM20 review-first whole-repository in-place onboarding
+                        and ownership inventory
 
 options:
   -h, --help            show this help message and exit

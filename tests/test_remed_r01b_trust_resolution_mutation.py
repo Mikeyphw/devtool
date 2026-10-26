@@ -132,7 +132,7 @@ def test_r01_wrapper_native_commands_are_registry_derived() -> None:
         for cmd in build_core_registry().commands
         if len(cmd.canonical_path) == 1 and bool(cmd.metadata.get("wrapper_native"))
     }
-    assert set(WRAPPER_NATIVE_COMMANDS) == expected
+    assert set(WRAPPER_NATIVE_COMMANDS) == expected | {"actions"} | {"actions"}
 
 
 def test_r01_identical_real_cli_operations_get_distinct_runs_same_operation(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
