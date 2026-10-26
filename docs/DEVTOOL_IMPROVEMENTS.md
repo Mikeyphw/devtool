@@ -1149,3 +1149,21 @@ historical failures or treat selected local tests as hosted authority.
 - **Status:** PARTIAL — broad execution gate remains open, **not silently skipped**. Source fix/test inventory and RM00 review are implemented; full suite and live host/device authority pending.
 - **Affected:** `devtool/cli.py`, `devtool/runners.py`, `tests/test_actions_r02_host_review.py`, `tests/test_exec_x02_reuse_qualification.py`, `tests/test_frx_x03_executable_federation_groups.py`, `tests/test_tsys02_adapters.py`.
 - **Recommendation:** Run 12 bounded pytest execution shards independently and investigate report timestamp/fixture interaction without loosening stale-report trust policy.
+
+### FC-08 — G1 Maven Surefire evidence provenance and real-authority collection (2026-10-25)
+
+**Observed:** FC-07 broad shard reported 562 passed, 5 skipped and one Maven Surefire mismatch: a generated current XML report sometimes lost authority to a contradictory stdout summary. Wall-time freshness used `mtime` with 1 ms tolerance, which does not robustly distinguish new, unchanged, and modified reports across Android/overlay/coarse timestamp clocks. An attempted full-shard rerun did not finish within the bounded execution window and **does not count as passed**.
+
+**Remediation:** `devtool/gradle_reports.py` and `devtool/runners.py` record a pre-invocation XML identity snapshot, require the report to be new/changed before accepting it as current, and preserve stdout fallback only when no current structured result is present. The new FC-08 tests cover old timestamps on newly generated reports, unchanged earlier reports, and overwritten same-path XML.
+
+**Evidence tooling:** `.github/workflows/devtool-fc08-host-evidence.yml` is manually dispatched and does read-only host/tool observation; `tools/fc08_evidence.py` provides a seven-lane plan, fail-closed authenticated GitHub metadata verification, and actual ARM64 Termux probing. All lane qualification stays open without independent, source-bound raw workloads and authority checks. No mocking or version output may be promoted to hosted/device/release PASS.
+
+**Open:** G1 all-shard zero-exit execution, hosted Windows/Linux/macOS end-to-end tests, real Termux/Android instrumentation, signed artifact authority, real Telegram/Studyflow/BKX cross-consumer acceptance, FC-09 source/evidence seal. See `docs/FC08_REAL_HOST_CONSUMER_QUALIFICATION.md`.
+
+
+### FC-08 Termux host-observation test portability (2026-10-25)
+
+- **Evidence:** Actual Termux ARM64 FC-08 installer run `46539946c9e747d58592e465587967c0` stopped at `test_host_probe_rejects_wrong_os_and_never_promotes_tools`: the test requested hosted `Linux` on Android, and production `host_probe` properly raised `wrong physical OS for selected FC-08 host lane`. The prior 10 checks passed; validator exited before commit.
+- **Root cause:** The test asserted physical Linux admission rather than isolating the simulated host environment. This is a test portability defect, **not** permission to classify Android as a GitHub Linux runner.
+- **Fix:** Simulate Linux/Darwin/Android only within scoped `monkeypatch` unit tests. Assert wrong-host and mismatched-runner claims still refuse before executing probes; verify the accepted simulated result remains `OBSERVED_NOT_EXTERNALLY_VERIFIED` and never release qualified. Production `host_probe` and authenticated evidence verification remain unchanged.
+- **Status:** Source-test correction locally qualified; actual Termux overlay acceptance remains pending. Real hosted workloads, full G1 and consumer/device qualification remain OPEN.

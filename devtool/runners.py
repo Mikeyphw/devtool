@@ -2792,6 +2792,13 @@ def run_specs(
             if parsed_timeout > 0:
                 command_timeout_seconds = parsed_timeout
 
+        # For Maven XML evidence, an entry snapshot is more reliable than host
+        # timestamp comparisons (especially Termux/Android coarse mtime clocks).
+        report_entry_state = None
+        if "maven-surefire" in str(spec.metadata.get("report_parsers") or spec.metadata.get("report_parser") or ""):
+            from .gradle_reports import snapshot_maven_report_state
+            report_entry_root = Path(str(spec.metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
+            report_entry_state = snapshot_maven_report_state(report_entry_root)
         started = time.perf_counter()
         started_wall = time.time()
         returncode = 1
@@ -3056,6 +3063,7 @@ def run_specs(
                     command_name=spec.name,
                     output=output,
                     report_path=raw_report_path,
+                    initial_report_state=report_entry_state if report_parser == "maven-surefire" and not returned_project_root else None,
                 )
                 if report_parser in {"gradle-junit", "pytest-junit", "android-instrumentation", "dotnet-trx", "maven-surefire", "node-json", "node-junit"}:
                     tests = dict(collection.metadata)

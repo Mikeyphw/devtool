@@ -254,3 +254,44 @@ def test_node_json_failure_is_authoritative_even_when_process_exits_zero(tmp_pat
     assert result.metadata["tests"]["failed"] == 1
     case = result.metadata["test_result"]["suites"][0]["cases"][0]
     assert case["duration_seconds"] == 0.005
+
+
+def test_fc08_maven_report_with_old_mtime_still_beats_stdout(tmp_path: Path) -> None:
+    """Android clock/granularity drift must not suppress new report evidence."""
+    script = _script(tmp_path, "old-clock.sh", '''mkdir -p target/surefire-reports
+printf '%s\\n' '<testsuite name="s"><testcase classname="C" name="current"/></testsuite>' > target/surefire-reports/TEST-clock.xml
+# Source-date/clock skew is intentional. This was previously treated as stale.
+touch -t 202001010000 target/surefire-reports/TEST-clock.xml
+printf '%s\\n' 'Results:' 'Tests run: 99, Failures: 0, Errors: 0, Skipped: 0'
+''')
+    config = ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="maven")
+    spec = CommandSpec("test", [str(script)], cwd=str(tmp_path), metadata={"runner":"maven", "report_parser":"maven-surefire", "report_parsers":["maven-surefire"], "project_root":str(tmp_path)})
+    result = run_specs(config, [spec], verbose=False)[0][0]
+    assert result.metadata["test_evidence"] == "report"
+    assert result.metadata["tests"]["total"] == 1
+
+
+def test_fc08_unchanged_preexisting_maven_report_is_not_current(tmp_path: Path) -> None:
+    target = tmp_path / "target" / "surefire-reports"
+    target.mkdir(parents=True)
+    (target / "TEST-stale.xml").write_text('<testsuite name="s"><testcase name="stale"/></testsuite>')
+    script = _script(tmp_path, "no-new-report.sh", "printf '%s\\n' 'Results:' 'Tests run: 7, Failures: 0, Errors: 0, Skipped: 0'\n")
+    config = ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="maven")
+    spec = CommandSpec("test", [str(script)], cwd=str(tmp_path), metadata={"runner":"maven", "report_parser":"maven-surefire", "report_parsers":["maven-surefire"], "project_root":str(tmp_path)})
+    result = run_specs(config, [spec], verbose=False)[0][0]
+    assert result.metadata["test_evidence"] == "stdout"
+    assert result.metadata["tests"]["total"] == 7
+
+
+def test_fc08_rewritten_maven_report_must_not_use_previous_contents(tmp_path: Path) -> None:
+    target = tmp_path / "target" / "surefire-reports"
+    target.mkdir(parents=True)
+    (target / "TEST-replaced.xml").write_text('<testsuite name="s"><testcase name="old"/></testsuite>')
+    script = _script(tmp_path, "rewrite.sh", '''printf '%s\\n' '<testsuite name="s"><testcase name="new"/></testsuite>' > target/surefire-reports/TEST-replaced.xml
+printf '%s\\n' 'Results:' 'Tests run: 99, Failures: 0, Errors: 0, Skipped: 0'
+''')
+    config = ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="maven")
+    spec = CommandSpec("test", [str(script)], cwd=str(tmp_path), metadata={"runner":"maven", "report_parser":"maven-surefire", "report_parsers":["maven-surefire"], "project_root":str(tmp_path)})
+    result = run_specs(config, [spec], verbose=False)[0][0]
+    assert result.metadata["test_evidence"] == "report"
+    assert result.metadata["tests"]["total"] == 1

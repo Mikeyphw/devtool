@@ -887,18 +887,56 @@ def collect_dotnet_trx_report(
     return ReportCollection(metadata, issues, result)
 
 
+
+def snapshot_maven_report_state(project_root: Path) -> dict[str, tuple[int, int, int, int, int]]:
+    """Capture invocation-entry XML identities without relying on wall clocks.
+
+    A report is current if it did not exist at command entry, or its inode,
+    size, mtime or ctime changed while the command ran.  On Android/Termux,
+    filesystem clock granularity and clocks can differ from Python's wall
+    clock; comparing *only* mtime to time.time() drops genuine current XML.
+    """
+    result: dict[str, tuple[int, int, int, int, int]] = {}
+    for pattern in ("**/target/surefire-reports/TEST-*.xml", "**/target/failsafe-reports/TEST-*.xml"):
+        for path in project_root.glob(pattern):
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                st = path.stat()
+                result[str(path.absolute())] = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+            except OSError:
+                continue
+    return result
+
+
 def collect_maven_test_reports(
     project_root: Path,
     *,
     repo_root: Path | None = None,
     started_at: float | None = None,
     command_name: str = "test",
+    initial_report_state: dict[str, tuple[int, ...]] | None = None,
 ) -> ReportCollection:
     files = [
         *project_root.glob("**/target/surefire-reports/TEST-*.xml"),
         *project_root.glob("**/target/failsafe-reports/TEST-*.xml"),
     ]
-    files = sorted({path.resolve() for path in files if path.is_file() and _recent(path, started_at)})
+    current_files: set[Path] = set()
+    for path in files:
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            if initial_report_state is not None:
+                st = path.stat()
+                state = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+                if initial_report_state.get(str(path.absolute())) == state:
+                    continue  # unchanged report from an earlier invocation
+            elif not _recent(path, started_at):
+                continue
+            current_files.add(path.resolve())
+        except OSError:
+            continue
+    files = sorted(current_files)
     return parse_junit_reports(
         repo_root or project_root,
         files,
@@ -1005,6 +1043,7 @@ def collect_report_metadata(
     command_name: str,
     output: str = "",
     report_path: str = "",
+    initial_report_state: dict[str, tuple[int, ...]] | None = None,
 ) -> ReportCollection:
     if parser == "gradle-junit":
         return collect_gradle_test_reports(
@@ -1032,7 +1071,8 @@ def collect_report_metadata(
         )
     if parser == "maven-surefire":
         return collect_maven_test_reports(
-            project_root, repo_root=repo_root, started_at=started_at, command_name=command_name
+            project_root, repo_root=repo_root, started_at=started_at, command_name=command_name,
+            initial_report_state=initial_report_state,
         )
     if parser == "node-junit":
         return collect_node_junit_report(
