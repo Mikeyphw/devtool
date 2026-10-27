@@ -176,3 +176,89 @@ def test_timeout_cancels_heavy_output_without_reader_leak(tmp_path):
     assert transport['transport_error'] is None
     assert transport['child_exit_code'] is not None
     assert not any(t.name == 'devtool-go-stdout-drain' for t in threading.enumerate())
+
+# Go spool P1/P2 boundary regression (post-squash source hotfix).
+
+def test_empty_successful_go_stream_is_not_accepted(tmp_path):
+    rc, out, state = _invoke(tmp_path, "import sys;sys.exit(0)")
+    assert rc != 0
+    assert "completed_package_count=0" in state["go_output_transport"]["transport_error"]
+    assert state["go_output_transport"]["pipe_eof_observed"] is True
+    assert state["go_test_report"].packages_total == 0
+
+
+def test_only_output_events_cannot_prove_a_completed_package(tmp_path):
+    emitted = _line("output", Output="Go output but no result\n")
+    rc, _, state = _invoke(tmp_path, "import sys;sys.stdout.write(" + repr(emitted) + ")")
+    assert rc != 0
+    assert state["go_test_report"].packages_total == 0
+    assert "completed_package_count=0" in state["go_output_transport"]["transport_error"]
+
+
+def test_genuine_no_test_files_package_is_accepted(tmp_path):
+    # `go test -json` still emits the terminal package result for no-tests.
+    emitted = (_line("start") + _line("output", Output="?\texample.org/spool\t[no test files]\n")
+               + _line("skip"))
+    rc, _, state = _invoke(tmp_path, "import sys;sys.stdout.write(" + repr(emitted) + ")")
+    assert rc == 0
+    report = state["go_test_report"]
+    assert report.packages_no_tests == 1
+    assert report.packages_total == 1
+    assert report.tests_total == 0
+    assert state["go_output_transport"]["transport_error"] is None
+
+
+@pytest.mark.parametrize("bad", ["not-a-number", "1", "-1", "4294967297"])
+def test_invalid_capacity_is_refused_before_popen(tmp_path, monkeypatch, bad):
+    import devtool.runners as runners
+    spawn_attempts = []
+    def forbidden_spawn(*args, **kwargs):
+        spawn_attempts.append(args)
+        raise AssertionError("child must not start with invalid spool capacity")
+    monkeypatch.setattr(runners.subprocess, "Popen", forbidden_spawn)
+    with pytest.raises(ValueError, match="DEVTOOL_GO_OUTPUT_SPOOL_MAX_BYTES"):
+        _run_process_live([sys.executable, "-c", "pass"], cwd=str(tmp_path),
+              env={**os.environ, "DEVTOOL_GO_OUTPUT_SPOOL_MAX_BYTES":bad},
+              verbose=True, progress_parser="go-test-json")
+    assert spawn_attempts == []
+
+
+def test_spool_initialization_io_error_is_before_spawn(tmp_path, monkeypatch):
+    import devtool.runners as runners
+    import devtool.go_output_spool as transport
+    attempts = []
+    def fail_spool(*args, **kwargs):
+        raise OSError("private temporary directory unavailable")
+    def forbidden_spawn(*args, **kwargs):
+        attempts.append(True)
+        raise AssertionError("spool error must precede spawn")
+    monkeypatch.setattr(transport, "GoOutputSpool", fail_spool)
+    monkeypatch.setattr(runners.subprocess, "Popen", forbidden_spawn)
+    with pytest.raises(OSError, match="private temporary directory unavailable"):
+        _run_process_live([sys.executable, "-c", "pass"], cwd=str(tmp_path),
+              env={**os.environ, "DEVTOOL_GO_OUTPUT_SPOOL_MAX_BYTES":"4096"},
+              verbose=True, progress_parser="go-test-json")
+    assert attempts == []
+
+
+def test_failed_process_creation_closes_preallocated_spool(tmp_path, monkeypatch):
+    import devtool.runners as runners
+    import devtool.go_output_spool as transport
+    real = transport.GoOutputSpool
+    opened = []
+    def private_spool(*args, **kwargs):
+        instance = real(*args, directory=str(tmp_path), **kwargs)
+        opened.append(instance)
+        return instance
+    def forbidden_spawn(*args, **kwargs):
+        raise PermissionError("deliberate process refusal")
+    monkeypatch.setattr(transport, "GoOutputSpool", private_spool)
+    monkeypatch.setattr(runners.subprocess, "Popen", forbidden_spawn)
+    rc, output = _run_process_live(["forbidden"], cwd=str(tmp_path),
+        env={**os.environ, "DEVTOOL_GO_OUTPUT_SPOOL_MAX_BYTES":"4096"},
+        verbose=True, progress_parser="go-test-json")
+    assert rc == 127
+    assert "deliberate process refusal" in output
+    assert len(opened) == 1
+    assert not opened[0].temporary_path.exists()
+    assert not list(tmp_path.glob("devtool-go-spool-*.raw"))

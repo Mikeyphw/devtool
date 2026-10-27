@@ -1653,6 +1653,16 @@ def _run_process_live(
     execution_adapter: RunnerExecutionAdapter | None = None,
     presentation_mode: str = "",
 ) -> tuple[int, str]:
+    # The Go-only disk transport is validated and privately allocated BEFORE
+    # spawning the child: bad config or disk errors can never strand Go tests.
+    go_test_stream = None
+    go_spool = None
+    if progress_parser == "go-test-json":
+        from .go_test import GoTestJSONStream
+        from .go_output_spool import GoOutputSpool, capacity_from_env
+        go_spool = GoOutputSpool(max_bytes=capacity_from_env(env))
+        go_test_stream = GoTestJSONStream()
+
     live_log_handle = None
     if live_log_path is not None:
         try:
@@ -1725,6 +1735,8 @@ def _run_process_live(
             start_new_session=(os.name == "posix"),
         )
     except OSError as exc:
+        if go_spool is not None:
+            go_spool.close()
         if tracker is not None:
             tracker.__exit__(None, None, None)
         # Keep live streaming as the normal path, but return a structured failure
@@ -1766,6 +1778,13 @@ def _run_process_live(
             _append_live_log(str(exc))
             _close_live_log()
             return 127, str(exc)
+    except BaseException:
+        # No child survived Popen; close the preallocated transport on all
+        # exceptional spawn paths, not only the expected OSError fallback.
+        if go_spool is not None:
+            go_spool.close()
+        _close_live_log()
+        raise
 
     trace_after_spawn = time.perf_counter() if git_trace_enabled else 0.0
     if git_trace_enabled and structured_state is not None:
@@ -1785,13 +1804,6 @@ def _run_process_live(
         structured_state["git_trace"]["start_event_seconds"] = trace_after_event - trace_after_spawn
         structured_state["git_trace"]["remaining_live_seconds"] = 0.0
     output_parts: list[str] = []
-    go_test_stream = None
-    go_spool = None
-    if progress_parser == "go-test-json":
-        from .go_test import GoTestJSONStream
-        from .go_output_spool import GoOutputSpool, capacity_from_env
-        go_test_stream = GoTestJSONStream()
-        go_spool = GoOutputSpool(max_bytes=capacity_from_env(env))
 
     def _render_process_line(raw_line: str) -> str:
         if go_test_stream is None:
@@ -1822,9 +1834,15 @@ def _run_process_live(
             return code
         malformed = go_test_stream.invalid_json_events
         unfinished = go_test_stream.incomplete_packages()
-        if not malformed and not unfinished:
+        # Even when Go exits 0 and the pipe closes cleanly, an empty stream
+        # is not evidence of a completed go test -json package. No-test-file
+        # packages count once their authoritative terminal event is observed.
+        completed_packages = go_test_stream.report().packages_total
+        if not malformed and not unfinished and completed_packages > 0:
             return code
-        reason = f"incomplete_go_json: malformed_events={malformed} unfinished_package_count={len(unfinished)}"
+        reason = (f"incomplete_go_json: malformed_events={malformed} "
+                  f"unfinished_package_count={len(unfinished)} "
+                  f"completed_package_count={completed_packages}")
         setattr(proc, "_devtool_go_shutdown_reason", "incomplete_go_json")
         transport = dict(getattr(proc, "_devtool_go_transport", {}) or {})
         transport["transport_error"] = reason

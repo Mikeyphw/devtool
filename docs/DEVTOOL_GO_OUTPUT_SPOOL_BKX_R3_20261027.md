@@ -33,3 +33,12 @@ BKX R2 transaction `af27fac12cd44663ae2b5dc20e753ccf`; R3 `dd90c585b20a4ca993e5b
 | Original rollback and transaction receipt | Source-bound overlay, native Devtool transactional test pending real Termux | Native Termux OPEN |
 
 No BKX runtime implementation, chroot-ctl, API-04, root bridge, rclone, Go WaitDelay setting, or permanent test `-count=1` change.
+
+## Post-squash P1/P2 hotfix, source-pinned GO-SPOOL-R2
+
+Parent is the GitHub squash on `main` `dc23352e8f9d3ce3370ce82b88e067bd6b10deae`, tree `d400d6cb2ea8a9677e4b18997a32eced65f3270c`.
+
+- **P1 — empty JSON false success:** A successful Go JSON validation must contain at least one terminal package event. Output-only and empty streams are incomplete regardless of clean process exit and pipe EOF. Real legitimate Go no-test packages emit a terminal `skip` and remain accepted. Machine-readable `transport_error` identifies `completed_package_count=0`.
+- **P2 — bad config stranded process:** Spool capacity parsing and private spool descriptor allocation now precede `subprocess.Popen` entirely. If either fails, no process is started. Popen error fallback and other exceptional spawn paths close the preallocated spool file. All other runners retain prior execution flow.
+
+**Evidence:** 98 targeted tests + 7 subtests pass; real Go 1.23 no-test emitted start/output/skip; an actual Devtool Go spool smoke on that package returned 0, one completed package, no transport error, EOF observed. Local disposable Devtool overlay tests are separate evidence and do not qualify the physical Android host. **OPEN**: full source validation on final merged commit, native Termux installation, exact BKX API-03 R3 standalone and disposable Devtool transaction, cause differentiation on device, FC08/FC09 gates.
