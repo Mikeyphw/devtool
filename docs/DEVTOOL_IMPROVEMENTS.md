@@ -1201,3 +1201,33 @@ historical failures or treat selected local tests as hosted authority.
 - **Affected:** Active golden help comparison on Python 3.14/Termux where argparse provides styled output, not canonical parser command identity.
 - **Recommendation / implementation:** In the test fixture only, remove SGR sequences from `format_help()` output before asserting current command synopsis and exact stable help body; retain the unstyled golden fixture and add a colored-help regression. Do not disable operator color globally or relax canonical CLI schema testing.
 - **Status:** R1R4 source candidate; local architecture tests (16) and mandatory selection (239 tests, 40 subtests) passed on Python 3.13 with injected ANSI regression. Native Termux and hosted full 24-shard acceptance **OPEN**.
+
+## FC08 real-host observation and G5 coverage follow-up (2026-10-26 local / 2026-10-27 UTC)
+
+- Evidence: GitHub run `40425019752`, attempt 1, source `e09057529dc9016bc514ccfb43e45b0b978625b7`, tree `337d4ef8bb06a8a700bce469a869c6bcba256dc3`; four independent job/artifact identities; raw JSON SHA-256 hashes included in `FC08_AUDIT.json`.
+- Status: HOST_OBSERVATION_VERIFIED, REAL_HOST_WORKLOAD_QUALIFICATION_OPEN. The current reports deliberately set `execution_semantics_qualified=false` and `release_qualified=false`.
+- Gap: `meson` unavailable in observed Linux environment. Fix via explicit setup in future hosted-workload workflow, not by skipping the Meson provider.
+- Gap: Windows `where cl` exited 1 without Visual Studio developer environment. Use VsDevCmd/VS setup and real compilation; do not equate PATH absence to MSVC unavailability.
+- Gap: real Linux uv/Poetry/PDM, Node, Rust, Java, CMake/Meson ABI/negative cases and macOS native provider execution, Windows .NET shared restore/coverage/TRX/publish are still unqualified. Existing G5 real fixture matrix is useful bounded evidence, not complete Devtool provider acceptance.
+- Gap: hosted G1 `test_real_ed25519_trusted_key_only` skipped from missing optional `cryptography`. Add to future CI test dependencies and assert it executes; do not recast historical pass as security qualification.
+- Open separate authorities: native Termux real workloads, installed signing, consumer adoption and owner approvals. RM19 remains cancelled.
+- Status of this file: staging appendix only; append to canonical `docs/DEVTOOL_IMPROVEMENTS.md` when delivering the next source-bound Devtool overlay; no remote repo mutation is claimed.
+
+## FC08-HOST-R1 native hosted workloads (2026-10-26)
+
+- **Source baseline:** exact G1 R1R4 `e09057529dc9016bc514ccfb43e45b0b978625b7` / `337d4ef8bb06a8a700bce469a869c6bcba256dc3`.
+- **G5 evidence:** run `40426743366` eight of eight real Python/Go/Rust/Java Ubuntu/Windows fixture jobs succeeded, source unchanged. This is narrowed G5 fixture evidence, not full provider or signing release authority.
+- **Gap:** FC08 observation `40425019752` proved four hosts but not real native provider runs; missing Linux Meson and Windows VS developer env.
+- **Host R1 candidate:** read-only four-lane GHA DAG/Linux/Windows/macOS execution with real Devtool native build/test fixture invocations, negative refusal, locked .NET cold/warm NuGet restore, TRX/coverage, NuGet pack, publish and MSVC native compilation; explicit Meson and Visual Studio setup; fail-closed source-tree/run-id/attempt and artifact payload verifier. No release/pass promotion; hosted execution and independent review PENDING.
+- **G1 cryptography:** one Ed25519 signature acceptance test skipped in run `40399195875` only because the hosted dependency was absent. Bounded `cryptography` is now installed for the full Python regression; new source must rerun G1 before test skip can be closed. This is not a signing credential.
+- **Limitations:** Repeated/failed/permission-denied GitHub dispatch, Linux lock/ABI adversarial, native Termux/Android, consumers, signing, and FC09 160-active/8-cancelled promises stay OPEN.
+- **Status:** Source-bound implementation candidate; local deterministic contract tests PASS, Linux CMake/Go CLI smoke PASS; no live hosted workload gates yet.
+
+
+## FC08-HOST-R1R2 native namespace collision: repo-local `tools` imports (2026-10-26)
+
+- **Observed evidence:** native Termux Devtool run `5843698efef74683919f8e955fff8abc` stopped at collection of `tests/test_fc08_host_workload_contract.py`. `from tools import fc08_host_workloads as h` resolved `tools` to `/data/data/com.termux/files/usr/share/hermes-agent/tools/__init__.py`, not Devtool's repository-local `tools/`. The native validator returned an import error before running any tests.
+- **Classification:** current-test import-path isolation bug, not an FC08 hosted provider execution or system capability failure. No source apply success or rollback receipt follows from the truncated operator log.
+- **Correction:** the contract test prepends the *resolved repository-local* `tools/` directory, imports the three named sibling modules directly (never via a top-level `tools` package), and asserts their `__file__` origins. This is independent of an already-imported third-party `tools` package and remains compatible with Python 3.14 in Termux. Production workload scripts, GitHub workflow, negative-case checks, execution authority and evidence schema are unchanged.
+- **Installation:** complete R1R2 replacement on the same exact **clean** R1R4 commit/tree, not layered onto R1. Devtool must provide successful current-contract native validation, one clean commit, or automatic rollback.
+- **Status:** source candidate; operator native acceptance, new-source hosted real workloads, and Ed25519 G1 repeat remain OPEN. RM19 still CANCELLED.

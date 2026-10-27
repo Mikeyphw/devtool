@@ -1,0 +1,179 @@
+name: Devtool FC-08 real-host workload evidence (not release)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fc08-host-real-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dag:
+    name: FC08 real github-actions-dag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install reviewed source runtime
+        run: python -m pip install -e . pytest
+      - name: Run real Devtool DAG identity and rejection cases
+        run: python tools/fc08_host_workloads.py --lane github-actions-dag --out out/fc08/github-actions-dag.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fc08-real-github-actions-dag-attempt${{ github.run_attempt }}
+          path: out/fc08/github-actions-dag.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    name: FC08 real linux-polyglot
+    needs: dag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Required real provider prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -e . pytest 'uv>=0.8,<1' 'poetry>=2.0,<3' 'pdm>=2.20,<3' 'meson>=1.5,<2' 'ninja>=1.11,<2'
+          rustup toolchain install stable --profile minimal
+          command -v mvn
+          command -v cmake
+          command -v meson
+          command -v clang++
+      - name: Execute real Devtool provider build/test workloads
+        run: python tools/fc08_host_workloads.py --lane linux-polyglot --out out/fc08/linux-polyglot.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fc08-real-linux-polyglot-attempt${{ github.run_attempt }}
+          path: out/fc08/linux-polyglot.json
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: FC08 real windows-dotnet-msvc
+    needs: dag
+    runs-on: windows-2022
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+      - name: Required .NET and native MSVC prerequisites
+        shell: pwsh
+        run: |
+          python -m pip install -e . pytest
+          Get-Command cl.exe -ErrorAction Stop
+          Get-Command cmake.exe -ErrorAction Stop
+          dotnet --list-sdks
+      - name: Execute .NET locked restores, TRX/coverage/publish and MSVC build
+        shell: pwsh
+        run: python tools/fc08_host_workloads.py --lane windows-dotnet-msvc --out out/fc08/windows-dotnet-msvc.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fc08-real-windows-dotnet-msvc-attempt${{ github.run_attempt }}
+          path: out/fc08/windows-dotnet-msvc.json
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: FC08 real macos-native
+    needs: dag
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Real native runner prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -e . pytest
+          xcrun --find clang++
+          cmake --version
+      - name: Execute real native CMake and unsupported-host refusal
+        run: python tools/fc08_host_workloads.py --lane macos-native --out out/fc08/macos-native.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fc08-real-macos-native-attempt${{ github.run_attempt }}
+          path: out/fc08/macos-native.json
+          if-no-files-found: error
+          retention-days: 14
+
+  summary:
+    name: FC08 fail-closed four-lane evidence inventory
+    if: always()
+    needs: [dag, linux, windows, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fc08-real-*-attempt${{ github.run_attempt }}
+          path: fc08-raw
+          merge-multiple: false
+        continue-on-error: true
+      - name: Refuse failed jobs, missing receipts or false release claims
+        env:
+          FC08_NEEDS_JSON: ${{ toJSON(needs) }}
+        shell: bash
+        run: |
+          python tools/fc08_host_summary.py --input fc08-raw --out out/fc08/host-summary.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fc08-real-host-summary-attempt${{ github.run_attempt }}
+          path: out/fc08/host-summary.json
+          if-no-files-found: error
+          retention-days: 14

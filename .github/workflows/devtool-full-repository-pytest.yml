@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install 'setuptools>=75,<82' wheel 'coverage>=7,<9'
+          python -m pip install 'setuptools>=75,<82' wheel 'coverage>=7,<9' 'cryptography>=43,<47'
           python -m pip install -e '.[textual]' pytest pexpect
       - name: Run assigned modules with bounded subprocesses and live output
         shell: bash
