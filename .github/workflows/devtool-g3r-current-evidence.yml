@@ -1,0 +1,58 @@
+name: G3R current-source evidence consumer
+
+on:
+  workflow_dispatch:
+    inputs:
+      evidence_run_id:
+        description: 'Prior run ID containing an uploaded native Termux evidence ZIP (leave empty for tests only)'
+        required: false
+        type: string
+      evidence_artifact_name:
+        description: 'Exact uploaded artifact name'
+        required: false
+        default: g3r-native-termux-evidence
+        type: string
+  push:
+    paths:
+      - 'devtool/g3r_*'
+      - 'devtool/remed_r04b_fixed_point.py'
+      - 'tests/test_g3r_*'
+      - '.github/workflows/devtool-g3r-current-evidence.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  candidate-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install regression test runner
+        run: python -m pip install -e . pytest
+      - name: G3R contract regressions (not device certification)
+        run: python -m pytest -q tests/test_g3r_current_source_evidence.py tests/test_g3r_git_lookup_authority.py
+      - name: Download previously uploaded Termux evidence
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.evidence_artifact_name }}
+          run-id: ${{ inputs.evidence_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: .g3r-incoming
+      - name: Validate native Termux candidate against exact clean HEAD
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_run_id != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' candidates < <(find .g3r-incoming -type f -name '*.zip' -print0)
+          if [[ ${#candidates[@]} != 1 ]]; then
+            printf 'Expected exactly one candidate ZIP, found %s\n' "${#candidates[@]}" >&2
+            exit 2
+          fi
+          python -m devtool.g3r_evidence_gate --repo "$PWD" --candidate "${candidates[0]}"

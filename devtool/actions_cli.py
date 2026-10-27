@@ -20,6 +20,64 @@ def run_actions_command(args: Any) -> int:
             print(encode_observation(observation), flush=True)
     try:
         root = Path(str(getattr(args, "repo", "") or Path.cwd()))
+        if command == 'adoption-doctor':
+            from .actions_adoption import adoption_doctor, AdoptionError
+            try:
+                payload = adoption_doctor(root, target=str(getattr(args, 'adopt_target', '') or ''))
+            except AdoptionError as exc:
+                print(f'ACTIONS_R06B_REVIEW_REFUSED: {exc}', file=sys.stderr)
+                return 1
+            print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+            return 0
+        if command in ('provider-plan', 'provider-export', 'provider-doctor', 'provider-distributions'):
+            from .actions_language_providers import (provider_plan, provider_export,
+                                                     provider_doctor, ProviderError, AdoptionError)
+            try:
+                selected = str(getattr(args, 'adopt_target', '') or '')
+                if command == 'provider-distributions':
+                    from .actions_distributions import distribution_contract, verify_distributions, DistributionError
+                    named = str(getattr(args,'adopt_workflow','') or '')
+                    try:
+                        payload = (distribution_contract(root,target=selected,workflow=named)
+                                   if bool(getattr(args,'distribution_plan',False)) else
+                                   verify_distributions(root,target=selected,workflow=named))
+                    except DistributionError as exc: raise ProviderError(str(exc)) from None
+                elif command == 'provider-doctor':
+                    payload = provider_doctor(root, target=selected,
+                                              all_profiles=bool(getattr(args,'provider_all_profiles',False)))
+                else:
+                    named = str(getattr(args, 'adopt_workflow', '') or '')
+                    sha = str(getattr(args, 'devtool_sha', '') or '')
+                    if command == 'provider-plan':
+                        payload = provider_plan(root, target=selected, workflow=named,
+                            devtool_sha=sha,
+                            expect_plan_sha=str(getattr(args,'expect_plan_sha','') or ''))
+                    else:
+                        if bool(getattr(args,'provider_review_plan',False)) and (getattr(args,'yes',False) or getattr(args,'verify',False)):
+                            raise ProviderError('--plan cannot be combined with --yes or --verify')
+                        payload = provider_export(root, target=selected, workflow=named,
+                            devtool_sha=sha, write=bool(getattr(args,'yes',False)),
+                            verify=bool(getattr(args,'verify',False)),
+                            mode=str(getattr(args,'provider_mode','single-job') or 'single-job'),
+                            host_profiles=str(getattr(args,'provider_host_profiles','') or ''),
+                            cache_locks=bool(getattr(args,'provider_cache_locks',False)),
+                            affected=bool(getattr(args,'provider_affected',False)),
+                            affected_base=str(getattr(args,'provider_affected_base','') or ''),
+                            affected_head=str(getattr(args,'provider_affected_head','') or ''))
+            except (ProviderError, AdoptionError, ValueError) as exc:
+                print(f'ACTIONS_NEXT03_PROVIDER_REFUSED: {exc}', file=sys.stderr)
+                return 1
+            print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+            return 0
+        if command == 'adopt':
+            from .actions_adoption import adoption_command, AdoptionError
+            try:
+                payload = adoption_command(root, args)
+            except AdoptionError as exc:
+                print(f'ACTIONS_A03_REFUSED: {exc}', file=sys.stderr)
+                return 1
+            print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+            return 0
         payload = (actions_cli(args, root, observation_callback=callback) if streaming
                    else actions_cli(args, root))
     except GitHubActionsError as exc:
@@ -34,6 +92,30 @@ def run_actions_command(args: Any) -> int:
             print(f"Run: {remote['html_url']}")
         if last.get('source_binding') == 'not-confirmed':
             print('WARNING: run source SHA differs from dispatch receipt', file=sys.stderr)
+    elif command in ('recent', 'detail', 'ui') and not (bool(getattr(args,'json',False)) or bool(getattr(args,'_devtool_json',False))):
+        from .actions_workspace import screen_lines, create_actions_app
+        interactive = command == 'ui' and sys.stdout.isatty() and sys.stdin.isatty() and not os.environ.get('CI')
+        if interactive and os.environ.get('DEVTOOL_JOB_UI','auto')!='plain' and os.environ.get('DEVTOOL_EXECUTION_PRESENTATION','auto')!='plain':
+            try:
+                from .textual_execution_host import textual_available
+                interactive = textual_available()
+            except (ImportError,ValueError):
+                interactive = False
+        else:
+            interactive = False
+        if interactive:
+            create_actions_app(root, payload['repository'],initial=payload).run()
+        else:
+            if command == 'detail':
+                payload = {'repository':payload['item']['repository'],'items':[payload['item']]}
+            content = screen_lines(payload,compact=True)
+            print(content['title']+'\n'+content['rows']+'\n'+content['detail']+'\n'+content['footer'])
+    elif command == 'overview':
+        from .actions_control_center import overview_text
+        print(overview_text(payload, width=int(getattr(args,'width',40))))
+    elif command == 'lineage':
+        from .actions_lineage import lineage_text
+        print(lineage_text(payload, width=60))
     elif bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
         print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
     elif (str(getattr(args, 'actions_command', '')) == 'release'
@@ -66,6 +148,12 @@ def run_actions_command(args: Any) -> int:
         print(pipeline_text(payload))
     else:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
+    if command == 'review':
+        state = payload.get('state')
+        if state in ('uncorrelated', 'incomplete'):
+            return 2
+        if state != 'succeeded':
+            return 1
     if command == 'qualification' and str(getattr(args, 'qualification_command', '') or '') == 'check':
         if not payload.get('source_contract_consistent', False):
             return 1

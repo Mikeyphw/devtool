@@ -9,7 +9,7 @@ actual test/build execution remains owned by Devtool validation/artifact gates.
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 import fnmatch
 import hashlib
 import ast
@@ -36,48 +36,6 @@ class SealCheck:
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-
-_REQUIRED_REPORTS = (
-    "TRUST_BOUNDARY_EMERGENCY_SEAL_REPORT.md",
-    "RELEASE_VERIFIER_FINAL_SEAL_INTEGRITY_REPORT.md",
-    "CLI_CONFIG_WORKSPACE_DISCOVERY_REPORT.md",
-    "EXECUTION_SCHEDULER_CORRECTNESS_REPORT.md",
-    "TRANSACTIONS_ARCHIVES_ROLLBACK_REPORT.md",
-    "ARTIFACT_LIFECYCLE_REGISTRY_REPORT.md",
-    "VALIDATION_TRUTH_SESSION_CHECKPOINT_REPORT.md",
-    "DIAGNOSTICS_REDACTION_REPORTING_REPORT.md",
-    "CORE_RUNTIME_IPC_HOOKS_REPORT.md",
-    "ANDROID_TOOLCHAIN_RESOLUTION_REPORT.md",
-    "ANDROID_DEVICE_SIGNING_RELEASE_GATES_REPORT.md",
-    "ANDROID_LIVE_HUD_RUNSTORE_TRUTH_REPORT.md",
-    "UI_DESKTOP_TRUTH_ACTIONS_REPORT.md",
-    "LANGUAGE_RUNNERS_PACKAGING_INSTALL_REPO_REPORT.md",
-    "MP01_MP02_POLYGLOT_TARGETS_WORKFLOWS_REPORT.md",
-    "MP03_MP04_WORKFLOW_DAG_CROSS_RUNNER_REPORT.md",
-    "MP05_MP06_CROSS_TARGET_WORKSPACE_GROUPS_REPORT.md",
-    "MP07_MP08_AFFECTED_TOOLCHAIN_PREFLIGHT_REPORT.md",
-    "MP09_MP10_SAFE_SCHEDULING_GRAPH_OBSERVABILITY_REPORT.md",
-    "UI01_UI02_SHARED_UI_STATE_ACTION_NAVIGATION_REPORT.md",
-    "UI03_UI04_UI_PREFERENCES_TOKENS_COPY_REPORT.md",
-    "UI05_UI06_CAPABILITIES_RESPONSIVE_PROGRESS_DIAGNOSTICS_REPORT.md",
-    "UI07_UI08_CONFIRMATION_NOTIFICATION_TERMINAL_MIGRATION_REPORT.md",
-    "UI09_UI10_DESKTOP_ANDROID_UI_CORE_MIGRATION_REPORT.md",
-    "UI11_UI12_MACHINE_IPC_COMPLETION_CONFIG_REPORT.md",
-    "FS01_FS02_COMPATIBILITY_DOCUMENTATION_REPORT.md",
-    "HROPS01_COMPLETE_EMBEDDED_HOOK_RUNTIME_REPORT.md",
-    "AOPS02_ANDROID_EXECUTION_DEVICE_FABRIC_REPORT.md",
-    "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
-    "AOPS04_ANDROID_RELEASE_EVIDENCE_FINAL_SEAL_REPORT.md",
-    "PYTEST_REVITALIZATION_REPORT.md",
-    "GRADLE_ANDROID_TASK_OPTIMIZATION_REPORT.md",
-    "ROADMAP_DELIVERY_AUDIT_REPORT.md",
-    "ROADMAP_PROMISE_RECHECK_REPORT.md",
-)
-
-_REQUIRED_TARGET_SEAL_REPORTS = (
-    "REM15_DEVTOOL_TARGET_FINAL_QUALIFICATION_REPORT.md",
-    "android/devtool-live-hud/REM15_ANDROID_HUD_TARGET_FINAL_QUALIFICATION_REPORT.md",
-)
 
 _FINAL_REMEDIATION_COVERAGE = "FINAL_REMEDIATION_COVERAGE.json"
 
@@ -249,7 +207,7 @@ def _workspace_backup_paths(repo_root: Path) -> list[str]:
 
         return [
             str(path.relative_to(repo_root))
-            for path in discover_backup_candidates(repo_root)
+            for path in discover_backup_candidates(repo_root, managed_only=True)
             if not any(fnmatch.fnmatch(str(path.relative_to(repo_root)), pattern) for pattern in _ALLOWED_BACKUP_PATTERNS)
         ]
     except Exception as exc:
@@ -335,7 +293,6 @@ def _target_final_seal_errors(repo_root: Path, configured_targets: set[str]) -> 
     errors: list[str] = []
     if configured_targets != expected_targets:
         errors.append(f"configured_target_mismatch: configured={sorted(configured_targets)} expected={sorted(expected_targets)}")
-    errors.extend(_markdown_content_errors(repo_root, _REQUIRED_TARGET_SEAL_REPORTS, min_bytes=160))
     for target in sorted(expected_targets):
         payload = target_seal_report(repo_root, target)
         if payload.get("status") != "pass":
@@ -343,15 +300,22 @@ def _target_final_seal_errors(repo_root: Path, configured_targets: set[str]) -> 
             errors.append(f"{target}:" + ",".join(failed))
     return errors
 
-def final_seal_report(repo_root: Path) -> dict[str, Any]:
+def final_seal_report(repo_root: Path, *, on_check: Callable[[str], None] | None = None) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     checks: list[SealCheck] = []
+
+    def record(item: SealCheck) -> None:
+        checks.append(item)
+        # Instrumentation only. A failed callback must NEVER claim a passed seal.
+        # The caller may use this to attribute a slow Termux run to one check.
+        if on_check is not None:
+            on_check(item.id)
 
     cfg_path = repo_root / ".devtool.toml"
     if cfg_path.is_file():
         cfg_text = cfg_path.read_text(encoding="utf-8")
         migrations = analyze_config_migration_text(cfg_text)
-        checks.append(_check(
+        record(_check(
             "config.canonical",
             not migrations,
             "repository configuration uses canonical syntax" if not migrations else "repository configuration still needs migration",
@@ -360,10 +324,10 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         try:
             parsed_cfg = load_repository_document(cfg_path, required=True)
         except SystemExit as exc:
-            checks.append(_check("config.parse", False, "repository configuration failed canonical ingestion", [str(exc)]))
+            record(_check("config.parse", False, "repository configuration failed canonical ingestion", [str(exc)]))
             parsed_cfg = {}
         else:
-            checks.append(_check("config.parse", True, "repository configuration passes canonical ingestion"))
+            record(_check("config.parse", True, "repository configuration passes canonical ingestion"))
         workspace_default = str((parsed_cfg.get("workspace") or {}).get("default_target") or "") if isinstance(parsed_cfg, dict) else ""
         targets = parsed_cfg.get("targets") or {} if isinstance(parsed_cfg, dict) else {}
         roots_missing: list[str] = []
@@ -374,7 +338,7 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
                 root = str(raw.get("root") or ".")
                 if not (repo_root / root).exists():
                     roots_missing.append(f"{name}:{root}")
-        checks.append(_check(
+        record(_check(
             "workspace.targets",
             bool(workspace_default) and isinstance(targets, dict) and workspace_default in targets and not roots_missing,
             "workspace default target and target roots are valid",
@@ -382,7 +346,7 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         ))
     else:
         parsed_cfg = {}
-        checks.append(_check("config.canonical", False, "repository .devtool.toml is missing"))
+        record(_check("config.canonical", False, "repository .devtool.toml is missing"))
 
     configured_targets = set()
     if isinstance(parsed_cfg, dict):
@@ -390,14 +354,14 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         if isinstance(raw_targets, dict):
             configured_targets = {str(name) for name in raw_targets}
     target_errors = _target_final_seal_errors(repo_root, configured_targets)
-    checks.append(_check(
+    record(_check(
         "targets.final-seal-overlays",
         not target_errors,
-        "every configured Devtool target has its own passing Overlay 15 final-seal artifact",
+        "configured targets satisfy executable target identity, validation and test contracts",
         target_errors,
     ))
     coverage_errors = _final_remediation_coverage_errors(repo_root, configured_targets)
-    checks.append(_check(
+    record(_check(
         "coverage.final-remediation",
         not coverage_errors,
         "308/308 deduped findings and all target-split final overlays are accounted for",
@@ -411,7 +375,7 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         and len(compat_ids) >= 24
         and int(compat.get("summary", {}).get("active_config_migrations", 0)) == 0
     )
-    checks.append(_check(
+    record(_check(
         "compatibility.registry",
         compat_ok,
         "compatibility registry is unique, explicit, and has no active repository migrations",
@@ -427,23 +391,15 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         f"tasker={TASKER_SCHEMA_VERSION}",
         f"validation_session={SESSION_SCHEMA_VERSION}",
     ]
-    checks.append(_check(
+    record(_check(
         "schemas.versioned",
         all(isinstance(v, int) and v >= 1 for v in (MACHINE_SCHEMA_VERSION, IPC_PROTOCOL_VERSION, TASKER_SCHEMA_VERSION, SESSION_SCHEMA_VERSION)),
         "public machine/IPC/Tasker/session schemas are explicitly versioned",
         schema_details,
     ))
 
-    report_errors = _markdown_content_errors(repo_root, _REQUIRED_REPORTS, min_bytes=160)
-    checks.append(_check(
-        "roadmap.reports",
-        not report_errors,
-        "all roadmap implementation reports, including HROPS01, AOPS02-AOPS04, pytest revitalization, Gradle optimization, and delivery audit, are present and content-validated",
-        report_errors,
-    ))
-
     doc_errors = _doc_content_errors(repo_root, _REQUIRED_DOCS)
-    checks.append(_check("docs.required", not doc_errors, "canonical release documentation is present and content-validated", doc_errors))
+    record(_check("docs.required", not doc_errors, "canonical release documentation is present and content-validated", doc_errors))
 
     example_errors: list[str] = []
     for rel in _REQUIRED_EXAMPLES:
@@ -460,10 +416,10 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         if isinstance(project, dict) and project:
             if "kind" in project or "type" in project or "runner" not in project:
                 example_errors.append(f"noncanonical:{rel}")
-    checks.append(_check("examples.canonical", not example_errors, "canonical TOML examples parse and use modern identity fields", example_errors))
+    record(_check("examples.canonical", not example_errors, "canonical TOML examples parse and use modern identity fields", example_errors))
 
     test_errors = _python_test_content_errors(repo_root, _REQUIRED_TESTS)
-    checks.append(_check(
+    record(_check(
         "tests.roadmap-contracts",
         not test_errors,
         "roadmap, TS00, Android Operations, pytest revitalization, Gradle optimization, and delivery-audit contract suites are present and syntactically valid",
@@ -472,26 +428,43 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
 
     completion_path = repo_root / "completions" / "_devtool"
     completion_ok = completion_path.is_file() and completion_path.read_text(encoding="utf-8") == ZSH_COMPLETION
-    checks.append(_check("completion.synchronized", completion_ok, "generated and packaged zsh completion are synchronized"))
+    record(_check("completion.synchronized", completion_ok, "generated and packaged zsh completion are synchronized"))
 
-    profile_text = (repo_root / "devtool" / "validation_profiles.py").read_text(encoding="utf-8") if (repo_root / "devtool" / "validation_profiles.py").is_file() else ""
-    checks.append(_check(
+    # FS03 is a repository contract audit, not a substitute for executing tests,
+    # native device jobs, artifact validation, or release qualification.
+    # Inspect the live profile configuration instead of trusting report prose.
+    try:
+        from .validation_profiles import BUILTIN_PROFILES
+        profile = BUILTIN_PROFILES.get("final-seal", {})
+        policy = profile.get("validation", {}) if isinstance(profile, dict) else {}
+        artifacts = profile.get("artifacts", {}) if isinstance(profile, dict) else {}
+        profile_errors = [
+            name for name, valid in (
+                ("validation.final_seal_contracts", policy.get("final_seal_contracts") is True),
+                ("artifacts.required", artifacts.get("required") is True),
+                ("artifacts.external_verification", artifacts.get("external_verification") == "required"),
+            ) if not valid
+        ]
+    except Exception as exc:
+        profile_errors = [f"profile-import:{type(exc).__name__}:{exc}"]
+    record(_check(
         "validation.final-seal-profile",
-        '"final-seal"' in profile_text,
-        "final-seal validation workflow profile is available",
+        not profile_errors,
+        "final-seal profile requires contract checks, artifacts and external verification",
+        profile_errors,
     ))
 
     try:
         from .android.release import audit_android_release_convergence
         android_audit = audit_android_release_convergence(repo_root)
-        checks.append(_check(
+        record(_check(
             "android.operations-roadmap",
             android_audit.get("status") == "pass",
             "HROPS01 and AOPS02-AOPS04 Android/hook execution paths are converged",
             list(android_audit.get("failed") or []),
         ))
     except Exception as exc:
-        checks.append(_check("android.operations-roadmap", False, "Android Operations convergence audit failed to execute", [str(exc)]))
+        record(_check("android.operations-roadmap", False, "Android Operations convergence audit failed to execute", [str(exc)]))
 
     try:
         from .artifacts import SUPPORTED_ARCHIVE_SUFFIXES
@@ -499,21 +472,21 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         missing_suffixes = sorted(required_suffixes - set(SUPPORTED_ARCHIVE_SUFFIXES))
         completion_text = (repo_root / "completions" / "_devtool").read_text(encoding="utf-8") if (repo_root / "completions" / "_devtool").is_file() else ""
         completion_missing = [suffix for suffix in sorted(required_suffixes) if suffix not in completion_text]
-        checks.append(_check(
+        record(_check(
             "artifacts.archive-formats",
             not missing_suffixes and not completion_missing,
             "ZIP and tar overlay/bundle artifact suffixes are supported and discoverable",
             ([f"missing_supported:{suffix}" for suffix in missing_suffixes] + [f"missing_completion:{suffix}" for suffix in completion_missing]),
         ))
     except Exception as exc:
-        checks.append(_check("artifacts.archive-formats", False, "archive-format audit failed to execute", [str(exc)]))
+        record(_check("artifacts.archive-formats", False, "archive-format audit failed to execute", [str(exc)]))
 
     backups = sorted(set(_tracked_backup_paths(repo_root) + _workspace_backup_paths(repo_root)))
-    checks.append(_check("repository.backup-hygiene", not backups, "no transient backup/reject files exist in the workspace", backups))
+    record(_check("repository.backup-hygiene", not backups, "no transient backup/reject files exist in the workspace", backups))
 
     readme = (repo_root / "README.md").read_text(encoding="utf-8") if (repo_root / "README.md").is_file() else ""
     seal_doc = repo_root / "docs" / "FINAL_RELEASE_SEAL.md"
-    checks.append(_check(
+    record(_check(
         "release.discoverability",
         seal_doc.is_file() and "final-seal" in readme and "FS03" in readme,
         "FS03 final seal is documented and discoverable from README",
@@ -523,6 +496,8 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
     failures = [item for item in checks if item.status == "fail"]
     return {
         "schema_version": FINAL_SEAL_SCHEMA_VERSION,
+        "gate_scope": "repository_contracts_only",
+        "formal_release_qualified": False,
         "status": "pass" if not failures else "fail",
         "repo_root": str(repo_root),
         "summary": {
@@ -530,10 +505,8 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
             "passed": len(checks) - len(failures),
             "failed": len(failures),
             "compatibility_entries": len(COMPATIBILITY_ENTRIES),
-            "roadmap_reports": len(_REQUIRED_REPORTS),
-            "roadmap_test_files": len(_REQUIRED_TESTS),
-            "target_final_reports": len(_REQUIRED_TARGET_SEAL_REPORTS),
-            "configured_targets": len(configured_targets),
+                "roadmap_test_files": len(_REQUIRED_TESTS),
+                "configured_targets": len(configured_targets),
         },
         "checks": [item.as_dict() for item in checks],
         "compatibility": compat.get("summary", {}),

@@ -330,6 +330,15 @@ class TransportFrame:
         }
 
 
+def _delivery_session_digest(link: DelegationLink) -> str:
+    """Stable delivery-session context across reconnects, bound to source/provider proof.
+
+    This is a context integrity binding, not a cryptographic signature or a
+    protection against a malicious caller holding the current link and frame.
+    """
+    return canonical_digest({"kind": "delegated-delivery-session-v1", "link": link.as_dict()})
+
+
 @dataclass(frozen=True, slots=True)
 class DeliveryAck:
     delegation_id: str
@@ -337,15 +346,26 @@ class DeliveryAck:
     acknowledged_sequence: int
     event_id: str
     duplicate: bool = False
+    frame_digest: str = ""
+    session_digest: str = ""
+    attestation_digest: str = ""
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "DeliveryAck":
+        # Never coerce booleans, strings or floats into a durable cursor sequence.
+        sequence = payload.get("acknowledged_sequence")
+        duplicate = payload.get("duplicate", False)
+        if type(sequence) is not int or type(duplicate) is not bool:
+            raise DistributedTransportError("invalid acknowledgement sequence or duplicate flag")
         return cls(
             delegation_id=str(payload.get("delegation_id") or ""),
             child_run_id=str(payload.get("child_run_id") or ""),
-            acknowledged_sequence=int(payload.get("acknowledged_sequence") or 0),
+            acknowledged_sequence=sequence,
             event_id=str(payload.get("event_id") or ""),
-            duplicate=bool(payload.get("duplicate", False)),
+            duplicate=duplicate,
+            frame_digest=str(payload.get("frame_digest") or ""),
+            session_digest=str(payload.get("session_digest") or ""),
+            attestation_digest=str(payload.get("attestation_digest") or ""),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -356,6 +376,9 @@ class DeliveryAck:
             "acknowledged_sequence": self.acknowledged_sequence,
             "event_id": self.event_id,
             "duplicate": self.duplicate,
+            "frame_digest": self.frame_digest,
+            "session_digest": self.session_digest,
+            "attestation_digest": self.attestation_digest,
         }
 
 
@@ -453,6 +476,9 @@ class DelegatedEventReceiver:
                 self.acknowledged_sequence,
                 frame.event_id,
                 duplicate=True,
+                frame_digest=frame.frame_digest,
+                session_digest=_delivery_session_digest(self.link),
+                attestation_digest=self.link.attestation_digest,
             )
         expected = self.acknowledged_sequence + 1
         if sequence != expected:
@@ -479,6 +505,9 @@ class DelegatedEventReceiver:
             sequence,
             frame.event_id,
             duplicate=False,
+            frame_digest=frame.frame_digest,
+            session_digest=_delivery_session_digest(self.link),
+            attestation_digest=self.link.attestation_digest,
         )
 
 
@@ -955,12 +984,19 @@ class AsyncJournalForwarder:
             # is authorization to advance the durable delivery cursor.
             if not isinstance(ack, DeliveryAck):
                 raise DistributedTransportError("transport response lacks a bound delivery acknowledgement")
-            acknowledged = int(ack.acknowledged_sequence)
+            if type(ack.acknowledged_sequence) is not int or type(ack.duplicate) is not bool:
+                raise DistributedTransportError("transport acknowledgement has invalid field types")
+            acknowledged = ack.acknowledged_sequence
             if (
                 acknowledged != int(frame.sequence)
+                or ack.delegation_id != self.link.delegation_id
+                or ack.child_run_id != self.link.child_run_id
                 or ack.delegation_id != frame.delegation_id
                 or ack.child_run_id != frame.child_run_id
                 or ack.event_id != frame.event_id
+                or ack.frame_digest != frame.frame_digest
+                or ack.session_digest != _delivery_session_digest(self.link)
+                or ack.attestation_digest != self.link.attestation_digest
             ):
                 raise DistributedTransportError(
                     "transport acknowledgement does not match the delivered event identity"

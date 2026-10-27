@@ -264,74 +264,8 @@ def _run_fresh_lifecycle_chain() -> dict[str, Any]:
 
 
 def run_gate() -> dict[str, Any]:
-    from .g3_evidence_preflight import assess_evidence
-    preflight = assess_evidence(ROOT, {
-        'life-source': 'LIFE_G3_SOURCE_DISPOSITIONS.json',
-        'life-feature': 'LIFE_G3_FEATURE_DISPOSITIONS.json',
-        'life-promise': 'LIFE_G3_PROMISE_DISPOSITIONS.json',
-    }, {'life': 'LIFE_G3_FINAL_ATTESTATION.json'})
-    _require(preflight['status'] == 'consistent',
-             f"LIFE-G3 historical evidence preflight blocked ({preflight['issue_count']} issues)")
-    before = _git_status()
-    source_path = ROOT / "LIFE_G3_SOURCE_DISPOSITIONS.json"
-    feature_path = ROOT / "LIFE_G3_FEATURE_DISPOSITIONS.json"
-    promise_path = ROOT / "LIFE_G3_PROMISE_DISPOSITIONS.json"
-    att_path = ROOT / "LIFE_G3_FINAL_ATTESTATION.json"
-
-    source = json.loads(source_path.read_text(encoding="utf-8"))
-    feature = json.loads(feature_path.read_text(encoding="utf-8"))
-    promise = json.loads(promise_path.read_text(encoding="utf-8"))
-    att = json.loads(att_path.read_text(encoding="utf-8"))
-
-    _require(source.get("source_obligations") == 168 and len(source.get("rows") or []) == 168, "LIFE-G3 formal source dispositions incomplete")
-    _require(feature.get("feature_obligations") == 45 and len(feature.get("rows") or []) == 45, "LIFE-G3 feature dispositions incomplete")
-    expected_promises = {f"LIFE-P{i:03d}" for i in range(1, 118)} | {f"LIFE-P{i:03d}" for i in range(123, 128)}
-    promise_rows = promise.get("rows") or []
-    _require(promise.get("defined_life_promises") == 122, "LIFE-G3 defined LIFE promise count is not 122")
-    _require(len(promise_rows) == 122, "LIFE-G3 LIFE promise dispositions incomplete")
-    _require({row.get("promise_id") for row in promise_rows} == expected_promises, "LIFE-G3 LIFE promise ID closure mismatch")
-    _require(not ({f"LIFE-P{i:03d}" for i in range(118, 123)} & {row.get("promise_id") for row in promise_rows}), "LIFE-G3 reserved promise IDs were treated as obligations")
-
-    source_root, source_bindings = _verify_evidence(source["rows"], id_field="source_id")
-    feature_root, feature_bindings = _verify_evidence(feature["rows"], id_field="obligation_id")
-    promise_root, promise_bindings = _verify_evidence(promise_rows, id_field="promise_id")
-
-    _require(att.get("source_dispositions_sha256") == _hash(source_path), "LIFE-G3 source disposition digest mismatch")
-    _require(att.get("feature_dispositions_sha256") == _hash(feature_path), "LIFE-G3 feature disposition digest mismatch")
-    _require(att.get("promise_dispositions_sha256") == _hash(promise_path), "LIFE-G3 LIFE promise disposition digest mismatch")
-    _require(att.get("source_evidence_root_sha256") == source_root, "LIFE-G3 source evidence root mismatch")
-    _require(att.get("feature_evidence_root_sha256") == feature_root, "LIFE-G3 feature evidence root mismatch")
-    _require(att.get("promise_evidence_root_sha256") == promise_root, "LIFE-G3 LIFE promise evidence root mismatch")
-    _require(att.get("source_evidence_bindings") == source_bindings, "LIFE-G3 source evidence count mismatch")
-    _require(att.get("feature_evidence_bindings") == feature_bindings, "LIFE-G3 feature evidence count mismatch")
-    _require(att.get("promise_evidence_bindings") == promise_bindings, "LIFE-G3 LIFE promise evidence count mismatch")
-    _require(att.get("defined_life_promises") == 122, "LIFE-G3 attestation does not bind all defined LIFE promises")
-
-    for rel, digest in dict(att.get("prior_seals") or {}).items():
-        path = ROOT / rel
-        _require(path.is_file(), f"LIFE-G3 prior seal missing: {rel}")
-        _require(_hash(path) == digest, f"LIFE-G3 prior seal drift: {rel}")
-
-    fresh = _run_fresh_lifecycle_chain()
-    after = _git_status()
-    _require(after == before, "LIFE-G3 final proof mutated repository state")
-
-    return {
-        "schema_version": 1,
-        "gate": "LIFE-G3",
-        "status": "passed",
-        "native_termux": _is_termux(),
-        "source_obligations": 168,
-        "feature_obligations": 45,
-        "defined_life_promises": 122,
-        "promise_evidence_bindings": promise_bindings,
-        "promise_evidence_root_sha256": promise_root,
-        "source_evidence_bindings": source_bindings,
-        "feature_evidence_bindings": feature_bindings,
-        "source_evidence_root_sha256": source_root,
-        "feature_evidence_root_sha256": feature_root,
-        **fresh,
-    }
+    """Retired historical attestation gate; never infer release status."""
+    raise RuntimeError("LIFE-G3 historical seal retired; use G3R v3 current-source evidence and native receipts")
 
 
 def main() -> int:

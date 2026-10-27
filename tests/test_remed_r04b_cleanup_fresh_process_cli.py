@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests._rmp_c02_durable_fixture import attach_durable_apply_evidence
+
 import json
 import subprocess
 from pathlib import Path
@@ -79,6 +81,7 @@ def test_cli_post_apply_cleanup_uses_fresh_worker_when_parent_policy_is_stale(tm
         metadata={"artifact_path": str(artifact), "delete_artifact_on_success": True},
     )
 
+    attach_durable_apply_evidence(repo, result)
     original = cleanup_lifecycle._cleanup_global_blocker_for_candidate
     cleanup_lifecycle._cleanup_global_blocker_for_candidate = (
         lambda ownership, descriptor, repo_root: ownership.global_blockers[0]
@@ -113,6 +116,7 @@ def test_cli_worker_failure_is_classified_as_artifact_cleanup_failure(tmp_path: 
         metadata={"artifact_path": str(artifact), "delete_artifact_on_success": True},
     )
 
+    attach_durable_apply_evidence(repo, result)
     class Proc:
         returncode = 9
         stdout = ""

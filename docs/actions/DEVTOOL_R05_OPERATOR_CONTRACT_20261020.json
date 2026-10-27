@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "kind": "devtool-actions-r05-operator-contract",
+  "r04b_native": {
+    "run_id": "7524f3b5b2f54e519036682a0331dd05",
+    "passed": 113,
+    "skipped": 0,
+    "native_commit": "f4d5532",
+    "life_cleanup": "ok"
+  },
+  "component": "existing actions ui",
+  "network_default": "none",
+  "auth": "existing GitHub resolver, GET only except explicit collection archive retrieval",
+  "review": "exact dispatch request ID",
+  "follow": {
+    "explicit": true,
+    "poll_limit": 12,
+    "wait_seconds": 5,
+    "no_replay": true
+  },
+  "lineage": "exact pipeline ID, local projection",
+  "workflows": "GET only, explicit",
+  "collect": {
+    "only_correlated": true,
+    "exact_name": true,
+    "submit_requires_enter": true,
+    "additional_confirm_key": "y",
+    "canonical_collector_rechecks": true,
+    "does_not_install_or_release": true
+  },
+  "native_r05_accepted": false,
+  "real_hosted_qualified": false,
+  "device_qualified": false,
+  "release_qualified": false
+}

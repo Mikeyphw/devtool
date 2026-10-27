@@ -1,12 +1,14 @@
 # Devtool generated CORE reference
 
-Registry digest: `b04756a4e8d96ebe76377440f1ae36c8c34943a84e7e793ed9ce18753f1ac00b`
+Registry digest: `63c4b8571a885a6075efec1aef6c6d73cdbcb65f227f9b36662dd897b82bc368`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
 ## Commands
 
 - `actions` — Read-only GitHub Actions provider
+- `actions adopt` — Review or generate pinned target-local GitHub Actions adoption workflow
+- `actions adoption-doctor` — Review A09 host eligibility for configured workflows without changing files
 - `actions android` — Android builds on GitHub Actions and verified APK/AAB acquisition
 - `actions android aab-check` — Inspect source-bound AAB with bundletool (read-only)
 - `actions android aab-import` — Download, verify and register unsigned AAB
@@ -15,7 +17,12 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions android aab-sign` — Locally sign imported AAB using LIFE (requires --yes)
 - `actions android collect` — Fetch or verify and inspect an APK/AAB, registering output as unqualified
 - `actions android discover` — Discover statically declared Android app modules
+- `actions android options-repair` — Review or apply source-bound protected Gradle JVM property repair
 - `actions android plan` — Validate source parity and Android workflow inputs without dispatch
+- `actions android release-import` — Unified Android release: import with registered ACTIONS-10 LIFE authority
+- `actions android release-plan` — Unified Android release: plan with registered ACTIONS-10 LIFE authority
+- `actions android release-run` — Unified Android release: run with registered ACTIONS-10 LIFE authority
+- `actions android release-sign` — Unified Android release: sign with registered ACTIONS-10 LIFE authority
 - `actions android run` — Dispatch an Android build only with explicit --yes
 - `actions android unsigned-check` — Verify exact GitHub unsigned archive and APK (read-only)
 - `actions android unsigned-import` — Download, validate and register unsigned GitHub APK
@@ -31,6 +38,8 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions ci collect` — G5 polyglot collect
 - `actions ci plan` — G5 polyglot plan
 - `actions ci run` — G5 polyglot run
+- `actions collect` — Collect a uniquely named SHA-256 archive from verified exact dispatch
+- `actions detail` — Inspect exact local dispatch/pipeline identity
 - `actions diagnose` — Diagnose GitHub repository identity, access and workflow discovery without mutation
 - `actions download` — Download, SHA-256 verify and register an unextracted Actions ZIP
 - `actions extensions` — G7 optional provider integrations
@@ -40,6 +49,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions extensions publish-plan` — G7 optional publish-plan
 - `actions extensions runners` — G7 optional runners
 - `actions jobs` — Inspect run and job/step states
+- `actions lineage` — Offline read-only Actions pipeline/run/artifact evidence lineage; never qualification
 - `actions logs` — Download remote workflow run logs as a bounded unextracted ZIP to private state
 - `actions pipeline` — Cross-boundary local/remote DAG with frozen source and durable resume
 - `actions pipeline cancel` — Request safe, durable pipeline cancellation without cancelling remote jobs
@@ -48,23 +58,35 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions pipeline run` — Create durable pipeline journal and execute ready nodes
 - `actions pipeline status` — Read local durable pipeline states (no GitHub operations)
 - `actions plan` — Validate workflow ref and inputs without dispatching
+- `actions provider-distributions` — Review or verify typed Go/Python distribution outputs (read-only)
+- `actions provider-doctor` — Read-only local installed toolchains and reviewed host profiles
+- `actions provider-export` — Review, write or verify source-bound provider-hosted workflow
+- `actions provider-plan` — Review exact source-bound native DAG provider plan (never dispatches)
+- `actions qualification` — G8 Actions qualification
+- `actions qualification check` — G8 read-only qualification check
+- `actions qualification report` — G8 read-only qualification report
+- `actions recent` — Read-only local dispatch and pipeline history
 - `actions release` — Independent-policy release provenance qualification
 - `actions release local-build` — Preview or execute local signed release build without Github qualification
 - `actions release local-evidence` — G6 read-only signed APK/AAB provenance and certificate re-verification
+- `actions release local-handoff` — A08 consented local signed-unqualified export/install handoff
 - `actions release local-verify` — Verify local package manifest and pinned LIFE signing certificate
 - `actions release readiness` — Check protected ref, signing secret names and private policy
 - `actions release setup` — Minimum allowed release versionCode
 - `actions release verify` — Read-only package release qualification with signed GitHub provenance
 - `actions rerun` — Request a new remote workflow attempt (explicit confirmation)
 - `actions resume` — Resume a recorded dispatch by its exact request ID
+- `actions review` — Review exact dispatch remote source, attempt and jobs (read-only)
 - `actions run` — Dispatch workflow only with explicit --yes; return run ID if available
 - `actions runs` — List recent remote workflow runs from selected GitHub repository
 - `actions status` — Read-only GitHub Actions provider
+- `actions ui` — Read-only Termux Textual GitHub Actions workspace
 - `actions verify` — Verify a previously downloaded registered GitHub artifact
 - `actions view` — Inspect one remote workflow run
 - `actions watch` — Poll a remote run in the foreground with finite limits (no daemon)
 - `actions workflow` — Read-only GitHub Actions provider
 - `actions workflows` — Read-only GitHub Actions provider
+- `adopt-batch` — Multi-repo source-lock preview, per-repo apply and explicit partial recovery
 - `affected`
 - `ai-prompt`
 - `android`
@@ -104,14 +126,16 @@ This file is generated from the CORE command/config registry and the canonical C
 - `android uninstall`
 - `android-hud-bridge`
 - `apply`
-- `apply overlay`
 - `apply overlays`
+- `apply overlay`
 - `apply snapshot`
 - `artifact`
 - `artifact inspect`
 - `artifact list`
 - `artifact prune`
 - `artifact verify`
+- `artifacts` — Read-only artifact integrity (does not update registry)
+- `artifacts verify` — Rehash an existing registry record and inspect producer identity
 - `audit`
 - `audit delta`
 - `audit record`
@@ -160,6 +184,11 @@ This file is generated from the CORE command/config registry and the canonical C
 - `delivery plan`
 - `detect`
 - `doctor`
+- `evidence` — Typed evidence and report validation (read-only)
+- `evidence lineage` — Read-only canonical EXO node and remote lineage
+- `evidence merge-tests` — Read-only hash-bound deterministic test shard merge
+- `evidence normalize` — Parse an actual test report without claiming hosted authority
+- `evidence validate` — Check version, exact identity and untrusted reported gates
 - `federation`
 - `federation affected`
 - `federation artifacts`
@@ -167,6 +196,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `federation bootstrap`
 - `federation capabilities`
 - `federation conformance`
+- `federation dag-contract` — Read-only child-owned producer/consumer DAG and source-lock evidence
 - `federation diff`
 - `federation doctor`
 - `federation exec`
@@ -238,6 +268,7 @@ This file is generated from the CORE command/config registry and the canonical C
 - `logs tail`
 - `menu`
 - `menu validation`
+- `migration` — Git-locked extraction inventory, durable generated-data escrow and two-commit recovery
 - `oci`
 - `oci bootstrap`
 - `oci build`
@@ -257,7 +288,9 @@ This file is generated from the CORE command/config registry and the canonical C
 - `oci workspace`
 - `overlay`
 - `overlay check`
+- `overlay plan` — Review overlay source, patch presence, and safe lifecycle next step (read-only)
 - `overlay rebase`
+- `overlay recovery-plan` — Read-only transaction rollback and LIFE cleanup recovery evidence
 - `overlay status`
 - `package`
 - `plan`
@@ -318,6 +351,10 @@ This file is generated from the CORE command/config registry and the canonical C
 - `termux explain`
 - `termux packages`
 - `test`
+- `transaction` — Historical marker operations (no Git checkout rollback or integration)
+- `transaction inspect` — Inspect historical retirement predicates without side effects
+- `transaction retire` — Explicitly escrow historical active markers, preserving checkout
+- `transaction unretire` — Restore matching escrowed active markers
 - `tui`
 - `ui-contract`
 - `validate`
@@ -338,6 +375,8 @@ This file is generated from the CORE command/config registry and the canonical C
 - `validation-stop`
 - `variants`
 - `wine-validate`
+- `workflow` — Native workflow retry planning and guarded execution
+- `workflow retry` — Plan failed-node retry, execute only with explicit --yes
 - `workflows`
 - `wrapper`
 - `wrapper describe`
@@ -351,9 +390,14 @@ This file is generated from the CORE command/config registry and the canonical C
 - `wrapper status`
 - `wrapper update`
 - `wrapper verify`
-- `actions qualification` — G8 Actions qualification
-- `actions qualification check` — G8 read-only qualification check
-- `actions qualification report` — G8 read-only qualification report
+- `actions overview` — Read-only Actions overview
+- `capabilities` — Source-aware capability inventory
+- `actions android release-batch-plan` — Source-bound unsigned Android release batch
+- `actions android release-batch-run` — Source-bound unsigned Android release batch
+- `actions android release-batch-check` — Source-bound unsigned Android release batch
+- `actions android release-batch-import` — Source-bound unsigned Android release batch
+- `actions android release-batch-sign` — Source-bound unsigned Android release batch
+- `onboard` — In-place whole-repository review, ownership and source-bound onboarding
 
 ## Configuration documents
 

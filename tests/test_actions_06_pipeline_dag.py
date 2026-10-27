@@ -50,7 +50,9 @@ def make(repo, body=None):
     return commit(repo)
 
 
-def remote_preflight(client, slug, workflow, ref, inputs, *, execute):
+def remote_preflight(client, slug, workflow, ref, inputs, *, execute, expected_source_sha=None):
+    if execute:
+        assert expected_source_sha == client.head
     assert slug == SLUG
     assert workflow == 'devtool-android-build.yml'
     return {'pre_dispatch_sha':client.head,'workflow_id':99,
@@ -217,10 +219,19 @@ def test_native_workflow_delegation_bounded_and_not_shell(tmp_path, monkeypatch)
     from devtool.actions_pipeline import _local_invoke
     calls=[]
     def run(cmd, **kwargs):
-        calls.append((cmd,kwargs))
+        from devtool.run_store import RunCatalog
+        from devtool.core_runtime import private_run_root
+        record=json.loads(Path(kwargs['env']['DEVTOOL_MANAGED_RUN_HANDOFF']).read_text())
+        child_id=record['run_id']
+        catalog=RunCatalog.open(private_run_root(tmp_path))
+        catalog.add_run({'run_id':child_id,'command_id':'invoke','status':'succeeded',
+                         'exit_code':0,'finished_at':'2026-10-20T00:00:00Z'})
+        catalog.save()
+        calls.append((cmd,kwargs,child_id))
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr('devtool.actions_pipeline.subprocess.run',run)
-    _local_invoke(tmp_path,{'kind':'local-invoke','action':'codegen','target':'devtool'})
+    recorded=_local_invoke(tmp_path,{'kind':'local-invoke','action':'codegen','target':'devtool'})
+    assert recorded == calls[0][2]
     assert calls[0][0][:3] == [__import__('sys').executable,'-m','devtool']
     assert calls[0][0][-4:]==['invoke','codegen','--target','devtool']
     assert calls[0][1]['timeout']==900 and calls[0][1]['cwd']==tmp_path

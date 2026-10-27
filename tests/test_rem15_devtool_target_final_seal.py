@@ -87,7 +87,7 @@ class Rem15DevtoolTargetFinalSealTests(unittest.TestCase):
     def test_repository_wide_final_seal_still_passes_after_target_split(self) -> None:
         payload = final_seal_report(ROOT)
         self.assertEqual(payload["status"], "pass", payload)
-        report_check = next(item for item in payload["checks"] if item["id"] == "roadmap.reports")
+        report_check = next(item for item in payload["checks"] if item["id"] == "tests.roadmap-contracts")
         self.assertEqual(report_check["status"], "pass")
 
 

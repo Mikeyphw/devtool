@@ -14,7 +14,7 @@ devtool final-seal --target devtool --strict
 
 `--target <name>` emits the deterministic final seal for one configured workspace target, which lets the last remediation step be shipped as one overlay per target while keeping the repository-wide FS03 gate intact.
 
-`--strict` exits non-zero when any seal check fails. The versioned report verifies canonical repository configuration, compatibility-registry integrity, explicit schema versions, roadmap reports and contract suites, canonical TOML examples, completion synchronization, the `final-seal` validation profile, tracked-backup hygiene, target roots, and release-document discoverability.
+`--strict` exits non-zero when any seal check fails. The versioned report verifies canonical repository configuration, compatibility-registry integrity, explicit schema versions, contract-suite presence/syntax and the live final-seal validation profile, canonical TOML examples, completion synchronization, the `final-seal` validation profile, tracked-backup hygiene, target roots, and release-document discoverability.
 
 The release validation profile is available separately:
 
@@ -50,7 +50,7 @@ devtool final-seal --target android_hud --strict
 devtool final-seal --strict
 ```
 
-The target reports are side-effect-free. They verify that the selected target exists in `.devtool.toml`, matches its sealed runner/platform/root identity, owns the expected files and regression tests, and has a concrete target-specific overlay apply command.
+The target reports are side-effect-free and check real CLI dispatch, not historical Markdown report contents. They verify that the selected target exists in `.devtool.toml`, matches its sealed runner/platform/root identity, owns the expected files and regression tests, and has a concrete target-specific overlay apply command.
 
 ## Final remediation coverage manifest
 
@@ -61,3 +61,21 @@ The repository-wide final seal also reads `FINAL_REMEDIATION_COVERAGE.json`. Tha
 The `final-seal` validation profile now does more than set `final_seal_contracts=true`: every runner validation plan appends a target-scoped final-seal `CommandSpec` when that flag is active. The root target plans `python-final-seal`, and the Android HUD target plans `android-final-seal`.
 
 `FINAL_REMEDIATION_COVERAGE.json` uses schema v2 and lists all 308 assigned finding IDs exactly once. The release seal rejects missing, duplicated, or out-of-range assignment evidence.
+
+## Phase B: legacy-report retirement
+
+FS03 no longer requires 34 milestone reports or two target qualification reports
+as inputs. Report presence and prose do not prove operational correctness.
+The historical documents may be archived or removed separately without causing
+a false failure (or false success) in the active seal.
+
+Instead, the contract gate inspects active configuration, target roots,
+strict CLI arguments, the final-seal validation policy (including external
+artifact verification), required regression test contracts, backup hygiene,
+and Android operations convergence. The target gate still verifies target
+validation task declarations and owned project/test files.
+
+**Important:** `status=pass` means the structural FS03 contract passed only.
+`formal_release_qualified` remains `false`. Successful test execution,
+G3R native evidence, artifact verification and unresolved real-substrate
+obligations require independent qualification; this gate cannot waive them.

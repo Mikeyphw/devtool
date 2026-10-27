@@ -379,6 +379,21 @@ def worker_doctor_payload(
             "detail": "inspect OpenSSH known_hosts evidence before changing host-key policy",
         })
 
+    from .ssh_r07_reliability import worker_substrate, return_recovery_inventory
+    runtime_substrate = worker_substrate(
+        probe.platform, probe.home, probe.prefix,
+        proot_available=bool(probe.tools.get("proot_distro")),
+        proot_ready=bool(oci_runtime.get("ready")),
+    )
+    recovery_inventory = {"kind": "ssh-return-recovery-inventory", "state": "not-requested"}
+    if repo_root:
+        try:
+            recovery_inventory = return_recovery_inventory(
+                repo_root, profile=config.profile, destination=config.destination,
+            )
+        except (OSError, ValueError) as exc:
+            recovery_inventory = {"kind": "ssh-return-recovery-inventory", "ok": False, "reason": type(exc).__name__}
+
     payload = {
         "schema_version": 1,
         "kind": "ssh-worker-doctor",
@@ -398,6 +413,8 @@ def worker_doctor_payload(
         },
         "execution": {
             "provider": provider,
+            "runtime_substrate": runtime_substrate,
+            "return_recovery_inventory": recovery_inventory,
             "proot_oci_runtime": oci_runtime,
             "automatic_sync": config.workspace_mode in {"managed", "ephemeral"},
             "tmux_owned_phases": True if config.profile else bool(config.worker_tmux),

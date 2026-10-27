@@ -178,16 +178,19 @@ def notify_apply_finished(
 def post_apply_notification(notification: ApplyNotification) -> None:
     if not notification.should_emit:
         return
+    if _prefer_android_side():
+        _post_android(notification)
+        return
+    from .notification_controls import os_output_enabled
+    if not os_output_enabled("notifications", android=False):
+        return
     if notification.bell and sys.stderr.isatty():
         try:
             sys.stderr.write("\a")
             sys.stderr.flush()
         except OSError:
             pass
-    if _prefer_android_side():
-        _post_android(notification)
-    else:
-        _post_desktop(notification)
+    _post_desktop(notification)
 
 
 def _prefer_android_side() -> bool:
@@ -233,12 +236,25 @@ def _post_desktop(notification: ApplyNotification) -> None:
 
 
 def _post_android(notification: ApplyNotification) -> None:
-    if not _android_app_run_notification_active():
-        _post_termux_notification(notification)
+    from .notification_controls import os_output_enabled, output_mode, companion_installed
 
-    toasted = _post_termux_toast(notification.toast)
-    if not toasted:
-        _post_android_bridge_toast(notification)
+    # One positive check, shared across notification and toast decisions.
+    # Explicit "off" is never overridden. "on" opts back in despite the app.
+    modes = (output_mode("notifications"), output_mode("toasts"))
+    app_detected = companion_installed() if "auto" in modes else False
+    if os_output_enabled("notifications", android=True, app_detected=app_detected):
+        if notification.bell and sys.stderr.isatty():
+            try:
+                sys.stderr.write("\a")
+                sys.stderr.flush()
+            except OSError:
+                pass
+        if modes[0] == "on" or not _android_app_run_notification_active():
+            _post_termux_notification(notification)
+    if os_output_enabled("toasts", android=True, app_detected=app_detected):
+        toasted = _post_termux_toast(notification.toast)
+        if not toasted:
+            _post_android_bridge_toast(notification)
 
 
 def _android_app_run_notification_active() -> bool:

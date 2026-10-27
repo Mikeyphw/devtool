@@ -833,6 +833,12 @@ inputs = ["pyproject.toml", "devtool/**"]
 metadata = { read_only = false, roadmap_id = "DIST-R01", transaction_root_aware = true, purpose = "candidate-runtime-binding" }
 
 [targets.devtool.workflows]
+qual-ci24-start = [{ id = "dispatch", ref = "test:qual-ci24-start" }]
+qual-ci24-resume = [{ id = "observe", ref = "test:qual-ci24-resume" }]
+qual-g3r-native = [{ id = "native", ref = "test:qual-g3r-native" }]
+qual-g3r-verify = [{ id = "verify", ref = "test:qual-g3r-verify" }]
+qual-status = [{ id = "status", ref = "test:qual-status" }]
+qual-seal = [{ id = "seal", ref = "test:qual-seal" }]
 roadmap-env-x01 = [
   { id = "syntax", ref = "job:source-syntax", depends_on = [] },
   { id = "env-x01", ref = "test:roadmap-env-x01", depends_on = ["syntax"] },
@@ -4767,3 +4773,78 @@ command = [
   "tests/test_pres_h02_textual_apply_host.py",
   "-k", "real_apply_host_app_runs_on_textual_main_thread_when_required",
 ]
+
+# QW01: canonical repository wrapper commands, with no second scheduler.
+# These workflows delegate to ACTIONS-02/03/04 and G3R v3's exact-source gates.
+[wrapper.commands.ci24-start]
+description = "Dispatch source-bound 24-shard GitHub CI exactly once (durable journal)"
+workflow = "qual-ci24-start"
+target = "devtool"
+
+[wrapper.commands.ci24-resume]
+description = "Observe and independently verify 24-shard CI (never redispatch)"
+workflow = "qual-ci24-resume"
+target = "devtool"
+
+[wrapper.commands.g3r-native]
+description = "Produce and independently verify 13-lane native Termux G3R evidence"
+workflow = "qual-g3r-native"
+target = "devtool"
+
+[wrapper.commands.g3r-verify]
+description = "Verify exact-source native G3R archive (no lane rerun)"
+workflow = "qual-g3r-verify"
+target = "devtool"
+
+[wrapper.commands.qualify-status]
+description = "Inspect current-source CI24/G3R receipts without promoting stale evidence"
+workflow = "qual-status"
+target = "devtool"
+
+[wrapper.commands.qualify-seal]
+description = "Reverify CI24, G3R and FS03; automated milestone only, not release"
+workflow = "qual-seal"
+target = "devtool"
+
+
+[[test]]
+id = "qual-ci24-start"
+name = "QW01 ci24-start canonical qualification workflow"
+runner = "command"
+timeout_seconds = 300
+command = ["python3", "-m", "devtool.qualification_workflows", "ci24-start"]
+
+[[test]]
+id = "qual-ci24-resume"
+name = "QW01 ci24-resume canonical qualification workflow"
+runner = "command"
+timeout_seconds = 900
+command = ["python3", "-m", "devtool.qualification_workflows", "ci24-resume"]
+
+[[test]]
+id = "qual-g3r-native"
+name = "QW01 g3r-native canonical qualification workflow"
+runner = "command"
+timeout_seconds = 9000
+command = ["python3", "-m", "devtool.qualification_workflows", "g3r-native"]
+
+[[test]]
+id = "qual-g3r-verify"
+name = "QW01 g3r-verify canonical qualification workflow"
+runner = "command"
+timeout_seconds = 1200
+command = ["python3", "-m", "devtool.qualification_workflows", "g3r-verify"]
+
+[[test]]
+id = "qual-status"
+name = "QW01 qualify-status canonical qualification workflow"
+runner = "command"
+timeout_seconds = 120
+command = ["python3", "-m", "devtool.qualification_workflows", "qualify-status"]
+
+[[test]]
+id = "qual-seal"
+name = "QW01 qualify-seal canonical qualification workflow"
+runner = "command"
+timeout_seconds = 1500
+command = ["python3", "-m", "devtool.qualification_workflows", "qualify-seal"]

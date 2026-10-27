@@ -22,10 +22,11 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     steps:
-      - name: Checkout exact selected commit
+      - name: Checkout exact selected commit and historical provenance
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0  # Phase D SHA-256 proof uses git show <ancestor>:<path>.
       - name: Python 3.13
         uses: actions/setup-python@v5
         with:
@@ -35,6 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
+          python -m pip install 'setuptools>=75,<82' wheel 'coverage>=7,<9' 'cryptography>=43,<47'
           python -m pip install -e '.[textual]' pytest pexpect
       - name: Run assigned modules with bounded subprocesses and live output
         shell: bash
@@ -62,10 +64,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Checkout exact selected commit
+      - name: Checkout exact selected commit and historical provenance
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0  # Phase D SHA-256 proof uses git show <ancestor>:<path>.
       - name: Python 3.13
         uses: actions/setup-python@v5
         with:

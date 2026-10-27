@@ -91,3 +91,35 @@ def test_explicit_test_failure_remains_test_failure():
         "INSTRUMENTATION_STATUS: numtests=1\nINSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS_CODE: -2\n", 0,
     )
     assert kind == "test-failure" and counts["failed"] == 1
+
+@pytest.mark.parametrize("result_names, skipped, expected", [
+    (("test-a", "test-b"), False, "passed"),
+    (("test-a", "test-a"), False, "failed"),
+    (("test-b", "test-a"), False, "failed"),
+    (("test-a", "unrelated"), False, "failed"),
+    (("test-a", "test-b"), True, "failed"),
+])
+def test_multiple_android_results_bind_exact_command_order(tmp_path, monkeypatch, result_names, skipped, expected):
+    from devtool.project_runners import AndroidGradleRunner
+    from devtool.android.release import AndroidReleaseOrchestrator
+
+    def specs(self, config, action):
+        if action == "test":
+            return [CommandSpec("test-a", ["fake", "a"]), CommandSpec("test-b", ["fake", "b"])]
+        return [CommandSpec(action, ["fake", action])]
+    monkeypatch.setattr(AndroidGradleRunner, "build_specs", specs)
+    fake_context = mock.Mock()
+    fake_context.as_dict.return_value = {"tools": {}}
+    monkeypatch.setattr("devtool.android.release.resolve_android_execution_context", lambda *a, **kw: fake_context)
+
+    def executor(config, planned):
+        if planned[0].name == "test-a":
+            return [OperationResult(name, ["fake"], 0, 0.01, "ok", [], skipped=skipped)
+                    for name in result_names], ""
+        return [OperationResult(planned[0].name, planned[0].argv, 0, 0.01, "ok", [])], ""
+
+    result = AndroidReleaseOrchestrator(_config(tmp_path), executor=executor).run(continue_on_error=True)
+    phase = next(item for item in result.evidence["gates"] if item["name"] == "unit-tests")
+    assert phase["status"] == expected
+    if expected == "failed":
+        assert result.evidence["verdict"] != "passed"

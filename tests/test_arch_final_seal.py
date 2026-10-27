@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 import subprocess
 import zipfile
@@ -25,6 +26,12 @@ from devtool.summary import build_runner_json, render_summary
 from devtool.validation_profiles import BUILTIN_PROFILES
 
 GOLDEN = Path(__file__).parent / "golden"
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain_cli_help(help_text: str) -> str:
+    """Ignore terminal SGR styling; golden help asserts content, not colors."""
+    return _ANSI_SGR.sub("", help_text)
 
 
 def _init_repo(root: Path) -> None:
@@ -120,10 +127,19 @@ def test_golden_cli_help_contract(monkeypatch) -> None:
     # be stable in narrow Termux panes, tmux, CI, and wide desktop terminals,
     # while tolerating Python-version-specific usage grouping punctuation.
     monkeypatch.setenv("COLUMNS", "80")
-    actual = build_parser().format_help()
+    # Python 3.14 can style argparse help under terminal/Termux color policy.
+    # Keep all command/option/text assertions, but compare unstyled content.
+    actual = _plain_cli_help(build_parser().format_help())
     expected = (GOLDEN / "cli-help.txt").read_text(encoding="utf-8")
     assert actual.startswith("usage: devtool ")
     assert _cli_help_body(actual) == _cli_help_body(expected)
+
+
+def test_golden_cli_help_styling_is_not_a_content_change() -> None:
+    plain = build_parser().format_help()
+    styled = plain.replace("usage: devtool ", "\x1b[1;34musage: \x1b[0m\x1b[1;35mdevtool\x1b[0m ", 1)
+    assert _plain_cli_help(styled) == _plain_cli_help(plain)
+    assert _plain_cli_help(styled).startswith("usage: devtool ")
 
 
 def test_golden_validation_summary_contract() -> None:

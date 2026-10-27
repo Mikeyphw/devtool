@@ -173,14 +173,17 @@ def test_ov14_gtk_package_metadata_rejects_injection_and_path_separators() -> No
     assert "deb_path=\"$out/devtool-control-center_${version}_${arch}.deb\"" in text
 
 
-def test_ov13_ov14_report_matches_focused_validation_scope() -> None:
-    report = (ROOT / "DEVTOOL_OV13_OV14_IMPLEMENTATION_REPORT.md").read_text(encoding="utf-8")
-    for token in (
-        "OV-13 — Android logs, privacy & Activity/UI lifecycle",
-        "OV-14 — Desktop persistence, execution, GTK & packaging",
-        "tests/test_ov13_ov14_android_desktop_seal.py",
+def test_ov13_ov14_current_source_privacy_and_packaging_contract() -> None:
+    # Historical success counts in the retired report cannot certify this source.
+    privacy = java("AndroidPrivacyLog.java")
+    desktop = (ROOT / "devtool/desktop/preferences.py").read_text(encoding="utf-8")
+    packaging = PACKAGE.read_text(encoding="utf-8")
+    assert "BuildConfig.DEBUG" in privacy and "SupportRedactor.redact" in privacy
+    assert "os.fsync(handle.fileno())" in desktop and "os.replace(tmp_name, path)" in desktop
+    assert "valid_deb_arch()" in packaging and "valid_deb_version" in packaging
+    for regression in (
         "tests/test_android_debug_phase47c5_c7_lint_cleanup.py",
         "tests/test_desktop_gtk_phase6_7_run_theming.py",
-        "131 passed",
     ):
-        assert token in report
+        path = ROOT / regression
+        assert path.is_file() and "def test_" in path.read_text(encoding="utf-8")

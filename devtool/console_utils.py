@@ -48,7 +48,7 @@ def termux_home_override() -> str:
     return os.environ.get(_TERMUX_HOME_OVERRIDE_ENV, "").strip()
 
 
-def resolve_cli_path(path_text: str) -> Path:
+def resolve_cli_path(path_text: str, *, preserve_leaf: bool = False) -> Path:
     raw = (path_text or "").strip()
     if not raw:
         return Path(raw).resolve()
@@ -66,4 +66,10 @@ def resolve_cli_path(path_text: str) -> Path:
                 raw = f"{override}/{raw[len('$HOME/') :]}"
 
     expanded = os.path.expandvars(raw)
-    return Path(expanded).expanduser().resolve()
+    candidate = Path(expanded).expanduser()
+    # Artifact deletion must retain the literal last component so a symlink
+    # cannot be silently converted to the file it points to. Other callers
+    # keep their existing fully resolved behavior.
+    if preserve_leaf:
+        return candidate.parent.resolve() / candidate.name
+    return candidate.resolve()

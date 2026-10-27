@@ -230,9 +230,18 @@ class TransactionalApplyTests(unittest.TestCase):
 
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always", ResourceWarning)
-                with patch("devtool.cli.render_summary"):
+                with patch("devtool.cli.render_summary"), patch(
+                    "devtool.cli._append_run_log_summary", wraps=__import__(
+                        "devtool.cli", fromlist=["_append_run_log_summary"]
+                    )._append_run_log_summary,
+                ) as summary_log:
                     rc = main(["--repo", str(root), "--yes", "--no-clipboard", "restore"])
                 gc.collect()
+            # The rollback path must emit the actual rollback result. A legacy
+            # path restored files but then crashed while logging an unbound
+            # `results` variable, hiding the true recovery outcome.
+            self.assertTrue(summary_log.called)
+            self.assertEqual(summary_log.call_args.kwargs["results"][0].name, "apply-rollback")
             leaked = [item for item in caught if issubclass(item.category, ResourceWarning)]
             self.assertEqual(leaked, [], [str(item.message) for item in leaked])
 
@@ -242,6 +251,48 @@ class TransactionalApplyTests(unittest.TestCase):
             self.assertIsNone(find_active_transaction(root))
             self.assertFalse((root / ".devtool" / "transactions").exists())
             self.assertFalse(any(transaction_root(root).glob("*/backup")))
+
+    def test_pending_validation_reports_actual_result_without_internal_cli_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False
+        ):
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            (root / ".git").mkdir()
+            (root / "file.txt").write_text("old\n", encoding="utf-8")
+            self._write_generic_config(root)
+            artifact = Path(tmp) / "overlay.zip"
+            with ZipFile(artifact, "w") as archive:
+                archive.writestr("file.txt", "new\n")
+            create_apply_transaction(
+                root, artifact, artifact_type="overlay",
+                preview={"changes": [{"kind": "modify", "path": "file.txt"}],
+                         "counts": {"modify": 1}},
+            )
+            journal = find_active_transactions(root, include_live=True)[0]
+            data = __import__("json").loads(journal.read_text(encoding="utf-8"))
+            data.update({"pid": 99999999, "process_start": "dead",
+                         "status": "applied-pending-validation",
+                         "validation_session_id": "retained-session"})
+            journal.write_text(__import__("json").dumps(data), encoding="utf-8")
+            for marker_file in (transaction_root(root) / "active.json",
+                                transaction_root(root) / "active" / (journal.parent.name + ".json")):
+                if marker_file.is_file():
+                    pointer = __import__("json").loads(marker_file.read_text(encoding="utf-8"))
+                    pointer.update({"pid": 99999999, "process_start": "dead"})
+                    marker_file.write_text(__import__("json").dumps(pointer), encoding="utf-8")
+            with patch("devtool.cli.render_summary"), patch(
+                "devtool.cli._append_run_log_summary"
+            ) as summary_log, patch(
+                "devtool.cli._acquire_single_run_lock"
+            ) as single_run_lock:
+                single_run_lock.return_value.allows_transaction.return_value = False
+                rc = main(["--repo", str(root), "--yes", "--no-clipboard", "restore"])
+            self.assertEqual(rc, 1)
+            self.assertTrue(summary_log.called)
+            self.assertEqual(summary_log.call_args.kwargs["results"][0].name, "validation-pending")
+            self.assertEqual((root / "file.txt").read_text(encoding="utf-8"), "old\n")
+            self.assertTrue(journal.exists(), "Inspection must not erase pending transaction")
 
     def test_delete_manifest_paths_are_transactional(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):

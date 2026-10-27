@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import re
+import stat
 from pathlib import Path
 from typing import Any, Sequence
 
-from .artifacts import artifact_cleanup_paths
 from .repository_identity import build_repository_identity
 from .cleanup_lifecycle import (
     CleanupActionResult,
@@ -36,6 +38,267 @@ def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
 
+def _literal_path(value: str | Path) -> Path:
+    """Keep the exact file name: resolving the leaf follows symlinks to victims."""
+    return Path(os.path.abspath(os.path.expanduser(str(value))))
+
+
+def cleanup_source_snapshot(path: str | Path) -> dict[str, Any]:
+    """Capture the exact consumed source identity; never follow a leaf symlink."""
+    target = _literal_path(path)
+    if target.is_symlink():
+        raise ValueError("source symlink is not an authorized cleanup target")
+    st = target.lstat()
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError("only a regular consumed artifact file may be removed")
+    parent = target.parent.resolve(strict=True)
+    parent_st = parent.stat()
+    return {
+        "path": str(target), "parent": str(parent),
+        "parent_dev": parent_st.st_dev, "parent_ino": parent_st.st_ino,
+        "dev": st.st_dev, "ino": st.st_ino, "size": st.st_size,
+        "mtime_ns": st.st_mtime_ns, "ctime_ns": st.st_ctime_ns,
+    }
+
+
+def _unlink_owned_source(path: Path, expected: dict[str, Any] | None) -> int:
+    """Unlink by an anchored directory fd after revalidating file identity."""
+    current = cleanup_source_snapshot(path)
+    if expected is not None and current != expected:
+        raise ValueError("consumed source identity changed after cleanup authorization")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    parent_fd = os.open(current["parent"], flags)
+    try:
+        pst = os.fstat(parent_fd)
+        if (pst.st_dev, pst.st_ino) != (current["parent_dev"], current["parent_ino"]):
+            raise ValueError("consumed source parent changed before cleanup")
+        st = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("consumed source is not a regular file")
+        if (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns) != (
+            current["dev"], current["ino"], current["size"], current["mtime_ns"], current["ctime_ns"]
+        ):
+            raise ValueError("consumed source identity changed before unlink")
+        os.unlink(path.name, dir_fd=parent_fd)
+        return int(st.st_size)
+    finally:
+        os.close(parent_fd)
+
+
+def _validate_persisted_apply_evidence(
+    root: Path, run_id: str, record_id: str, reason: str,
+    requested_sources: dict[str, dict[str, Any]],
+) -> None:
+    """Validate a runner-persisted RUN-V3 record before deleting its sources.
+
+    This prevents unbacked OperationResult metadata from being treated as a
+    completed apply. It is an identity/consistency check, not authorization
+    against another process with the same filesystem privileges.
+    """
+    if not re.fullmatch(r"[0-9a-f]{32}", run_id):
+        raise ValueError("invalid durable apply run identity")
+    if not re.fullmatch(r"artifact-execution:[0-9a-f]{24}", record_id):
+        raise ValueError("invalid durable artifact execution identity")
+    from .core_runtime import private_run_root
+    from .run_store import RunCatalog
+
+    store = private_run_root(root)
+    catalog = RunCatalog.open(store, create=False)
+    record_path = store / run_id / "artifacts" / (record_id.replace(":", "-") + ".json")
+    if record_path.is_symlink() or not record_path.is_file():
+        raise ValueError("durable artifact execution record is unavailable")
+    data_bytes = record_path.read_bytes()
+    if len(data_bytes) > 65536:
+        raise ValueError("durable artifact execution record is oversized")
+    record = json.loads(data_bytes)
+    if not isinstance(record, dict) or record.get("record_id") != record_id or record.get("run_id") != run_id:
+        raise ValueError("durable artifact execution identity mismatch")
+    if record.get("durability") != "durable" or not str(record.get("artifact_id") or "") or not str(record.get("plan_id") or ""):
+        raise ValueError("durable artifact execution record is incomplete")
+    row = catalog.runs.get(run_id)
+    if not isinstance(row, dict) or any((
+        str(row.get(field) or "") != str(record.get(expected) or "")
+        for field, expected in (("artifact_id", "artifact_id"), ("artifact_plan_id", "plan_id"),
+                                ("artifact_qualification_receipt_id", "qualification_receipt_id"))
+    )):
+        raise ValueError("durable run catalog does not attest this artifact execution")
+    status = str(record.get("execution_status") or "")
+    allowed = {"succeeded", "applied-pending-validation"}
+    if reason == "after failed apply":
+        allowed.update({"failed", "rolled-back", "rollback-failed"})
+    if status not in allowed:
+        raise ValueError("durable artifact execution status is not eligible for cleanup")
+    # The catalog seals the attachment digest when the runner saves the record.
+    # A file substituted after the apply is not acceptable evidence.
+    matching = [item for item in catalog.attachments.values()
+                if item.run_id == run_id and item.kind == "artifact-execution-record"
+                and item.path == str(record_path) and item.state != "tombstoned"]
+    if not any(item.sha256 == hashlib.sha256(data_bytes).hexdigest() for item in matching):
+        raise ValueError("durable artifact execution attachment integrity mismatch")
+    # A valid record for *another* apply must not authorize arbitrary deletion.
+    # The runner separately persists source identities as a catalog-attested
+    # attachment; both the list and the inode/stat snapshots must agree.
+    evidence_path = record_path.with_name(record_path.stem + "-sources.json")
+    if evidence_path.is_symlink() or not evidence_path.is_file():
+        raise ValueError("durable consumed-source provenance is unavailable")
+    evidence_bytes = evidence_path.read_bytes()
+    if len(evidence_bytes) > 65536:
+        raise ValueError("durable consumed-source provenance is oversized")
+    source_evidence = json.loads(evidence_bytes)
+    if (not isinstance(source_evidence, dict)
+        or source_evidence.get("schema_version") != 1
+        or source_evidence.get("repository") != str(root)
+        or source_evidence.get("run_id") != run_id
+        or source_evidence.get("artifact_execution_record_id") != record_id):
+        raise ValueError("durable consumed-source provenance identity mismatch")
+    source_rows = source_evidence.get("sources")
+    if not isinstance(source_rows, list) or not source_rows:
+        raise ValueError("durable consumed-source inventory is missing")
+    source_by_path = {row.get("path"): row for row in source_rows if isinstance(row, dict)}
+    if len(source_by_path) != len(source_rows) or source_by_path != requested_sources:
+        raise ValueError("durable consumed-source inventory does not match the requested source")
+    matching_provenance = [item for item in catalog.attachments.values()
+                           if item.run_id == run_id and item.kind == "artifact-apply-source-provenance"
+                           and item.path == str(evidence_path) and item.state != "tombstoned"]
+    if not any(item.sha256 == hashlib.sha256(evidence_bytes).hexdigest() for item in matching_provenance):
+        raise ValueError("durable consumed-source provenance attachment integrity mismatch")
+
+
+def _read_authority(fd: int, *, root: Path, reason: str, run_id: str, paths: Sequence[str]) -> dict[str, dict[str, Any]]:
+    if fd < 3:
+        raise ValueError("fresh cleanup worker requires parent-issued apply authority")
+    with os.fdopen(os.dup(fd), "rb") as stream:
+        data = stream.read(65537)
+    if len(data) > 65536:
+        raise ValueError("apply cleanup authority exceeds bounded limit")
+    payload = json.loads(data)
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError("invalid apply cleanup authority")
+    if payload.get("repository") != str(root) or payload.get("reason") != reason or payload.get("run_id") != run_id:
+        raise ValueError("apply cleanup authority context mismatch")
+    if not payload.get("apply_completed"):
+        raise ValueError("apply cleanup authority lacks a terminal apply result")
+    rows = payload.get("sources")
+    if not isinstance(rows, list) or not rows or len(rows) > 32:
+        raise ValueError("apply cleanup authority source count invalid")
+    sources = {row["path"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("path"), str)}
+    if len(sources) != len(rows) or sorted(sources) != sorted(str(_literal_path(path)) for path in paths):
+        raise ValueError("apply cleanup authority sources differ from requested paths")
+    evidence = payload.get("execution_records")
+    if not isinstance(evidence, list) or not evidence or len(evidence) > 32:
+        raise ValueError("cleanup authority lacks bounded durable execution provenance")
+    covered: list[str] = []
+    inspected: set[tuple[str, str]] = set()
+    for item in evidence:
+        if not isinstance(item, dict) or not isinstance(item.get("sources"), list) or not item["sources"]:
+            raise ValueError("invalid durable execution source mapping")
+        record_run = str(item.get("run_id") or "")
+        record_id = str(item.get("record_id") or "")
+        key = (record_run, record_id)
+        item_sources = item["sources"]
+        if not all(isinstance(source, str) and source in sources for source in item_sources):
+            raise ValueError("durable execution source mapping contains an unrelated path")
+        if key not in inspected:
+            _validate_persisted_apply_evidence(
+                root, record_run, record_id, reason,
+                {source: sources[source] for source in item_sources},
+            )
+            inspected.add(key)
+        covered.extend(item_sources)
+    if sorted(covered) != sorted(sources) or len(covered) != len(set(covered)):
+        raise ValueError("durable execution provenance does not cover exact consumed sources")
+    return sources
+
+
+
+def external_apply_cleanup_plan_id(
+    root: Path, paths: Sequence[Path], *, reason: str,
+    source_snapshots: dict[str, dict[str, Any]],
+) -> str:
+    """A deletion receipt must identify the *specific files*, not only their names.
+
+    Inode/time/parent snapshots are already protected by phase-2 RUN evidence.
+    Include them in the receipt plan so stale receipts for recycled download
+    filenames cannot be used to reconcile a later timed-out cleanup.
+    """
+    repository_id = build_repository_identity(root).fingerprint
+    names = sorted(str(_literal_path(path)) for path in paths)
+    if len(names) != len(set(names)) or any(name not in source_snapshots for name in names):
+        raise ValueError("cleanup plan requires unique authorized source identities")
+    return "cleanup-plan:" + _digest({
+        "repository_id": repository_id,
+        "policy": "life-apply-source-external-source-identity-v2",
+        "sources": [source_snapshots[name] for name in names],
+        "reason": reason,
+    })[:32]
+
+
+def verified_external_cleanup_receipt(
+    root: Path, paths: Sequence[Path], *, reason: str, run_id: str,
+    source_snapshots: dict[str, dict[str, Any]],
+) -> dict[str, str] | None:
+    """Read-only reconciliation of a terminated worker; never repeat unlink.
+
+    A missing file proves only absence, *not* a completed cleanup. Accept a
+    persisted receipt only when it matches the exact consumed-source identity,
+    current repository, terminal actions and (when set) RUN attachment digest.
+    """
+    if not paths or any(_path_is_within(_literal_path(path), root) for path in paths):
+        return None
+    names = sorted(str(_literal_path(path)) for path in paths)
+    try:
+        plan_id = external_apply_cleanup_plan_id(
+            root, paths, reason=reason, source_snapshots=source_snapshots,
+        )
+        repo_id = build_repository_identity(root).fingerprint
+        directory = root / ".devtool" / "private" / "cleanup" / "receipts"
+        if directory.is_symlink() or not directory.is_dir():
+            return None
+        # Non-mutating bounded scan; an unbounded or unavailable inventory is
+        # UNKNOWN, never a successful recovery.
+        paths_to_check = []
+        for index, candidate in enumerate(directory.glob("cleanup-receipt-*.json")):
+            if index >= 4096:
+                return None
+            paths_to_check.append(candidate)
+        catalog = None
+        if run_id:
+            from .core_runtime import private_run_root
+            from .run_store import RunCatalog
+            catalog = RunCatalog.open(private_run_root(root), create=False)
+        for candidate in paths_to_check:
+            if candidate.is_symlink() or not candidate.is_file() or candidate.stat().st_size > 65536:
+                continue
+            raw = candidate.read_bytes()
+            row = json.loads(raw)
+            if not isinstance(row, dict) or row.get("plan_id") != plan_id:
+                continue
+            if (row.get("repository_id") != repo_id or row.get("status") != "applied"
+                or row.get("scope") != "project" or row.get("destination") != "local"
+                or candidate.name != str(row.get("receipt_id", "")).replace(":", "-") + ".json"):
+                continue
+            results = row.get("results")
+            if (not isinstance(results, list) or len(results) != len(names)
+                or sorted(str(item.get("path")) for item in results if isinstance(item, dict)) != names
+                or any(not isinstance(item, dict) or item.get("status") != "applied"
+                       or item.get("postcondition") != "absent" for item in results)):
+                continue
+            if any(_literal_path(path).exists() or _literal_path(path).is_symlink() for path in paths):
+                continue
+            if catalog is not None and not any(
+                item.run_id == run_id and item.kind == "cleanup-receipt"
+                and item.state != "tombstoned" and item.path == str(candidate)
+                and item.sha256 == hashlib.sha256(raw).hexdigest()
+                for item in catalog.attachments.values()
+            ):
+                continue
+            return {"cleanup_receipt_id": str(row["receipt_id"]),
+                    "cleanup_receipt_path": str(candidate), "cleanup_status": "applied"}
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+    return None
+
+
 def _cleanup_external_apply_sources(
     root: Path,
     existing: Sequence[Path],
@@ -43,6 +306,7 @@ def _cleanup_external_apply_sources(
     *,
     reason: str,
     run_id: str,
+    authorized_sources: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Delete explicitly-consumed external source artifacts without a global rebuild.
 
@@ -55,12 +319,15 @@ def _cleanup_external_apply_sources(
 
     repo_id = build_repository_identity(root).fingerprint
     descriptor_by_path = {str(_canonical(item.path)): item for item in descriptors}
-    plan_id = "cleanup-plan:" + _digest({
-        "repository_id": repo_id,
-        "policy": "life-apply-source-external-bounded-v1",
-        "paths": [str(item) for item in existing],
-        "reason": reason,
-    })[:32]
+    try:
+        snapshots = authorized_sources if authorized_sources is not None else {
+            str(path): cleanup_source_snapshot(path) for path in existing
+        }
+        plan_id = external_apply_cleanup_plan_id(root, existing, reason=reason, source_snapshots=snapshots)
+    except (OSError, ValueError) as exc:
+        return {"returncode": 1, "output": "Refused consumed source cleanup: " + str(exc),
+                "failure_kind": "artifact_cleanup_authority_missing",
+                "metadata": {"cleanup_status": "protected"}}
     rows: list[CleanupActionResult] = []
     reclaimed = 0
     failed = False
@@ -77,9 +344,8 @@ def _cleanup_external_apply_sources(
             failed = True
             continue
         try:
-            size = int(path.lstat().st_size) if (path.exists() or path.is_symlink()) else 0
-            path.unlink(missing_ok=True)
-        except OSError as exc:
+            size = _unlink_owned_source(path, authorized_sources.get(str(path)) if authorized_sources is not None else None)
+        except (OSError, ValueError) as exc:
             rows.append(CleanupActionResult(action_id, resource_id, str(path), "failed", reason=str(exc)))
             failed = True
             continue
@@ -137,15 +403,17 @@ def cleanup_apply_source_artifacts(
     *,
     reason: str,
     run_id: str = "",
+    authorized_sources: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     root = _canonical(repo_root)
     candidates: list[Path] = []
+    # RMP-C02: deleting an artifact family is not the same as deleting the
+    # consumed artifact. Sibling downloads and sidecars require their own
+    # explicit, source-bound apply authorization; do not infer ownership by name.
     for raw_path in artifact_paths:
-        artifact = _canonical(raw_path)
-        for candidate in artifact_cleanup_paths(artifact):
-            resolved = _canonical(candidate)
-            if resolved not in candidates:
-                candidates.append(resolved)
+        literal = _literal_path(raw_path)
+        if literal not in candidates:
+            candidates.append(literal)
 
     existing = [path for path in candidates if path.exists() or path.is_symlink()]
     if not existing:
@@ -178,7 +446,8 @@ def cleanup_apply_source_artifacts(
     ]
     if existing and all(not _path_is_within(candidate, root) for candidate in existing):
         return _cleanup_external_apply_sources(
-            root, existing, descriptors, reason=reason, run_id=run_id
+            root, existing, descriptors, reason=reason, run_id=run_id,
+            authorized_sources=authorized_sources,
         )
 
     ownership = build_cleanup_ownership_view(
@@ -238,6 +507,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--reason", required=True)
     parser.add_argument("--run-id", default="")
+    parser.add_argument("--authority-fd", type=int, default=-1)
     parser.add_argument("artifact", nargs="+")
     return parser
 
@@ -245,11 +515,14 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        root = _canonical(args.repo_root)
+        authority = _read_authority(
+            args.authority_fd, root=root, reason=args.reason,
+            run_id=args.run_id, paths=args.artifact,
+        )
         payload = cleanup_apply_source_artifacts(
-            args.repo_root,
-            args.artifact,
-            reason=args.reason,
-            run_id=args.run_id,
+            root, args.artifact, reason=args.reason, run_id=args.run_id,
+            authorized_sources=authority,
         )
     except BaseException as exc:
         payload = {

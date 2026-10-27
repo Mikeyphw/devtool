@@ -100,6 +100,47 @@ def test_wrapper_schema_migration_is_minimal_and_idempotent() -> None:
     assert second.source_sha256 == second.migrated_sha256
 
 
+def _cli_subprocess_smoke_timeout() -> int:
+    """Bound a *full CLI import* smoke test, not the CORE performance budget.
+
+    Termux Python imports the complete source-bound Devtool parser and can have
+    cold-start variance under device resource pressure. Keep the existing 20s
+    smoke bound on ordinary hosts and a finite 60s bound on native Termux.
+    The separately enforced generated-surface budgets remain unchanged.
+    """
+    executable = str(Path(sys.executable).resolve())
+    return 60 if "/com.termux/files/" in executable else 20
+
+
+def test_cli_smoke_timeout_is_host_bounded_not_generation_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "executable", "/data/data/com.termux/files/usr/bin/python3")
+    assert _cli_subprocess_smoke_timeout() == 60
+    monkeypatch.setattr(sys, "executable", "/usr/bin/python3")
+    assert _cli_subprocess_smoke_timeout() == 20
+    assert PERFORMANCE_BUDGETS_MS["generated_surfaces"] == 5000
+
+
+def test_wrapper_launcher_argv_forwarding_without_python_import(tmp_path: Path) -> None:
+    """Verify the launcher boundary independently from an expensive CLI import."""
+    probe = tmp_path / "argv-probe"
+    probe.write_text("#!/bin/sh\nprintf 'ARG:%s\\n' \"$@\"\n", encoding="utf-8")
+    probe.chmod(0o700)
+    env = os.environ.copy()
+    env["DEVTOOL_WRAPPER_EXECUTABLE"] = str(probe)
+    env["PATH"] = "/usr/bin:/bin"
+    result = subprocess.run(
+        [str(Path("devtoolw").resolve()), "--help", "--", "argument with spaces"],
+        cwd=Path.cwd(), env=env, text=True, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, timeout=5, check=False,
+    )
+    assert result.returncode == 0, result.stdout
+    assert result.stdout.splitlines() == [
+        "ARG:--repo", f"ARG:{Path.cwd().resolve()}",
+        "ARG:wrapper", "ARG:exec", "ARG:--help", "ARG:--",
+        "ARG:argument with spaces",
+    ]
+
+
 def test_devtool_repo_dogfoods_schema2_wrapper_and_source_aware_launchers() -> None:
     config = Path(".devtool.toml").read_text(encoding="utf-8")
     assert "[wrapper]\n" in config
@@ -118,7 +159,7 @@ def test_devtool_repo_dogfoods_schema2_wrapper_and_source_aware_launchers() -> N
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        timeout=20,
+        timeout=_cli_subprocess_smoke_timeout(),
         check=False,
     )
     assert result.returncode == 0, result.stdout
@@ -183,7 +224,7 @@ def test_config_status_and_diff_are_machine_readable_and_side_effect_free() -> N
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=20,
+            timeout=_cli_subprocess_smoke_timeout(),
             check=False,
         )
         assert result.returncode == 0, result.stderr or result.stdout
@@ -271,3 +312,33 @@ def test_storage_status_classifies_owned_families_and_fails_unknown_state(tmp_pa
     failed = run_storage_status(repo, catalog)
     assert failed["status"] == "fail"
     assert failed["inventory"]["unclassified"][0]["family"] == "mystery-state"
+
+
+def test_generated_help_option_index_preserves_full_canonical_order_and_metadata() -> None:
+    """Indexed projection must agree with a deliberately slow independent oracle."""
+    from devtool.core_surfaces import machine_help_payload
+
+    parser = build_parser()
+    registry = build_adopted_core_registry(parser)
+    payload = machine_help_payload(parser, registry)
+    assert payload["parser_parity"]["missing_count"] == 0
+    assert payload["parser_parity"]["option_missing_count"] == 0
+    assert payload["parser_parity"]["option_extra_count"] == 0
+    for command in payload["commands"]:
+        selected_path = tuple(command["path"])
+        expected = []
+        for option in registry.options:
+            metadata = dict(option.metadata)
+            if tuple(str(x) for x in (metadata.get("path") or ())) != selected_path:
+                continue
+            expected.append({
+                "id": option.stable_id,
+                "dest": str(metadata.get("dest") or ""),
+                "spellings": list(option.all_spellings()),
+                "required": bool(metadata.get("required")),
+                "nargs": metadata.get("nargs"),
+                "choices": list(metadata.get("choices") or ()),
+                "help": "" if metadata.get("hidden") else str(metadata.get("help") or ""),
+                "hidden": bool(metadata.get("hidden")),
+            })
+        assert command["options"] == expected, selected_path

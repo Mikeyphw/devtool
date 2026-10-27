@@ -1,0 +1,3432 @@
+{
+  "schema": "devtool-full-closure-roadmap-v1",
+  "source_snapshot": "devtool-20261024-111803-909225.tar.gz",
+  "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+  "audit_sources": [
+    "DEEP_AUDIT_168_PROMISE_MATRIX.json",
+    "DEEPENED_RM11_RM20_PROMISE_MATRIX.json"
+  ],
+  "total_original_obligations": 168,
+  "active_obligations": 160,
+  "cancelled_rm19": 8,
+  "baseline_counts": {
+    "BOUNDED_LOCAL_PASS": 133,
+    "CONFIRMED_PARTIAL": 20,
+    "SOURCE_TEST_COVERAGE_ONLY__NOT_FULLY_VERIFIED": 3,
+    "NOT_DEMONSTRATED": 4,
+    "CANCELLED_BY_USER": 8
+  },
+  "no_claim_of_new_validation": true,
+  "status": "PLANNING_ONLY__SOURCE_UNCHANGED",
+  "obligations": [
+    {
+      "id": "RM00-T1",
+      "milestone": "RM00",
+      "promise": "Extend the versioned LanguageProvider protocol into an allowlisted, reviewed registration mechanism with provider ID, API/schema version, capability flags, supported host profiles, safe command grammar, and explicit artifact roles. Keep arbitrary package entry points and network-loaded plugins disabled by default.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/contracts_v2.py; devtool/evidence_kernel.py; devtool/actions_language_providers.py",
+      "tests": [
+        "tests/test_rm00_shared_contracts.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-07",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM00-T2",
+      "milestone": "RM00",
+      "promise": "Define canonical typed states for local job, remote dispatch, remote completion, verification, device qualification, and release authority; add backwards-compatible adapters for every old producer rather than rewriting historic receipts.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/contracts_v2.py; devtool/evidence_kernel.py; devtool/actions_language_providers.py",
+      "tests": [
+        "tests/test_rm00_shared_contracts.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-07",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM00-T3",
+      "milestone": "RM00",
+      "promise": "Make host admission a first-class target/job property: OS, architecture, root/device, toolchains, signing authority, environment, and constraints. Require explicit refusals for unsupported combinations.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/contracts_v2.py; devtool/evidence_kernel.py; devtool/actions_language_providers.py",
+      "tests": [
+        "tests/test_rm00_shared_contracts.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-07",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM00-T4",
+      "milestone": "RM00",
+      "promise": "Add contract feature negotiation and schema migration readers so old project TOML, receipts, and API consumers keep working.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/contracts_v2.py; devtool/evidence_kernel.py; devtool/actions_language_providers.py",
+      "tests": [
+        "tests/test_rm00_shared_contracts.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-07",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM00-A1",
+      "milestone": "RM00",
+      "promise": "Unknown provider and schema major version reject before execution",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/contracts_v2.py; devtool/evidence_kernel.py; devtool/actions_language_providers.py",
+      "tests": [
+        "tests/test_rm00_shared_contracts.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-07",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM00-A2",
+      "milestone": "RM00",
+      "promise": "Conflicting host declarations fail closed",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/contracts_v2.py; devtool/evidence_kernel.py; devtool/actions_language_providers.py",
+      "tests": [
+        "tests/test_rm00_shared_contracts.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-07",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM00-A3",
+      "milestone": "RM00",
+      "promise": "Legacy typed receipts remain readable with no state promotion",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/contracts_v2.py; devtool/evidence_kernel.py; devtool/actions_language_providers.py",
+      "tests": [
+        "tests/test_rm00_shared_contracts.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-07",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM00-A4",
+      "milestone": "RM00",
+      "promise": "Provider plan never invokes untrusted shell/network or downloads code",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/contracts_v2.py; devtool/evidence_kernel.py; devtool/actions_language_providers.py",
+      "tests": [
+        "tests/test_rm00_shared_contracts.py"
+      ],
+      "evidence": "Provider discovery itself remains non-executing locally; real external provider planning unqualified.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-07",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM01-T1",
+      "milestone": "RM01",
+      "promise": "Add typed output declarations for repository files, per-run temporary roots, shared caches, and external destinations with owner node, lifetime, cleanup rule, and hash-retention policy.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/output_scopes.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm01_output_scopes.py"
+      ],
+      "evidence": "Typed scope declarations exist; hash correctness under parent replacement must not be inferred from schema correctness.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-01",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM01-T2",
+      "milestone": "RM01",
+      "promise": "Map declared output directories to reservation keys and conservative read/write conflict sets. Legacy jobs with unknown writes stay serialized.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/output_scopes.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm01_output_scopes.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-01",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM01-T3",
+      "milestone": "RM01",
+      "promise": "Mint temporary roots under a controlled state directory using secure paths and no-follow resolution; reject traversal, symlinks escaping the root, and overlapping reservations.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/output_scopes.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm01_output_scopes.py"
+      ],
+      "evidence": "Owned output hashing traverses replaced symlink parent; unsafe no-follow resolution. See O-02 and probe_behavior.json.",
+      "severity": "P1",
+      "closure_work_packages": [
+        "FC-01",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM01-T4",
+      "milestone": "RM01",
+      "promise": "Expose conflict reasons and effective reservations in static and live plans; cleanup only owned temporary files after the run and evidence sealing.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/output_scopes.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm01_output_scopes.py"
+      ],
+      "evidence": "Original dangerous root removal race plus missing abrupt-crash cleanup; see previous audit A-02/A-03 and O-01.",
+      "severity": "P1",
+      "closure_work_packages": [
+        "FC-01",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM01-A1",
+      "milestone": "RM01",
+      "promise": "Two disjoint temporary-output writers overlap safely",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/output_scopes.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm01_output_scopes.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-01",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM01-A2",
+      "milestone": "RM01",
+      "promise": "Shared tmp path, overlapping repository writes, and unknown external writes serialize",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/output_scopes.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm01_output_scopes.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-01",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM01-A3",
+      "milestone": "RM01",
+      "promise": "Symlink/path traversal and race replacement are rejected",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/output_scopes.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm01_output_scopes.py"
+      ],
+      "evidence": "Original directory deletion race and new parent-component hash traversal violate race-replacement refusal.",
+      "severity": "P1",
+      "closure_work_packages": [
+        "FC-01",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM01-A4",
+      "milestone": "RM01",
+      "promise": "Cancellation and crash cleanup preserve evidence but never remove foreign files",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/output_scopes.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm01_output_scopes.py"
+      ],
+      "evidence": "Foreign data can be deleted under replacement; original crash recovery remains absent.",
+      "severity": "P1",
+      "closure_work_packages": [
+        "FC-01",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM02-T1",
+      "milestone": "RM02",
+      "promise": "Replace the execution-time `for wave in plan.waves` barrier with a bounded ready queue that reacts to each completed node; retain existing static-wave plan as a conservative compatibility view.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_scheduler.py; devtool/workflow_graph.py",
+      "tests": [
+        "tests/test_rm02_dependency_ready.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM02-T2",
+      "milestone": "RM02",
+      "promise": "Use stable topological tie-breaking, explicit dependency-state accounting, worker occupancy, and reservation acquisition/release to launch newly safe nodes immediately.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_scheduler.py; devtool/workflow_graph.py",
+      "tests": [
+        "tests/test_rm02_dependency_ready.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM02-T3",
+      "milestone": "RM02",
+      "promise": "Handle fail-fast versus continue_on_error, blocked descendants, cancellation, worker crashes, nested specs, and no-op/dry-run deterministically.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_scheduler.py; devtool/workflow_graph.py",
+      "tests": [
+        "tests/test_rm02_dependency_ready.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM02-T4",
+      "milestone": "RM02",
+      "promise": "Publish actual start/end order separately from static planning; never claim precomputed waves are exact live start times.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_scheduler.py; devtool/workflow_graph.py",
+      "tests": [
+        "tests/test_rm02_dependency_ready.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM02-A1",
+      "milestone": "RM02",
+      "promise": "A finishes early; C depending on A starts before independent slow B completes",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_scheduler.py; devtool/workflow_graph.py",
+      "tests": [
+        "tests/test_rm02_dependency_ready.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM02-A2",
+      "milestone": "RM02",
+      "promise": "Read/write conflict with B still blocks C even if A finished",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_scheduler.py; devtool/workflow_graph.py",
+      "tests": [
+        "tests/test_rm02_dependency_ready.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM02-A3",
+      "milestone": "RM02",
+      "promise": "Fail-fast blocks unscheduled dependents but drains/cancels in-flight nodes safely",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_scheduler.py; devtool/workflow_graph.py",
+      "tests": [
+        "tests/test_rm02_dependency_ready.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM02-A4",
+      "milestone": "RM02",
+      "promise": "Stable result ordering and EXO finalization under worker exceptions and cancellation",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_scheduler.py; devtool/workflow_graph.py",
+      "tests": [
+        "tests/test_rm02_dependency_ready.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM03-T1",
+      "milestone": "RM03",
+      "promise": "Normalize native node start, completion, error, timeout, duration, attempt and source/config fingerprint into canonical EXO event shapes; reuse existing event buses and store.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/evidence_lineage.py; devtool/actions_lineage.py",
+      "tests": [
+        "tests/test_rm03_exo_lineage.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM03-T2",
+      "milestone": "RM03",
+      "promise": "Add typed built-in target-local job kinds for `remote-run-correlated`, `remote-build-verified`, and `artifact-verified`; remote dispatch remains under existing Actions authority.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/evidence_lineage.py; devtool/actions_lineage.py",
+      "tests": [
+        "tests/test_rm03_exo_lineage.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM03-T3",
+      "milestone": "RM03",
+      "promise": "Connect local workflow node IDs to Actions request ID, GitHub run ID and attempt, pipeline/federation identity, and artifact receipt; expose a single read-only lineage query/view with partial/unknown states.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/evidence_lineage.py; devtool/actions_lineage.py",
+      "tests": [
+        "tests/test_rm03_exo_lineage.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM03-T4",
+      "milestone": "RM03",
+      "promise": "Ensure restart reconciliation does not invent past events or infer remote success from dispatch acceptance, file presence, or GitHub green checks alone.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/evidence_lineage.py; devtool/actions_lineage.py",
+      "tests": [
+        "tests/test_rm03_exo_lineage.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM03-A1",
+      "milestone": "RM03",
+      "promise": "One node produces exactly one terminal event with durable attempts",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/evidence_lineage.py; devtool/actions_lineage.py",
+      "tests": [
+        "tests/test_rm03_exo_lineage.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM03-A2",
+      "milestone": "RM03",
+      "promise": "Crash/restart recovers correlation without new dispatch",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/evidence_lineage.py; devtool/actions_lineage.py",
+      "tests": [
+        "tests/test_rm03_exo_lineage.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM03-A3",
+      "milestone": "RM03",
+      "promise": "Remote run attempt and artifact source mismatch reject binding",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/evidence_lineage.py; devtool/actions_lineage.py",
+      "tests": [
+        "tests/test_rm03_exo_lineage.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM03-A4",
+      "milestone": "RM03",
+      "promise": "Missing GitHub permissions produce unknown/inaccessible, not pass",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/evidence_lineage.py; devtool/actions_lineage.py",
+      "tests": [
+        "tests/test_rm03_exo_lineage.py"
+      ],
+      "evidence": "Unknown/inaccessible should not be promoted; external trust gates pending.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM04-T1",
+      "milestone": "RM04",
+      "promise": "Implement a read-only retry plan referencing an original run, frozen source and graph, per-node outcomes and node attempt counters.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_retry.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm04_workflow_retry.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM04-T2",
+      "milestone": "RM04",
+      "promise": "Define reusability fingerprints for source, config, inputs, host/toolchain, outputs and verifier receipts; invalidate affected descendants of rerun nodes.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_retry.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm04_workflow_retry.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM04-T3",
+      "milestone": "RM04",
+      "promise": "Allow retry of failed/blocked nodes and explicitly invalidated dependents. Disallow silent replay of non-idempotent mutating jobs, signing, publication and uncertain remote dispatch.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_retry.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm04_workflow_retry.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM04-T4",
+      "milestone": "RM04",
+      "promise": "Persist per-node replay decisions, original run parentage, and provenance with crash-safe resume checkpoints.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_retry.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm04_workflow_retry.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM04-A1",
+      "milestone": "RM04",
+      "promise": "Failed B reruns, passed independent A reused, dependent C reruns",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_retry.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm04_workflow_retry.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM04-A2",
+      "milestone": "RM04",
+      "promise": "Source drift, missing input, altered outputs or toolchain mismatch force invalidation/rejection",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_retry.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm04_workflow_retry.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM04-A3",
+      "milestone": "RM04",
+      "promise": "Non-idempotent and uncertain-remote nodes never auto-replay",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_retry.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm04_workflow_retry.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM04-A4",
+      "milestone": "RM04",
+      "promise": "Interrupted retry resumes from ledger with no duplicate node side effects",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/workflow_retry.py; devtool/workflow_scheduler.py",
+      "tests": [
+        "tests/test_rm04_workflow_retry.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM05-T1",
+      "milestone": "RM05",
+      "promise": "Add a format-aware verifier registry for APK/AAB, Go binary, wheel/sdist, archives, .NET packages, JAR, native binaries and web bundles as providers arrive.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/artifact_convergence.py; devtool/artifact_evidence.py; devtool/artifact_tests.py",
+      "tests": [
+        "tests/test_rm05_artifact_convergence.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM05-T2",
+      "milestone": "RM05",
+      "promise": "Bind each output to one declared producer node, source SHA, native/remote run attempt, path, hash, content identity, verifier version, and dependent consumers. Do not conflate a hash match with signature trust.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/artifact_convergence.py; devtool/artifact_evidence.py; devtool/artifact_tests.py",
+      "tests": [
+        "tests/test_rm05_artifact_convergence.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM05-T3",
+      "milestone": "RM05",
+      "promise": "Extend JUnit/pytest, TRX, Go JSON, Cargo JSON and JavaScript reports with deterministic shard merge, duplicate-case policy, malformed/truncated handling, and per-node EXO result association.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/artifact_convergence.py; devtool/artifact_evidence.py; devtool/artifact_tests.py",
+      "tests": [
+        "tests/test_rm05_artifact_convergence.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM05-T4",
+      "milestone": "RM05",
+      "promise": "Add signed provenance/attestation verification adapters, SBOM references and integrity checks while keeping absent/unsigned/untrusted states explicit and separate from release qualification.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/artifact_convergence.py; devtool/artifact_evidence.py; devtool/artifact_tests.py",
+      "tests": [
+        "tests/test_rm05_artifact_convergence.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM05-A1",
+      "milestone": "RM05",
+      "promise": "Wrong kind, digest, source SHA, attempt and package ID reject",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/artifact_convergence.py; devtool/artifact_evidence.py; devtool/artifact_tests.py",
+      "tests": [
+        "tests/test_rm05_artifact_convergence.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM05-A2",
+      "milestone": "RM05",
+      "promise": "ZIP traversal/duplicate entries/bombs reject before extraction",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/artifact_convergence.py; devtool/artifact_evidence.py; devtool/artifact_tests.py",
+      "tests": [
+        "tests/test_rm05_artifact_convergence.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM05-A3",
+      "milestone": "RM05",
+      "promise": "Shard merge preserves counts and rejects duplicate contradictory test identities",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/artifact_convergence.py; devtool/artifact_evidence.py; devtool/artifact_tests.py",
+      "tests": [
+        "tests/test_rm05_artifact_convergence.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM05-A4",
+      "milestone": "RM05",
+      "promise": "Unsigned does not become verified signature; lacking attestations is not a passing check",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/artifact_convergence.py; devtool/artifact_evidence.py; devtool/artifact_tests.py",
+      "tests": [
+        "tests/test_rm05_artifact_convergence.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM06-T1",
+      "milestone": "RM06",
+      "promise": "Lift the current single-Ubuntu-job exporter into a compiler that partitions a native workflow graph into eligible hosted jobs; preserve node IDs, dependencies and source SHA.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_graph_export.py; devtool/affected.py",
+      "tests": [
+        "tests/test_rm06_graph_export.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM06-T2",
+      "milestone": "RM06",
+      "promise": "Generate GitHub `needs` edges and typed artifact handoffs; refuse graphs with unsupported host boundaries, privileged operations, unsafe secrets, external writers or unreviewed command forms. Keep a single-job fallback.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_graph_export.py; devtool/affected.py",
+      "tests": [
+        "tests/test_rm06_graph_export.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM06-T3",
+      "milestone": "RM06",
+      "promise": "Support opt-in, bounded OS/arch/language-version matrices, dependency cache keys derived from trusted lockfiles, and affected-target selection based on a source ownership graph.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_graph_export.py; devtool/affected.py",
+      "tests": [
+        "tests/test_rm06_graph_export.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM06-T4",
+      "milestone": "RM06",
+      "promise": "Preserve native source of truth and round-trip workflow manifest provenance (generated code SHA, provider schema, target, node, GitHub run attempt).",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_graph_export.py; devtool/affected.py",
+      "tests": [
+        "tests/test_rm06_graph_export.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM06-A1",
+      "milestone": "RM06",
+      "promise": "A→C, independent B maps to correct `needs`, no fake A→B barrier",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_graph_export.py; devtool/affected.py",
+      "tests": [
+        "tests/test_rm06_graph_export.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM06-A2",
+      "milestone": "RM06",
+      "promise": "Multi-host DAG with unsupported device/root jobs refuses rather than silently skipping",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_graph_export.py; devtool/affected.py",
+      "tests": [
+        "tests/test_rm06_graph_export.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM06-A3",
+      "milestone": "RM06",
+      "promise": "Tampered artifact handoff or input SHA fails before consumer starts",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_graph_export.py; devtool/affected.py",
+      "tests": [
+        "tests/test_rm06_graph_export.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Static handoff/tampering local tests do not establish real GitHub artifact delivery.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM06-A4",
+      "milestone": "RM06",
+      "promise": "Matrix cardinality and cache trust bounds enforced; equivalent plans byte-stable",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_graph_export.py; devtool/affected.py",
+      "tests": [
+        "tests/test_rm06_graph_export.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM07-T1",
+      "milestone": "RM07",
+      "promise": "Create reviewed toolchain profiles for Linux, Windows, macOS and Termux where applicable. Separate hosted job eligibility from local host installation.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/toolchain_profiles.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm07_toolchain_profiles.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM07-T2",
+      "milestone": "RM07",
+      "promise": "Pin setup actions by full commit SHA; validate compiler/SDK/runtime requested versions against each provider, including unavailable host/arch combinations.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/toolchain_profiles.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm07_toolchain_profiles.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM07-T3",
+      "milestone": "RM07",
+      "promise": "Implement lockfile-based cache eligibility, no cache of secrets/credentials, permission-scoped paths, timeout policies, matrix fanout caps and deterministic refusals.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/toolchain_profiles.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm07_toolchain_profiles.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM07-T4",
+      "milestone": "RM07",
+      "promise": "Expose one machine-readable provider/toolchain doctor containing installed versions, pinned requested versions, expected runners, missing prerequisites and safe next action.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/toolchain_profiles.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm07_toolchain_profiles.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM07-A1",
+      "milestone": "RM07",
+      "promise": "Missing pinned toolchain or unsupported host rejects early",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/toolchain_profiles.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm07_toolchain_profiles.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM07-A2",
+      "milestone": "RM07",
+      "promise": "Untrusted lockfile, secret path, or cache key injection refused",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/toolchain_profiles.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm07_toolchain_profiles.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM07-A3",
+      "milestone": "RM07",
+      "promise": "Version/matrix caps respected on Windows/macOS/Linux",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/toolchain_profiles.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm07_toolchain_profiles.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM07-A4",
+      "milestone": "RM07",
+      "promise": "Doctor reports unknown separately from missing, with no automatic installation",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/toolchain_profiles.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm07_toolchain_profiles.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM08-T1",
+      "milestone": "RM08",
+      "promise": "Go: discover tracked nested `go.mod` and `go.work` modules, workspace dependencies, Go versions; support vetted test/vet/build/race configurations and explicit GOOS/GOARCH/CGO eligibility.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm08_projects.py; devtool/actions_rm08_native.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm08_completion.py",
+        "tests/test_rm08_projects.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM08-T2",
+      "milestone": "RM08",
+      "promise": "Go: produce executable receipts with OS/architecture/build metadata, target-entrypoint verification, reproducibility checks where deterministic, and module-aware distributions.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm08_projects.py; devtool/actions_rm08_native.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm08_completion.py",
+        "tests/test_rm08_projects.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM08-T3",
+      "milestone": "RM08",
+      "promise": "Python: resolve pyproject build backend and reviewed lock/dependency policies (uv/poetry/pdm/pip), support bounded Python version matrices and coverage reports.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm08_projects.py; devtool/actions_rm08_native.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm08_completion.py",
+        "tests/test_rm08_projects.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM08-T4",
+      "milestone": "RM08",
+      "promise": "Python: run wheel/sdist package checks and isolated install-and-invoke smoke tests with trusted dependencies, respecting Termux and hosted constraints.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm08_projects.py; devtool/actions_rm08_native.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm08_completion.py",
+        "tests/test_rm08_projects.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM08-A1",
+      "milestone": "RM08",
+      "promise": "Nested module/workspace root accepted; invalid go.work replace escapes refused",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm08_projects.py; devtool/actions_rm08_native.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm08_completion.py",
+        "tests/test_rm08_projects.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM08-A2",
+      "milestone": "RM08",
+      "promise": "Race/CGO/OS combination refused on unsupported host",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm08_projects.py; devtool/actions_rm08_native.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm08_completion.py",
+        "tests/test_rm08_projects.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM08-A3",
+      "milestone": "RM08",
+      "promise": "Python wheel built under supported backend and installed-entrypoint smoke test passes",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm08_projects.py; devtool/actions_rm08_native.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm08_completion.py",
+        "tests/test_rm08_projects.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Wheel smoke test local/host-specific; external build backend gates pending.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM08-A4",
+      "milestone": "RM08",
+      "promise": "Missing/untrusted lock and ambiguous build backend fail closed",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm08_projects.py; devtool/actions_rm08_native.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm08_completion.py",
+        "tests/test_rm08_projects.py",
+        "tests/test_rm06_rm09_remaining_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM09-T1",
+      "milestone": "RM09",
+      "promise": "Discover tracked `.sln`, `.slnx`, `.csproj`, `global.json`, NuGet.Config/lockfiles and the relationship between solutions/projects; provide explicit override for unusual repositories.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm09_dotnet.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm09_dotnet.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-06",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM09-T2",
+      "milestone": "RM09",
+      "promise": "Generate bounded restore/build/test/publish DAGs with configurations, TFMs and runtime identifiers; use host eligibility for Windows-only APIs and workloads.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm09_dotnet.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm09_dotnet.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-06",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM09-T3",
+      "milestone": "RM09",
+      "promise": "Collect TRX and coverage artifacts with project/target identities, merge test shards and verify NuGet/portable publication receipts.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm09_dotnet.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm09_dotnet.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-06",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM09-T4",
+      "milestone": "RM09",
+      "promise": "Preserve Devtool local dotnet runner and expose native target/job adoption rather than an isolated Actions script.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm09_dotnet.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm09_dotnet.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-06",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM09-A1",
+      "milestone": "RM09",
+      "promise": "Multiple solutions share restored dependencies without collisions",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/actions_rm09_dotnet.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm09_dotnet.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Cross-job restored dependency sharing remains unproven; repeated independent restores are not shared filesystem state.",
+      "severity": "P2",
+      "closure_work_packages": [
+        "FC-06",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM09-A2",
+      "milestone": "RM09",
+      "promise": "Windows-only target cannot run as Linux job",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm09_dotnet.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm09_dotnet.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-06",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM09-A3",
+      "milestone": "RM09",
+      "promise": "TRX aggregation handles failure/duplicate cases",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm09_dotnet.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm09_dotnet.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-06",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM09-A4",
+      "milestone": "RM09",
+      "promise": "NuGet package identity and runtime RID checks reject wrong output",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm09_dotnet.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm09_dotnet.py",
+        "tests/test_rm06_rm09_consolidated_closure.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-06",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM10-T1",
+      "milestone": "RM10",
+      "promise": "Discover Cargo.toml, workspace members, rust-toolchain, features, target triples and lockfile policy.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm10_cargo.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm10_cargo.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM10-T2",
+      "milestone": "RM10",
+      "promise": "Implement fmt, Clippy, test, build and package jobs using host-specific bounded toolchain setup and optional cross-compilation profiles.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm10_cargo.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm10_cargo.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM10-T3",
+      "milestone": "RM10",
+      "promise": "Capture Cargo JSON test output and crate/binary artifact identities, compile flags, source and attempt lineage.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm10_cargo.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm10_cargo.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM10-T4",
+      "milestone": "RM10",
+      "promise": "Explicitly refuse scripts/toolchains requiring undocumented host permissions or network installation in planning.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm10_cargo.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm10_cargo.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM10-A1",
+      "milestone": "RM10",
+      "promise": "Workspace member DAG, lock and feature matrices correct",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm10_cargo.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm10_cargo.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM10-A2",
+      "milestone": "RM10",
+      "promise": "Clippy/fmt findings remain failed, not warnings",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm10_cargo.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm10_cargo.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM10-A3",
+      "milestone": "RM10",
+      "promise": "Wrong binary target triple rejected",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm10_cargo.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm10_cargo.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM10-A4",
+      "milestone": "RM10",
+      "promise": "No release qualification inferred from successful Cargo package",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm10_cargo.py; devtool/actions_graph_export.py",
+      "tests": [
+        "tests/test_rm10_cargo.py"
+      ],
+      "evidence": "Earlier bounded source/test assessment retained; this turn did not independently validate every input/environment or external host. No additional finding established.",
+      "severity": "n/a",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM11-T1",
+      "milestone": "RM11",
+      "promise": "Discover `package.json`, workspaces, lockfiles and declared npm/pnpm/Yarn/bun package manager/version; refuse ambiguous mixed managers unless selected.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm11_node.py; tests/test_rm11_node.py",
+      "tests": [],
+      "evidence": "Lock manager/workspace, exact scripts, native npm proof, JUnit/tar/manifest, cache and matrix regression cases. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM11-T2",
+      "milestone": "RM11",
+      "promise": "Generate reviewed install, typecheck, lint, test and build jobs from repo-owned scripts, with scripts treated as trusted only under reviewed source lock.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm11_node.py; tests/test_rm11_node.py",
+      "tests": [],
+      "evidence": "Lock manager/workspace, exact scripts, native npm proof, JUnit/tar/manifest, cache and matrix regression cases. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM11-T3",
+      "milestone": "RM11",
+      "promise": "Normalize JUnit/Vitest/Jest-compatible results; verify package tarball, app bundle or static web output manifest and source identity.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm11_node.py; tests/test_rm11_node.py",
+      "tests": [],
+      "evidence": "Lock manager/workspace, exact scripts, native npm proof, JUnit/tar/manifest, cache and matrix regression cases. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM11-T4",
+      "milestone": "RM11",
+      "promise": "Cap Node versions and OS matrices; cache only dependency stores keyed to selected trusted lockfiles.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm11_node.py; tests/test_rm11_node.py",
+      "tests": [],
+      "evidence": "Lock manager/workspace, exact scripts, native npm proof, JUnit/tar/manifest, cache and matrix regression cases. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM11-A1",
+      "milestone": "RM11",
+      "promise": "pnpm monorepo discovery and affected package graph",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/actions_rm11_node.py; tests/test_rm11_node.py",
+      "tests": [],
+      "evidence": "Root-owned tracked src/index.ts and tsconfig.json produce zero affected targets.",
+      "severity": "P2",
+      "closure_work_packages": [
+        "FC-03",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM11-A2",
+      "milestone": "RM11",
+      "promise": "Conflicting lockfiles and arbitrary package-script injection refused",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm11_node.py; tests/test_rm11_node.py",
+      "tests": [],
+      "evidence": "Lock manager/workspace, exact scripts, native npm proof, JUnit/tar/manifest, cache and matrix regression cases. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM11-A3",
+      "milestone": "RM11",
+      "promise": "Web bundle output must match declared artifact root",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm11_node.py; tests/test_rm11_node.py",
+      "tests": [],
+      "evidence": "Lock manager/workspace, exact scripts, native npm proof, JUnit/tar/manifest, cache and matrix regression cases. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM11-A4",
+      "milestone": "RM11",
+      "promise": "Sharded JS test results attached to correct DAG nodes",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm11_node.py; tests/test_rm11_node.py",
+      "tests": [],
+      "evidence": "Lock manager/workspace, exact scripts, native npm proof, JUnit/tar/manifest, cache and matrix regression cases. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM12-T1",
+      "milestone": "RM12",
+      "promise": "Discover Maven POM reactor and Gradle projects/version catalogs, JDK toolchains, modules and target outputs without executing arbitrary plugin scripts in the plan.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/actions_rm12_jvm.py; tests/test_rm12_jvm.py",
+      "tests": [],
+      "evidence": "Tracked version-catalog Android plugin alias is not resolved in Gradle project classification.",
+      "severity": "P2",
+      "closure_work_packages": [
+        "FC-03",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM12-T2",
+      "milestone": "RM12",
+      "promise": "Provide reviewed test/check/JAR/distribution jobs, bounded Java version and OS matrix, caching and tooling provenance.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm12_jvm.py; tests/test_rm12_jvm.py",
+      "tests": [],
+      "evidence": "Maven reactor, literal Gradle, toolchain refusal, real javac/JAR bytes and JUnit aggregation. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM12-T3",
+      "milestone": "RM12",
+      "promise": "Verify manifest/classpath/JAR signatures or desktop bundle structure where applicable without implying production signer trust.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/actions_rm12_jvm.py:279-345; devtool/actions_rm12_jvm.py; tests/test_rm12_jvm.py",
+      "tests": [],
+      "evidence": "verify_desktop_bundle() accepts a desktop distribution whose nested .class payload fails standalone verify_jar; nested class validation is not reused.",
+      "severity": "P2",
+      "closure_work_packages": [
+        "FC-04",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM12-T4",
+      "milestone": "RM12",
+      "promise": "Detect project requiring Android SDK and route to Android provider rather than treating it as a generic JVM build.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/actions_rm12_jvm.py; tests/test_rm12_jvm.py",
+      "tests": [],
+      "evidence": "Android application plugin alias admitted as ordinary JVM project.",
+      "severity": "P2",
+      "closure_work_packages": [
+        "FC-03",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM12-A1",
+      "milestone": "RM12",
+      "promise": "Multi-project Maven/Gradle reactors produce correct dependencies",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm12_jvm.py; tests/test_rm12_jvm.py",
+      "tests": [],
+      "evidence": "Maven reactor, literal Gradle, toolchain refusal, real javac/JAR bytes and JUnit aggregation. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM12-A2",
+      "milestone": "RM12",
+      "promise": "Java toolchain version mismatch rejected",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm12_jvm.py; tests/test_rm12_jvm.py",
+      "tests": [],
+      "evidence": "Maven reactor, literal Gradle, toolchain refusal, real javac/JAR bytes and JUnit aggregation. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM12-A3",
+      "milestone": "RM12",
+      "promise": "JAR output and manifest verification correct",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm12_jvm.py; tests/test_rm12_jvm.py",
+      "tests": [],
+      "evidence": "Maven reactor, literal Gradle, toolchain refusal, real javac/JAR bytes and JUnit aggregation. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM12-A4",
+      "milestone": "RM12",
+      "promise": "Android-only plugin is not silently admitted as ordinary JVM",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/actions_rm12_jvm.py; tests/test_rm12_jvm.py",
+      "tests": [],
+      "evidence": "Android plugin routing bypassed by version catalog alias.",
+      "severity": "P2",
+      "closure_work_packages": [
+        "FC-03",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM13-T1",
+      "milestone": "RM13",
+      "promise": "Discover CMake presets/toolchain files, Meson profiles and native source roots; declare compiler and system dependencies explicitly.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm13_cpp.py; tests/test_rm13_cpp.py",
+      "tests": [],
+      "evidence": "Real native compiler/CMake/CTest and static Meson/MSVC/ABI/sanitizer probes; external MSVC unqualified. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM13-T2",
+      "milestone": "RM13",
+      "promise": "Generate GCC/Clang/MSVC host matrices, CTest suites, bounded sanitizers and permitted build types.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm13_cpp.py; tests/test_rm13_cpp.py",
+      "tests": [],
+      "evidence": "Real native compiler/CMake/CTest and static Meson/MSVC/ABI/sanitizer probes; external MSVC unqualified. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM13-T3",
+      "milestone": "RM13",
+      "promise": "Inspect ELF/PE/Mach-O architecture and ABI compatibility where supported; register archive and symbol artifact contracts.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/actions_rm13_cpp.py:260-323; devtool/actions_rm13_cpp.py; tests/test_rm13_cpp.py",
+      "tests": [],
+      "evidence": "verify_archive() marks a ZIP structure verified despite abi_verified_member_count=0; unlike .a branch, ZIP has no nonzero ABI-member requirement.",
+      "severity": "P2",
+      "closure_work_packages": [
+        "FC-04",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM13-T4",
+      "milestone": "RM13",
+      "promise": "Enforce cache and source path safety for native build intermediates.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm13_cpp.py; tests/test_rm13_cpp.py",
+      "tests": [],
+      "evidence": "Real native compiler/CMake/CTest and static Meson/MSVC/ABI/sanitizer probes; external MSVC unqualified. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM13-A1",
+      "milestone": "RM13",
+      "promise": "Windows MSVC vs Linux Clang/GCC matrices map to eligible runners",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm13_cpp.py; tests/test_rm13_cpp.py",
+      "tests": [],
+      "evidence": "Real native compiler/CMake/CTest and static Meson/MSVC/ABI/sanitizer probes; external MSVC unqualified. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM13-A2",
+      "milestone": "RM13",
+      "promise": "Invalid compiler/sanitizer matrix rejected",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm13_cpp.py; tests/test_rm13_cpp.py",
+      "tests": [],
+      "evidence": "Real native compiler/CMake/CTest and static Meson/MSVC/ABI/sanitizer probes; external MSVC unqualified. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM13-A3",
+      "milestone": "RM13",
+      "promise": "Wrong architecture/ABI binary rejected",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm13_cpp.py; tests/test_rm13_cpp.py",
+      "tests": [],
+      "evidence": "Real native compiler/CMake/CTest and static Meson/MSVC/ABI/sanitizer probes; external MSVC unqualified. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM13-A4",
+      "milestone": "RM13",
+      "promise": "Unsafe CMake presets do not run during read-only discovery",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm13_cpp.py; tests/test_rm13_cpp.py",
+      "tests": [],
+      "evidence": "Real native compiler/CMake/CTest and static Meson/MSVC/ABI/sanitizer probes; external MSVC unqualified. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM14-T1",
+      "milestone": "RM14",
+      "promise": "Detect Bash, POSIX sh, Zsh and Tasker/Termux-sensitive scripts with explicit platform and shell versions.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm14_shell.py; tests/test_rm14_shell.py",
+      "tests": [],
+      "evidence": "Shebang/dialect, quoted argv, hosted-vs-Termux policy, lint/Bats/JUnit refusal and node identity. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM14-T2",
+      "milestone": "RM14",
+      "promise": "Create ShellCheck, shfmt, Bats and safe syntax/compatibility test jobs without executing scripts in discovery.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm14_shell.py; tests/test_rm14_shell.py",
+      "tests": [],
+      "evidence": "Shebang/dialect, quoted argv, hosted-vs-Termux policy, lint/Bats/JUnit refusal and node identity. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM14-T3",
+      "milestone": "RM14",
+      "promise": "Protect command quoting, environment variables and output paths; require reviewed command allowlists for hosted runs.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm14_shell.py; tests/test_rm14_shell.py",
+      "tests": [],
+      "evidence": "Shebang/dialect, quoted argv, hosted-vs-Termux policy, lint/Bats/JUnit refusal and node identity. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM14-T4",
+      "milestone": "RM14",
+      "promise": "Use Android/Termux native eligibility for actual device-specific paths; hosted Linux results are not claimed to establish Termux parity.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm14_shell.py; tests/test_rm14_shell.py",
+      "tests": [],
+      "evidence": "Shebang/dialect, quoted argv, hosted-vs-Termux policy, lint/Bats/JUnit refusal and node identity. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM14-A1",
+      "milestone": "RM14",
+      "promise": "POSIX/Bash/Zsh syntax matrix distinguishes dialects",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm14_shell.py; tests/test_rm14_shell.py",
+      "tests": [],
+      "evidence": "Shebang/dialect, quoted argv, hosted-vs-Termux policy, lint/Bats/JUnit refusal and node identity. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM14-A2",
+      "milestone": "RM14",
+      "promise": "Quoted paths and injection attempts fail safe argv checks",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm14_shell.py; tests/test_rm14_shell.py",
+      "tests": [],
+      "evidence": "Shebang/dialect, quoted argv, hosted-vs-Termux policy, lint/Bats/JUnit refusal and node identity. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM14-A3",
+      "milestone": "RM14",
+      "promise": "Termux-only jobs are refused on ordinary Ubuntu",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm14_shell.py; tests/test_rm14_shell.py",
+      "tests": [],
+      "evidence": "Shebang/dialect, quoted argv, hosted-vs-Termux policy, lint/Bats/JUnit refusal and node identity. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM14-A4",
+      "milestone": "RM14",
+      "promise": "ShellCheck/Bats failures propagate exact node identity",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_rm14_shell.py; tests/test_rm14_shell.py",
+      "tests": [],
+      "evidence": "Shebang/dialect, quoted argv, hosted-vs-Termux policy, lint/Bats/JUnit refusal and node identity. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM15-T1",
+      "milestone": "RM15",
+      "promise": "Implement bounded multiline Gradle settings parser for Kotlin/Groovy DSL, `include`, `projectDir`, catalogs, plugin aliases and straightforward convention plugins; support explicit overrides for ambiguous/dynamic cases.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_android_model.py; tests/test_rm15_android_consumers.py; tests/test_rm15_hf02_release_unification.py",
+      "tests": [],
+      "evidence": "Multiline settings, flavors, native variant artifacts, signature boundaries and JVM option repair tested on synthetic repos. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM15-T2",
+      "milestone": "RM15",
+      "promise": "Build variant registry from declared Gradle model or reviewed target allowlist: handle `officialDebug` and flavor+buildType names, validated Gradle task names, expected outputs and package IDs.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_android_model.py; tests/test_rm15_android_consumers.py; tests/test_rm15_hf02_release_unification.py",
+      "tests": [],
+      "evidence": "Multiline settings, flavors, native variant artifacts, signature boundaries and JVM option repair tested on synthetic repos. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM15-T3",
+      "milestone": "RM15",
+      "promise": "Preserve correct APK/AAB identity and signature/variant verification without assuming custom variants are release-qualified.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_android_model.py; tests/test_rm15_android_consumers.py; tests/test_rm15_hf02_release_unification.py",
+      "tests": [],
+      "evidence": "Multiline settings, flavors, native variant artifacts, signature boundaries and JVM option repair tested on synthetic repos. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM15-T4",
+      "milestone": "RM15",
+      "promise": "Add a reviewable migration for protected JVM/Gradle options: preview old/new config, preserve enforced JVM limits and reject bypasses.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_android_model.py; tests/test_rm15_android_consumers.py; tests/test_rm15_hf02_release_unification.py",
+      "tests": [],
+      "evidence": "Multiline settings, flavors, native variant artifacts, signature boundaries and JVM option repair tested on synthetic repos. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM15-A1",
+      "milestone": "RM15",
+      "promise": "Studyflow convention plugin and Relatório multiline include detected",
+      "baseline_status": "SOURCE_TEST_COVERAGE_ONLY__NOT_FULLY_VERIFIED",
+      "source_paths": "devtool/actions_android_model.py; tests/test_rm15_android_consumers.py; tests/test_rm15_hf02_release_unification.py",
+      "tests": [],
+      "evidence": "Synthetic Gradle tests pass, but actual Studyflow convention plugin and Relatório include not examined.",
+      "severity": "External",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM15-A2",
+      "milestone": "RM15",
+      "promise": "MMRL officialDebug plan and package collection verified",
+      "baseline_status": "SOURCE_TEST_COVERAGE_ONLY__NOT_FULLY_VERIFIED",
+      "source_paths": "devtool/actions_android_model.py; tests/test_rm15_android_consumers.py; tests/test_rm15_hf02_release_unification.py",
+      "tests": [],
+      "evidence": "Custom officialDebug model tests pass, but real MMRL artifact collection not evidenced.",
+      "severity": "External",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM15-A3",
+      "milestone": "RM15",
+      "promise": "Unknown variant and library-only module rejected",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_android_model.py; tests/test_rm15_android_consumers.py; tests/test_rm15_hf02_release_unification.py",
+      "tests": [],
+      "evidence": "Multiline settings, flavors, native variant artifacts, signature boundaries and JVM option repair tested on synthetic repos. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM15-A4",
+      "milestone": "RM15",
+      "promise": "Protected JVM args never downgraded by auto repair",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_android_model.py; tests/test_rm15_android_consumers.py; tests/test_rm15_hf02_release_unification.py",
+      "tests": [],
+      "evidence": "Multiline settings, flavors, native variant artifacts, signature boundaries and JVM option repair tested on synthetic repos. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM16-T1",
+      "milestone": "RM16",
+      "promise": "Add explicit typed wrapper bindings for Actions plan, dispatch, watch, resume, and artifact operations, with source/ref/input schemas, declared scope and side-effect indicators.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_dispatch.py; devtool/actions_control_center.py; tests/test_rm16_controls.py",
+      "tests": [],
+      "evidence": "Typed wrapper, uncertain dispatch deduplication, error codes and 40-column formatting mocked. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM16-T2",
+      "milestone": "RM16",
+      "promise": "Add `resume-if-existing` as an opt-in safe dispatch plan, keyed by source/ref/workflow/inputs with remote request correlation; unresolved requests block duplicate dispatch.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_dispatch.py; devtool/actions_control_center.py; tests/test_rm16_controls.py",
+      "tests": [],
+      "evidence": "Typed wrapper, uncertain dispatch deduplication, error codes and 40-column formatting mocked. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM16-T3",
+      "milestone": "RM16",
+      "promise": "Build a narrow-terminal Actions dashboard combining branch, auth, runs, relevant failures, artifact verification and suggested next safe commands.",
+      "baseline_status": "SOURCE_TEST_COVERAGE_ONLY__NOT_FULLY_VERIFIED",
+      "source_paths": "devtool/actions_dispatch.py; devtool/actions_control_center.py; tests/test_rm16_controls.py",
+      "tests": [],
+      "evidence": "TTY width 40 and mocked overview pass; authenticated real terminal dashboard not observed.",
+      "severity": "External",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM16-T4",
+      "milestone": "RM16",
+      "promise": "Add unified repository capability inventory and shared error code registry with path, affected target/node, receipt, safe remediation and machine output.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_dispatch.py; devtool/actions_control_center.py; tests/test_rm16_controls.py",
+      "tests": [],
+      "evidence": "Typed wrapper, uncertain dispatch deduplication, error codes and 40-column formatting mocked. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM16-A1",
+      "milestone": "RM16",
+      "promise": "Wrapper options cannot inject shell or change unapproved repository",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_dispatch.py; devtool/actions_control_center.py; tests/test_rm16_controls.py",
+      "tests": [],
+      "evidence": "Typed wrapper, uncertain dispatch deduplication, error codes and 40-column formatting mocked. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM16-A2",
+      "milestone": "RM16",
+      "promise": "Repeated uncertain dispatch plans never send second request",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_dispatch.py; devtool/actions_control_center.py; tests/test_rm16_controls.py",
+      "tests": [],
+      "evidence": "Typed wrapper, uncertain dispatch deduplication, error codes and 40-column formatting mocked. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM16-A3",
+      "milestone": "RM16",
+      "promise": "TTY width 40 and JSON output preserve IDs and safe next steps",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_dispatch.py; devtool/actions_control_center.py; tests/test_rm16_controls.py",
+      "tests": [],
+      "evidence": "Typed wrapper, uncertain dispatch deduplication, error codes and 40-column formatting mocked. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM16-A4",
+      "milestone": "RM16",
+      "promise": "Mixed missing auth / no workflow / remote inaccessible errors remain distinct",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/actions_dispatch.py; devtool/actions_control_center.py; tests/test_rm16_controls.py",
+      "tests": [],
+      "evidence": "Typed wrapper, uncertain dispatch deduplication, error codes and 40-column formatting mocked. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM17-T1",
+      "milestone": "RM17",
+      "promise": "Implement previewable mapping of known legacy config schemas, with explicit extension preservation and safe refusal on unknown or ambiguous sections.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/adoption_staged.py; devtool/adoption_batch.py; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Reviewable migration, extension-preserving mapping and offline hooks; staged transaction shares RM18 race. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM17-T2",
+      "milestone": "RM17",
+      "promise": "Integrate config migration, overlay preimage validation, wrapper migration/regeneration and `.gitignore` repair into a single repository-scoped staged transaction and commit.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/adoption_staged.py; devtool/adoption_batch.py; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Shared RM18 staged transaction can overwrite a concurrent worktree edit after safety check.",
+      "severity": "P1",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM17-T3",
+      "milestone": "RM17",
+      "promise": "Add safe upgrade detection for pristine, installed, installed-uncommitted, partial and drifted states; propose a reviewed three-way rebase when source differs and never silently overwrite changes.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/adoption_staged.py; devtool/adoption_batch.py; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Reviewable migration, extension-preserving mapping and offline hooks; staged transaction shares RM18 race. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM17-T4",
+      "milestone": "RM17",
+      "promise": "Add dependency-light, network-free preflight hooks and one guided recovery coordinator reusing historical retirement and transaction journals.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/adoption_staged.py; devtool/adoption_batch.py; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Reviewable migration, extension-preserving mapping and offline hooks; staged transaction shares RM18 race. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM17-A1",
+      "milestone": "RM17",
+      "promise": "Legacy Telegram config migrations remain lossless and reversible",
+      "baseline_status": "NOT_DEMONSTRATED",
+      "source_paths": "devtool/adoption_staged.py; devtool/adoption_batch.py; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Actual Telegram legacy config lossless/reversible migration not demonstrated.",
+      "severity": "External",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM17-A2",
+      "milestone": "RM17",
+      "promise": "Studyflow already-applied wrapper+overlay commits exactly intended paths",
+      "baseline_status": "NOT_DEMONSTRATED",
+      "source_paths": "devtool/adoption_staged.py; devtool/adoption_batch.py; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Actual Studyflow already-applied wrapper+overlay transaction not demonstrated.",
+      "severity": "External",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM17-A3",
+      "milestone": "RM17",
+      "promise": "No writes occur when an unsupported config or stale transaction is found",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/adoption_staged.py; devtool/adoption_batch.py; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Reviewable migration, extension-preserving mapping and offline hooks; staged transaction shares RM18 race. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM17-A4",
+      "milestone": "RM17",
+      "promise": "Offline hooks do not bootstrap venv or download packages; rerun clean no-op",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/adoption_staged.py; devtool/adoption_batch.py; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Reviewable migration, extension-preserving mapping and offline hooks; staged transaction shares RM18 race. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM18-T1",
+      "milestone": "RM18",
+      "promise": "Plan every selected repository before writing any; verify clean trees, HEAD/preimages, absence of stale ledger locks and source-owned paths.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/adoption_staged.py:40-64,290-408; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Global prepare, Git update-ref CAS, repeat, partial compensation and drift refusal tests; uncovered worktree race/recovery hole. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM18-T2",
+      "milestone": "RM18",
+      "promise": "Stage complete candidate trees and local commits under isolated refs/worktrees, then guardedly publish target refs with expected-HEAD leases one repository at a time.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/adoption_staged.py:40-64,290-376; devtool/adoption_staged.py:40-64,290-408; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "In addition to the previously reproduced worktree overwrite, local journal and prepared Git ref substitution can publish bytes whose SHA-256 differs from the reviewed candidate.",
+      "severity": "P1",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM18-T3",
+      "milestone": "RM18",
+      "promise": "Journal each prepare/publish step and support resume or compensating rollback only when HEAD/preimages have not advanced; never force-reset unrelated newer work.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/adoption_staged.py:251-264,290-325,326-376; devtool/adoption_staged.py:40-64,290-408; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Resume trusts recorded prepared_commit/ref without re-deriving candidate tree and approved postimage hashes; requires journal and prepared-ref write access.",
+      "severity": "P2",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM18-T4",
+      "milestone": "RM18",
+      "promise": "Report cross-repository `PARTIAL_COMMIT` explicitly because Git cannot atomically publish refs in independent repositories; provide audited recovery and leave all backups intact.",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/adoption_staged.py:40-64,290-408; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Global prepare, Git update-ref CAS, repeat, partial compensation and drift refusal tests; uncovered worktree race/recovery hole. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM18-A1",
+      "milestone": "RM18",
+      "promise": "Repo N failure before publish produces zero target-branch mutations",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/adoption_staged.py:40-64,290-408; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Global prepare, Git update-ref CAS, repeat, partial compensation and drift refusal tests; uncovered worktree race/recovery hole. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM18-A2",
+      "milestone": "RM18",
+      "promise": "Repo N failure during publish reports partial, prevents unsafe rollback if HEAD moved",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/adoption_staged.py:326-376; devtool/adoption_staged.py:40-64,290-408; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "The earlier worktree race remains, plus a journal/ref substitution can publish different bytes without validation.",
+      "severity": "P1",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM18-A3",
+      "milestone": "RM18",
+      "promise": "Rerunning same manifest is idempotent with no duplicate commits",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/adoption_staged.py:40-64,290-408; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Global prepare, Git update-ref CAS, repeat, partial compensation and drift refusal tests; uncovered worktree race/recovery hole. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM18-A4",
+      "milestone": "RM18",
+      "promise": "Unowned staged files, lock collisions, symlinks, and dirty worktrees reject",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/adoption_staged.py:40-64,290-408; tests/test_rm17_rm18_staged.py",
+      "tests": [],
+      "evidence": "Global prepare, Git update-ref CAS, repeat, partial compensation and drift refusal tests; uncovered worktree race/recovery hole. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM19-T1",
+      "milestone": "RM19",
+      "promise": "Discover owners/consumers across module manifests, Go imports/replaces/go.work, Devtool target jobs, wrapper commands, workflow YAML, installers and tests.",
+      "baseline_status": "CANCELLED_BY_USER",
+      "source_paths": "original roadmap cancellation",
+      "tests": [],
+      "evidence": "Deliberately cancelled; no implementation obligation",
+      "severity": "N/A",
+      "closure_work_packages": [
+        "EXEMPT-RM19"
+      ],
+      "engineering_required": false,
+      "closure_status": "CANCELLED_BY_USER",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Retain explicit user cancellation; no implementation or gate required"
+    },
+    {
+      "id": "RM19-T2",
+      "milestone": "RM19",
+      "promise": "Propose complete, reviewable source and destination path rewrites, ownership changes, deletion candidates, and expected import/module identities; never infer ambiguous rename as certain.",
+      "baseline_status": "CANCELLED_BY_USER",
+      "source_paths": "original roadmap cancellation",
+      "tests": [],
+      "evidence": "Deliberately cancelled; no implementation obligation",
+      "severity": "N/A",
+      "closure_work_packages": [
+        "EXEMPT-RM19"
+      ],
+      "engineering_required": false,
+      "closure_status": "CANCELLED_BY_USER",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Retain explicit user cancellation; no implementation or gate required"
+    },
+    {
+      "id": "RM19-T3",
+      "milestone": "RM19",
+      "promise": "Reuse existing ignored-file escrow with content hashes, `local.properties` handling and unknown-file/symlink rejection (DT-040 already complete).",
+      "baseline_status": "CANCELLED_BY_USER",
+      "source_paths": "original roadmap cancellation",
+      "tests": [],
+      "evidence": "Deliberately cancelled; no implementation obligation",
+      "severity": "N/A",
+      "closure_work_packages": [
+        "EXEMPT-RM19"
+      ],
+      "engineering_required": false,
+      "closure_status": "CANCELLED_BY_USER",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Retain explicit user cancellation; no implementation or gate required"
+    },
+    {
+      "id": "RM19-T4",
+      "milestone": "RM19",
+      "promise": "Route prepare, execute and resume through staged cross-repo coordination with per-repository commits, explicit partial-state receipt, and no force pushes.",
+      "baseline_status": "CANCELLED_BY_USER",
+      "source_paths": "original roadmap cancellation",
+      "tests": [],
+      "evidence": "Deliberately cancelled; no implementation obligation",
+      "severity": "N/A",
+      "closure_work_packages": [
+        "EXEMPT-RM19"
+      ],
+      "engineering_required": false,
+      "closure_status": "CANCELLED_BY_USER",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Retain explicit user cancellation; no implementation or gate required"
+    },
+    {
+      "id": "RM19-A1",
+      "milestone": "RM19",
+      "promise": "XBS-like Go split rewrites imports, module and go.work correctly",
+      "baseline_status": "CANCELLED_BY_USER",
+      "source_paths": "original roadmap cancellation",
+      "tests": [],
+      "evidence": "Deliberately cancelled; no implementation obligation",
+      "severity": "N/A",
+      "closure_work_packages": [
+        "EXEMPT-RM19"
+      ],
+      "engineering_required": false,
+      "closure_status": "CANCELLED_BY_USER",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Retain explicit user cancellation; no implementation or gate required"
+    },
+    {
+      "id": "RM19-A2",
+      "milestone": "RM19",
+      "promise": "Old suite has no stale target/jobs/wrapper/CI/install registration",
+      "baseline_status": "CANCELLED_BY_USER",
+      "source_paths": "original roadmap cancellation",
+      "tests": [],
+      "evidence": "Deliberately cancelled; no implementation obligation",
+      "severity": "N/A",
+      "closure_work_packages": [
+        "EXEMPT-RM19"
+      ],
+      "engineering_required": false,
+      "closure_status": "CANCELLED_BY_USER",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Retain explicit user cancellation; no implementation or gate required"
+    },
+    {
+      "id": "RM19-A3",
+      "milestone": "RM19",
+      "promise": "Ignored module/Gradle outputs escrow, unknown source and symlinks rejected",
+      "baseline_status": "CANCELLED_BY_USER",
+      "source_paths": "original roadmap cancellation",
+      "tests": [],
+      "evidence": "Deliberately cancelled; no implementation obligation",
+      "severity": "N/A",
+      "closure_work_packages": [
+        "EXEMPT-RM19"
+      ],
+      "engineering_required": false,
+      "closure_status": "CANCELLED_BY_USER",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Retain explicit user cancellation; no implementation or gate required"
+    },
+    {
+      "id": "RM19-A4",
+      "milestone": "RM19",
+      "promise": "Conflict/ref advances never silently overwrite newer commits",
+      "baseline_status": "CANCELLED_BY_USER",
+      "source_paths": "original roadmap cancellation",
+      "tests": [],
+      "evidence": "Deliberately cancelled; no implementation obligation",
+      "severity": "N/A",
+      "closure_work_packages": [
+        "EXEMPT-RM19"
+      ],
+      "engineering_required": false,
+      "closure_status": "CANCELLED_BY_USER",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Retain explicit user cancellation; no implementation or gate required"
+    },
+    {
+      "id": "RM20-T1",
+      "milestone": "RM20",
+      "promise": "Recognize Go workspaces, Python projects, JVM/Android modules, .NET solutions, Node workspaces, native projects, and shell packages using providers already implemented.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/onboarding.py:20-249; tests/test_rm20_onboarding.py",
+      "tests": [],
+      "evidence": "Missing .NET/CMake/Meson/shell recognition and Java-only Gradle incorrectly classified Android.",
+      "severity": "P1/P2",
+      "closure_work_packages": [
+        "FC-03",
+        "FC-05",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM20-T2",
+      "milestone": "RM20",
+      "promise": "Propose target boundaries, reusable target-local jobs, DAG dependencies, scheduler resources/output scopes, wrappers, and local-vs-hosted host admission.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/onboarding.py:20-249; tests/test_rm20_onboarding.py",
+      "tests": [],
+      "evidence": "Only target stubs proposed; no reviewed jobs/DAG/output scopes/wrappers/host admission.",
+      "severity": "P2",
+      "closure_work_packages": [
+        "FC-05",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM20-T3",
+      "milestone": "RM20",
+      "promise": "Identify existing source workflows and recommend reuse instead of duplicating GitHub YAML; preserve release/signing/device ownership and unrecognized custom hooks.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/onboarding.py:20-249; tests/test_rm20_onboarding.py",
+      "tests": [],
+      "evidence": "Existing workflows retained, but reusable hooks/workflows and signing/device ownership are not proposed.",
+      "severity": "P2",
+      "closure_work_packages": [
+        "FC-05",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM20-T4",
+      "milestone": "RM20",
+      "promise": "Create one reviewable install manifest suitable for RM-17 and RM-18; emit explainable unsupported/ambiguous decisions.",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/onboarding.py:199-253; devtool/onboarding.py:20-249; tests/test_rm20_onboarding.py",
+      "tests": [],
+      "evidence": "In addition to the concurrent HEAD race, os.replace() can overwrite a newly created .devtool.toml after last source check, while returning APPLIED.",
+      "severity": "P1",
+      "closure_work_packages": [
+        "FC-02",
+        "FC-05",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM20-A1",
+      "milestone": "RM20",
+      "promise": "Studyflow detects app/TV/web/desktop target boundaries",
+      "baseline_status": "NOT_DEMONSTRATED",
+      "source_paths": "devtool/onboarding.py:20-249; tests/test_rm20_onboarding.py",
+      "tests": [],
+      "evidence": "Actual Studyflow app/TV/web/desktop onboarding not demonstrated.",
+      "severity": "External",
+      "closure_work_packages": [
+        "FC-05",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM20-A2",
+      "milestone": "RM20",
+      "promise": "BKX Go+Android dual project does not produce duplicate CI jobs",
+      "baseline_status": "NOT_DEMONSTRATED",
+      "source_paths": "devtool/onboarding.py:20-249; tests/test_rm20_onboarding.py",
+      "tests": [],
+      "evidence": "Actual BKX Go+Android duplicate-free CI onboarding not demonstrated.",
+      "severity": "External",
+      "closure_work_packages": [
+        "FC-05",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM20-A3",
+      "milestone": "RM20",
+      "promise": "Existing custom workflows are retained unless explicitly replaced",
+      "baseline_status": "BOUNDED_LOCAL_PASS",
+      "source_paths": "devtool/onboarding.py:20-249; tests/test_rm20_onboarding.py",
+      "tests": [],
+      "evidence": "Target stub discovery and cautious refusal on known overlap; previous deeper audit uncovered unknown-marker and source drift failures. Original promise has selected code/test coverage; no external qualification claim.",
+      "severity": "None",
+      "closure_work_packages": [
+        "FC-05",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": false,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    },
+    {
+      "id": "RM20-A4",
+      "milestone": "RM20",
+      "promise": "Unknown project or mixed build roots produce a manual-review plan, no guessy mutation",
+      "baseline_status": "CONFIRMED_PARTIAL",
+      "source_paths": "devtool/onboarding.py:20-249; tests/test_rm20_onboarding.py",
+      "tests": [],
+      "evidence": "Unknown mixed build roots can be omitted while safe_to_apply=true.",
+      "severity": "P1",
+      "closure_work_packages": [
+        "FC-03",
+        "FC-05",
+        "FC-08",
+        "FC-09"
+      ],
+      "engineering_required": true,
+      "closure_status": "OPEN_REQUALIFICATION",
+      "release_qualified": false,
+      "source_commit": "445044ac4941c1542754cc19d74ebd785b5d8595",
+      "acceptance_required": "Original T/A promise, matching behavioral or negative test, immutable receipt and any applicable real-host/consumer gate; no simulation as external authority"
+    }
+  ]
+}

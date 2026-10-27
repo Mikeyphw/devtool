@@ -169,6 +169,7 @@ def test_apply_rebase_fully_present_skips_without_commit(tmp_path: Path) -> None
     rc = main(["-y", "-r", str(repo), "apply-overlay", str(overlay), "--rebase", "--no-validate", "--commit-mode", "new", "--commit", "should not happen"])
     assert rc == 0
     assert _git(repo, "rev-parse", "HEAD") == before
+    assert overlay.is_file(), "a fully present rebase must preserve its original input"
 
 
 def test_cli_exposes_overlay_status() -> None:
@@ -197,3 +198,4 @@ def test_apply_rebase_performs_clean_three_way_merge(tmp_path: Path) -> None:
     rc = main(["-y", "-r", str(repo), "apply-overlay", str(overlay), "--rebase", "--no-validate", "--no-commit"])
     assert rc == 0
     assert (repo / "a.txt").read_bytes() == b"one current\ntwo\nthree incoming\n"
+    assert overlay.is_file(), "rebase may consume temporary rebased overlay, not original input"

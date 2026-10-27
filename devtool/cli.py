@@ -119,6 +119,7 @@ from .federation_gate import build_federation_gate1_report, federation_gate1_as_
 from .federation_gate2 import build_federation_gate2_report, federation_gate2_as_dict, render_federation_gate2
 from .federation_final_seal import build_federation_final_seal_report, federation_final_seal_as_dict, render_federation_final_seal
 from .federation_plan import FederationPlanError, build_federated_plan, build_federated_group_plan
+from .federation_dag_contract import FederationDAGContractError
 from .federation_lock import FederationSourceLockError
 from .federation_sync import FederationSyncError
 from .federation_capabilities import FederationCapabilityError, build_capability_graph
@@ -7761,8 +7762,27 @@ def _finalize_cli_run_instance(args: argparse.Namespace, run_id: str, *, status:
                     row["reuse_source_proof_refs"] = list(source_refs)
         except Exception as attach_exc:
             row["execution_attachment_warning"] = f"{type(attach_exc).__name__}: {attach_exc}"
-        catalog.add_run(row)
-        catalog.save()
+        # An apply runner can persist its artifact execution and LIFE source
+        # attachments while the CLI finalizer is assembling its projection.
+        # A previously opened catalog must not overwrite that later durable
+        # authority with a stale RUN row or attachment inventory.
+        latest = RunCatalog.open(private_run_root(repo))
+        previous = set(latest.attachments)
+        for attachment_id, attachment in catalog.attachments.items():
+            if attachment_id not in previous:
+                latest.attachments[attachment_id] = attachment
+            elif latest.attachments[attachment_id] != attachment:
+                raise ValueError("RUN attachment identity collision during finalization")
+        latest_row = dict(latest.runs.get(run_id, {"run_id": run_id}))
+        # Only the finalizer's lifecycle/projection fields supersede freshly
+        # saved runner fields; a stale snapshot is not a replacement authority.
+        for field in ("status", "exit_code", "finished_at", "execution_attachment_refs",
+                      "execution_projection_dir", "execution_history_path",
+                      "reuse_source_proof_refs", "execution_attachment_warning"):
+            if field in row:
+                latest_row[field] = row[field]
+        latest.add_run(latest_row)
+        latest.save()
     except Exception as exc:
         raise RuntimeError(f"unable to finalize canonical RUN identity {run_id}: {exc}") from exc
 
@@ -8439,24 +8459,9 @@ def _preflight(config: ProjectConfig, args: argparse.Namespace) -> int:
 
 
 def _workflow_plan_dot(graph, schedule: WorkflowExecutionPlan | None) -> str:
-    lines = ["digraph devtool_workflow {", '  rankdir="LR";', '  node [shape="box"];']
-    schedule_nodes = schedule.by_key if schedule is not None else {}
-    for node in graph.nodes:
-        scheduled = schedule_nodes.get(node.key)
-        runner = scheduled.runner if scheduled is not None else (node.runner or node.ref.kind)
-        resolution = node.ref.resolution_key or node.ref.name
-        if node.ref.resolution_scope == "target" and resolution:
-            resolution = f"job:{resolution}"
-        label_parts = [node.target, node.label, runner]
-        if resolution and resolution != node.label:
-            label_parts.append(resolution)
-        label = "\n".join(label_parts)
-        lines.append(f'  "{node.key}" [label="{label}"];')
-    for node in graph.nodes:
-        for dependency in node.depends_on:
-            lines.append(f'  "{dependency}" -> "{node.key}";')
-    lines.append("}")
-    return "\n".join(lines)
+    # Keep this compatibility entry point for existing callers and tests.
+    from .workflow_plan_views import render_plan_dot
+    return render_plan_dot(graph, schedule)
 
 
 def _plan_command_entry(index: int, spec: CommandSpec, config: ProjectConfig) -> dict[str, object]:
@@ -8604,8 +8609,26 @@ def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
                 for index, spec in enumerate(specs, 1)
             ],
         }
-        if bool(getattr(args, "dot", False)):
+        from .workflow_plan_views import static_dependency_analysis, render_plan_ascii, render_plan_mermaid
+        payload["analysis"] = static_dependency_analysis(graph, plan)
+        output_flags = {
+            "dot": bool(getattr(args, "dot", False)),
+            "ascii": bool(getattr(args, "ascii", False)),
+            "mermaid": bool(getattr(args, "mermaid", False)),
+            "json": bool(getattr(args, "json", False)),
+        }
+        # Preserve the historical --dot/--json precedence, but reject any new
+        # conflicting format requests instead of silently choosing one.
+        if (output_flags["ascii"] or output_flags["mermaid"]) and sum(output_flags.values()) != 1:
+            raise SystemExit("Choose only one of --ascii, --mermaid, --dot or --json")
+        if output_flags["dot"]:
             print(_workflow_plan_dot(graph, plan))
+            return 0
+        if output_flags["mermaid"]:
+            print(render_plan_mermaid(graph, plan), end="")
+            return 0
+        if output_flags["ascii"]:
+            print(render_plan_ascii(graph, plan), end="")
             return 0
         if bool(getattr(args, "json", False)):
             print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -10000,6 +10023,15 @@ def _run_sequential_overlays(
                     metadata["artifact_paths"] = [str(path) for path in direct_sources]
                     metadata["artifact_path"] = str(direct_sources[0])
                     result.metadata = metadata
+                    # The runner consumed an ad-hoc temporary bundle, but its
+                    # actual sources are the component archives chosen here.
+                    # Replace the temporary bundle's persisted source evidence
+                    # with those exact consumed component identities.
+                    from .runners import _persist_artifact_cleanup_source_provenance
+                    try:
+                        _persist_artifact_cleanup_source_provenance(config.repo_root, result, direct_sources)
+                    except (OSError, ValueError) as exc:
+                        result.metadata["artifact_cleanup_provenance_error"] = type(exc).__name__ + ": " + str(exc)
         all_results.extend(apply_results)
         raw_sections.append(apply_raw)
         transaction_path = _apply_transaction_path(all_results)
@@ -10608,10 +10640,49 @@ def _delete_original_artifact_after_apply(
         return None
 
     artifact_paths = _apply_artifact_paths(results)
-    if not artifact_paths and artifact:
-        artifact_paths = [str(resolve_artifact_path(item)) for item in _artifact_arg_list(artifact)]
-    if not artifact_paths:
+    if not artifact_paths and not artifact:
         return None
+    # Every deleted source must belong to an explicit, unskipped runner apply
+    # result, with a corresponding persisted ArtifactExecutionRecord. Unrelated
+    # operation metadata and a bare CLI filename must never widen that set.
+    apply_names = {"apply-overlay", "apply-overlays", "apply-snapshot"}
+    applied = [row for row in results if row.name in apply_names and not row.skipped]
+    execution_records: list[dict[str, object]] = []
+    owned_sources: list[str] = []
+    for row in applied:
+        metadata = row.metadata if isinstance(row.metadata, dict) else {}
+        if not metadata.get("delete_artifact_on_success"):
+            continue
+        raw = metadata.get("artifact_paths")
+        if isinstance(raw, list):
+            sources_for_row = [str(item) for item in raw if isinstance(item, str) and item]
+        else:
+            single = metadata.get("artifact_path")
+            sources_for_row = [str(single)] if isinstance(single, str) and single else []
+        if not sources_for_row or (row.returncode != 0 and not delete_on_failure):
+            continue
+        # No path may be assigned to two different records: that would make
+        # authority ambiguous when applying a bundle.
+        if any(source in owned_sources for source in sources_for_row):
+            return OperationResult(
+                "artifact-cleanup", ["cleanup-life", *artifact_paths], 1, 0.0,
+                "Refused consumed source cleanup: duplicate apply source ownership.", [],
+                failure_kind="artifact_cleanup_authority_missing",
+                metadata={"cleanup_authority": "LIFE", "cleanup_status": "protected"},
+            )
+        owned_sources.extend(sources_for_row)
+        execution_records.append({
+            "run_id": str(metadata.get("run_id") or ""),
+            "record_id": str(metadata.get("artifact_execution_record_id") or ""),
+            "sources": sources_for_row,
+        })
+    if not owned_sources or sorted(owned_sources) != sorted(artifact_paths):
+        return OperationResult(
+            "artifact-cleanup", ["cleanup-life", *artifact_paths], 1, 0.0,
+            "Refused consumed artifact cleanup: sources lack matching apply execution evidence.", [],
+            failure_kind="artifact_cleanup_authority_missing",
+            metadata={"cleanup_authority": "LIFE", "cleanup_status": "protected"},
+        )
 
     start_ts = datetime.now(timezone.utc).timestamp()
     reason = "after failed apply" if failed or rolled_back else "after successful apply"
@@ -10645,54 +10716,86 @@ def _delete_original_artifact_after_apply(
         *artifact_paths,
     ]
     timeout_seconds = _artifact_cleanup_timeout_seconds()
+    # The parent issues a bounded, in-memory capability for the exact files
+    # consumed by the completed apply. The worker refuses direct CLI invocation
+    # or a different source identity. The descriptor never appears in argv/logs.
+    from .artifact_cleanup_worker import cleanup_source_snapshot
+    import tempfile as _cleanup_tempfile
     try:
-        proc = subprocess.run(
-            command,
-            cwd=str(root),
-            env=env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired as exc:
-        # Cleanup is post-success housekeeping and must never hold the entire
-        # apply indefinitely.  If the worker already removed every source before
-        # timing out while persisting secondary evidence, preserve success;
-        # otherwise fail closed with a classified, bounded cleanup result.
-        remaining = [
-            path for raw in artifact_paths
-            for path in [Path(raw).expanduser().resolve(strict=False)]
-            if path.exists() or path.is_symlink()
-        ]
-        duration = datetime.now(timezone.utc).timestamp() - start_ts
-        removed_all = not remaining
-        detail = f"Artifact cleanup worker exceeded the {timeout_seconds:.0f}s deadline and was terminated."
-        if removed_all:
-            detail += " Source artifact(s) are already absent; cleanup deletion completed but receipt finalization timed out."
-        else:
-            detail += " Remaining artifact(s): " + ", ".join(str(item) for item in remaining)
+        sources = [cleanup_source_snapshot(path) for path in artifact_paths]
+    except (OSError, ValueError) as exc:
         return OperationResult(
-            "artifact-cleanup",
-            ["cleanup-life", *artifact_paths],
-            0 if removed_all else 1,
-            duration,
-            detail,
-            [],
-            failure_kind="" if removed_all else "artifact_cleanup_timeout",
-            metadata={
-                "cleanup_authority": "LIFE",
-                "cleanup_process": "fresh-worker",
-                "cleanup_timeout_seconds": timeout_seconds,
-                "cleanup_worker_timed_out": True,
-                "cleanup_source_removed": removed_all,
-            },
+            "artifact-cleanup", ["cleanup-life", *artifact_paths], 1, 0.0,
+            "Refused consumed source cleanup: " + str(exc), [],
+            failure_kind="artifact_cleanup_authority_missing",
+            metadata={"cleanup_authority": "LIFE", "cleanup_status": "protected"},
+        )
+    from .artifact_cleanup_worker import verified_external_cleanup_receipt
+    expected_sources = {item["path"]: item for item in sources}
+    external_sources = bool(artifact_paths) and all(
+        not Path(path).is_relative_to(root) for path in artifact_paths
+    )
+    def _verify_worker_receipt() -> dict[str, str] | None:
+        if not external_sources:
+            return None
+        return verified_external_cleanup_receipt(
+            root, [Path(path) for path in artifact_paths], reason=reason,
+            run_id=str(os.environ.get("DEVTOOL_RUN_ID") or ""),
+            source_snapshots=expected_sources,
+        )
+    authority = {
+        "schema_version": 1, "repository": str(root), "reason": reason,
+        "run_id": str(os.environ.get("DEVTOOL_RUN_ID") or ""),
+        "apply_completed": True, "sources": sources,
+        "execution_records": execution_records,
+    }
+    try:
+        with _cleanup_tempfile.TemporaryFile(mode="w+b") as authority_stream:
+            authority_stream.write(json.dumps(authority, sort_keys=True).encode("utf-8"))
+            authority_stream.flush()
+            authority_stream.seek(0)
+            proc = subprocess.run(
+                [*command[:9], "--authority-fd", str(authority_stream.fileno()), *command[9:]],
+                cwd=str(root), env=env, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                check=False, timeout=timeout_seconds,
+                pass_fds=(authority_stream.fileno(),),
+            )
+    except subprocess.TimeoutExpired:
+        # Do not convert an unreceipted deletion into success. The worker may
+        # have terminated between unlink and receipt persistence. Reconciliation
+        # is strictly read-only: no second worker launch, no blind retry.
+        proof = _verify_worker_receipt()
+        remaining = [path for path in artifact_paths
+                     if Path(path).exists() or Path(path).is_symlink()]
+        duration = datetime.now(timezone.utc).timestamp() - start_ts
+        if proof is not None:
+            return OperationResult(
+                "artifact-cleanup", ["cleanup-life", *artifact_paths], 0, duration,
+                "Cleanup worker timed out, but the exact durable cleanup receipt was verified.", [],
+                metadata={"cleanup_authority": "LIFE", "cleanup_process": "fresh-worker",
+                          "cleanup_worker_timed_out": True, "cleanup_recovered_from_receipt": True,
+                          "cleanup_source_removed": True, **proof},
+            )
+        return OperationResult(
+            "artifact-cleanup", ["cleanup-life", *artifact_paths], 1, duration,
+            "Cleanup worker exceeded the bounded deadline; outcome cannot be proven. "
+            "No source will be deleted again automatically. "
+            + ("Remaining source(s): " + ", ".join(remaining) if remaining
+               else "Sources absent but the matching durable receipt is unavailable."), [],
+            failure_kind="artifact_cleanup_outcome_unknown",
+            metadata={"cleanup_authority": "LIFE", "cleanup_process": "fresh-worker",
+                      "cleanup_timeout_seconds": timeout_seconds,
+                      "cleanup_worker_timed_out": True,
+                      "cleanup_source_removed": not remaining,
+                      "cleanup_status": "outcome-unknown"},
         )
     payload: dict[str, object] | None = None
     try:
-        loaded = json.loads(proc.stdout or "{}")
-        if isinstance(loaded, dict):
+        loaded = json.loads(proc.stdout)
+        if (isinstance(loaded, dict) and type(loaded.get("returncode")) is int
+            and isinstance(loaded.get("output"), str)
+            and isinstance(loaded.get("metadata"), dict)):
             payload = loaded
     except json.JSONDecodeError:
         payload = None
@@ -10700,20 +10803,38 @@ def _delete_original_artifact_after_apply(
     synthetic_argv = ["cleanup-life", *artifact_paths]
     duration = datetime.now(timezone.utc).timestamp() - start_ts
     if payload is None:
+        # An interrupted/killed worker may have unlinked the file immediately
+        # before losing stdout. Treat that as uncertain, just like a timeout:
+        # only the exact receipt can prove success and no retry may occur.
+        proof = _verify_worker_receipt()
+        remaining = [path for path in artifact_paths
+                     if Path(path).exists() or Path(path).is_symlink()]
+        if proof is not None:
+            return OperationResult(
+                "artifact-cleanup", synthetic_argv, 0, duration,
+                "Cleanup worker ended without a structured result; the exact durable cleanup receipt was verified.", [],
+                metadata={"cleanup_authority": "LIFE", "cleanup_process": "fresh-worker",
+                          "cleanup_worker_return_unavailable": True,
+                          "cleanup_recovered_from_receipt": True,
+                          "cleanup_source_removed": True, **proof},
+            )
         detail = (proc.stderr or proc.stdout or "fresh cleanup worker produced no structured result").strip()
+        # A controlled nonzero worker exit with all sources still present is
+        # an ordinary failure, not an interrupted unlink. Signals, exit-zero
+        # protocol violations, and any missing source retain UNKNOWN.
+        ordinary_failure = proc.returncode > 0 and len(remaining) == len(artifact_paths)
         return OperationResult(
-            "artifact-cleanup",
-            synthetic_argv,
-            1,
-            duration,
-            "Failed canonical LIFE cleanup in fresh process.\n" + detail,
-            [],
-            failure_kind="artifact_cleanup_failure",
-            metadata={
-                "cleanup_authority": "LIFE",
-                "cleanup_process": "fresh-worker",
-                "worker_returncode": proc.returncode,
-            },
+            "artifact-cleanup", synthetic_argv, 1, duration,
+            ("Cleanup worker failed without a structured result.\n" if ordinary_failure else
+             "Cleanup worker ended without a structured result; outcome cannot be proven. "
+             "No automatic retry or further deletion is permitted.\n") + detail,
+            [], failure_kind=("artifact_cleanup_failure" if ordinary_failure else
+                              "artifact_cleanup_outcome_unknown"),
+            metadata={"cleanup_authority": "LIFE", "cleanup_process": "fresh-worker",
+                      "worker_returncode": proc.returncode,
+                      "cleanup_worker_return_unavailable": True,
+                      "cleanup_source_removed": not remaining,
+                      "cleanup_status": "failed" if ordinary_failure else "outcome-unknown"},
         )
 
     worker_returncode = int(payload.get("returncode") or 0)
@@ -10732,6 +10853,20 @@ def _delete_original_artifact_after_apply(
         failure_kind = failure_kind or "artifact_cleanup_failure"
         if proc.stderr.strip():
             output = (output + "\n" + proc.stderr.strip()).strip()
+
+    # An external worker that claims success must also have written its own
+    # source-bound LIFE receipt. Do not accept an uncorroborated JSON exit 0.
+    if worker_returncode == 0 and external_sources:
+        proof = _verify_worker_receipt()
+        if proof is None:
+            return OperationResult(
+                "artifact-cleanup", synthetic_argv, 1, duration,
+                "Cleanup worker claimed success without a matching durable LIFE receipt.", [],
+                failure_kind="artifact_cleanup_receipt_unverified",
+                metadata={"cleanup_authority": "LIFE", "cleanup_process": "fresh-worker",
+                          "cleanup_status": "unverified", "worker_returncode": proc.returncode},
+            )
+        normalized_metadata.update(proof)
 
     return OperationResult(
         "artifact-cleanup",
@@ -11442,6 +11577,26 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append((f"reason.{index}", str(reason.get("reason") or reason.get("kind") or "")))
                 render_status_table(rows)
             return 0 if payload.get("affected") else 1
+        if action == "dag-contract":
+            from .federation_dag_contract import (
+                project_dag_contract, render_dag_contract_ascii,
+            )
+            workflow_name = str(getattr(args, "workflow", "") or "").strip()
+            group_name = str(getattr(args, "group", "") or "").strip()
+            if bool(workflow_name) == bool(group_name):
+                raise FederationDAGContractError(
+                    "dag-contract requires exactly one workflow name or --group <name>"
+                )
+            graph = (build_federated_group_plan(config, group_name)
+                     if group_name else build_federated_plan(config, workflow_name))
+            payload = project_dag_contract(
+                config, graph, require_frozen=bool(getattr(args, "require_frozen", False))
+            )
+            if as_json:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(render_dag_contract_ascii(payload), end="")
+            return 0
         if action == "plan":
             workflow_name = str(getattr(args, "workflow", "") or "").strip()
             group_name = str(getattr(args, "group", "") or "").strip()
@@ -11837,7 +11992,7 @@ def _federation_command(args: argparse.Namespace) -> int:
                     rows.append(("job", str(payload.get("job_reference"))))
                 render_status_table(rows)
             return code
-    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError, FederationResumeError, FederationSyncError, FederationIntegrationError) as exc:
+    except (FederationDiscoveryError, FederationPlanError, FederationExecutionError, FederationBridgeError, FederationCapabilityError, FederationImpactError, FederationInterfaceError, FederationSourceLockError, FederationDAGContractError, FederationResumeError, FederationSyncError, FederationIntegrationError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(f"Unknown federation command: {action}")
 
@@ -13156,6 +13311,28 @@ def _main_impl(argv: list[str] | None = None) -> int:
     console.quiet = bool(getattr(args, "quiet", False))
     configure_event_console(console, enabled=bool((getattr(args, "verbose", False) or getattr(args, "trace", False)) and not getattr(args, "quiet", False) and not universal_json))
 
+    # RM20 is deliberately read-only during inventory/plan. Avoid creating
+    # Devtool execution catalogs inside a repository that is not onboarded yet.
+    # Apply uses its own reviewed one-file Git transaction.
+    if getattr(args, 'command', '') == 'onboard':
+            from .onboarding import inventory as onboarding_inventory, apply as onboarding_apply, OnboardingBlocked
+            try:
+                root = Path(str(getattr(args, "repo", "") or Path.cwd()))
+                if args.onboard_operation == "apply":
+                    payload = onboarding_apply(root, reviewed_sha256=str(args.reviewed_sha256 or ""),
+                                               yes=bool(getattr(args, "yes", False)),
+                                               review_spec=getattr(args, "review_spec", "") or None)
+                else:
+                    payload = onboarding_inventory(root, review_spec=getattr(args, "review_spec", "") or None)
+                    payload['ok'] = True
+            except (OnboardingBlocked, OSError, ValueError) as exc:
+                payload = {'schema': 'devtool.whole-repository-onboarding.v1',
+                           'ok': False, 'status': 'BLOCKED', 'reason': str(exc),
+                           'in_place': True, 'release_qualified': False}
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
+            return 0 if payload.get('ok') else 2
+
+
     # PRES-H02: a real Textual terminal driver must own the main interpreter
     # thread. Interactive artifact apply therefore runs the canonical Devtool
     # invocation as a managed child while the parent/main process owns Textual.
@@ -13193,7 +13370,9 @@ def _main_impl(argv: list[str] | None = None) -> int:
 
     def _invoke() -> int:
         command = str(getattr(args, "command", "") or "devtool")
-        emit_build = command in PROGRESS_CAPABLE_COMMANDS
+        emit_build = command in PROGRESS_CAPABLE_COMMANDS or (
+            command == 'workflow' and getattr(args,'workflow_command','') == 'retry'
+            and bool(getattr(args,'yes',False)))
         event_run_id = _ensure_run_id(args)
         _register_cli_run_instance(args, raw_argv, event_run_id)
         lifecycle_started = time.monotonic()
@@ -13329,6 +13508,48 @@ def _main_after_parse(
     _normalize_live_progress_args(args)
     if args.command == "wrapper":
         return _handle_wrapper_command(args)
+    if args.command == "migration":
+        from .repository_extraction import run as extraction_run, ExtractionBlocked
+        manifest = Path(str(args.migration_manifest)).expanduser()
+        state_dir = Path(str(getattr(args,"state_dir","") or "")).expanduser() if getattr(args,"state_dir",None) else Path.home()/".local/state/devtool/extractions"
+        try:
+            payload = extraction_run(str(args.migration_operation), manifest, state_dir, yes=bool(getattr(args,"yes",False)))
+        except (ExtractionBlocked, OSError, ValueError, RuntimeError) as exc:
+            payload={"schema":"devtool.repo-extraction.v1","ok":False,"state":"BLOCKED","reason":str(exc),
+                     "cross_repo_atomic":False,"release_qualified":False}
+        print(json.dumps(payload,indent=2,sort_keys=True,ensure_ascii=False))
+        return 0 if payload.get("ok") else 2
+
+    if args.command == "adopt-batch":
+        from .adoption_batch import plan as adoption_plan, apply as adoption_apply, AdoptionBlocked
+        from . import adoption_staged
+        manifest = Path(str(args.batch_manifest)).expanduser()
+        state_dir = Path(str(getattr(args, 'state_dir', '') or '')).expanduser() if getattr(args,'state_dir',None) else Path.home()/'.local/state/devtool/adoption-batches'
+        try:
+            operation = str(args.batch_operation)
+            if operation in {"prepare", "publish", "recover", "resume-staged"}:
+                worker = {"prepare": adoption_staged.prepare, "publish": adoption_staged.publish,
+                          "recover": adoption_staged.recover, "resume-staged": adoption_staged.publish}[operation]
+                payload = worker(manifest, state_dir, yes=bool(getattr(args, 'yes', False)))
+                payload = {**payload, 'ok': payload.get('overall') in {'PREPARED', 'COMPLETE', 'ROLLED_BACK'},
+                           'cross_repository_atomic': False, 'formal_release_qualified': False}
+            elif operation in {"review-staged", "status-staged"}:
+                payload = adoption_staged.review(manifest, state_dir)
+            elif operation == "upgrade-review":
+                payload = adoption_staged.upgrade_review(manifest, state_dir)
+            elif operation == "recovery-plan":
+                payload = adoption_staged.recovery_plan(manifest, state_dir)
+            elif operation in {"apply", "resume"}:
+                payload = adoption_apply(manifest, state_dir, yes=bool(getattr(args,'yes',False)))
+            else:
+                payload = adoption_plan(manifest, state_dir)
+        except (AdoptionBlocked, OSError, ValueError, RuntimeError) as exc:
+            payload = {"schema":"devtool.multi-repo-adoption.v1", "ok":False,
+                       "overall":"BLOCKED", "reason":str(exc),
+                       "cross_repository_atomic":False, "formal_release_qualified":False}
+        print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+        return 0 if payload.get('ok',payload.get('safe_to_apply',False)) else 2
+
     ssh_rc = _maybe_delegate_ssh(raw_argv, args)
     if ssh_rc is not None:
         return ssh_rc
@@ -13366,6 +13587,157 @@ def _main_after_parse(
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
 
+    if args.command == 'workflow':
+        from .workflow_retry import (WorkflowRetryError, _record_path, _read,
+                                     plan_retry, execute_retry)
+        action = str(getattr(args,'workflow_command',''))
+        if action != 'retry':
+            parser.error('unknown workflow subcommand')
+        try:
+            if not bool(getattr(args,'failed',False)):
+                raise WorkflowRetryError('--failed is required; no implicit retry policy')
+            if bool(getattr(args,'yes',False)) and bool(getattr(args,'plan',False)):
+                raise WorkflowRetryError('--plan and --yes are mutually exclusive')
+            repo = resolve_repository_root(
+                str(getattr(args,'repo','') or ''),str(getattr(args,'config','') or ''))
+            old = _read(_record_path(str(args.run_id)))
+            target = old.get('target')
+            workflow = old.get('workflow')
+            if not target or not workflow or not isinstance(target,str) or not isinstance(workflow,str):
+                raise WorkflowRetryError('original workflow target or action unavailable')
+            if getattr(args,'target','') and args.target != target:
+                raise WorkflowRetryError('selected target differs from original run')
+            config = load_project_config(str(repo),str(getattr(args,'config','') or '') or None,
+                                         target_name=target)
+            if workflow in {'validate','wine-validate'}:
+                specs=build_workspace_validation_specs(config,[target],wine=workflow=='wine-validate')
+            else:
+                specs=build_workspace_specs(config,[target],workflow)
+            result=plan_retry(repo,str(args.run_id),specs)
+            if bool(getattr(args,'yes',False)):
+                def replay(selected_specs, observer):
+                    if not selected_specs: return []
+                    values, _, _ = run_workflow_specs(
+                        config,list(selected_specs),verbose=bool(getattr(args,'verbose',False)),
+                        dry_run=False,continue_on_error=True,log_path=None,
+                        parallel_requested=True,max_parallel_nodes=1,
+                        node_observer=observer)
+                    return values
+                result=execute_retry(repo,result,specs,approval=True,
+                                     original_run_id=str(args.run_id),
+                                     resume=bool(getattr(args,'resume',False)),on_execute=replay)
+        except (WorkflowRetryError,OSError,ValueError,RuntimeError) as exc:
+            result={'schema_version':1,'kind':'devtool.workflow-retry.error',
+                    'disposition':'BLOCKED','reason':str(exc),'original_run_id':str(args.run_id)}
+        print(json.dumps(result,ensure_ascii=False,sort_keys=True,indent=2))
+        return 2 if result.get('disposition')=='BLOCKED' else (
+            0 if result.get('execution_verified',True) else 1)
+
+    if args.command in ("evidence", "artifacts"):
+        # NEXT-02 reads only: no execution, registry writes, trust promotion or
+        # external provider calls are performed by these CLI projections.
+        from .evidence_kernel import (EvidenceError, validate_evidence, normalize_test_report)
+        from .artifact_evidence import (ArtifactEvidenceError, typed_artifact_verify)
+        command = str(getattr(args, "command", ""))
+        action = str(getattr(args, "evidence_command" if command == "evidence" else "artifacts_command", ""))
+        try:
+            if command == "evidence" and action == "validate":
+                file = Path(str(args.receipt))
+                if file.is_symlink() or not file.is_file() or file.stat().st_size > 16 * 1024 * 1024:
+                    raise EvidenceError("evidence file missing, symlink or oversized")
+                payload = json.loads(file.read_text(encoding="utf-8"))
+                expected = {}
+                if getattr(args, "commit", None): expected["source.commit"] = str(args.commit)
+                if getattr(args, "run_id", None) is not None: expected["execution.run_id"] = args.run_id
+                if getattr(args, "attempt", None) is not None: expected["execution.attempt"] = args.attempt
+                result = validate_evidence(payload, expected=expected)
+            elif command == "evidence" and action == "lineage":
+                from .execution_lineage_v2 import LineageError, project_execution_lineage
+                try:
+                    result = project_execution_lineage(
+                        Path(str(getattr(args, 'repo', '') or Path.cwd())),
+                        str(args.run_id), receipt_paths=tuple(getattr(args, 'remote_receipt', []) or []),
+                    )
+                except LineageError as exc:
+                    raise EvidenceError(str(exc)) from exc
+            elif command == "evidence" and action == "normalize":
+                result = normalize_test_report(Path(str(args.report)), str(args.format))
+            elif command == "evidence" and action == "merge-tests":
+                from .artifact_convergence import merge_test_shards
+                repo = resolve_repository_root(str(getattr(args,"repo","") or ""), str(getattr(args,"config","") or ""))
+                expected = {}
+                if getattr(args,"commit",None): expected["source_sha"] = str(args.commit)
+                if getattr(args,"run_id",None): expected["run_id"] = str(args.run_id)
+                if getattr(args,"attempt",None): expected["attempt"] = int(args.attempt)
+                result = merge_test_shards(repo, Path(str(args.receipt)), expected=expected)
+            elif command == "artifacts" and action == "verify":
+                repo = resolve_repository_root(str(getattr(args, "repo", "") or ""), str(getattr(args, "config", "") or ""))
+                if getattr(args, "receipt", None):
+                    if getattr(args, "selector", None):
+                        raise EvidenceError("--receipt cannot be combined with an artifact selector")
+                    from .artifact_convergence import verify_artifact_receipt
+                    expected = {}
+                    if getattr(args,"commit",None): expected["source_sha"] = str(args.commit)
+                    if getattr(args,"run_id",None): expected["run_id"] = str(args.run_id)
+                    if getattr(args,"attempt",None): expected["attempt"] = int(args.attempt)
+                    result = verify_artifact_receipt(repo, Path(str(args.receipt)), expected=expected)
+                else:
+                    result = typed_artifact_verify(repo, str(args.selector),
+                        repository=str(getattr(args, "repository", "") or ""),
+                        commit=str(getattr(args, "commit", "") or ""),
+                        run_id=getattr(args, "run_id", None), attempt=getattr(args, "attempt", None))
+            else:
+                raise EvidenceError("unsupported read-only evidence operation")
+        except (EvidenceError, ArtifactEvidenceError, OSError, UnicodeError, ValueError, TypeError) as exc:
+            result = {"schema_version": 1, "ok": False, "state": "BLOCKED",
+                      "reason": str(exc), "trusted_producer_verified": False,
+                      "formal_release_qualified": False}
+        print(json.dumps(result, sort_keys=True, indent=2, ensure_ascii=False))
+        return 2 if result.get("ok") is False else 0
+
+    if args.command == "transaction":
+        from .historical_transactions import (
+            inspect_historical_transaction, retire_historical_transaction,
+            unretire_historical_transaction, HistoricalRetirementError,
+        )
+        repo = resolve_repository_root(
+            str(getattr(args, "repo", "") or ""), str(getattr(args, "config", "") or "")
+        )
+        action = str(getattr(args, "transaction_command", "") or "")
+        txid = str(getattr(args, "transaction_id", "") or "")
+        try:
+            if action == "inspect":
+                result = inspect_historical_transaction(repo, txid)
+            elif action == "retire":
+                if not bool(getattr(args, "preserve_current", False)):
+                    raise HistoricalRetirementError("--preserve-current is required; ordinary abandonment may integrate worktrees")
+                if not bool(getattr(args, "yes", False)) or bool(getattr(args, "dry_run", False)):
+                    result = inspect_historical_transaction(repo, txid)
+                else:
+                    result = retire_historical_transaction(repo, txid)
+            elif action == "unretire":
+                if not bool(getattr(args, "yes", False)):
+                    raise HistoricalRetirementError("unretire requires explicit --yes")
+                result = unretire_historical_transaction(repo, txid)
+            else:
+                raise HistoricalRetirementError("Unknown transaction operation")
+        except (HistoricalRetirementError, OSError, RuntimeError, ValueError) as exc:
+            result = {"ok": False, "eligible": False, "transaction_id": txid,
+                      "classification": "blocked", "reason": str(exc),
+                      "rollback_verified": False, "release_qualified": False}
+        if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+            print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
+        else:
+            print(f"transaction {action}: {result.get('state', result.get('classification', '-'))}")
+            print(f"  id: {txid}")
+            if result.get("reason") or result.get("blockers"):
+                print(f"  blocker: {result.get('reason') or '; '.join(result.get('blockers', []))}")
+            if action == "retire" and not bool(getattr(args, "yes", False)) and result.get("eligible"):
+                print(f"  next: devtool -r {repo} transaction retire {txid} --preserve-current --yes")
+            if result.get("escrow"):
+                print(f"  escrow: {result['escrow']}")
+        return 0 if result.get("ok") or (action in {"inspect", "retire"} and result.get("eligible")) else 2
+
     if args.command == "git":
         # Git state must honor Git's own nearest-repository boundary. In
         # particular, an unenrolled nested Git checkout must not borrow an
@@ -13393,6 +13765,19 @@ def _main_after_parse(
     if auto_chroot_rc is not None:
         return auto_chroot_rc
     _print_chroot_indicator_once(args)
+
+    if args.command == "capabilities":
+        from .actions_control_center import capability_inventory
+        try:
+            result=capability_inventory(Path(str(args.repo)))
+        except Exception as exc:
+            from .github_actions import GitHubActionsError
+            if isinstance(exc,(GitHubActionsError,ValueError,OSError)):
+                print(f"Devtool capabilities: {exc}",file=sys.stderr)
+                return 1
+            raise
+        print(json.dumps(result,indent=2,ensure_ascii=False,sort_keys=True))
+        return 0
 
     if args.command == "actions":
         from .actions_cli import run_actions_command
@@ -15296,6 +15681,42 @@ def _main_after_parse(
     if args.command == "overlay":
         repo = Path(args.repo or Path.cwd()).resolve()
         action = str(getattr(args, "overlay_command", "") or "")
+        if action == "recovery-plan":
+            from .overlay.recovery import overlay_recovery_plan
+            payload = overlay_recovery_plan(
+                repo, transaction=str(getattr(args, "transaction", "") or ""),
+                limit=int(getattr(args, "limit", 10) or 10),
+            )
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+            else:
+                rows = [("decision", payload["decision"]),
+                        ("active transactions", str(len(payload["active_transactions"]))),
+                        ("marker issues", str(len(payload["marker_issues"]))),
+                        ("LIFE historic failures", str(len(payload["life"].get("failures", []))))]
+                for tx in payload["active_transactions"]:
+                    rows.append((tx["transaction_id"], tx["classification"] + ": " + tx["status"]))
+                render_status_table(rows)
+                console.print(payload["next_step"])
+            return 0 if not payload["marker_issues"] else 2
+        if action == "plan":
+            from .overlay.planning import overlay_plan
+            try:
+                payload = overlay_plan(repo, args.artifact)
+            except (OSError, RuntimeError, ValueError, KeyError) as exc:
+                payload = {'read_only': True, 'decision': 'refuse', 'error': str(exc)[:240]}
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+            else:
+                render_status_table([
+                    ('decision', payload.get('decision', 'refuse')),
+                    ('integrity', 'pass' if payload.get('integrity_ok') else 'not established'),
+                    ('source', 'compatible' if payload.get('source_compatible') else 'not compatible'),
+                    ('already_applied', payload.get('patch_equivalence', {}).get('status', 'unknown')),
+                    ('worktree', 'clean' if payload.get('git_worktree_clean') else 'not clean'),
+                ])
+                console.print(payload.get('next_step') or payload.get('error') or 'Inspection failed')
+            return 0 if payload.get('decision') in ('candidate_only', 'already_present') else 2
         if action == "check":
             result = check_overlay(
                 repo,
@@ -16042,7 +16463,7 @@ def _main_after_parse(
             _write_json_payload(args.machine_file, machine_text)
             _finish_live_progress(tasker_progress, totals=totals, results=[pending_result])
             _maybe_copy(pending_result.output, summary_text, json_text, args, log_path=log_path)
-            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=results)
+            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=[pending_result])
             _release_single_run_lock(args)
             return 1
 
@@ -16115,7 +16536,7 @@ def _main_after_parse(
             _write_json_payload(args.machine_file, machine_text)
             _finish_live_progress(tasker_progress, totals=totals, results=[rollback_result])
             _maybe_copy(recovery_output, summary_text, json_text, args, log_path=log_path)
-            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=results)
+            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=[rollback_result])
             _release_single_run_lock(args)
             return 1
 
@@ -16348,6 +16769,15 @@ def _main_after_parse(
                 delete_on_failure = bool(getattr(args, "delete_artifact_on_failure", False))
                 if (
                     not getattr(args, "dry_run", False)
+                    and not getattr(args, "preview", False)
+                    and not (getattr(args, "diff", False) and not getattr(args, "interactive", False))
+                    and not getattr(args, "validate_only", False)
+                    # A rebase applies an internally generated temporary overlay.
+                    # Its original source is NOT a consumed apply source, and the
+                    # rebase temp lifetime ends inside _run_apply. Never attempt
+                    # LIFE deletion after that temporary scope has been closed.
+                    and not getattr(args, "rebase", False)
+                    and not getattr(args, "_devtool_overlay_already_applied", False)
                     and not getattr(args, "keep_artifact", False)
                     and (not any(result.returncode != 0 for result in results) or delete_on_failure)
                 ):

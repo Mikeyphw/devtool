@@ -46,7 +46,7 @@ def _setup(tmp_path: Path):
 def test_invalid_transport_ack_cannot_advance_cursor(tmp_path: Path, corruption: str):
     link, journal, store, loopback = _setup(tmp_path)
     frame = journal.frames_after(0, delivery_mode="catch-up")[0]
-    valid = DeliveryAck(link.delegation_id, link.child_run_id, frame.sequence, frame.event_id)
+    valid = loopback.send(frame)
 
     def forged(current):
         if corruption == "bare-integer":

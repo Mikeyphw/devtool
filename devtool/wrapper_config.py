@@ -42,7 +42,7 @@ WRAPPER_NATIVE_COMMANDS = frozenset(
     command.canonical_path[0]
     for command in build_core_registry().commands
     if len(command.canonical_path) == 1 and bool(command.metadata.get("wrapper_native"))
-)
+) | frozenset({"actions"})
 
 # Static binding safety.  The wrapper contract may bind repository-facing
 # options to Devtool argv, but it must not let the repository redefine the
@@ -62,7 +62,7 @@ _MISSING = object()
 
 _WRAPPER_KEYS = frozenset({"schema", "default_command", "commands"})
 _COMMAND_KEYS = frozenset({
-    "description", "devtool", "workflow", "aliases", "target", "group", "all_targets",
+    "description", "devtool", "workflow", "actions", "aliases", "target", "group", "all_targets",
     "allow_passthrough", "options", "positionals",
 })
 _OPTION_KEYS = frozenset({
@@ -385,6 +385,30 @@ def _parse_command(
         )
     if workflow:
         _nonempty_name(workflow, path=f"{path}.workflow")
+    actions_spec = _table(raw.get('actions'),path=f'{path}.actions')
+    if actions_spec:
+        if devtool != 'actions':
+            raise _fail(f'{path}.actions requires devtool="actions"')
+        _reject_unknown(actions_spec,frozenset({'operation','workflow_id','ref','inputs'}),path=f'{path}.actions')
+        operation=actions_spec.get('operation')
+        if operation not in {'plan','dispatch','watch','resume','artifacts'}:
+            raise _fail(f'{path}.actions.operation is unsupported')
+        if operation in {'plan','dispatch'}:
+            if not isinstance(actions_spec.get('workflow_id'),str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}\.ya?ml|[0-9]{1,12}',actions_spec['workflow_id']):
+                raise _fail(f'{path}.actions.workflow_id is invalid')
+            from .actions_dispatch import _ref, _NAME
+            from .github_actions import GitHubActionsError
+            try:_ref(str(actions_spec.get('ref') or ''))
+            except (ValueError,GitHubActionsError):raise _fail(f'{path}.actions.ref is unsafe') from None
+            inputs=_table(actions_spec.get('inputs'),path=f'{path}.actions.inputs')
+            if len(inputs)>25 or any(not isinstance(k,str) or not _NAME.fullmatch(k) or
+                not isinstance(v,str) or not v.isprintable() or len(v)>4096
+                for k,v in inputs.items()):
+                raise _fail(f'{path}.actions.inputs contains invalid input values')
+        elif any(k in actions_spec for k in ('workflow_id','ref','inputs')):
+            raise _fail(f'{path}.actions read-only operations must use an exact request-id option')
+    elif devtool=='actions':
+        raise _fail(f'{path}.devtool=actions requires typed [actions] contract')
 
     target = str(raw.get("target") or "").strip()
     group = str(raw.get("group") or "").strip()
@@ -451,6 +475,7 @@ def _parse_command(
         description=str(raw.get("description") or "").strip(),
         devtool=devtool,
         workflow=workflow,
+        actions=dict(actions_spec),
         aliases=aliases,
         target=target,
         group=group,
@@ -472,6 +497,20 @@ def _parse_command(
         raise _fail(
             f"{path} declares passthrough bindings for {', '.join(declared_passthrough)} but allow_passthrough is false"
         )
+    if actions_spec:
+        operation=actions_spec['operation']
+        if command.allow_passthrough:
+            raise _fail(f'{path}.actions refuses raw passthrough')
+        if operation=='dispatch':
+            confirm=command.options.get('yes')
+            if (confirm is None or confirm.type!='boolean' or confirm.default is True or
+                confirm.command_argv!=('--yes',)):
+                raise _fail(f'{path}.actions.dispatch requires explicit boolean --yes option binding')
+        if operation in {'watch','resume','artifacts'}:
+            request=command.options.get('request_id')
+            if (request is None or request.type!='string' or not request.required or
+                request.command_argv!=('--request-id','{value}')):
+                raise _fail(f'{path}.actions requires exact typed --request-id option')
     _validate_option_links(command)
     return command
 
@@ -536,6 +575,7 @@ def wrapper_as_dict(wrapper: WrapperConfig) -> dict[str, Any]:
                 "execution_kind": "native" if command.devtool else "workflow",
                 "devtool": command.devtool,
                 "workflow": command.workflow,
+                "actions": command.actions,
                 "aliases": list(command.aliases),
                 "target": command.target,
                 "group": command.group,

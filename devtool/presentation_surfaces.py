@@ -29,7 +29,14 @@ def projection_digest(value: Any) -> str:
 def redact_value(key: str, value: Any) -> Any:
     if _SECRET_RE.search(key):
         return "<redacted>"
-    if isinstance(value, str) and re.search(r"(?i)(bearer\s+[a-z0-9._-]+|token=[^\s]+|password=[^\s]+)", value):
+    # Presentation event details may contain nested dictionaries or lists.
+    # Recursively remove secret-bearing values before machine serialization;
+    # shallow redaction leaves credentials inside otherwise harmless fields.
+    if isinstance(value, Mapping):
+        return {str(k): redact_value(str(k), v) for k, v in sorted(value.items(), key=lambda x: str(x[0]))}
+    if isinstance(value, (list, tuple)):
+        return [redact_value(key, v) for v in value]
+    if isinstance(value, str) and re.search(r"(?i)(bearer\s+[a-z0-9._-]+|(?:token|password|passwd|secret|api[_-]?key)=[^\s]+)", value):
         return "<redacted>"
     return value
 
@@ -150,8 +157,10 @@ def status_from_exo(records: Sequence[Mapping[str, Any]], *, surface: Presentati
         )
     # Preserve EXO terminal and nonterminal semantics: absence of a failure
     # event must never be interpreted as proof of success.
-    states = {str(event.status or "unknown").strip().lower() for event in events}
-    if not events:
+    # Truncation affects display only, NEVER terminal truth. A failure after
+    # the visible window must not let a TUI, HUD or machine projection pass.
+    states = {str(record.get("status") or "unknown").strip().lower() for record in records}
+    if not records:
         status = "empty"
     elif states & {"failed", "error"}:
         status = "failed"
@@ -241,8 +250,26 @@ def compose_dashboard(*projections: PresentationProjection, surface: Presentatio
     truncated = len(events) > limit
     if truncated:
         events = events[:limit]
-    status_order = {"failed": 3, "rerun": 2, "running": 2, "passed": 1, "reused": 1, "empty": 0}
-    status = max((p.status for p in projections), key=lambda s: status_order.get(s, 0), default="empty")
+    # Aggregate canonical truth BEFORE truncating events for the UI. An
+    # unrecognized/blocked/cancelled projection is never a green dashboard.
+    # Successful child projections cannot mask an adverse child hidden below
+    # the display limit.
+    status_order = {
+        "failed": 90, "error": 90,
+        "blocked": 80, "cancelled": 80, "canceled": 80, "aborted": 80,
+        "running": 70, "pending": 70, "planned": 70, "queued": 70,
+        "rerun": 60, "unknown": 50, "interrupted": 50,
+        "skipped": 40, "not-applicable": 30,
+        "passed": 20, "succeeded": 20, "reused": 20,
+        "empty": 0,
+    }
+    # Do not trust a green summary when one of its canonical child events
+    # carries a failure, including events beyond the visible render limit.
+    states = [str(p.status or "unknown").strip().lower() for p in projections]
+    states.extend(str(event.status or "unknown").strip().lower()
+                  for projection in projections for event in projection.events)
+    states = [s if s in status_order else "unknown" for s in states]
+    status = max(states, key=status_order.__getitem__, default="empty")
     return PresentationProjection(
         surface=surface,
         title="Devtool dashboard",

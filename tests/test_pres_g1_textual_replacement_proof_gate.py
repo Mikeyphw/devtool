@@ -16,27 +16,21 @@ from devtool.tui_textual import (
 )
 
 
-def test_pres_g1_required_reports_are_complete_in_repository() -> None:
+def test_pres_g1_source_closure_does_not_require_historical_markdown() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    present = [path.name for path in repo_root.glob("PRES_X*_REPORT.md")]
-    gate = build_textual_replacement_proof_gate(present_reports=present)
+    # Filenames are accepted for backwards API compatibility but cannot grant
+    # executable closure, even when the list is empty.
+    gate = build_textual_replacement_proof_gate(repo_root=repo_root, present_reports=[])
     assert gate.passed is True
+    assert gate.missing_proofs == ()
     assert gate.missing_reports == ()
-    assert required_pres_gate_reports() == (
-        "PRES_X01_PRESENTATION_PROJECTION_FOUNDATION_REPORT.md",
-        "PRES_X02_PRESENTATION_LAYOUT_INTERACTIONS_REPORT.md",
-        "PRES_X03_CROSS_SURFACE_RENDERING_ADOPTION_REPORT.md",
-        "PRES_X04_TEXTUAL_TUI_SUBSTRATE_REPORT.md",
-        "PRES_X05_TEXTUAL_FEATURE_PARITY_REPORT.md",
-        "PRES_X06_TEXTUAL_DEFAULT_REPLACEMENT_REPORT.md",
-        "PRES_X07_TEXTUAL_REPLACEMENT_HARDENING_REPORT.md",
-    )
+    assert [item.id for item in gate.source_proofs] == [f"PRES-X{i:02d}" for i in range(1, 8)]
+    assert required_pres_gate_reports() == ()
 
 
-def test_pres_g1_fails_closed_when_a_pres_report_is_missing() -> None:
-    present = [name for name in required_pres_gate_reports() if not name.startswith("PRES_X04")]
-    with pytest.raises(AssertionError, match="missing report evidence"):
-        build_textual_replacement_proof_gate(present_reports=present)
+def test_pres_g1_fails_closed_if_source_root_is_missing(tmp_path: Path) -> None:
+    with pytest.raises((RuntimeError, FileNotFoundError), match="source-proof|No such file"):
+        build_textual_replacement_proof_gate(repo_root=tmp_path)
 
 
 def test_gate_machine_contract_proves_textual_default_and_renderer_only() -> None:
@@ -56,7 +50,7 @@ def test_gate_checks_all_major_replacement_invariants() -> None:
     gate = build_textual_replacement_proof_gate()
     by_id = {item.id: item.status for item in gate.items}
     assert by_id == {
-        "pres-report-window-complete": "passed",
+        "pres-source-closure-complete": "passed",
         "textual-is-default": "passed",
         "auto-prefers-textual": "passed",
         "fallback-is-fenced": "passed",
@@ -156,6 +150,7 @@ def test_gate_assertion_rejects_mutated_failed_item() -> None:
         present_reports=gate.present_reports,
         owns_truth=gate.owns_truth,
         machine_output_changed=gate.machine_output_changed,
+        source_proofs=gate.source_proofs,
     )
     with pytest.raises(AssertionError, match="proof gate failed"):
         assert_textual_replacement_gate_passes(broken)

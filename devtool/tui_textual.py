@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib import util as importlib_util
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from devtool.presentation_surfaces import (
@@ -973,16 +974,9 @@ def run_tui_entrypoint(
     return int(textual_runner(args, repo_root=repo_root, console=console))
 
 
-# PRES-G1 Textual replacement proof gate.
-_REQUIRED_PRES_GATE_REPORTS: tuple[str, ...] = (
-    "PRES_X01_PRESENTATION_PROJECTION_FOUNDATION_REPORT.md",
-    "PRES_X02_PRESENTATION_LAYOUT_INTERACTIONS_REPORT.md",
-    "PRES_X03_CROSS_SURFACE_RENDERING_ADOPTION_REPORT.md",
-    "PRES_X04_TEXTUAL_TUI_SUBSTRATE_REPORT.md",
-    "PRES_X05_TEXTUAL_FEATURE_PARITY_REPORT.md",
-    "PRES_X06_TEXTUAL_DEFAULT_REPLACEMENT_REPORT.md",
-    "PRES_X07_TEXTUAL_REPLACEMENT_HARDENING_REPORT.md",
-)
+# PRES-G1 is now proved by live, source-bound executable contracts rather
+# than the existence of historical report Markdown files.
+from .source_bound_proofs import (PRES_G1_IDS, SourceProof, pres_source_proofs, proof_digest)
 
 
 @dataclass(frozen=True)
@@ -1021,10 +1015,16 @@ class TextualReplacementGateReport:
     present_reports: tuple[str, ...]
     owns_truth: bool = False
     machine_output_changed: bool = False
+    source_proofs: tuple[SourceProof, ...] = ()
+
+    @property
+    def missing_proofs(self) -> tuple[str, ...]:
+        ids = {proof.id for proof in self.source_proofs if proof.status == "passed"}
+        return tuple(proof_id for proof_id in PRES_G1_IDS if proof_id not in ids)
 
     @property
     def passed(self) -> bool:
-        return all(item.status == "passed" for item in self.items)
+        return not self.missing_proofs and all(item.status == "passed" for item in self.items)
 
     @property
     def missing_reports(self) -> tuple[str, ...]:
@@ -1040,7 +1040,11 @@ class TextualReplacementGateReport:
             "machine_output_changed": self.machine_output_changed,
             "required_reports": list(self.required_reports),
             "present_reports": list(self.present_reports),
-            "missing_reports": list(self.missing_reports),
+            "missing_reports": [],  # Legacy wire key; Markdown is not proof.
+            "source_proof_schema_version": 1,
+            "source_proofs": [proof.as_dict() for proof in self.source_proofs],
+            "missing_proofs": list(self.missing_proofs),
+            "source_proof_digest": proof_digest(self.source_proofs),
             "items": [item.as_dict() for item in self.items],
             "backend_selections": [selection.as_dict() for selection in self.backend_selections],
             "notices": [notice.as_dict() for notice in self.notices],
@@ -1053,9 +1057,9 @@ class TextualReplacementGateReport:
 
 
 def required_pres_gate_reports() -> tuple[str, ...]:
-    """Reports that must exist before PRES-G1 can claim closure."""
+    """Legacy API: historical documents are no longer runtime requirements."""
 
-    return _REQUIRED_PRES_GATE_REPORTS
+    return ()
 
 
 def _gate_status(condition: bool) -> str:
@@ -1066,6 +1070,7 @@ def build_textual_replacement_proof_gate(
     *,
     present_reports: Sequence[str] | None = None,
     textual_available: bool = True,
+    repo_root: Path | None = None,
 ) -> TextualReplacementGateReport:
     """Build the PRES-G1 proof gate from canonical PRES contracts.
 
@@ -1074,7 +1079,10 @@ def build_textual_replacement_proof_gate(
     and that all rendering remains reference-only.
     """
 
-    present = tuple(sorted(set(present_reports or _REQUIRED_PRES_GATE_REPORTS)))
+    # Keep the legacy keyword parameter for callers; it can neither grant nor
+    # deny closure now. A report-name list is not a trusted proof input.
+    _ = present_reports
+    source_proofs = pres_source_proofs(repo_root or Path(__file__).resolve().parents[1], stage="PRES-G1")
     available = TextualAvailability(bool(textual_available))
     missing = TextualAvailability(False, reason="textual package is not importable")
     selections = (
@@ -1101,14 +1109,12 @@ def build_textual_replacement_proof_gate(
     bundle_machine = parity_plan.base_spec.source_bundle.as_machine()
     default_contract = default_tui_backend_contract()
     hardening_contract = textual_replacement_hardening_contract()
-    required = _REQUIRED_PRES_GATE_REPORTS
-    missing_reports = tuple(name for name in required if name not in set(present))
     items = (
         TextualReplacementGateItem(
-            "pres-report-window-complete",
-            _gate_status(not missing_reports),
-            present,
-            "PRES-X01 through PRES-X07 reports are present before the gate closes",
+            "pres-source-closure-complete",
+            _gate_status(tuple(p.id for p in source_proofs) == PRES_G1_IDS and all(p.status == "passed" for p in source_proofs)),
+            tuple(p.source_digest for p in source_proofs),
+            "PRES-X01 through PRES-X07 current-source executable proofs must all pass",
         ),
         TextualReplacementGateItem(
             "textual-is-default",
@@ -1167,10 +1173,11 @@ def build_textual_replacement_proof_gate(
         parity_plan=parity_plan,
         default_contract=default_contract,
         hardening_contract=hardening_contract,
-        required_reports=required,
-        present_reports=present,
+        required_reports=(),
+        present_reports=(),
         owns_truth=False,
         machine_output_changed=False,
+        source_proofs=source_proofs,
     )
     assert_textual_replacement_gate_passes(report)
     return report
@@ -1187,8 +1194,8 @@ def assert_textual_replacement_gate_passes(report: TextualReplacementGateReport)
         raise AssertionError("PRES-G1 attempted to own canonical truth")
     if report.machine_output_changed is not False:
         raise AssertionError("PRES-G1 must not change machine output semantics")
-    if report.missing_reports:
-        raise AssertionError(f"PRES-G1 is missing report evidence: {report.missing_reports}")
+    if report.missing_proofs or any(p.status != "passed" for p in report.source_proofs):
+        raise AssertionError(f"PRES-G1 missing or failed current-source executable proof: {report.missing_proofs}")
     if not report.passed:
         failed = [item.id for item in report.items if item.status != "passed"]
         raise AssertionError(f"PRES-G1 proof gate failed: {failed}")

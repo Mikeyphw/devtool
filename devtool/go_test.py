@@ -153,6 +153,7 @@ class GoTestJSONStream:
         self._test_output: dict[tuple[str, str], list[str]] = {}
         self._failures: list[GoTestFailure] = []
         self._failure_keys: set[tuple[str, str]] = set()
+        self.invalid_json_events = 0
 
     def _record_output(self, package: str, test: str, output: str) -> None:
         if package:
@@ -207,6 +208,8 @@ class GoTestJSONStream:
         try:
             event = json.loads(stripped)
         except (json.JSONDecodeError, TypeError):
+            if stripped.startswith("{"):
+                self.invalid_json_events += 1
             return raw_line
         if not isinstance(event, dict):
             return raw_line
@@ -256,6 +259,10 @@ class GoTestJSONStream:
             return f"<== go-test package {effective_package} {action}\n"
 
         return ""
+
+    def incomplete_packages(self) -> set[str]:
+        completed = {key.split("\0", 1)[0] for key in self._finished_packages}
+        return self._started_packages - completed
 
     def report(self) -> GoTestReport:
         report = GoTestReport(failures=[GoTestFailure(**failure.to_dict()) for failure in self._failures])

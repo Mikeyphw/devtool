@@ -14,6 +14,7 @@ from typing import Any, Mapping
 from .execution_environments import normalize_execution_environment
 from .environment_qualification import assert_environment_overlay_safe
 from .models import JobConfig, TargetConfig, WorkflowConfig, WorkflowStepRef
+from .output_scopes import OutputScopeError, parse_output_scopes
 
 _RUNNER_ALIASES = {"generic": "command"}
 _PLATFORM_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -130,6 +131,12 @@ def load_jobs(
         command = _command_tuple(raw_value.get("command"), job_name=name, context_prefix=context_prefix)
         shell_command = str(raw_value.get("shell_command", "") or "").strip()
         action = str(raw_value.get("action", "") or "").strip()
+        if runner in {'remote-run-correlated', 'remote-build-verified', 'artifact-verified'}:
+            if action != 'verify' or command or shell_command or gradle_tasks:
+                raise SystemExit(f"Job '{name}' typed evidence runner requires action = 'verify', never a dispatch command")
+            declared = raw_value.get('inputs')
+            if not isinstance(declared, list) or len(declared) != 1:
+                raise SystemExit(f"Job '{name}' typed evidence runner requires exactly one receipt in inputs")
         modes = sum(bool(item) for item in (command, shell_command, action, gradle_tasks))
         if modes == 0:
             raise SystemExit(
@@ -180,6 +187,17 @@ def load_jobs(
         metadata.setdefault("job_key", stored_name)
         if gradle_tasks:
             metadata.setdefault("gradle_tasks", list(gradle_tasks))
+
+        try:
+            output_scopes = parse_output_scopes(
+                raw_value.get("output_scopes"), context=f"{context_prefix}.{name}.output_scopes"
+            )
+        except OutputScopeError as exc:
+            raise SystemExit(str(exc)) from exc
+        if output_scopes and metadata.get("read_only") is True:
+            raise SystemExit(f"{context_prefix}.{name}: read_only=true contradicts declared output_scopes")
+        if output_scopes:
+            metadata["output_scopes"] = [scope.as_dict() for scope in output_scopes]
 
         jobs[stored_name] = JobConfig(
             name=stored_name,

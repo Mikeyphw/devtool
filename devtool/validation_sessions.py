@@ -680,6 +680,33 @@ def _metadata_exposes_credential(value: Any, secrets: list[tuple[str, bool]]) ->
     return any(_secret_in_value(rendered, secret, from_spec=from_spec) for secret, from_spec in secrets)
 
 
+def _metadata_uses_inline_credentials(value: Any, *, credential_field: bool = False) -> bool:
+    """Refuse untracked plaintext secrets in nested durable metadata.
+
+    Matching known environment values alone is insufficient: a supplied
+    password may not exist in ``os.environ`` when the plan is serialized.
+    Credential identity fields are allowed only as opaque references.
+    """
+    if isinstance(value, dict):
+        return any(
+            _metadata_uses_inline_credentials(item, credential_field=(
+                credential_field or bool(_DURABLE_SECRET_NAME.search(str(key)))
+            ))
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_metadata_uses_inline_credentials(item, credential_field=credential_field) for item in value)
+    if not credential_field or value is None:
+        return False
+    if not isinstance(value, str):
+        return True
+    # References already used by the validation engine stay resumable.
+    return not (
+        _durable_secret_reference(value)
+        or value.startswith(("vault:", "env:", "file:", "fd:"))
+    )
+
+
 def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
     """Write resumable plan descriptors without persisting live credentials.
 
@@ -719,8 +746,8 @@ def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
     if any(_secret_in_value(candidate, secret, from_spec=direct) for candidate in safe_env.values() for secret, direct in secret_values):
         raise ValidationSessionError("Validation plan environment aliases a credential value.")
     metadata = _json_safe(dict(spec.metadata))
-    if _metadata_exposes_credential(metadata, secret_values):
-        raise ValidationSessionError("Validation plan metadata contains a credential value.")
+    if _metadata_exposes_credential(metadata, secret_values) or _metadata_uses_inline_credentials(metadata):
+        raise ValidationSessionError("Validation plan metadata contains a credential; use an opaque reference.")
     return {
         "name": str(spec.name),
         "argv": argv,
@@ -732,22 +759,44 @@ def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
 
 
 def deserialize_spec(payload: dict[str, Any]) -> CommandSpec:
-    """Restore a validation command exactly enough to resume without replanning."""
+    """Validate persisted command plans before restoring executable instructions.
 
-    return CommandSpec(
+    Older or modified journal entries must not bypass the write-time credential
+    guard through a separate read path. Unsupported legacy entries fail closed.
+    """
+    if not isinstance(payload, dict):
+        raise ValidationSessionError("Invalid persisted validation command descriptor.")
+    argv = payload.get("argv", [])
+    env = payload.get("env", {})
+    metadata = payload.get("metadata", {})
+    if (
+        not isinstance(argv, list)
+        or any(not isinstance(item, str) for item in argv)
+        or not isinstance(env, dict)
+        or any(not isinstance(key, str) or not isinstance(value, str) for key, value in env.items())
+        or not isinstance(metadata, dict)
+        or type(payload.get("destructive", False)) is not bool
+    ):
+        raise ValidationSessionError("Invalid persisted validation command field types.")
+    spec = CommandSpec(
         name=str(payload.get("name") or "validation"),
-        argv=[str(item) for item in payload.get("argv", [])],
-        env={str(key): str(value) for key, value in dict(payload.get("env") or {}).items()},
+        argv=argv,
+        env=env,
         cwd=None if payload.get("cwd") is None else str(payload.get("cwd")),
-        destructive=bool(payload.get("destructive", False)),
-        metadata=dict(payload.get("metadata") or {}),
+        destructive=payload.get("destructive", False),
+        metadata=metadata,
     )
+    safe = serialize_spec(spec)
+    if safe["env"] != env or safe["argv"] != argv or safe["metadata"] != metadata:
+        raise ValidationSessionError("Persisted validation command is not a canonical safe descriptor.")
+    return spec
 
 
 def stored_specs(session: ValidationSession) -> list[CommandSpec]:
-    """Return the immutable command plan captured when the session was created."""
-
-    return [deserialize_spec(item) for item in session.plan_specs if isinstance(item, dict)]
+    """Restore the entire saved plan, rejecting invalid rather than dropping entries."""
+    if not isinstance(session.plan_specs, list):
+        raise ValidationSessionError("Invalid persisted validation command plan.")
+    return [deserialize_spec(item) for item in session.plan_specs]
 
 
 def _session_from_dict(payload: dict[str, Any]) -> ValidationSession:
@@ -768,7 +817,18 @@ def _session_from_dict(payload: dict[str, Any]) -> ValidationSession:
     values["updated_at"] = str(values.get("updated_at") or values["created_at"])
     values["fingerprints"] = dict(values.get("fingerprints") or {})
     values["revision"] = max(0, _coerce_int(values.get("revision"), 0))
-    for key in ("plan_specs", "required_checkpoint_keys", "plan_drift_details"):
+    # A saved executable plan is security-sensitive. Never downgrade an
+    # explicitly malformed plan to an empty one while reconstructing a session.
+    # Missing plans remain supported for historical non-resumable sessions.
+    if "plan_specs" in values:
+        plans = values["plan_specs"]
+        if not isinstance(plans, list):
+            raise ValidationSessionError("Invalid persisted validation command plan type.")
+        for item in plans:
+            deserialize_spec(item)
+    else:
+        values["plan_specs"] = []
+    for key in ("required_checkpoint_keys", "plan_drift_details"):
         if not isinstance(values.get(key), list):
             values[key] = []
     for key in ("apply_context", "options"):

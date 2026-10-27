@@ -1,0 +1,65 @@
+{
+  "formal_release_qualified": false,
+  "kind": "devtool-source-bound-qualification-history",
+  "next_qualification": {
+    "ci24": "NOT_RUN",
+    "fs03": "NOT_RUN",
+    "native_g3r": "NOT_RUN",
+    "source_sha": null,
+    "state": "PENDING_NEW_PHASE_E_COMMIT"
+  },
+  "open_real_substrate_obligations": [
+    "ENV-A06",
+    "ANDROID-A16",
+    "DIST-A01",
+    "DIST-A12",
+    "DIST-A13",
+    "TEST-A11"
+  ],
+  "records": [
+    {
+      "automated_milestone": "PASS_AUTOMATED_MILESTONE_ONLY",
+      "ci24_jobs": 25,
+      "ci24_run_id": 38843257546,
+      "ci24_shards": 24,
+      "ci24_source_binding": "github_workflow_dispatch_verified",
+      "formal_release_qualified": false,
+      "fs03_checks": 16,
+      "fs03_receipt": "user-provided native qualify-seal run 5da76acd571b4e6eb78d14578d83f387",
+      "g3r_lanes": 13,
+      "g3r_receipt": "user-provided independent native verifier output",
+      "seal_total_seconds_reported": 850.01,
+      "source_sha": "f25196a297d42bc3a2ff36a03aa0411f89fe9d46"
+    },
+    {
+      "automated_milestone": "FAILED_CI24",
+      "cause": "G8 G1 source-pin mismatch and shallow CI Phase D ancestor, repaired by QW04",
+      "ci24_run_id": 38852350297,
+      "ci24_shards_failed": [
+        12,
+        16
+      ],
+      "ci24_shards_passed": 22,
+      "ci24_source_binding": "github_workflow_dispatch_verified",
+      "formal_release_qualified": false,
+      "source_sha": "b4154f5be97f466149bf37cf7b37b44e72951b1f"
+    },
+    {
+      "automated_milestone": "PASS_REPORTED_NATIVE_WITH_HOSTED_CI_VERIFIED",
+      "ci24_artifacts": 25,
+      "ci24_jobs": 25,
+      "ci24_run_id": 38855033077,
+      "ci24_shards": 24,
+      "ci24_source_binding": "github_workflow_dispatch_verified",
+      "formal_release_qualified": false,
+      "fs03_checks": 16,
+      "fs03_receipt": "user-reported pass; stage_durations_seconds not provided",
+      "g3r_lanes": 13,
+      "g3r_receipt": "user-reported pass; complete machine artifact not present in this handoff",
+      "source_sha": "1bb1053f29ba33bf5283244b2badf3f3dccf4581",
+      "source_tree": "da6a7cb1a0a760826ad87fdc6f0095d2a4e1e200"
+    }
+  ],
+  "repo": "Mikeyphw/devtool",
+  "schema_version": 1
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "kind": "devtool.actions-r04b-lineage-contract",
+  "r04_r1_native_receipt": {
+    "run_id": "078eb17498bf4cbc8b37e697e9c18a5a",
+    "tests_passed": 88,
+    "exit_code": 0,
+    "git_commit": "244d6d7",
+    "life_cleanup": "ok"
+  },
+  "phase2": {
+    "source_tree": "9d8d779f5e7725d68e1237cb89c3a4e4ac552e4f",
+    "child_identity": "RUN-V3 one-shot parent handoff",
+    "live": "read-only credentialed GitHub GET, opt-in, no persisted observations",
+    "ci_live_state": "CI_PASS_REMOTE_OBSERVED",
+    "no_source_attestation": true,
+    "no_device_qualification": true,
+    "no_release_qualification": true
+  },
+  "native_qualified": false,
+  "hosted_qualified": false,
+  "release_qualified": false
+}

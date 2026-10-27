@@ -31,26 +31,25 @@ class CompletionAndManpageTests(unittest.TestCase):
     def test_packaged_and_runtime_zsh_completions_are_identical(self) -> None:
         self.assertEqual(ZSH_COMPLETION, COMPLETION_PATH.read_text(encoding="utf-8"))
 
-    def test_completion_mentions_every_long_cli_option(self) -> None:
-        missing: list[str] = []
-        for parser in _walk_parsers(build_parser()):
-            for action in parser._actions:
-                for option in action.option_strings:
-                    if option.startswith("--") and option != "--help" and option not in ZSH_COMPLETION:
-                        missing.append(option)
-        self.assertEqual(sorted(set(missing)), [])
-
-    def test_completion_mentions_every_command_and_alias(self) -> None:
+    def test_core_generated_machine_help_covers_live_cli_options(self) -> None:
+        from devtool.core_surfaces import machine_help_payload
+        from devtool.core_registry import build_core_registry
         parser = build_parser()
-        subparsers = next(
-            action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
-        )
-        missing = [
-            name
-            for name in subparsers.choices
-            if not re.search(rf"(?<![A-Za-z0-9_-]){re.escape(name)}(?![A-Za-z0-9_-])", ZSH_COMPLETION)
-        ]
-        self.assertEqual(missing, [])
+        registry = build_core_registry()
+        payload = machine_help_payload(parser, registry)
+        assert payload['parser_parity']['missing_count'] == 0
+        assert payload['parser_parity']['option_missing_count'] == 0
+        # Static legacy Zsh completion deliberately has no exhaustive option
+        # inventory; canonical machine-help covers the *live* complete parser.
+        option_spellings = {spelling for row in payload['commands']
+                            for option in row.get('options', [])
+                            for spelling in option['spellings']}
+        assert '--rebase' in option_spellings
+        assert '--keep-artifact' in option_spellings
+
+    def test_zsh_legacy_completion_retains_supported_core_commands(self) -> None:
+        for name in ('apply-overlay', 'apply-snapshot', 'actions', 'validate'):
+            self.assertRegex(ZSH_COMPLETION, rf'(?<![A-Za-z0-9_-]){re.escape(name)}(?![A-Za-z0-9_-])')
 
     def test_completion_documents_exclusive_validation_task_semantics(self) -> None:
         wording = (

@@ -11,6 +11,12 @@ This manual is generated from the canonical CORE registry and canonical CLI sche
 .B actions
 Read\\-only GitHub Actions provider
 .TP
+.B actions adopt
+Review or generate pinned target\\-local GitHub Actions adoption workflow
+.TP
+.B actions adoption\\-doctor
+Review A09 host eligibility for configured workflows without changing files
+.TP
 .B actions android
 Android builds on GitHub Actions and verified APK/AAB acquisition
 .TP
@@ -35,8 +41,23 @@ Fetch or verify and inspect an APK/AAB, registering output as unqualified
 .B actions android discover
 Discover statically declared Android app modules
 .TP
+.B actions android options\\-repair
+Review or apply source\\-bound protected Gradle JVM property repair
+.TP
 .B actions android plan
 Validate source parity and Android workflow inputs without dispatch
+.TP
+.B actions android release\\-import
+Unified Android release: import with registered ACTIONS\\-10 LIFE authority
+.TP
+.B actions android release\\-plan
+Unified Android release: plan with registered ACTIONS\\-10 LIFE authority
+.TP
+.B actions android release\\-run
+Unified Android release: run with registered ACTIONS\\-10 LIFE authority
+.TP
+.B actions android release\\-sign
+Unified Android release: sign with registered ACTIONS\\-10 LIFE authority
 .TP
 .B actions android run
 Dispatch an Android build only with explicit \\-\\-yes
@@ -83,6 +104,12 @@ G5 polyglot plan
 .B actions ci run
 G5 polyglot run
 .TP
+.B actions collect
+Collect a uniquely named SHA\\-256 archive from verified exact dispatch
+.TP
+.B actions detail
+Inspect exact local dispatch/pipeline identity
+.TP
 .B actions diagnose
 Diagnose GitHub repository identity, access and workflow discovery without mutation
 .TP
@@ -110,6 +137,9 @@ G7 optional runners
 .B actions jobs
 Inspect run and job/step states
 .TP
+.B actions lineage
+Offline read\\-only Actions pipeline/run/artifact evidence lineage; never qualification
+.TP
 .B actions logs
 Download remote workflow run logs as a bounded unextracted ZIP to private state
 .TP
@@ -134,6 +164,30 @@ Read local durable pipeline states (no GitHub operations)
 .B actions plan
 Validate workflow ref and inputs without dispatching
 .TP
+.B actions provider\\-distributions
+Review or verify typed Go/Python distribution outputs (read\\-only)
+.TP
+.B actions provider\\-doctor
+Read\\-only local installed toolchains and reviewed host profiles
+.TP
+.B actions provider\\-export
+Review, write or verify source\\-bound provider\\-hosted workflow
+.TP
+.B actions provider\\-plan
+Review exact source\\-bound native DAG provider plan (never dispatches)
+.TP
+.B actions qualification
+G8 Actions qualification
+.TP
+.B actions qualification check
+G8 read\\-only qualification check
+.TP
+.B actions qualification report
+G8 read\\-only qualification report
+.TP
+.B actions recent
+Read\\-only local dispatch and pipeline history
+.TP
 .B actions release
 Independent\\-policy release provenance qualification
 .TP
@@ -142,6 +196,9 @@ Preview or execute local signed release build without Github qualification
 .TP
 .B actions release local\\-evidence
 G6 read\\-only signed APK/AAB provenance and certificate re\\-verification
+.TP
+.B actions release local\\-handoff
+A08 consented local signed\\-unqualified export/install handoff
 .TP
 .B actions release local\\-verify
 Verify local package manifest and pinned LIFE signing certificate
@@ -161,6 +218,9 @@ Request a new remote workflow attempt (explicit confirmation)
 .B actions resume
 Resume a recorded dispatch by its exact request ID
 .TP
+.B actions review
+Review exact dispatch remote source, attempt and jobs (read\\-only)
+.TP
 .B actions run
 Dispatch workflow only with explicit \\-\\-yes; return run ID if available
 .TP
@@ -169,6 +229,9 @@ List recent remote workflow runs from selected GitHub repository
 .TP
 .B actions status
 Read\\-only GitHub Actions provider
+.TP
+.B actions ui
+Read\\-only Termux Textual GitHub Actions workspace
 .TP
 .B actions verify
 Verify a previously downloaded registered GitHub artifact
@@ -184,6 +247,9 @@ Read\\-only GitHub Actions provider
 .TP
 .B actions workflows
 Read\\-only GitHub Actions provider
+.TP
+.B adopt\\-batch
+Multi\\-repo source\\-lock preview, per\\-repo apply and explicit partial recovery
 .TP
 .B affected
 Canonical Devtool command.
@@ -305,13 +371,13 @@ Aliases: termux\\-hud\\-bridge
 .B apply
 Canonical Devtool command.
 .TP
-.B apply overlay
-Canonical Devtool command.
-Aliases: apply\\-overlay, ao
-.TP
 .B apply overlays
 Canonical Devtool command.
 Aliases: apply\\-overlays, aos
+.TP
+.B apply overlay
+Canonical Devtool command.
+Aliases: apply\\-overlay, ao
 .TP
 .B apply snapshot
 Canonical Devtool command.
@@ -333,6 +399,12 @@ Canonical Devtool command.
 .TP
 .B artifact verify
 Canonical Devtool command.
+.TP
+.B artifacts
+Read\\-only artifact integrity (does not update registry)
+.TP
+.B artifacts verify
+Rehash an existing registry record and inspect producer identity
 .TP
 .B audit
 Canonical Devtool command.
@@ -485,6 +557,21 @@ Canonical Devtool command.
 Canonical Devtool command.
 Aliases: dr
 .TP
+.B evidence
+Typed evidence and report validation (read\\-only)
+.TP
+.B evidence lineage
+Read\\-only canonical EXO node and remote lineage
+.TP
+.B evidence merge\\-tests
+Read\\-only hash\\-bound deterministic test shard merge
+.TP
+.B evidence normalize
+Parse an actual test report without claiming hosted authority
+.TP
+.B evidence validate
+Check version, exact identity and untrusted reported gates
+.TP
 .B federation
 Canonical Devtool command.
 Aliases: fed
@@ -512,6 +599,10 @@ Aliases: federation graph, fed capabilities, fed graph
 .B federation conformance
 Canonical Devtool command.
 Aliases: federation interface\\-check, fed conformance, fed interface\\-check
+.TP
+.B federation dag\\-contract
+Read\\-only child\\-owned producer/consumer DAG and source\\-lock evidence
+Aliases: fed dag\\-contract
 .TP
 .B federation diff
 Canonical Devtool command.
@@ -758,6 +849,9 @@ Canonical Devtool command.
 Canonical Devtool command.
 Aliases: menu validate, menu v
 .TP
+.B migration
+Git\\-locked extraction inventory, durable generated\\-data escrow and two\\-commit recovery
+.TP
 .B oci
 Canonical Devtool command.
 .TP
@@ -820,8 +914,14 @@ Canonical Devtool command.
 .B overlay check
 Canonical Devtool command.
 .TP
+.B overlay plan
+Review overlay source, patch presence, and safe lifecycle next step (read\\-only)
+.TP
 .B overlay rebase
 Canonical Devtool command.
+.TP
+.B overlay recovery\\-plan
+Read\\-only transaction rollback and LIFE cleanup recovery evidence
 .TP
 .B overlay status
 Canonical Devtool command.
@@ -1027,6 +1127,18 @@ Canonical Devtool command.
 Canonical Devtool command.
 Aliases: t
 .TP
+.B transaction
+Historical marker operations (no Git checkout rollback or integration)
+.TP
+.B transaction inspect
+Inspect historical retirement predicates without side effects
+.TP
+.B transaction retire
+Explicitly escrow historical active markers, preserving checkout
+.TP
+.B transaction unretire
+Restore matching escrowed active markers
+.TP
 .B tui
 Canonical Devtool command.
 .TP
@@ -1104,6 +1216,12 @@ Canonical Devtool command.
 Canonical Devtool command.
 Aliases: wv
 .TP
+.B workflow
+Native workflow retry planning and guarded execution
+.TP
+.B workflow retry
+Plan failed\\-node retry, execute only with explicit \\-\\-yes
+.TP
 .B workflows
 Canonical Devtool command.
 Aliases: wf
@@ -1145,15 +1263,30 @@ Canonical Devtool command.
 .B wrapper verify
 Canonical Devtool command.
 .TP
-.B actions qualification
-G8 Actions qualification
+.B actions overview
+Read\\-only Actions overview
 .TP
-.B actions qualification check
-G8 read\\-only qualification check
+.B capabilities
+Source\\-aware capability inventory
 .TP
-.B actions qualification report
-G8 read\\-only qualification report
+.B actions android release\\-batch\\-plan
+Source\\-bound unsigned Android release batch
+.TP
+.B actions android release\\-batch\\-run
+Source\\-bound unsigned Android release batch
+.TP
+.B actions android release\\-batch\\-check
+Source\\-bound unsigned Android release batch
+.TP
+.B actions android release\\-batch\\-import
+Source\\-bound unsigned Android release batch
+.TP
+.B actions android release\\-batch\\-sign
+Source\\-bound unsigned Android release batch
+.TP
+.B onboard
+In\\-place whole\\-repository review, ownership and source\\-bound onboarding
 .SH GENERATED CONTRACT
-Registry digest: b04756a4e8d96ebe76377440f1ae36c8c34943a84e7e793ed9ce18753f1ac00b
+Registry digest: 63c4b8571a885a6075efec1aef6c6d73cdbcb65f227f9b36662dd897b82bc368
 .SH SEE ALSO
 devtool(1)

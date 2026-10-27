@@ -119,6 +119,7 @@ def aggregate_shards(expected_check_ids:Sequence[str], outcomes:Iterable[ShardOu
     )
     return {
         "complete":complete,
+        "expected_case_ids":list(expected),
         "missing":missing,"duplicate":duplicate,"unexpected":unexpected,
         "invalid_shards":invalid_shards,
         "count_mismatch":bool(count_mismatch or negative_counts),
@@ -126,22 +127,71 @@ def aggregate_shards(expected_check_ids:Sequence[str], outcomes:Iterable[ShardOu
         "passed":sum(o.passed for o in vals),
         "failed":sum(o.failed for o in vals),
         "skipped":sum(o.skipped for o in vals),
-        "attachments":[{"shard_id":o.shard_id,"junit":o.junit_path,"log":o.log_path,"profile":o.profile_path} for o in vals],
+        "attachments":[{"shard_id":o.shard_id,"case_ids":list(o.check_ids),"passed":o.passed,"failed":o.failed,"skipped":o.skipped,"junit":o.junit_path,"log":o.log_path,"profile":o.profile_path} for o in vals],
     }
 
-def run_attachment_manifest(run_id:str, selection_id:str, aggregate:Mapping[str,Any])->dict[str,Any]:
+def _valid_terminal_attachments(attachments: list[Any], counts: Mapping[str, int], expected: int, expected_ids: list[str]) -> bool:
+    """Bind projected completion to each shard's selected cases and outcomes."""
+    if not attachments:
+        return False
+    cases: list[str] = []
+    totals = {key: 0 for key in counts}
+    shard_ids: set[str] = set()
+    for shard in attachments:
+        if not isinstance(shard, dict):
+            return False
+        shard_id = shard.get("shard_id")
+        ids = shard.get("case_ids")
+        if not isinstance(shard_id, str) or not shard_id or shard_id in shard_ids:
+            return False
+        if not isinstance(ids, list) or not ids or any(not isinstance(x, str) or not x for x in ids):
+            return False
+        shard_ids.add(shard_id)
+        values = [shard.get(key) for key in counts]
+        if any(type(value) is not int or value < 0 for value in values):
+            return False
+        if sum(values) != len(ids):
+            return False
+        for key, value in zip(counts, values):
+            totals[key] += value
+        cases.extend(ids)
+    return (
+        len(cases) == expected and len(set(cases)) == expected
+        and sorted(cases) == sorted(expected_ids) and totals == dict(counts)
+    )
+
+def run_attachment_manifest(run_id:str, selection_id:str, aggregate:Mapping[str,Any], *, authorized_case_ids:Sequence[str]|None=None)->dict[str,Any]:
     attachments=list(aggregate.get("attachments") or ())
-    counts={k:int(aggregate.get(k,0)) for k in ("passed","failed","skipped")}
+    raw_counts=[aggregate.get(k,0) for k in ("passed","failed","skipped")]
+    numeric_counts=all(type(v) is int and v>=0 for v in raw_counts)
+    counts=dict(zip(("passed","failed","skipped"),raw_counts)) if numeric_counts else {"passed":0,"failed":0,"skipped":0}
     expected=aggregate.get("expected_check_count")
     observed=aggregate.get("observed_check_count")
+    valid_expected=type(expected) is int and expected>0
+    expected_ids=aggregate.get("expected_case_ids")
+    valid_inventory=(
+        isinstance(expected_ids,list) and valid_expected
+        and len(expected_ids)==expected
+        and all(isinstance(item,str) and bool(item) for item in expected_ids)
+        and len(set(expected_ids))==expected
+    )
+    # A mutable aggregate can counterfeit BOTH its attached cases and its
+    # internally claimed expected_case_ids. Real producers should pass the
+    # independently selected inventory from the original selection authority.
+    external_binding=(
+        authorized_case_ids is None
+        or (valid_inventory and isinstance(authorized_case_ids,(list,tuple))
+            and len(authorized_case_ids)==expected
+            and all(isinstance(x,str) and bool(x) for x in authorized_case_ids)
+            and len(set(authorized_case_ids))==expected
+            and set(authorized_case_ids)==set(expected_ids))
+    )
     safe_complete=(
-        aggregate.get("complete") is True
-        and isinstance(expected,int) and not isinstance(expected,bool) and expected>0
-        and isinstance(observed,int) and observed==expected
+        external_binding and aggregate.get("complete") is True
+        and numeric_counts and valid_expected and valid_inventory
+        and type(observed) is int and observed==expected
         and sum(counts.values())==expected
-        and all(v>=0 for v in counts.values())
-        and len({str(a.get("shard_id", "")) for a in attachments if isinstance(a,dict)})==len(attachments)
-        and all(isinstance(a,dict) and str(a.get("shard_id", "")) for a in attachments)
+        and _valid_terminal_attachments(attachments,counts,expected,expected_ids)
         and not any(aggregate.get(key) for key in ("missing","duplicate","unexpected","invalid_shards","count_mismatch"))
     )
     return {"schema_version":3,"run_id":run_id,"selection_id":selection_id,"complete":safe_complete,"attachments":attachments,"summary":counts}

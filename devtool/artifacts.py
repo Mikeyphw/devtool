@@ -286,7 +286,9 @@ def _artifact_family_variants(path: Path) -> list[ArtifactVariant]:
     lower_suffix = suffix.lower()
     for root in roots:
         for entry in path.parent.iterdir():
-            if not entry.is_file() and not entry.is_symlink():
+            # A symlinked duplicate is not a valid consumed source. Resolving
+            # it here would erase the original leaf identity before cleanup.
+            if entry.is_symlink() or not entry.is_file():
                 continue
             if not entry.name.lower().endswith(lower_suffix):
                 continue
@@ -348,8 +350,13 @@ def resolve_artifact_path(artifact: str | Path) -> Path:
     ``overlay1.zip`` or ``overlay-1.zip``.  The highest numeric duplicate suffix
     wins, unless the unsuffixed archive exists and has a newer modification time.
     """
-    path = resolve_cli_path(str(artifact))
-    return _select_artifact_variant(path, _artifact_family_variants(path))
+    path = resolve_cli_path(str(artifact), preserve_leaf=True)
+    if path.is_symlink():
+        raise ValueError("artifact source symlinks are not accepted")
+    chosen = _select_artifact_variant(path, _artifact_family_variants(path))
+    if chosen.is_symlink():
+        raise ValueError("selected artifact variant is a symlink")
+    return chosen
 
 
 def artifact_cleanup_paths(artifact: str | Path) -> list[Path]:

@@ -62,7 +62,7 @@ from .transaction_worktree import transaction_execution_root
 from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, redact_sensitive_value, write_log
 from .process_state import preserve_environment_keys
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
-from .core.events import NodeDiscovered, NodeFinished, NodeStarted, TaskFinished, TaskStarted, WarningDetected, publish_event
+from .core.events import NodeDiscovered, NodeFinished, NodeProgressChanged, NodeStarted, TaskFinished, TaskStarted, WarningDetected, publish_event
 from .core.execution_contract import NodeId, RunId
 from .xdg import state_dir
 from .project_runners import (
@@ -1189,6 +1189,7 @@ def _iter_process_output_lines(
     stall_warning_message: str = "",
     heartbeat_seconds: float = 0.0,
     heartbeat_message: Callable[[float], str] | None = None,
+    go_spool=None,
 ):
     """Yield child output without waiting forever for pipe EOF.
 
@@ -1205,18 +1206,23 @@ def _iter_process_output_lines(
     stdout = proc.stdout
     if stdout is None:
         return
-    if os.name != "posix":
+    if os.name != "posix" and go_spool is None:
         for line in stdout:
             yield line
         return
 
     import codecs
-    import fcntl
+    if os.name == "posix":
+        import fcntl
     import select
 
     fd = stdout.fileno()
-    old_flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-    fcntl.fcntl(fd, fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
+    old_flags = None
+    if go_spool is None:
+        old_flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
+    else:
+        go_spool.start(stdout)
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
     pending = ""
     last_output_at = time.monotonic()
@@ -1234,6 +1240,7 @@ def _iter_process_output_lines(
     memory_guard_history: deque[int] = deque(maxlen=12)
     memory_guard_details = ""
     memory_guard_sustained_limit, memory_guard_hard_limit = _memory_guard_limits(memory_guard_mb)
+    child_exited_at: float | None = None
 
     def emit_text(text: str):
         nonlocal pending
@@ -1279,11 +1286,13 @@ def _iter_process_output_lines(
 
     try:
         while True:
-            ready, _, _ = select.select([fd], [], [], 0.1)
-            if ready:
+            if go_spool is not None:
+                # The producer is the sole owner of the actual subprocess pipe.
+                # Rendering and Go JSON decoding occur only in this consumer.
                 try:
-                    chunk = os.read(fd, 65536)
-                except BlockingIOError:
+                    chunk = go_spool.read_available(wait=0.10)
+                except OSError as exc:
+                    go_spool.fail(f"spool_read_error: {type(exc).__name__}: {exc}")
                     chunk = b""
                 if chunk:
                     last_output_at = time.monotonic()
@@ -1291,26 +1300,68 @@ def _iter_process_output_lines(
                     for line in emit_and_track(decoder.decode(chunk)):
                         yield line
                     continue
-                if proc.poll() is not None:
+                state = go_spool.state()
+                if state["transport_error"]:
+                    setattr(proc, "_devtool_assumed_returncode", 75)
+                    setattr(proc, "_devtool_go_shutdown_reason", "transport_error")
+                    try:
+                        os.killpg(proc.pid, 15)
+                    except Exception:
+                        with contextlib.suppress(Exception):
+                            proc.terminate()
                     break
-
-            if proc.poll() is not None:
-                deadline = time.monotonic() + max(0.0, drain_seconds)
-                while time.monotonic() < deadline:
-                    ready, _, _ = select.select([fd], [], [], 0.05)
-                    if not ready:
+                if state["pipe_eof_observed"] and state["bytes_consumed"] == state["spool_bytes"]:
+                    break
+                if proc.poll() is not None:
+                    if child_exited_at is None:
+                        child_exited_at = time.monotonic()
+                    if time.monotonic() - child_exited_at >= max(0.1, drain_seconds):
+                        go_spool.fail("pipe_open_after_child_exit: EOF not observed; possible inherited descriptor")
+                        setattr(proc, "_devtool_assumed_returncode", 75)
+                        setattr(proc, "_devtool_go_shutdown_reason", "inherited_pipe_timeout")
+                        try:
+                            os.killpg(proc.pid, 15)
+                        except Exception:
+                            pass
                         break
+            else:
+                ready, _, _ = select.select([fd], [], [], 0.1)
+                if ready:
                     try:
                         chunk = os.read(fd, 65536)
                     except BlockingIOError:
                         chunk = b""
-                    if not chunk:
+                    if chunk:
+                        last_output_at = time.monotonic()
+                        last_heartbeat_at = last_output_at
+                        for line in emit_and_track(decoder.decode(chunk)):
+                            yield line
+                        continue
+                    if proc.poll() is not None:
                         break
-                    for line in emit_and_track(decoder.decode(chunk)):
-                        yield line
-                break
+
+                if proc.poll() is not None:
+                    deadline = time.monotonic() + max(0.0, drain_seconds)
+                    while time.monotonic() < deadline:
+                        ready, _, _ = select.select([fd], [], [], 0.05)
+                        if not ready:
+                            break
+                        try:
+                            chunk = os.read(fd, 65536)
+                        except BlockingIOError:
+                            chunk = b""
+                        if not chunk:
+                            break
+                        for line in emit_and_track(decoder.decode(chunk)):
+                            yield line
+                    break
 
             now_monotonic = time.monotonic()
+            if go_spool is not None:
+                # Producer activity, not renderer speed, determines an idle pipe.
+                last_output_at = max(last_output_at, go_spool.producer_activity_at())
+                if go_spool.state()["spool_bytes"] > go_spool.state()["bytes_consumed"]:
+                    last_output_at = now_monotonic
             if heartbeat_seconds > 0 and (now_monotonic - last_output_at) >= heartbeat_seconds and (now_monotonic - last_heartbeat_at) >= heartbeat_seconds:
                 last_heartbeat_at = now_monotonic
                 elapsed = now_monotonic - last_output_at
@@ -1525,10 +1576,17 @@ def _iter_process_output_lines(
         if pending:
             yield pending
     finally:
-        try:
-            fcntl.fcntl(fd, fcntl.F_SETFL, old_flags)
-        except Exception:
-            pass
+        if go_spool is not None:
+            go_spool.mark_presented()
+            go_spool.close()
+            setattr(proc, "_devtool_go_transport", go_spool.state())
+            if go_spool.state()["transport_error"]:
+                setattr(proc, "_devtool_assumed_returncode", 75)
+        if old_flags is not None:
+            try:
+                fcntl.fcntl(fd, fcntl.F_SETFL, old_flags)
+            except Exception:
+                pass
 
 
 def _wait_process_returncode(proc: subprocess.Popen, *, timeout: float = 5.0) -> int:
@@ -1728,20 +1786,66 @@ def _run_process_live(
         structured_state["git_trace"]["remaining_live_seconds"] = 0.0
     output_parts: list[str] = []
     go_test_stream = None
+    go_spool = None
     if progress_parser == "go-test-json":
         from .go_test import GoTestJSONStream
+        from .go_output_spool import GoOutputSpool, capacity_from_env
         go_test_stream = GoTestJSONStream()
+        go_spool = GoOutputSpool(max_bytes=capacity_from_env(env))
 
     def _render_process_line(raw_line: str) -> str:
         if go_test_stream is None:
             return raw_line
         return go_test_stream.feed(raw_line)
 
+    go_transport_error_reported = False
+
+    def _report_go_transport_failure() -> None:
+        nonlocal go_transport_error_reported
+        if go_transport_error_reported or go_spool is None:
+            return
+        payload = getattr(proc, "_devtool_go_transport", {}) or {}
+        error = payload.get("transport_error")
+        if not error:
+            return
+        go_transport_error_reported = True
+        message = "\nDevtool Go output transport FAILED: " + str(error) + ".\n"
+        output_parts.append(message)
+        _append_live_log(message)
+        if presentation is not None:
+            presentation.output_line(message)
+        if verbose or presentation is None or not presentation.hides_raw_output:
+            print(message, end="", flush=True)
+
+    def _check_go_stream_complete(code: int) -> int:
+        if go_test_stream is None or code != 0:
+            return code
+        malformed = go_test_stream.invalid_json_events
+        unfinished = go_test_stream.incomplete_packages()
+        if not malformed and not unfinished:
+            return code
+        reason = f"incomplete_go_json: malformed_events={malformed} unfinished_package_count={len(unfinished)}"
+        setattr(proc, "_devtool_go_shutdown_reason", "incomplete_go_json")
+        transport = dict(getattr(proc, "_devtool_go_transport", {}) or {})
+        transport["transport_error"] = reason
+        setattr(proc, "_devtool_go_transport", transport)
+        # Keep the public diagnostic bounded and avoid exposing raw JSON payload.
+        message = "\nDevtool Go JSON transport incomplete: " + reason + ".\n"
+        output_parts.append(message)
+        _append_live_log(message)
+        return 75
+
     def _finalize_structured_state() -> None:
         if structured_state is None:
             return
         if go_test_stream is not None:
             structured_state["go_test_report"] = go_test_stream.report()
+            transport = getattr(proc, "_devtool_go_transport", None)
+            if transport is not None:
+                structured_state["go_output_transport"] = {
+                    **transport, "child_exit_code": proc.poll(),
+                    "shutdown_reason": getattr(proc, "_devtool_go_shutdown_reason", "normal"),
+                }
         if isinstance(tracker, GradleProgressTracker):
             try:
                 structured_state["gradle_progress"] = dict(tracker.snapshot())
@@ -1940,6 +2044,7 @@ def _run_process_live(
         cancel_watcher = threading.Thread(target=_watch_cancel, name=f"devtool-cancel-{proc.pid}", daemon=True)
         cancel_watcher.start()
 
+    active_line_iterator = None
     try:
         idle_timeout = _idle_timeout_for(parser_argv, command_name)
         completion_idle_grace = _test_completion_grace_for(parser_argv, command_name)
@@ -1965,7 +2070,7 @@ def _run_process_live(
 
         completion_detector = _dotnet_test_completion_status if completion_idle_grace is not None else None
         if tracker is None:
-            for raw_line in _iter_process_output_lines(
+            active_line_iterator = _iter_process_output_lines(
                 proc,
                 idle_timeout=idle_timeout,
                 completion_idle_grace=completion_idle_grace,
@@ -1977,7 +2082,9 @@ def _run_process_live(
                 stall_warning_message=stall_warning_message,
                 heartbeat_seconds=heartbeat_seconds,
                 heartbeat_message=_heartbeat_message,
-            ):
+                go_spool=go_spool,
+            )
+            for raw_line in active_line_iterator:
                 line = _render_process_line(raw_line)
                 if not line:
                     continue
@@ -1993,11 +2100,13 @@ def _run_process_live(
                 code = 124
             elif interrupted_by_devtool.is_set() or (tasker_progress is not None and tasker_progress.cancel_requested()):
                 code = 130
+            code = _check_go_stream_complete(code)
+            _report_go_transport_failure()
             _finalize_structured_state()
             return code, "".join(output_parts)
 
         with tracker:
-            for raw_line in _iter_process_output_lines(
+            active_line_iterator = _iter_process_output_lines(
                 proc,
                 idle_timeout=idle_timeout,
                 completion_idle_grace=completion_idle_grace,
@@ -2009,7 +2118,9 @@ def _run_process_live(
                 stall_warning_message=stall_warning_message,
                 heartbeat_seconds=heartbeat_seconds,
                 heartbeat_message=_heartbeat_message,
-            ):
+                go_spool=go_spool,
+            )
+            for raw_line in active_line_iterator:
                 line = _render_process_line(raw_line)
                 if not line:
                     continue
@@ -2057,6 +2168,8 @@ def _run_process_live(
             # runner publishes the authoritative final state afterwards.
             if returncode != 0:
                 tracker.finish(returncode)
+        returncode = _check_go_stream_complete(returncode)
+        _report_go_transport_failure()
         _finalize_structured_state()
         return returncode, "".join(output_parts)
     except KeyboardInterrupt:
@@ -2070,6 +2183,24 @@ def _run_process_live(
         _finalize_structured_state()
         return 130, "".join(output_parts)
     finally:
+        if go_spool is not None:
+            if go_spool.state()["presentation_completed_at"] is None and proc.poll() is None:
+                _terminate_process()
+            if active_line_iterator is not None:
+                active_line_iterator.close()
+            if go_spool.state()["presentation_completed_at"] is None:
+                go_spool.fail("presentation_aborted_before_transport_completion")
+                go_spool.close()
+                setattr(proc, "_devtool_go_transport", go_spool.state())
+            if structured_state is not None:
+                previous = dict(getattr(proc, "_devtool_go_transport", {}) or {})
+                snapshot = go_spool.state()
+                if previous.get("transport_error") and not snapshot.get("transport_error"):
+                    snapshot["transport_error"] = previous["transport_error"]
+                structured_state["go_output_transport"] = {
+                    **snapshot, "child_exit_code": proc.poll(),
+                    "shutdown_reason": getattr(proc, "_devtool_go_shutdown_reason", "normal"),
+                }
         if git_trace_enabled and structured_state is not None:
             structured_state["git_trace"]["remaining_live_seconds"] = time.perf_counter() - trace_after_event
         if presentation is not None:
@@ -2337,6 +2468,10 @@ def _publish_workflow_plan_events(specs: Sequence[CommandSpec], event_run_id: st
                 "index": spec.metadata.get("workflow_node_index"),
                 "runner": str(spec.metadata.get("workflow_runner") or ""),
                 "action": str(spec.metadata.get("workflow_action") or ""),
+                "source_commit": str(spec.metadata.get("workflow_source_commit") or ""),
+                "workflow_config_fingerprint": str(spec.metadata.get("workflow_config_fingerprint") or ""),
+                "workflow_canonical_identity": str(spec.metadata.get("workflow_canonical_identity") or ""),
+                "workflow_attempt": int(spec.metadata.get("workflow_attempt") or 1),
             },
         ))
 
@@ -2511,7 +2646,8 @@ def run_specs(
                     workflow_node_status[workflow_node_key] = synthetic_state
                 if tasker_progress is not None and not dry_run:
                     tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=spec.argv, metadata=spec.metadata)
-                publish_event(TaskStarted(
+                if prior_state not in {"failed", "blocked", "cancelled", "skipped"}:
+                    publish_event(TaskStarted(
                     run_id=event_run_id,
                     task=spec.name,
                     argv=tuple(str(value) for value in redact_sensitive_value(list(spec.argv))),
@@ -2542,7 +2678,8 @@ def run_specs(
                         pass
                 results.append(synthetic_result)
                 raw_sections.append(synthetic_raw)
-                publish_event(TaskFinished(
+                if prior_state not in {"failed", "blocked", "cancelled", "skipped"}:
+                    publish_event(TaskFinished(
                     run_id=event_run_id,
                     task=spec.name,
                     success=synthetic_state not in {"failed", "blocked", "cancelled"},
@@ -2672,7 +2809,8 @@ def run_specs(
                         "process_executed": False,
                     },
                 ))
-            publish_event(TaskFinished(
+            if not command_part_node_id or workflow_part_index == workflow_part_total:
+                publish_event(TaskFinished(
                 run_id=event_run_id,
                 task=spec.name,
                 success=True,
@@ -2742,7 +2880,8 @@ def run_specs(
                     run_id=event_run_id, node_id=command_part_node_id, parent_id=workflow_node_key,
                     status="skipped", exit_code=0, source="runner", metadata={"dry_run": True},
                 ))
-            publish_event(TaskFinished(
+            if not command_part_node_id or workflow_part_index == workflow_part_total:
+                publish_event(TaskFinished(
                     run_id=event_run_id,
                 task=spec.name,
                 success=True,
@@ -2784,6 +2923,13 @@ def run_specs(
             if parsed_timeout > 0:
                 command_timeout_seconds = parsed_timeout
 
+        # For Maven XML evidence, an entry snapshot is more reliable than host
+        # timestamp comparisons (especially Termux/Android coarse mtime clocks).
+        report_entry_state = None
+        if "maven-surefire" in str(spec.metadata.get("report_parsers") or spec.metadata.get("report_parser") or ""):
+            from .gradle_reports import snapshot_maven_report_state
+            report_entry_root = Path(str(spec.metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
+            report_entry_state = snapshot_maven_report_state(report_entry_root)
         started = time.perf_counter()
         started_wall = time.time()
         returncode = 1
@@ -2964,6 +3110,9 @@ def run_specs(
             str(result_metadata.get("runner") or "").lower() == "go"
             and str(spec.name or "").lower() in {"test", "go-test", "go-validation"}
         )
+        go_transport = structured_process_state.get("go_output_transport")
+        if isinstance(go_transport, dict):
+            result_metadata["go_output_transport"] = dict(go_transport)
         go_report = structured_process_state.get("go_test_report")
         go_report_evidence = "protocol" if go_report is not None else "stdout"
         if go_report is None and (
@@ -3048,6 +3197,7 @@ def run_specs(
                     command_name=spec.name,
                     output=output,
                     report_path=raw_report_path,
+                    initial_report_state=report_entry_state if report_parser == "maven-surefire" and not returned_project_root else None,
                 )
                 if report_parser in {"gradle-junit", "pytest-junit", "android-instrumentation", "dotnet-trx", "maven-surefire", "node-json", "node-junit"}:
                     tests = dict(collection.metadata)
@@ -3612,7 +3762,20 @@ def run_specs(
                 source="runner",
                 metadata={"part_index": workflow_part_index, "part_total": workflow_part_total},
             ))
-        publish_event(TaskFinished(
+        if command_part_node_id and workflow_part_index < workflow_part_total and returncode == 0:
+            # Preserve each successful command part's verified outputs in the
+            # parent aggregate without treating the parent as terminal early.
+            publish_event(NodeProgressChanged(
+                run_id=event_run_id, node_id=event_node_id,
+                current=workflow_part_index, total=workflow_part_total,
+                detail="command part completed; parent remains running", source="runner",
+                metadata={key: result_metadata[key] for key in (
+                    "reuse_fingerprint", "reuse_output_manifest",
+                    "reuse_result_identity", "reuse_portability_class",
+                ) if key in result_metadata},
+            ))
+        if not command_part_node_id or workflow_part_index == workflow_part_total or returncode != 0:
+            publish_event(TaskFinished(
                     run_id=event_run_id,
             task=spec.name,
             success=returncode == 0,
@@ -3631,6 +3794,8 @@ def run_specs(
                 "duration_seconds": duration,
                 "failure_kind": failure_kind,
                 **({key: result_metadata[key] for key in (
+                    "workflow_source_commit", "workflow_config_fingerprint",
+                    "workflow_canonical_identity", "workflow_attempt",
                     "reuse_fingerprint", "reuse_output_manifest", "reuse_result_identity",
                     "reuse_evidence_refs", "reuse_portability_class",
                     "gradle_execution_receipt", "gradle_receipt_id",
@@ -4081,6 +4246,56 @@ def _artifact_execution_status(result: OperationResult) -> str:
     return "succeeded"
 
 
+def _persist_artifact_cleanup_source_provenance(
+    repo_root: Path, result: OperationResult, paths: Sequence[str | Path],
+) -> None:
+    """Bind consumed source identities to an existing durable apply execution.
+
+    The caller must have produced an ArtifactExecutionRecord first.  In the
+    ad-hoc sequential-bundle case the CLI calls this once more with the exact
+    original component sources, after the runner has consumed the bundle.
+    """
+    from .artifact_cleanup_worker import cleanup_source_snapshot
+    from .core_runtime import private_run_root
+    from .run_store import AttachmentDescriptor, RunCatalog
+
+    metadata = dict(result.metadata or {})
+    run_id = str(metadata.get("run_id") or "")
+    record_id = str(metadata.get("artifact_execution_record_id") or "")
+    if not run_id or not record_id or not paths:
+        return
+    canonical_repo = Path(str(metadata.get("transaction_primary_repo_root") or repo_root)).resolve()
+    run_root = private_run_root(canonical_repo)
+    record_path = run_root / run_id / "artifacts" / (record_id.replace(":", "-") + ".json")
+    if not record_path.is_file():
+        raise ValueError("artifact cleanup source evidence requires a durable execution record")
+    snapshots = [cleanup_source_snapshot(path) for path in paths]
+    if len({snapshot["path"] for snapshot in snapshots}) != len(snapshots):
+        raise ValueError("duplicate artifact apply sources cannot be durably authorized")
+    evidence = {
+        "schema_version": 1, "repository": str(canonical_repo),
+        "run_id": run_id, "artifact_execution_record_id": record_id,
+        "sources": snapshots,
+    }
+    evidence_path = record_path.with_name(record_path.stem + "-sources.json")
+    staged = evidence_path.with_suffix(".json.tmp")
+    staged.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(staged, evidence_path)
+    catalog = RunCatalog.open(run_root)
+    # When replacing the temporary ad-hoc bundle's source evidence with its
+    # actual component sources, retire the old attachment descriptor.
+    for attachment_id, attachment in list(catalog.attachments.items()):
+        if attachment.path == str(evidence_path) and attachment.kind == "artifact-apply-source-provenance":
+            del catalog.attachments[attachment_id]
+    attachment = AttachmentDescriptor.from_file(
+        run_id=run_id, path=evidence_path,
+        kind="artifact-apply-source-provenance", media_type="application/json",
+    )
+    ref = catalog.add_attachment(attachment)
+    catalog.save()
+    result.metadata["artifact_cleanup_source_provenance_reference"] = ref.ref_id
+
+
 def _persist_artifact_execution_record(repo_root: Path, plan: object, result: OperationResult) -> None:
     from .artifact_lifecycle import ArtifactExecutionRecord, ResolvedArtifactPlan
     from .core_runtime import private_run_root
@@ -4189,6 +4404,19 @@ def _persist_artifact_execution_record(repo_root: Path, plan: object, result: Op
     result.metadata.setdefault("artifact_execution_attachment_id", execution_attachment.attachment_id)
     result.metadata.setdefault("artifact_execution_reference", execution_ref.ref_id)
     result.metadata.setdefault("run_id", run_id)
+    cleanup_paths = metadata.get("artifact_paths")
+    if not isinstance(cleanup_paths, list) or not cleanup_paths:
+        cleanup_paths = [str(metadata.get("artifact_path") or "")]
+    try:
+        _persist_artifact_cleanup_source_provenance(
+            canonical_repo, result,
+            [str(path) for path in cleanup_paths if isinstance(path, str) and path],
+        )
+    except (OSError, ValueError) as exc:
+        # Record the apply result faithfully. Cleanup then fails closed if no
+        # durable provenance could be written; a post-apply failure must not
+        # fabricate an unsuccessful mutation or silently allow deletion.
+        result.metadata["artifact_cleanup_provenance_error"] = type(exc).__name__ + ": " + str(exc)
 
 
 def apply_overlay(

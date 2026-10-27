@@ -1,0 +1,250 @@
+# Devtool ACTIONS-08: unsigned-first Android builds. Local LIFE signing never needs GitHub secrets.
+# Optional GitHub signing is an explicit protected-ref choice; never a dependency of unsigned releases.
+name: Devtool Android Build
+on:
+  workflow_dispatch:
+    inputs:
+      project_dir:
+        description: 'Gradle project root relative to repository, or dot for repository root'
+        required: true
+        type: string
+      module:
+        description: 'Gradle Android app module (colon-separated, no leading colon)'
+        required: true
+        type: string
+      variant:
+        description: 'Build variant'
+        required: true
+        type: string
+      format:
+        description: 'Android package format'
+        required: true
+        type: choice
+        options: [apk, aab]
+      build_type:
+        description: 'Explicit reviewed build type for custom variants; debug/release may be inferred'
+        required: false
+        type: string
+        default: ''
+      signing_mode:
+        description: 'local publishes unsigned output for Devtool LIFE signing; github uses protected GitHub signing secrets'
+        required: true
+        default: local
+        type: choice
+        options: [local, github]
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Validate requested Gradle task
+        shell: bash
+        env:
+          DT_PROJECT: ${{ inputs.project_dir }}
+          DT_MODULE: ${{ inputs.module }}
+          DT_VARIANT: ${{ inputs.variant }}
+          DT_FORMAT: ${{ inputs.format }}
+          DT_SIGNING_MODE: ${{ inputs.signing_mode }}
+          DT_REQUESTED_BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DT_MODULE" =~ ^[A-Za-z][A-Za-z0-9_-]*(:[A-Za-z][A-Za-z0-9_-]*){0,7}$ ]]; then exit 2; fi
+          if [[ ! "$DT_VARIANT" =~ ^[a-z][A-Za-z0-9]{0,60}$ ]]; then exit 2; fi
+          case "$DT_FORMAT" in apk|aab) ;; *) exit 2 ;; esac
+          if [[ -n "${DT_REQUESTED_BUILD_TYPE:-}" ]]; then
+            if [[ ! "$DT_REQUESTED_BUILD_TYPE" =~ ^[a-z][A-Za-z0-9]{0,40}$ ]]; then exit 2; fi
+            title="${DT_REQUESTED_BUILD_TYPE^}"
+            if [[ "$DT_VARIANT" != "$DT_REQUESTED_BUILD_TYPE" && "$DT_VARIANT" != *"$title" ]]; then
+              echo 'Declared build type conflicts with variant identity' >&2; exit 2
+            fi
+            DT_BUILD_TYPE="$DT_REQUESTED_BUILD_TYPE"
+          elif [[ "$DT_VARIANT" == release || "$DT_VARIANT" == *Release ]]; then
+            DT_BUILD_TYPE=release
+          elif [[ "$DT_VARIANT" == debug || "$DT_VARIANT" == *Debug ]]; then
+            DT_BUILD_TYPE=debug
+          else
+            echo 'Unreviewed Android variant build type' >&2; exit 2
+          fi
+          echo "TASK_BUILD_TYPE=$DT_BUILD_TYPE" >> "$GITHUB_ENV"
+          if [[ "$DT_PROJECT" != "." && ! "$DT_PROJECT" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ ]]; then exit 2; fi
+          if [[ "$DT_PROJECT" == *".."* ]]; then exit 2; fi
+          test -d "$DT_PROJECT" && test ! -L "$DT_PROJECT"
+          case "$DT_SIGNING_MODE" in local|github) ;; *) echo 'Unreviewed signing mode' >&2; exit 2 ;; esac
+          if [[ "$DT_BUILD_TYPE" == "release" && "$DT_SIGNING_MODE" == "github" && "${GITHUB_REF_PROTECTED:-false}" != "true" ]]; then
+            echo 'Hosted signing requires a protected GitHub ref' >&2; exit 2
+          fi
+          echo "TASK_PROJECT=$DT_PROJECT" >> "$GITHUB_ENV"
+          echo "TASK_MODULE=$DT_MODULE" >> "$GITHUB_ENV"
+          echo "TASK_VARIANT=$DT_VARIANT" >> "$GITHUB_ENV"
+          echo "TASK_FORMAT=$DT_FORMAT" >> "$GITHUB_ENV"
+          if [[ "$DT_FORMAT" == "apk" ]]; then task=assemble; else task=bundle; fi
+          task+="${DT_VARIANT^}"
+          echo "TASK_NAME=$task" >> "$GITHUB_ENV"
+      - name: Build Android debug output
+        if: ${{ inputs.build_type == 'debug' || (inputs.build_type == '' && (inputs.variant == 'debug' || endsWith(inputs.variant, 'Debug'))) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$TASK_PROJECT"
+          test -f ./gradlew && test ! -L ./gradlew
+          chmod +x ./gradlew
+          ./gradlew --no-daemon ":${TASK_MODULE}:${TASK_NAME}"
+      - name: Build Android release output without GitHub signing secrets
+        if: ${{ inputs.signing_mode == 'local' && inputs.build_type != 'debug' && (inputs.build_type != '' || inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$TASK_PROJECT"
+          test -f ./gradlew && test ! -L ./gradlew
+          chmod +x ./gradlew
+          # Producer must honor this reviewed project-side property by avoiding release signingConfig.
+          ./gradlew --no-daemon -Pdevtool.unsignedReleaseCandidate=true ":${TASK_MODULE}:${TASK_NAME}"
+      - name: Build Android signed release output
+        if: ${{ inputs.signing_mode == 'github' && inputs.build_type != 'debug' && (inputs.build_type != '' || inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) }}
+        shell: bash
+        env:
+          DT_KEYSTORE_B64: ${{ secrets.DEVTOOL_RELEASE_KEYSTORE_B64 }}
+          DT_STORE_PASSWORD: ${{ secrets.DEVTOOL_RELEASE_STORE_PASSWORD }}
+          DT_KEY_ALIAS: ${{ secrets.DEVTOOL_RELEASE_KEY_ALIAS }}
+          DT_KEY_PASSWORD: ${{ secrets.DEVTOOL_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_PROTECTED:-false}" != "true" ]]; then
+            echo 'Release source ref must be protected' >&2; exit 2
+          fi
+          if [[ -z "$DT_KEYSTORE_B64" || -z "$DT_STORE_PASSWORD" || -z "$DT_KEY_ALIAS" || -z "$DT_KEY_PASSWORD" ]]; then
+            echo 'Release signing secrets missing before Gradle; refusing build' >&2; exit 2
+          fi
+          store="$RUNNER_TEMP/devtool-gradle-release-keystore.p12"
+          trap 'rm -f "$store"' EXIT
+          (umask 077; printf '%s' "$DT_KEYSTORE_B64" | base64 --decode > "$store")
+          test -s "$store"
+          # Use the app's existing release signing contract. Never include
+          # credential values in argv, Gradle properties, logs or persistent files.
+          export DEVTOOL_RELEASE_STORE_FILE="$store"
+          export DEVTOOL_RELEASE_STORE_PASSWORD="$DT_STORE_PASSWORD"
+          export DEVTOOL_RELEASE_KEY_ALIAS="$DT_KEY_ALIAS"
+          export DEVTOOL_RELEASE_KEY_PASSWORD="$DT_KEY_PASSWORD"
+          cd "$TASK_PROJECT"
+          test -f ./gradlew && test ! -L ./gradlew
+          chmod +x ./gradlew
+          ./gradlew --no-daemon ":${TASK_MODULE}:${TASK_NAME}"
+      - name: Select output and sign release
+        id: package
+        shell: bash
+        env:
+          DT_SIGNING_MODE: ${{ inputs.signing_mode }}
+          DT_KEYSTORE_B64: ${{ secrets.DEVTOOL_RELEASE_KEYSTORE_B64 }}
+          DT_STORE_PASSWORD: ${{ secrets.DEVTOOL_RELEASE_STORE_PASSWORD }}
+          DT_KEY_ALIAS: ${{ secrets.DEVTOOL_RELEASE_KEY_ALIAS }}
+          DT_KEY_PASSWORD: ${{ secrets.DEVTOOL_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mod="${TASK_MODULE//://}"
+          root="$TASK_PROJECT/$mod/build/outputs"
+          if [[ "$TASK_VARIANT" == "$TASK_BUILD_TYPE" ]]; then
+            folder="$TASK_VARIANT"
+          else
+            suffix="${TASK_BUILD_TYPE^}"
+            flavor="${TASK_VARIANT%"$suffix"}"
+            folder="${flavor,}/$TASK_BUILD_TYPE"
+          fi
+          if [[ "$TASK_FORMAT" == "apk" ]]; then dir="$root/apk/$folder"; else dir="$root/bundle/$folder"; fi
+          test -d "$dir" && test ! -L "$dir"
+          mapfile -d '' packages < <(find "$dir" -maxdepth 1 -type f -name "*.$TASK_FORMAT" -print0)
+          if [[ "${#packages[@]}" -ne 1 || -L "${packages[0]}" ]]; then echo 'Expected one regular selected Android output' >&2; exit 2; fi
+          staging="$RUNNER_TEMP/devtool-android-output"
+          mkdir -p "$staging"
+          out="$staging/release.$TASK_FORMAT"
+          if [[ "$TASK_BUILD_TYPE" == "debug" ]]; then
+            out="$staging/debug.$TASK_FORMAT"
+            cp -- "${packages[0]}" "$out"
+          elif [[ "$DT_SIGNING_MODE" == "local" ]]; then
+            out="$staging/unsigned.$TASK_FORMAT"
+            cp -- "${packages[0]}" "$out"
+            unzip -tqq "$out" >/dev/null
+            # Explicitly refuse already signed Gradle output in the local LIFE lane.
+            if [[ "$TASK_FORMAT" == "apk" ]]; then
+              tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+              test -n "$tools" && test -x "$tools/apksigner"
+              if "$tools/apksigner" verify "$out" >/dev/null 2>&1; then
+                echo 'Local candidate was unexpectedly signed by Gradle' >&2; exit 2
+              fi
+            else
+              if unzip -Z1 "$out" | grep -Eqi '^META-INF/[^/]+\.(RSA|DSA|EC)$'; then
+                echo 'Local AAB candidate already contains a signature block' >&2; exit 2
+              fi
+            fi
+          else
+            if [[ "$DT_SIGNING_MODE" != "github" || -z "$DT_KEYSTORE_B64" || -z "$DT_STORE_PASSWORD" || -z "$DT_KEY_ALIAS" || -z "$DT_KEY_PASSWORD" ]]; then
+              echo 'Explicit GitHub signing requires protected credentials' >&2; exit 2
+            fi
+            store="$RUNNER_TEMP/devtool-release-keystore.p12"
+            trap 'rm -f "$store"' EXIT
+            (umask 077; printf '%s' "$DT_KEYSTORE_B64" | base64 --decode > "$store")
+            test -s "$store"
+            if [[ "$TASK_FORMAT" == "apk" ]]; then
+              tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+              test -n "$tools" && test -x "$tools/zipalign" && test -x "$tools/apksigner"
+              "$tools/zipalign" -P 16 -f 4 "${packages[0]}" "$staging/aligned.apk"
+              "$tools/apksigner" sign --ks "$store" --ks-key-alias "$DT_KEY_ALIAS" \
+                --ks-pass env:DT_STORE_PASSWORD --key-pass env:DT_KEY_PASSWORD \
+                --out "$out" "$staging/aligned.apk"
+              "$tools/zipalign" -c -P 16 4 "$out"
+              "$tools/apksigner" verify --print-certs "$out"
+            else
+              jarsigner -keystore "$store" -storepass:env DT_STORE_PASSWORD \
+                -keypass:env DT_KEY_PASSWORD -signedjar "$out" "${packages[0]}" "$DT_KEY_ALIAS"
+              jarsigner -verify -strict "$out"
+            fi
+          fi
+          test -s "$out" && test ! -L "$out"
+          echo "package=$out" >> "$GITHUB_OUTPUT"
+          sha256sum "$out"
+          DT_RESULT="$out" DT_VARIANT="$TASK_VARIANT" DT_FORMAT="$TASK_FORMAT" python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          result=pathlib.Path(os.environ['DT_RESULT'])
+          manifest={'schema_version':1,'variant':os.environ['DT_VARIANT'],
+                    'format':os.environ['DT_FORMAT'],'apk_file':result.name,
+                    'head_sha':os.environ['GITHUB_SHA'].lower(),
+                    'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
+                    'build_type':os.environ['TASK_BUILD_TYPE'],
+                    'signing_mode':os.environ['DT_SIGNING_MODE'],
+                    'signing_state':('unsigned' if os.environ['TASK_BUILD_TYPE']!='debug' and os.environ['DT_SIGNING_MODE']=='local' else 'debug-unverified' if os.environ['TASK_BUILD_TYPE']=='debug' else 'signed'),
+                    'qualified_release':False,
+                    'sha256':hashlib.sha256(result.read_bytes()).hexdigest()}
+          (result.parent/'android-variant-manifest.json').write_text(json.dumps(manifest,sort_keys=True)+'\n')
+          PY
+      - name: Attest signed release provenance
+        if: ${{ inputs.signing_mode == 'github' && inputs.build_type != 'debug' && (inputs.build_type != '' || inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) }}
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.package.outputs.package }}
+      - name: Attest unsigned candidate (not release qualification)
+        if: ${{ inputs.signing_mode == 'local' && inputs.build_type != 'debug' && (inputs.build_type != '' || inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) }}
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.package.outputs.package }}
+      - name: Upload exactly selected Android output
+        uses: actions/upload-artifact@v4
+        with:
+          name: devtool-android-${{ inputs.variant }}-${{ inputs.format }}
+          path: |
+            ${{ steps.package.outputs.package }}
+            ${{ runner.temp }}/devtool-android-output/android-variant-manifest.json
+          if-no-files-found: error
+          retention-days: 7

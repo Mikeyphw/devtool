@@ -675,10 +675,24 @@ class CliTests(unittest.TestCase):
         self.assertEqual(selected, newer)
 
     def test_batch_dry_run(self) -> None:
+        # This probes batch planning, not host substrate autodetection. Under
+        # Termux artifact validation, sanitised host markers can expose the
+        # diagnostic identity 'host-android', which is deliberately NOT a
+        # supported execution selector. Pin the simulated desktop planner
+        # explicitly, and reproduce that hostile observed identity on every
+        # host so this regression cannot silently pass only on Linux CI.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "App.sln").write_text("", encoding="utf-8")
-            rc = main(["--repo", str(root), "--dry-run", "batch", "validate"])
+            with (
+                patch("devtool.cli.detect_current_environment", return_value="host-android"),
+                patch("devtool.execution_environments.detect_current_environment", return_value="host-android"),
+            ):
+                rc = main([
+                    "--repo", str(root),
+                    "--execution-environment", "desktop-linux",
+                    "--dry-run", "batch", "validate",
+                ])
             self.assertEqual(rc, 0)
 
     def test_validate_can_skip_restore_and_build(self) -> None:
@@ -1792,7 +1806,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertFalse((root / ".devtool-delete").exists())
 
 
-    def test_apply_overlay_removes_sidecar_manifest_next_to_artifact_after_success(self) -> None:
+    def test_apply_overlay_preserves_unowned_sidecar_manifest_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
@@ -1808,7 +1822,9 @@ artifact-cleanup: ok exit=0 time=0.10s
 
             self.assertEqual(rc, 0)
             self.assertFalse(artifact.exists())
-            self.assertFalse(sidecar.exists())
+            # LIFE may only delete the source explicitly consumed by apply.
+            # A neighboring manifest was not separately authorized for deletion.
+            self.assertTrue(sidecar.exists())
             self.assertFalse((root / ".devtool-artifact.json").exists())
             self.assertEqual((root / "new.txt").read_text(encoding="utf-8"), "new")
 
@@ -1946,7 +1962,9 @@ artifact-cleanup: ok exit=0 time=0.10s
 
             self.assertEqual(rc, 1)
             self.assertFalse(artifact.exists())
-            self.assertFalse(sidecar.exists())
+            # LIFE may only delete the source explicitly consumed by apply.
+            # A neighboring manifest was not separately authorized for deletion.
+            self.assertTrue(sidecar.exists())
 
     def test_apply_overlay_preserves_corrupt_artifact_when_failure_precedes_extraction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2145,7 +2163,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 zf.writestr(".devtool-artifact.json", json.dumps({"type": "snapshot"}))
                 zf.writestr("README.txt", "snapshot")
 
-            rc = main(["--repo", str(root), "--yes", "apply-snapshot", str(artifact)])
+            rc = main(["--repo", str(root), "--yes", "apply-snapshot", "--keep-artifact", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertEqual((root / "README.txt").read_text(encoding="utf-8"), "snapshot")
@@ -2213,6 +2231,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 rc = main(["--repo", str(root), "apply-overlay", "--diff", str(artifact)])
 
             self.assertEqual(rc, 0)
+            self.assertTrue(artifact.is_file(), "--diff is read-only and must not consume the overlay")
             self.assertEqual((root / "README.txt").read_text(encoding="utf-8"), "old\n")
             self.assertIn("--- a/README.txt", stream.getvalue())
             self.assertIn("+new", stream.getvalue())
@@ -2234,7 +2253,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.Confirm.ask", side_effect=[True, True]) as mock_confirm,
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--no-clipboard", "apply-overlay", str(artifact)])
+                rc = main(["--repo", str(root), "--no-clipboard", "apply-overlay", "--keep-artifact", str(artifact)])
 
             self.assertEqual(rc, 0)
             prompts = [call.args[0] for call in mock_confirm.call_args_list]
@@ -2258,7 +2277,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.Confirm.ask") as mock_confirm,
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--interactive", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--interactive", "--keep-artifact", str(artifact)])
 
             self.assertEqual(rc, 0)
             mock_confirm.assert_not_called()
@@ -2304,7 +2323,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--keep-artifact", "--validate", "--skip-restore", "--skip-build", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertEqual(captured, ["test"])
@@ -2353,7 +2372,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--keep-artifact", "--validate", "--skip-restore", "--skip-build", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertTrue(any("apps/S3pe.Modern.sln" in " ".join(argv) for argv in captured))
@@ -2380,7 +2399,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.git_commit", side_effect=fake_git_commit),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--commit", "handoff commit", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--keep-artifact", "--validate", "--commit", "handoff commit", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["handoff commit"])
@@ -2614,7 +2633,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.git_commit", side_effect=fake_git_commit),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-snapshot", "--validate", "--commit", "snapshot handoff", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-snapshot", "--keep-artifact", "--validate", "--commit", "snapshot handoff", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["snapshot handoff"])
@@ -2792,7 +2811,7 @@ class ApplyOverlayValidationSelectionTests(unittest.TestCase):
                 patch("devtool.cli.render_summary"),
             ):
                 rc = main([
-                    "--repo", str(root), "--yes", "apply-overlay",
+                    "--repo", str(root), "--yes", "apply-overlay", "--keep-artifact",
                     "--validate", "--skip-restore", "--skip-build",
                     "--class", "ParserTests", str(artifact),
                 ])
@@ -2912,7 +2931,7 @@ class ExclusiveValidationTaskTests(unittest.TestCase):
             ):
                 rc = main([
                     "--repo", str(root), "--yes", "--no-clipboard",
-                    "apply-overlay", "--validate", "--no-apply-notification",
+                    "apply-overlay", "--keep-artifact", "--validate", "--no-apply-notification",
                     "--task", ":app:testDebugUnitTest", str(artifact),
                 ])
 

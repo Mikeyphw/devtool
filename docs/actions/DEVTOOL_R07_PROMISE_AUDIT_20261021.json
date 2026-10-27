@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "kind": "devtool-r07-promise-audit",
+  "baseline_tree": "46223fcd86a5cdc4f6cd4b7c034aa018603b5bce",
+  "replacement_for": [
+    "DEVTOOL_SSH_RETURN_EVIDENCE_R07A.zip",
+    "DEVTOOL_SSH_CONSOLIDATED_R07A.zip"
+  ],
+  "scope": "source behavior, negative tests, disposable application; no live external qualification",
+  "promises": [
+    {
+      "increment": "R07A",
+      "scope": "manifest and transfer completion verification",
+      "status": "source_implemented",
+      "limits": [
+        "local producer digest not independent host attestation"
+      ]
+    },
+    {
+      "increment": "R07B",
+      "scope": "qualification-stage receipt and return inventory",
+      "status": "source_implemented",
+      "repair": [
+        "explicit failure-stage record",
+        "local Git HEAD/tree snapshot, worktree unverified",
+        "permission-restricted receipt directory",
+        "orphan return evidence detection",
+        "unsafe directory limit",
+        "symlinked state root denial"
+      ],
+      "limits": [
+        "all SSH commands do not share this new qualification-specific receipt",
+        "return restoration explicit; not automatic"
+      ]
+    },
+    {
+      "increment": "R07C",
+      "scope": "Termux/PRoot classification and supervisor safety",
+      "status": "source_implemented",
+      "repair": [
+        "both HOME and PREFIX required for positive native classification"
+      ],
+      "limits": [
+        "no independently attested PRoot guest",
+        "existing supervisor guards, no new autonomous control"
+      ]
+    },
+    {
+      "increment": "R07D",
+      "scope": "observed phase timings and bounded comparative ratio",
+      "status": "source_implemented",
+      "repair": [
+        "distinguish measured vs skipped phases"
+      ],
+      "limits": [
+        "real-worker benchmark not performed",
+        "FS03 external acceptance not performed",
+        "Android notification acceptance not performed"
+      ]
+    }
+  ],
+  "unclosed_external_gates": [
+    "native_termux",
+    "real_ssh_worker",
+    "fs03",
+    "android_notification",
+    "release"
+  ],
+  "install_effects": [
+    "source replacement in exact clean baseline",
+    "validator tests",
+    "git commit",
+    "bounded LIFE cleanup only"
+  ],
+  "negative_claims": [
+    "no automatic remote invocation",
+    "no synthetic release qualification",
+    "no guest stop or recovery",
+    "no external acceptance from mocks"
+  ]
+}

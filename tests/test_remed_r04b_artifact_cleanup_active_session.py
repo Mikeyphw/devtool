@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests._rmp_c02_durable_fixture import attach_durable_apply_evidence
+
 import json
 import subprocess
 from pathlib import Path
@@ -78,6 +80,7 @@ def test_post_apply_source_artifact_cleanup_ignores_repository_active_session_bl
         metadata={"artifact_path": str(artifact), "delete_artifact_on_success": True},
     )
 
+    attach_durable_apply_evidence(repo, result)
     cleanup = _delete_original_artifact_after_apply([result], repo_root=repo)
 
     assert cleanup is not None

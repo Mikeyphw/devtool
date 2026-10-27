@@ -2455,6 +2455,9 @@ class DesktopNotificationHud:
         return argv
 
     def update(self, state: HudState) -> None:
+        from .notification_controls import os_output_enabled
+        if not os_output_enabled("notifications", android=False):
+            return
         signature = (state.display_title, state.display_text, state.current, state.total, state.status)
         if signature == self.last_signature:
             return

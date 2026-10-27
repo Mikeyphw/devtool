@@ -25,6 +25,7 @@ from .exec_operational_adoption import (
     prepare_operational_specs,
 )
 from .models import CommandSpec
+from .source_bound_proofs import exec_p082_source_proof
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -44,12 +45,11 @@ def audit_exec_promises(repo_root: str | Path = ".") -> dict[str, Any]:
     if missing:
         raise RuntimeError("EXEC-G3 retained EXEC-P001..P081 coverage gap: " + ", ".join(missing))
 
-    # EXEC-P082 is an explicitly named X01 validation-policy promise in retained
-    # evidence.  Do not invent meanings for the historical range-only P083..P087
-    # references: final closure is expressed as gate obligations below instead.
-    x01_report = (root / "EXEC_X01_EXECUTION_VALIDATION_FOUNDATION_REPORT.md").read_text(encoding="utf-8")
-    if "EXEC-P082" not in x01_report:
-        raise RuntimeError("EXEC-G3 retained EXEC-P082 evidence is missing")
+    # EXEC-P082 used to depend on a Markdown substring. Prove the actual
+    # canonical validation semantics using the current imported source instead.
+    p082 = exec_p082_source_proof(root)
+    if p082.status != "passed":
+        raise RuntimeError("EXEC-G3 current-source EXEC-P082 proof failed")
 
     exports = _load(root / "EXEC_X04_EXPORTED_OBLIGATIONS_20260929.json").get("exports") or []
     rows = [row for row in exports if isinstance(row, dict) and row.get("owner") == "EXEC-G3"]
@@ -70,6 +70,8 @@ def audit_exec_promises(repo_root: str | Path = ".") -> dict[str, Any]:
         "schema_version": 1,
         "kind": "exec-g3-promise-audit",
         "explicit_promises": 82,
+        "source_proof_schema_version": 1,
+        "exec_p082_source_proof": p082.as_dict(),
         "x04_gate_obligations": list(required_phrases),
         "unmapped": 0,
         "ok": True,

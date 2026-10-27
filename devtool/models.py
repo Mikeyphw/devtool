@@ -275,6 +275,7 @@ class WrapperCommandConfig:
     description: str = ""
     devtool: str = ""
     workflow: str = ""
+    actions: dict[str, Any] = field(default_factory=dict)
     aliases: tuple[str, ...] = ()
     target: str = ""
     group: str = ""

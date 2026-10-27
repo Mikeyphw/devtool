@@ -35,7 +35,6 @@ class TargetSealExpectation:
     runner: str
     platform: str
     root: str
-    report: str
     required_paths: tuple[str, ...]
     test_files: tuple[str, ...]
     validation_keys: tuple[str, ...] = ()
@@ -49,7 +48,6 @@ TARGET_SEAL_EXPECTATIONS: dict[str, TargetSealExpectation] = {
         runner="python",
         platform="server",
         root=".",
-        report="REM15_DEVTOOL_TARGET_FINAL_QUALIFICATION_REPORT.md",
         required_paths=(
             "devtool/cli.py",
             "devtool/final_seal.py",
@@ -68,7 +66,6 @@ TARGET_SEAL_EXPECTATIONS: dict[str, TargetSealExpectation] = {
         runner="android",
         platform="android",
         root="android/devtool-live-hud",
-        report="android/devtool-live-hud/REM15_ANDROID_HUD_TARGET_FINAL_QUALIFICATION_REPORT.md",
         required_paths=(
             "android/devtool-live-hud/settings.gradle",
             "android/devtool-live-hud/build.gradle",
@@ -104,23 +101,6 @@ def _read_config(repo_root: Path) -> tuple[dict[str, Any], list[str]]:
     except SystemExit as exc:
         return {}, [f"invalid:.devtool.toml:{exc}"]
     return data, []
-
-
-def _markdown_errors(repo_root: Path, paths: tuple[str, ...], *, min_bytes: int = 120) -> list[str]:
-    errors: list[str] = []
-    for rel in paths:
-        path = repo_root / rel
-        if not path.is_file():
-            errors.append(f"missing:{rel}")
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace").strip()
-        if len(text.encode("utf-8")) < min_bytes:
-            errors.append(f"too-small:{rel}")
-        if "#" not in text[:2048]:
-            errors.append(f"no-heading:{rel}")
-        if any(marker in text.lower() for marker in ("todo: fill", "placeholder report", "tbd release evidence")):
-            errors.append(f"placeholder:{rel}")
-    return errors
 
 
 def _python_test_errors(repo_root: Path, paths: tuple[str, ...]) -> list[str]:
@@ -224,18 +204,23 @@ def target_seal_report(repo_root: Path, target_name: str) -> dict[str, Any]:
             [f"missing:{task}" for task in sorted(expected_seal_tasks - actual_seal_tasks)],
         ))
 
+        # Parse the actual CLI surface. Historical Markdown cannot make a
+        # missing, renamed or non-strict target command look qualified.
         expected_command = f"devtool final-seal --target {expectation.target} --strict"
-        report_path = repo_root / expectation.report
-        report_text = report_path.read_text(encoding="utf-8", errors="replace") if report_path.is_file() else ""
+        try:
+            from .cli import build_parser
+            parsed = build_parser().parse_args(["final-seal", "--target", expectation.target, "--strict"])
+            command_errors = []
+            if (parsed.command, parsed.target, parsed.strict) != ("final-seal", expectation.target, True):
+                command_errors.append(f"unexpected-command:{parsed.command}:{parsed.target}:{parsed.strict}")
+        except (Exception, SystemExit) as exc:
+            command_errors = [f"command-unavailable:{type(exc).__name__}:{exc}"]
         checks.append(_check(
             "target.validation-seal-command",
-            expected_command in report_text,
-            "target report names the runnable final-seal command, not only the side-effect-free report file",
-            [expected_command] if expected_command not in report_text else [],
+            not command_errors,
+            "real CLI accepts the strict target-specific final-seal invocation",
+            command_errors,
         ))
-
-        report_errors = _markdown_errors(repo_root, (expectation.report,), min_bytes=160)
-        checks.append(_check("target.report", not report_errors, "target final qualification report is present and content-validated", report_errors))
 
         test_errors = _python_test_errors(repo_root, expectation.test_files)
         checks.append(_check("target.tests", not test_errors, "target final qualification tests are present and syntactically valid", test_errors))
@@ -249,6 +234,8 @@ def target_seal_report(repo_root: Path, target_name: str) -> dict[str, Any]:
     failures = [item for item in checks if item.status == "fail"]
     return {
         "schema_version": TARGET_SEAL_SCHEMA_VERSION,
+        "gate_scope": "target_contracts_only",
+        "formal_release_qualified": False,
         "report_kind": "devtool-target-final-seal",
         "status": "pass" if not failures else "fail",
         "repo_root": str(repo_root),

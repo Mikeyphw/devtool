@@ -8,6 +8,8 @@ truth store, or presentation truth model.
 """
 
 import argparse
+import ast
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -101,21 +103,105 @@ def audit_source_dispositions(repo_root: str | Path = ".") -> dict[str, Any]:
     }
 
 
+# Source-bound proof contracts for historical SSH/FRX compatibility. Markdown
+# remains provenance, never qualification authority. The full indicated tests
+# run in CI24; this gate also requires their executable assertion contracts to
+# exist and retain their canonical source roots, rather than passing on prose.
+HISTORICAL_SOURCE_TESTS: dict[str, tuple[str, ...]] = {
+    "SSH-01": (
+        "tests/test_ssh01_transport_environment_worker_preparation.py::test_cold_seed_selects_archive_then_reconciliation",
+        "tests/test_ssh01_transport_environment_worker_preparation.py::test_escaping_symlink_disables_archive_seed",
+        "tests/test_ssh01_transport_environment_worker_preparation.py::test_frozen_federation_source_drift_fails_before_transport",
+    ),
+    "SSH-02": (
+        "tests/test_ssh02_execution_history_recovery_convergence.py::test_commands_mode_persists_remote_repository_root_without_local_termux_path",
+        "tests/test_ssh02_execution_history_recovery_convergence.py::test_historical_output_reads_run_files_after_tmux_is_dead",
+        "tests/test_ssh02_execution_history_recovery_convergence.py::test_detached_exec_returns_recovery_hint_without_false_completion",
+    ),
+    "SSH-03": (
+        "tests/test_ssh03_lifecycle_hardening_final_qualification.py::test_host_identity_uses_openssh_known_hosts_and_emits_only_fingerprint",
+        "tests/test_ssh03_lifecycle_hardening_final_qualification.py::test_capacity_preflight_blocks_known_enospc_before_sync",
+        "tests/test_ssh03_lifecycle_hardening_final_qualification.py::test_gc_unsafe_run_id_is_never_selected",
+    ),
+    "FRX": (
+        "tests/test_frx_x01_target_qualified_workflow_identity.py::test_target_qualified_ref_fails_closed_for_unknown_target",
+        "tests/test_frx_x01_target_qualified_workflow_identity.py::test_same_repository_same_workflow_name_on_two_targets_has_distinct_canonical_graph_identity",
+        "tests/test_frx_x04_real_repo_adoption_reseal.py::test_final_seal_fails_closed_when_executable_group_plan_is_invalid",
+    ),
+    "GIT-FRX": (
+        "tests/test_git_frx14_federated_cancellation_recovery.py::test_cancellation_checkpoint_preserves_success_reuse_and_invalidates_cancelled_pending",
+        "tests/test_git_frx14_federated_cancellation_recovery.py::test_cancellation_recovery_never_claims_parent_owned_git_rollback",
+    ),
+}
+
+
+def _historical_test_proof(root: Path, reference: str) -> dict[str, str]:
+    """Require a canonical runnable test contract with behavioral assertions.
+
+    This verifies live current-source code, not the historical prose. Actual
+    execution belongs to CI24 and qualified native gates; AST collection is
+    intentionally bounded and doesn't spawn nested pytest inside DIST-G3.
+    """
+    filename, separator, symbol = reference.partition("::")
+    if not separator or not filename.startswith("tests/") or not symbol.startswith("test_"):
+        raise RuntimeError(f"Invalid historical executable proof identity: {reference}")
+    path = root / filename
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"Historical executable proof missing or symlinked: {reference}")
+    data = path.read_bytes()
+    try:
+        module = ast.parse(data, filename=filename)
+    except (UnicodeError, SyntaxError) as exc:
+        raise RuntimeError(f"Historical executable proof cannot be collected: {reference}: {exc}") from None
+    functions = [item for item in module.body if isinstance(item, ast.FunctionDef) and item.name == symbol]
+    if len(functions) != 1:
+        raise RuntimeError(f"Historical executable proof test node missing or duplicated: {reference}")
+    body = functions[0]
+    def is_negative_assertion(node: ast.AST) -> bool:
+        return (isinstance(node, ast.With) and any(
+            isinstance(item.context_expr, ast.Call)
+            and isinstance(item.context_expr.func, ast.Attribute)
+            and isinstance(item.context_expr.func.value, ast.Name)
+            and item.context_expr.func.value.id == 'pytest'
+            and item.context_expr.func.attr == 'raises'
+            for item in node.items))
+    if not any(isinstance(item, ast.Assert) or is_negative_assertion(item)
+               for item in ast.walk(body)):
+        raise RuntimeError(f"Historical proof missing semantic assertions: {reference}")
+    if not any(isinstance(item, (ast.Import, ast.ImportFrom)) and (
+        any(alias.name.startswith("devtool") for alias in item.names)
+        if isinstance(item, ast.Import) else str(item.module or "").startswith("devtool")
+    ) for item in module.body):
+        raise RuntimeError(f"Historical executable proof has no Devtool runtime import: {reference}")
+    return {"node": reference, "source_sha256": hashlib.sha256(data).hexdigest()}
+
+
 def audit_historical_substrate(repo_root: str | Path = ".") -> dict[str, Any]:
     root = Path(repo_root).resolve()
     payload = _load(root / "DIST_G3_HISTORICAL_SUBSTRATE_CROSSWALK.json")
     rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
-    required = {"SSH-01", "SSH-02", "SSH-03", "FRX", "GIT-FRX"}
-    observed = {str(row.get("authority") or "") for row in rows if isinstance(row, dict)}
-    if observed != required:
-        raise RuntimeError(f"DIST-G3 historical authority crosswalk mismatch: {sorted(observed)}")
+    required = set(HISTORICAL_SOURCE_TESTS)
+    observed = [str(row.get("authority") or "") for row in rows if isinstance(row, dict)]
+    if len(rows) != len(required) or len(observed) != len(required) or set(observed) != required:
+        raise RuntimeError(f"DIST-G3 historical authority crosswalk mismatch: {observed}")
+    executable = []
     for row in rows:
+        authority = row["authority"]
         if row.get("disposition") != "ALREADY_SATISFIED_BY_RETAINED_SSH_FRX_SUBSTRATE":
-            raise RuntimeError(f"historical authority {row.get('authority')} is not retained substrate")
-        for evidence in row.get("evidence") or ():
-            if str(evidence).endswith((".md", ".py")) and not (root / str(evidence)).exists():
-                raise RuntimeError(f"historical substrate evidence missing: {evidence}")
-    return {"schema_version": 1, "authorities": sorted(observed), "ok": True}
+            raise RuntimeError(f"Historical authority {authority} has invalid disposition")
+        evidence = row.get("evidence")
+        if not isinstance(evidence, list) or not evidence or not all(isinstance(x, str) for x in evidence):
+            raise RuntimeError(f"Historical authority {authority} lacks provenance references")
+        required_files = {reference.split("::", 1)[0] for reference in HISTORICAL_SOURCE_TESTS[authority]}
+        actual_files = {item for item in evidence if item.endswith(".py")}
+        if not required_files <= actual_files:
+            raise RuntimeError(f"Historical authority {authority} changed its executable evidence lineage")
+        executable.extend(_historical_test_proof(root, reference) for reference in HISTORICAL_SOURCE_TESTS[authority])
+    if len(executable) != sum(map(len, HISTORICAL_SOURCE_TESTS.values())):
+        raise RuntimeError("Historical executable proof count mismatch")
+    return {"schema_version": 2, "authorities": sorted(required), "ok": True,
+            "proof_kind": "source-bound-executable-test-contracts",
+            "executable_proofs": executable, "provenance_mode": "retained-ledger-not-markdown-authority"}
 
 
 def audit_dist_promises(repo_root: str | Path = ".") -> dict[str, Any]:

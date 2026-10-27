@@ -21,6 +21,8 @@ class Fs03FinalReleaseSealTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], FINAL_SEAL_SCHEMA_VERSION)
         self.assertEqual(payload["status"], "pass", payload)
         self.assertEqual(payload["summary"]["failed"], 0)
+        self.assertEqual(payload["gate_scope"], "repository_contracts_only")
+        self.assertFalse(payload["formal_release_qualified"])
         self.assertGreaterEqual(payload["summary"]["checks"], 12)
         self.assertGreaterEqual(payload["summary"]["compatibility_entries"], 24)
 
@@ -55,7 +57,7 @@ class Fs03FinalReleaseSealTests(unittest.TestCase):
             self.assertEqual(payload["status"], "fail")
             failed = {item["id"] for item in payload["checks"] if item["status"] == "fail"}
             self.assertIn("docs.required", failed)
-            self.assertIn("roadmap.reports", failed)
+            self.assertIn("tests.roadmap-contracts", failed)
 
     def test_readme_and_final_seal_doc_name_fs03(self) -> None:
         self.assertIn("FS03", (ROOT / "README.md").read_text(encoding="utf-8"))

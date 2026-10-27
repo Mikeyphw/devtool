@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests._rmp_c02_durable_fixture import attach_durable_apply_evidence
+
 import hashlib
 import json
 from pathlib import Path
@@ -264,6 +266,7 @@ def test_post_apply_artifact_cleanup_lowers_through_life_and_protects_tracked_so
         "apply-overlay", ["apply-overlay", str(external)], 0, 0.01, "applied", [],
         metadata={"artifact_path": str(external), "delete_artifact_on_success": True},
     )
+    attach_durable_apply_evidence(repo, result)
     cleanup = _delete_original_artifact_after_apply([result], repo_root=repo)
     assert cleanup is not None and cleanup.returncode == 0
     assert cleanup.metadata["cleanup_authority"] == "LIFE"
@@ -279,6 +282,7 @@ def test_post_apply_artifact_cleanup_lowers_through_life_and_protects_tracked_so
         "apply-overlay", ["apply-overlay", str(tracked)], 0, 0.01, "applied", [],
         metadata={"artifact_path": str(tracked), "delete_artifact_on_success": True},
     )
+    attach_durable_apply_evidence(repo, tracked_result)
     refused = _delete_original_artifact_after_apply([tracked_result], repo_root=repo)
     assert refused is not None and refused.returncode == 1
     assert refused.metadata["cleanup_authority"] == "LIFE"

@@ -1,0 +1,2198 @@
+{
+  "baseline": {
+    "archive": "devtool-20261020-103541-573598.tar.gz",
+    "branch": "feature/rmp01-security-remediation",
+    "repository": "Mikeyphw/devtool",
+    "sha": "6f7b1de146838dca2458eaa35d54cc8dd4445f70"
+  },
+  "current_source_assessment": {
+    "date": "2026-10-21",
+    "device_qualified": false,
+    "formal_release_qualified": false,
+    "hosted_qualified": false,
+    "native_termux_qualified": false,
+    "scope": "DT-001–DT-056 supplemental reconciliation; original R0/R09 historical rows immutable",
+    "source_changes_qualified": false,
+    "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671"
+  },
+  "formal_release_qualified": false,
+  "generated_on": "2026-10-20",
+  "issues": [
+    {
+      "category": "Actions typed wrapper",
+      "current_source_assessment": {
+        "audit_evidence": "Wrapper mappings still reject native `actions` bindings (`wrapper_config.py:52, 364–390`).",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-10"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-001",
+      "milestone": "R5",
+      "priority": "P1",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Gradle module detection",
+      "current_source_assessment": {
+        "audit_evidence": "`actions_android.py:78–127` statically parses only same-line Gradle includes and literal/catalog app plugins; no convention-plugin model.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-09"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-002",
+      "milestone": "R3",
+      "priority": "P1",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Custom Android variant",
+      "current_source_assessment": {
+        "audit_evidence": "`actions_android.py:177,456` accepts only debug/release variants.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-09"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-003",
+      "milestone": "R3",
+      "priority": "P1",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Config migration doctor",
+      "current_source_assessment": {
+        "audit_evidence": "`config migrate/doctor/status` exist; migration handles known aliases (`config_migration.py`), not arbitrary legacy extension tables or atomic adoption.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PREEXISTING_PARTIAL_OR_OPEN",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-004",
+      "milestone": "R6",
+      "priority": "P1",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "category": "Protected Gradle flags",
+      "current_source_assessment": {
+        "audit_evidence": "Protected Gradle policy/diagnostics exist; no reviewed automatic conversion of a conflicting project option.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-09"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-005",
+      "milestone": "R6",
+      "priority": "P1",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Unified DAG/EXO/Actions lineage",
+      "current_source_assessment": {
+        "audit_evidence": "`actions_lineage.py:235` and `actions lineage --pipeline-id` provide read-only source/run/artifact views; not a unified cross-provider authority.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-02"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-006",
+      "milestone": "R4",
+      "next02_source_candidate": {
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "formal_release_qualified": false,
+        "hosted_accepted": false,
+        "native_accepted": false,
+        "phase": "NEXT-02"
+      },
+      "priority": "P1",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Dispatch once UX",
+      "current_source_assessment": {
+        "audit_evidence": "`actions resume` and source-bound receipt checks exist; no universal opt-in `--resume-if-existing` user workflow.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-10"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-007",
+      "milestone": "R5",
+      "priority": "P1",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Overlay upgrade/rebase",
+      "current_source_assessment": {
+        "audit_evidence": "`overlay plan/status/rebase/recovery-plan` exist; cross-repo upgrades and safe automated partial adoption remain outside core.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PREEXISTING_PARTIAL_OR_OPEN",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-008",
+      "milestone": "R6",
+      "priority": "P1",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "DAG ASCII/critical path",
+      "current_source_assessment": {
+        "audit_evidence": "`devtool plan ACTION --ascii|--mermaid|--dot|--json --explain`, with `workflow_plan_views.py` and tests.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "DONE_SOURCE",
+        "target_milestone": "ALREADY_IMPLEMENTED"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)",
+        "R06A tests/test_workflow_r06_plan_views.py and devtool/workflow_plan_views.py (source/disposable pending)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-009",
+      "milestone": "R6",
+      "priority": "P2",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "category": "Common artifact manifest",
+      "current_source_assessment": {
+        "audit_evidence": "Actions ZIP artifact digest and Android package checks exist; no general typed cross-language `artifacts verify` with equivalent trust contracts.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-02"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-010",
+      "milestone": "R4",
+      "next02_source_candidate": {
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "formal_release_qualified": false,
+        "hosted_accepted": false,
+        "native_accepted": false,
+        "phase": "NEXT-02"
+      },
+      "priority": "P2",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Adoption wizard",
+      "current_source_assessment": {
+        "audit_evidence": "`actions adopt` generates pinned CI YAML + local wrapper alias for eligible jobs, not universal target/job/wrapper onboarding.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PREEXISTING_PARTIAL_OR_OPEN",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-011",
+      "milestone": "R2",
+      "priority": "P2",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "category": "Parallelism explanation",
+      "current_source_assessment": {
+        "audit_evidence": "`devtool plan ... --workflow-parallel --explain` plus static wave/scope analysis (`cli.py:8612`, scheduler).",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "DONE_SOURCE",
+        "target_milestone": "ALREADY_IMPLEMENTED"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)",
+        "R06A tests/test_workflow_r06_plan_views.py and devtool/workflow_plan_views.py (source/disposable pending)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-012",
+      "milestone": "R6",
+      "priority": "P2",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Pipeline example ignore",
+      "current_source_assessment": {
+        "audit_evidence": "`docs/actions-06-pipeline.md:13–14` still suggests `git add .devtool/actions-pipeline.json`; `.devtool` may be ignored.",
+        "next00_progress": "SOURCE_CANDIDATE_TEST_PENDING",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-00"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-013",
+      "milestone": "R6",
+      "priority": "P2",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Overlay ZIP lifecycle",
+      "current_source_assessment": {
+        "audit_evidence": "No full repeat-input ZIP lifecycle behavior test in this audit; do not infer from CLI surfaces.",
+        "next00_progress": "SOURCE_CANDIDATE_TEST_PENDING",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "NEEDS_VERIFICATION",
+        "target_milestone": "NEXT-00"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-014",
+      "milestone": "R6",
+      "priority": "P2",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "category": "Termux Actions UX",
+      "current_source_assessment": {
+        "audit_evidence": "Compact Actions status/workspace UI and terminal support exist, but no single holistic Termux Actions doctor/summary with all suggested hints.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-10"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-015",
+      "milestone": "R5",
+      "priority": "P2",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Repository capabilities",
+      "current_source_assessment": {
+        "audit_evidence": "`actions adoption-doctor`, `doctor`, and target-local adoption report exist; no complete cross-feature `devtool capabilities` project report.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-10"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-016",
+      "milestone": "R6",
+      "priority": "P2",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Qualification taxonomy",
+      "current_source_assessment": {
+        "audit_evidence": "Actions qualification and release false-by-default contracts exist; generic cross-language qualification state remains non-uniform.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-02"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-017",
+      "milestone": "R4",
+      "next02_source_candidate": {
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "formal_release_qualified": false,
+        "hosted_accepted": false,
+        "native_accepted": false,
+        "phase": "NEXT-02"
+      },
+      "priority": "P2",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Actionable JSON errors",
+      "current_source_assessment": {
+        "audit_evidence": "Structured machine API and selected guarded messages exist; standardized per-error remediation/next-command across all commands not shown.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-10"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-018",
+      "milestone": "R5",
+      "priority": "P3",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Named DAG planning",
+      "current_source_assessment": {
+        "audit_evidence": "`devtool plan ACTION --target TARGET --json|--mermaid|--ascii` accepts repository-defined names (`cli.py:8550–8640`).",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "DONE_SOURCE",
+        "target_milestone": "ALREADY_IMPLEMENTED"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)",
+        "R06A tests/test_workflow_r06_plan_views.py and devtool/workflow_plan_views.py (source/disposable pending)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-019",
+      "milestone": "R6",
+      "priority": "P1",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "category": "Overlay recovery",
+      "current_source_assessment": {
+        "audit_evidence": "Read-only `overlay recovery-plan` reports stale transactions; no complete self-healing/recovery path.",
+        "next01_progress": "SOURCE_CANDIDATE_TEST_PENDING",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-01"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-020",
+      "milestone": "R6",
+      "priority": "P1",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Config-aware overlays",
+      "current_source_assessment": {
+        "audit_evidence": "`config migrate` and overlay rebase support some cases; not a single lossless transactional legacy-config upgrade.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PREEXISTING_PARTIAL_OR_OPEN",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-021",
+      "milestone": "R6",
+      "priority": "P1",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Generated state doctor",
+      "current_source_assessment": {
+        "audit_evidence": "Clean-tree checks and developer diagnostics exist; fixture-generated ignore inference not established.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-10"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-022",
+      "milestone": "R6",
+      "priority": "P2",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Workflow present vs CI finished",
+      "current_source_assessment": {
+        "audit_evidence": "A03/A09 require exact host/source admission and distinguish local job execution from remote qualification; no generic typed CI gate job set.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-02"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical Library)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (current source)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-023",
+      "milestone": "R4",
+      "next02_source_candidate": {
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "formal_release_qualified": false,
+        "hosted_accepted": false,
+        "native_accepted": false,
+        "phase": "NEXT-02"
+      },
+      "priority": "P2",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "affected_paths": [
+        "devtool/qualification_workflows.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "QW-ERG-001",
+      "milestone": "R0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/actions_dispatch.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "QW-SRC-002",
+      "milestone": "R0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/final_seal.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "QW-PERF-005",
+      "milestone": "R7",
+      "qualification_status": "NATIVE_REMEASUREMENT_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/ssh_workspace.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "RS11-MANAGED-SYNC-FIXED-POINT",
+      "milestone": "R7",
+      "qualification_status": "NATIVE_REMEASUREMENT_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/cli.py",
+        "devtool/run_store.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "ACTIONS-A04-LOCAL-RUN-V3",
+      "milestone": "R1",
+      "qualification_status": "LOCAL_TERMUX_SCOPED_CLOSED_R01",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "pyproject.toml",
+        "tests/test_actions_a06_wheel_distribution.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "ACTIONS-A06",
+      "milestone": "R1",
+      "qualification_status": "LOCAL_TERMUX_WHEEL_SCOPED_CLOSED_R01",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/actions_qualification.py",
+        "devtool/actions_pipeline.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "ACTIONS-A08-G8-G2",
+      "milestone": "R1",
+      "qualification_status": "LOCAL_TERMUX_G8_TESTED_HOSTED_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/actions_adoption.py",
+        "devtool/actions_r02_acceptance.py",
+        "tests/test_actions_r02_host_review.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "docs/actions/ACTIONS_R02_CONSUMER_REVIEW.md",
+        "R01 native apply run bc397eb35a314149ad34d7223892778a",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "ACTIONS-A09",
+      "milestone": "R2",
+      "qualification_status": "LOCAL_TERMUX_SCOPED_CLOSED_R02_HOSTED_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/actions_android.py",
+        "devtool/github_actions.py",
+        "devtool/core_cli_schema.json",
+        "devtool/actions_release.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "tests/test_actions_r03_android_roles.py (source negatives; no live APK)",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "SKY-ACTIONS-COLLECT-008",
+      "milestone": "R3",
+      "qualification_status": "SOURCE_DISPOSABLE_VERIFIED_R03_NATIVE_RECEIPT_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/actions_android.py",
+        "devtool/github_actions.py",
+        "devtool/core_cli_schema.json",
+        "devtool/actions_release.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md",
+        "tests/test_actions_r03_android_roles.py (source negatives; no live APK)",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "SKY-ACTIONS-APK-META-012",
+      "milestone": "R3",
+      "qualification_status": "SOURCE_DISPOSABLE_VERIFIED_R03_NATIVE_RECEIPT_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/ssh_qualification.py"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "RS08-LIFECYCLE-002",
+      "milestone": "R7",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "affected_paths": [
+        "docs/RMP_FINAL_HARDENING.md"
+      ],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "MIXED_APPEND_ONLY",
+      "id": "RMP-H1/H2",
+      "milestone": "R8",
+      "qualification_status": "EXTERNAL_EVIDENCE_PENDING",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "OPEN",
+      "id": "ENV-A06",
+      "milestone": "R8",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "source_status": "BLOCKED_EXTERNAL"
+    },
+    {
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "OPEN",
+      "id": "ANDROID-A16",
+      "milestone": "R8",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "source_status": "BLOCKED_EXTERNAL"
+    },
+    {
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "OPEN",
+      "id": "DIST-A01",
+      "milestone": "R8",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "source_status": "BLOCKED_EXTERNAL"
+    },
+    {
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "OPEN",
+      "id": "DIST-A12",
+      "milestone": "R8",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "source_status": "BLOCKED_EXTERNAL"
+    },
+    {
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "OPEN",
+      "id": "DIST-A13",
+      "milestone": "R8",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "source_status": "BLOCKED_EXTERNAL"
+    },
+    {
+      "affected_paths": [],
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "OPEN",
+      "id": "TEST-A11",
+      "milestone": "R8",
+      "qualification_status": "BLOCKED_EXTERNAL",
+      "source_status": "BLOCKED_EXTERNAL"
+    },
+    {
+      "category": "Compiled instrumentation manifest inspection",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R03 addendum)",
+        "tests/test_actions_r03_android_roles.py",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
+      ],
+      "historical_status": "OPEN_UPSTREAM",
+      "id": "SKY-ACTIONS-APK-META-013",
+      "milestone": "R3",
+      "priority": "P1",
+      "qualification_status": "SOURCE_DISPOSABLE_VERIFIED_R03_NATIVE_RECEIPT_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "category": "Android PackageManager confirmed-absence classifier",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R03 addendum)",
+        "tests/test_actions_r03_android_pm_presence.py",
+        "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json"
+      ],
+      "historical_status": "OPEN_UPSTREAM",
+      "id": "SKY-B1C-PM-014",
+      "milestone": "R3",
+      "priority": "P1",
+      "qualification_status": "SOURCE_DISPOSABLE_VERIFIED_R03_NATIVE_RECEIPT_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/core_surfaces.py",
+        "tests/test_core_x04_generated_surfaces.py"
+      ],
+      "category": "Generated CORE help performance on native Termux",
+      "evidence": [
+        "Termux run 19b01fdc284a46dbab059c8ae7e58090: 73 passed / 1 failed at 5630.083948ms vs 5000ms",
+        "docs/DEVTOOL_IMPROVEMENTS.md (CORE-X04-NATIVE-PERF-001)",
+        "tests/test_core_x04_generated_surfaces.py",
+        "Termux run ac0b291eba434cbf8981b5f019c0a10a: all 131 tests passed, closure commit 52ad3d2, LIFE cleanup failure"
+      ],
+      "historical_status": "NEW_NATIVE_FAILURE",
+      "id": "CORE-X04-NATIVE-PERF-001",
+      "milestone": "R03_CLOSURE",
+      "priority": "P1",
+      "qualification_status": "NATIVE_131_TESTS_PASS_TRANSACTION_CLEANUP_FAILED",
+      "source_status": "REMEDIATION_COMMITTED"
+    },
+    {
+      "affected_paths": [
+        "devtool/actions_lineage.py",
+        "devtool/actions_cli.py",
+        "devtool/github_actions.py",
+        "devtool/core_cli_schema.json"
+      ],
+      "category": "Cross-system pipeline and artifact evidence projection",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R04-LINEAGE-001)",
+        "tests/test_actions_r04_lineage.py",
+        "Termux run 078eb17498bf4cbc8b37e697e9c18a5a: 88 passed, 15 paths verified, commit 244d6d7, LIFE cleanup ok"
+      ],
+      "historical_status": "OPEN_UNIFIED_LINEAGE",
+      "id": "R04-LINEAGE-001",
+      "milestone": "R4",
+      "open_followups": [
+        "AUTHENTICATED_REAL_GITHUB_GET",
+        "FORMAL_SOURCE_ARTIFACT_ATTESTATION"
+      ],
+      "priority": "P1",
+      "qualification_status": "NATIVE_88_TESTS_PASS_HOSTED_AND_ARTIFACT_PENDING",
+      "source_status": "R04_NATIVE_ACCEPTED_PHASE1"
+    },
+    {
+      "category": "Historical post-commit LIFE cleanup failure",
+      "evidence": [
+        "Termux run ac0b291eba434cbf8981b5f019c0a10a: 131 passed; cleanup failure",
+        "Read-only diagnostics: ctime_ns-only change in source snapshot",
+        "docs/DEVTOOL_IMPROVEMENTS.md (LIFE-CLEANUP-CTIME-20261020)"
+      ],
+      "historical_status": "OBSERVED_NATIVE_FAILURE",
+      "id": "LIFE-CLEANUP-CTIME-20261020",
+      "milestone": "R4",
+      "priority": "P1",
+      "qualification_status": "HISTORICAL_FAILURE_PRESERVED",
+      "source_status": "DIAGNOSED_UNMODIFIED"
+    },
+    {
+      "affected_paths": [
+        "tests/test_core_x04_generated_surfaces.py"
+      ],
+      "category": "Native source-aware CLI launcher smoke timeout",
+      "evidence": [
+        "Termux run b8c882f722c34d2a99e50233767312b6: 77 passed, 1 failed (devtoolw --help timed out at 20s)",
+        "docs/DEVTOOL_IMPROVEMENTS.md (CORE-X04-R04-TERMUX-COLDSTART-001)",
+        "Termux replacement R04-R1 run 078eb17498bf4cbc8b37e697e9c18a5a: 88 passed, LIFE cleanup ok"
+      ],
+      "historical_status": "OBSERVED_NATIVE_R04_TEST_FAILURE",
+      "id": "CORE-X04-R04-TERMUX-COLDSTART-001",
+      "milestone": "R4",
+      "open_followups": [
+        "FULL_COLD_START_PROFILE_ONLY_IF_NEW_TIMEOUT"
+      ],
+      "priority": "P1",
+      "qualification_status": "NATIVE_88_TESTS_PASS_RETEST",
+      "source_status": "R04_R1_NATIVE_ACCEPTED"
+    },
+    {
+      "affected_paths": [
+        "devtool/actions_pipeline.py",
+        "devtool/actions_lineage.py",
+        "devtool/github_actions.py",
+        "devtool/core_cli_schema.json"
+      ],
+      "category": "Canonical native child RUN and opt-in GitHub API lineage",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R04-LINEAGE-002)",
+        "tests/test_actions_r04b_lineage_authority.py",
+        "Termux R04 foundation run 078eb17498bf4cbc8b37e697e9c18a5a (not phase2 acceptance)",
+        "Termux R04B run 7524f3b5b2f54e519036682a0331dd05: 113 passed, 0 skipped, commit f4d5532, 16 paths verified, LIFE cleanup ok"
+      ],
+      "historical_status": "R04_PHASE2_OBLIGATION",
+      "id": "R04-LINEAGE-002",
+      "milestone": "R4",
+      "open_followups": [
+        "AUTHENTICATED_REAL_GITHUB_GET",
+        "ORIGINAL_PRODUCER_ARTIFACT_ATTESTATION"
+      ],
+      "priority": "P1",
+      "qualification_status": "NATIVE_113_TESTS_PASS_HOSTED_PENDING",
+      "source_status": "R04B_NATIVE_ACCEPTED"
+    },
+    {
+      "affected_paths": [
+        "devtool/actions_workspace.py",
+        "devtool/actions_operator.py",
+        "tests/test_actions_r05_operator.py"
+      ],
+      "category": "Unified Actions Textual review/follow/lineage/collection operator",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (ACTIONS-R05-OPERATOR-001)",
+        "tests/test_actions_r05_operator.py",
+        "Termux R04B source baseline run 7524f3b5b2f54e519036682a0331dd05",
+        "User-reported R05 install followed by actions ui error: GitHub Actions: Dispatch receipt state is invalid"
+      ],
+      "historical_status": "R05_PLANNED",
+      "id": "ACTIONS-R05-OPERATOR-001",
+      "milestone": "R5",
+      "open_followups": [
+        "NATIVE_R05_TRANSACTION_AND_TEXTUAL_SMOKE",
+        "AUTHENTICATED_REAL_GITHUB_GET_OR_ARTIFACT_HANDoFF_AS_EXPLICITLY_AUTHORIZED",
+        "R09_FULL_CAMPAIGN",
+        "CANONICAL_DISPATCH_STATE_UI_REPAIR_R05A"
+      ],
+      "priority": "P1",
+      "qualification_status": "NATIVE_TEXTUAL_STARTUP_AND_REMOTE_GATES_OPEN",
+      "source_status": "R05_NATIVE_APPLIED_STARTUP_SMOKE_FAILED"
+    },
+    {
+      "affected_paths": [
+        "devtool/actions_workspace.py",
+        "tests/test_actions_ux01_workspace.py",
+        "tests/test_actions_03_run_lifecycle.py"
+      ],
+      "category": "Actions workspace canonical dispatch receipt producer/consumer parity",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (ACTIONS-R05A-STATE-002)",
+        "devtool/github_actions.py dispatch returns accepted-correlated for GitHub HTTP 200",
+        "devtool/actions_dispatch.py persists dispatch result state",
+        "User-reported native R05 actions ui error; private offending receipt not inspected",
+        "ACTIONS-03 parser smoke updated to supply mandatory view --request-id; safety requirement unchanged"
+      ],
+      "historical_status": "R05_NATIVE_UI_STARTUP_FAILURE",
+      "id": "ACTIONS-R05A-STATE-002",
+      "milestone": "R5",
+      "open_followups": [
+        "NATIVE_TERMUX_R05A_OVERLAY_ACCEPTANCE",
+        "REAL_TERMUX_ACTIONS_UI_SMOKE",
+        "EXTERNAL_HOSTED_RUN_AND_RELEASE_QUALIFICATION"
+      ],
+      "priority": "P1",
+      "qualification_status": "LOCAL_LINUX_TESTED_NATIVE_TERMUX_PENDING",
+      "source_status": "R05A_REMEDIATION_CANDIDATE"
+    },
+    {
+      "category": "Review-only Devtool Actions adoption/overlay planning",
+      "evidence": [
+        "devtool/actions_adoption.py::adoption_doctor",
+        "devtool/overlay/planning.py::overlay_plan",
+        "tests/test_r06b_adoption_overlay_plan.py",
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "R06B_SOURCE_CANDIDATE",
+      "id": "R06B-ADOPTION-OVERLAY-002",
+      "milestone": "R6",
+      "priority": "P1",
+      "qualification_status": "NATIVE_TERMUX_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/federation_dag_contract.py",
+        "devtool/cli.py",
+        "devtool/core_cli_schema.json"
+      ],
+      "category": "FRX child-owned producer to consumer DAG contract evidence",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R06C-FRX-DAG-CONTRACT-003)",
+        "tests/test_federation_r06c_dag_contract.py",
+        "docs/actions/DEVTOOL_R06C_PRODUCER_CONSUMER_CONTRACT.md"
+      ],
+      "historical_status": "R06C_PLANNED",
+      "id": "R06C-FRX-DAG-CONTRACT-003",
+      "milestone": "R6",
+      "open_followups": [
+        "NATIVE_R06C_ACCEPTANCE",
+        "REAL_CONSUMER_SOURCE_CONTRACTS",
+        "PRODUCER_CONSUMER_RUN_AND_ARTIFACT_QUALIFICATION",
+        "R06D_ROLLBACK_FAILED_RECOVERY"
+      ],
+      "priority": "P1",
+      "qualification_status": "NATIVE_TERMUX_AND_REAL_CONSUMER_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "category": "Transactional recovery evidence visibility",
+      "evidence": [
+        "devtool/overlay/recovery.py",
+        "tests/test_overlay_r06d_recovery_plan.py",
+        "docs/DEVTOOL_IMPROVEMENTS.md"
+      ],
+      "historical_status": "NEW",
+      "id": "R06D-LIFE-RECOVERY-004",
+      "milestone": "R6",
+      "priority": "P1",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/cli.py",
+        "devtool/log_retention_worker.py",
+        "tests/test_transactions.py",
+        "tests/test_git_log_retention_latency_v3.py"
+      ],
+      "category": "R06D Termux lifecycle result logging and async log worker process reaping",
+      "evidence": [
+        "native apply run ba1c2342b39444e6a8fc7eee993aba75: 55 passed then 1 failed, 35 warnings",
+        "tests/test_transactions.py::TransactionalApplyTests::test_stale_apply_transaction_is_restored_before_next_command",
+        "docs/DEVTOOL_IMPROVEMENTS.md (R06D-R1-TERMUX-RECOVERY-005)"
+      ],
+      "historical_status": "R06D_NATIVE_VALIDATOR_FAILED",
+      "id": "R06D-R1-TERMUX-RECOVERY-005",
+      "milestone": "R6",
+      "open_followups": [
+        "NATIVE_TERMUX_R06D_R1_REPLACEMENT_VALIDATION",
+        "GIT_COMMIT_AND_LIFE_CLEANUP",
+        "R07_SSH_TERMUX_RELIABILITY",
+        "R09_FULL_ACCEPTANCE"
+      ],
+      "priority": "P1",
+      "qualification_status": "NATIVE_TERMUX_PENDING",
+      "source_status": "REMEDIATION_CANDIDATE"
+    },
+    {
+      "affected_paths": [
+        "devtool/ssh_qualification.py",
+        "tests/test_ssh_r07a_qualification_returns.py"
+      ],
+      "category": "SSH qualification project return provenance and completion",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R07A-SSH-RETURN-EVIDENCE-001)",
+        "tests/test_ssh_r07a_qualification_returns.py"
+      ],
+      "historical_status": "NEW",
+      "id": "R07A-SSH-RETURN-EVIDENCE-001",
+      "milestone": "R7",
+      "open_followups": [
+        "TERMUX_R07A_ACCEPTANCE",
+        "INDEPENDENT_SSH_WORKER_RETURN",
+        "DURABLE_STAGE_FAILURE_RECEIPTS",
+        "SSH_R07B_TIMING_AND_SUPERVISOR",
+        "R09_FULL_ACCEPTANCE"
+      ],
+      "priority": "P1",
+      "qualification_status": "NATIVE_AND_REAL_WORKER_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/ssh_qualification.py",
+        "devtool/ssh_worker.py",
+        "devtool/ssh_r07_reliability.py",
+        "tests/test_ssh_r07_consolidated_reliability.py"
+      ],
+      "category": "SSH stage-durable recovery, Termux PRoot and benchmark integration",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R07-CONSOLIDATED-20261020)",
+        "tests/test_ssh_r07_consolidated_reliability.py"
+      ],
+      "historical_status": "NEW",
+      "id": "R07-CONSOLIDATED-SSH-RELIABILITY-20261020",
+      "milestone": "R7",
+      "open_followups": [
+        "TERMUX_R07_CONSOLIDATED_ACCEPTANCE",
+        "INDEPENDENT_REAL_SSH_WORKER",
+        "FS03_REAL_WORKER_FIXED_POINT",
+        "UX_NOTIFY_REAL_ANDROID_DELIVERY",
+        "R08_INDEPENDENT_SECURITY_ACCEPTANCE",
+        "R09_CROSS_SYSTEM_ACCEPTANCE"
+      ],
+      "priority": "P1",
+      "qualification_status": "NATIVE_REMOTE_AND_NOTIFICATION_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/ssh_r07_reliability.py",
+        "devtool/ssh_qualification.py",
+        "tests/test_ssh_r07_consolidated_reliability.py"
+      ],
+      "category": "SSH consolidated promise audit and fail-closed local evidence",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R07-CONSOLIDATED-AUDIT-20261021)",
+        "docs/DEVTOOL_IMPLEMENTATION_ROADMAP.md (R07A consolidated pre-install audit)",
+        "docs/actions/DEVTOOL_R07_PROMISE_AUDIT_20261021.json"
+      ],
+      "historical_status": "NEW",
+      "id": "R07-CONSOLIDATED-AUDIT-20261021",
+      "milestone": "R7",
+      "open_followups": [
+        "TERMUX_R07_ACCEPTANCE",
+        "INDEPENDENT_REAL_SSH_WORKER",
+        "FS03_BENCHMARK_NOT_QUALIFIED",
+        "UX_NOTIFY01_NOT_QUALIFIED",
+        "SSH_GENERAL_COMMAND_STAGE_JOURNALS_EXISTING_ONLY"
+      ],
+      "priority": "P1",
+      "qualification_status": "TERMUX_AND_EXTERNAL_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "affected_paths": [
+        "devtool/rmp_r08_assessment.py",
+        "tests/test_rmp_r08_assessment.py",
+        "docs/actions/DEVTOOL_R08_SECURITY_AUTHORITY_MATRIX_20261021.json"
+      ],
+      "category": "RMP H1/H2 current-source evidence reconciliation without false formal closure",
+      "evidence": [
+        "docs/DEVTOOL_IMPROVEMENTS.md (R08-SECURITY-AUTHORITY-20261021)"
+      ],
+      "historical_status": "NEW",
+      "id": "R08-SECURITY-AUTHORITY-20261021",
+      "milestone": "R8",
+      "open_followups": [
+        "N01_SIGNED_ORIGINAL_SOURCE",
+        "N02_PERSISTENCE_READ_NATIVE",
+        "C04_TEST_A11_AUTHORITY",
+        "C05_REAL_ANDROID_HUD",
+        "C06_INDEPENDENT_ENV_IDENTITY",
+        "Q02_11_HISTORICAL_CONTRACTS",
+        "U01_6_REAL_SUBSTRATES",
+        "R09_FULL_SYSTEM_ACCEPTANCE"
+      ],
+      "priority": "P0",
+      "qualification_status": "NATIVE_AND_INDEPENDENT_EXTERNAL_PENDING",
+      "source_status": "DONE_SOURCE"
+    },
+    {
+      "category": "Cross-repository Devtool adoption transaction coordinator",
+      "current_source_assessment": {
+        "audit_evidence": "No native atomic coordinator across independent repository overlay installations; `apply-overlays` concerns overlay bundles, not multi-repository transactions.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PARTIAL_SOURCE_IMPLEMENTED",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-024",
+      "milestone": "NEXT-05",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "First-class staged legacy-config migration under overlay ownership",
+      "current_source_assessment": {
+        "audit_evidence": "`config migrate --write` uses backups, but is not part of a unified, source-pinned overlay transaction for arbitrary legacy configuration.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PARTIAL_SOURCE_IMPLEMENTED",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-025",
+      "milestone": "NEXT-05",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Manifest-driven commit must encompass generated wrapper files",
+      "current_source_assessment": {
+        "audit_evidence": "Generated wrapper initialization remains a separate operation from a manifest-driven single overlay/commit transaction.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PARTIAL_SOURCE_IMPLEMENTED",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-026",
+      "milestone": "NEXT-05",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Idempotent, partial-adoption-aware multi-repository overlay installation",
+      "current_source_assessment": {
+        "audit_evidence": "Overlay planning/rebasing is per checkout; no first-class resumable `install all repos` controller with adoption states.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PARTIAL_SOURCE_IMPLEMENTED",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-027",
+      "milestone": "NEXT-05",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Bootstrap diagnostics should not depend on overlay batch presentation",
+      "current_source_assessment": {
+        "audit_evidence": "Command-line `--no-hud` and config doctor help; a dependency-light isolated bootstrap diagnostic for all importer failures not shown.",
+        "next00_progress": "SOURCE_CANDIDATE_TEST_PENDING",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-00"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-028",
+      "milestone": "NEXT-00",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Updated with user-supplied MMRL journal audit (2026-10-16)",
+      "current_source_assessment": {
+        "audit_evidence": "Read-only `overlay recovery-plan` available, but no safely retiring historical markers while preserving current checkout.",
+        "next01_progress": "SOURCE_CANDIDATE_TEST_PENDING",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-01"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-029",
+      "milestone": "NEXT-01",
+      "priority": "P0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Isolated-worktree abandonment can attempt stale integration when called for historical recovery",
+      "current_source_assessment": {
+        "audit_evidence": "`transactions.py:1672` has old abandon logic; no separate protected historical retire without worktree integration.",
+        "next01_progress": "SOURCE_CANDIDATE_TEST_PENDING",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-01"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-030",
+      "milestone": "NEXT-01",
+      "priority": "P0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Provisional historical heading: cross-language dependency-light CI hooks",
+      "current_source_assessment": {
+        "audit_evidence": "Python/Python-shell adoption jobs execute under generated workflow, but not dedicated dependency-light cross-language hooks.",
+        "provisional_historical_description": true,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-04"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-031",
+      "milestone": "NEXT-04",
+      "next04_source_candidate": {
+        "date": "2026-10-21",
+        "qualification": "NOT_QUALIFIED",
+        "remaining": [
+          "real pinned consumer",
+          "authenticated hosted run/attempt",
+          "substantive tests",
+          "native/platform/release gates"
+        ],
+        "source": "docs/DEVTOOL_NEXT04_DISTRIBUTION_PROVIDERS.md",
+        "state": "PARTIAL_SOURCE"
+      },
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Provisional historical heading: legacy wrapper migration",
+      "current_source_assessment": {
+        "audit_evidence": "`wrapper migrate` and `wrapper_migration.py` exist; source-verified transactional migration of legacy launchers is not universal.",
+        "provisional_historical_description": true,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PREEXISTING_PARTIAL_OR_OPEN",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-032",
+      "milestone": "NEXT-05",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Provisional historical heading: host toolchain compatibility",
+      "current_source_assessment": {
+        "audit_evidence": "A09 provides source-pinned Go setup for eligible Ubuntu jobs; broader host toolchain compatibility absent.",
+        "provisional_historical_description": true,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-04"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-033",
+      "milestone": "NEXT-04",
+      "next04_source_candidate": {
+        "date": "2026-10-21",
+        "qualification": "NOT_QUALIFIED",
+        "remaining": [
+          "real pinned consumer",
+          "authenticated hosted run/attempt",
+          "substantive tests",
+          "native/platform/release gates"
+        ],
+        "source": "docs/DEVTOOL_NEXT04_DISTRIBUTION_PROVIDERS.md",
+        "state": "PARTIAL_SOURCE"
+      },
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Provisional historical heading: multi-repository installer",
+      "current_source_assessment": {
+        "audit_evidence": "No Devtool-native multi-repo source-guarded installation/resume coordinator confirmed.",
+        "provisional_historical_description": true,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-05",
+        "next05_source_candidate": "PARTIAL_SOURCE_IMPLEMENTED",
+        "next05_source_evidence": "devtool/adoption_batch.py; tests/test_next05_adoption_batch.py; docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md",
+        "next05_external_acceptance": "NOT_RUN; no current six-consumer source or authenticated provider evidence"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-034",
+      "milestone": "NEXT-05",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Unified cross-product hosted CI from a target-local DAG (proposed)",
+      "current_source_assessment": {
+        "audit_evidence": "A03/A09 export a restricted target-local Go/Python-shell DAG to one hosted job, not arbitrary DAG → multi-host native CI.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-03"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-035",
+      "milestone": "NEXT-03",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "First-class multi-solution .NET monorepo orchestration (proposed)",
+      "current_source_assessment": {
+        "audit_evidence": "Local .NET targets and workflow DAG support exist; no first-class cross-solution hosted matrix builder with TRX artifact receipts.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-07"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-036",
+      "milestone": "NEXT-07",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "First-class multi-repository extraction/migration",
+      "current_source_assessment": {
+        "audit_evidence": "No native two-repository extraction coordinator with prepare/commit/resume checkpoints.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-06"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-037",
+      "milestone": "NEXT-06",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "PARTIAL_SOURCE",
+      "next06_source_candidate": {
+        "status": "PARTIAL_SOURCE",
+        "evidence": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
+        "real_xbsctl_consumer": "NOT_RUN",
+        "release_qualified": false
+      }
+    },
+    {
+      "category": "Standalone Go module ownership repair",
+      "current_source_assessment": {
+        "audit_evidence": "No general Go module ownership/path inheritance extraction repair utility confirmed.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-06"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-038",
+      "milestone": "NEXT-06",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "PARTIAL_SOURCE",
+      "next06_source_candidate": {
+        "status": "PARTIAL_SOURCE",
+        "evidence": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
+        "real_xbsctl_consumer": "NOT_RUN",
+        "release_qualified": false
+      }
+    },
+    {
+      "category": "Automated dependent CI and wrapper pruning",
+      "current_source_assessment": {
+        "audit_evidence": "No native dependent target-wrapper/CI pruning/extraction graph operation confirmed.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-06"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-039",
+      "milestone": "NEXT-06",
+      "priority": "UNSPECIFIED",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "PARTIAL_SOURCE",
+      "next06_source_candidate": {
+        "status": "PARTIAL_SOURCE",
+        "evidence": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
+        "real_xbsctl_consumer": "NOT_RUN",
+        "release_qualified": false
+      }
+    },
+    {
+      "category": "Generated-artifact-aware source migration preflight",
+      "current_source_assessment": {
+        "audit_evidence": "No native git-aware migration inventory for ignored build caches/`local.properties` in cross-repo extraction.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-06"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-040",
+      "milestone": "NEXT-06",
+      "priority": "P1",
+      "qualification_status": "NOT_QUALIFIED",
+      "source_status": "PARTIAL_SOURCE",
+      "next06_source_candidate": {
+        "status": "PARTIAL_SOURCE",
+        "evidence": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
+        "real_xbsctl_consumer": "NOT_RUN",
+        "release_qualified": false
+      }
+    },
+    {
+      "category": "Versioned language-provider API for discovery, toolchains, targets, jobs, DAG, artifacts and qualifier capabilities",
+      "current_source_assessment": {
+        "audit_evidence": "No versioned general Actions language-provider registry/interface across Python/Go/.NET/etc.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-03"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-041",
+      "milestone": "NEXT-03",
+      "priority": "P0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Extend G5 from controlled fixtures to **real-project** polyglot build/test/artifact collection",
+      "current_source_assessment": {
+        "audit_evidence": "G5 real hosted fixture matrix exists, A03/A09 can run bounded real project jobs; not a universal real-project matrix/artifact builder.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-03"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-042",
+      "milestone": "NEXT-03",
+      "priority": "P0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Go provider: go.mod/go.work, test/vet/race, GOOS/GOARCH, CGO eligibility, verified executable distributions",
+      "current_source_assessment": {
+        "audit_evidence": "A09 supports `go.mod` and pinned setup-go for source-declared Go jobs; no GOOS/GOARCH/CGO/race/distribution provider.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-04"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-043",
+      "milestone": "NEXT-04",
+      "next04_source_candidate": {
+        "date": "2026-10-21",
+        "qualification": "NOT_QUALIFIED",
+        "remaining": [
+          "real pinned consumer",
+          "authenticated hosted run/attempt",
+          "substantive tests",
+          "native/platform/release gates"
+        ],
+        "source": "docs/DEVTOOL_NEXT04_DISTRIBUTION_PROVIDERS.md",
+        "state": "PARTIAL_SOURCE"
+      },
+      "priority": "P0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Python provider: pyproject/lock detection, pytest/coverage/Ruff, build wheels and sdist, verify metadata",
+      "current_source_assessment": {
+        "audit_evidence": "A03 admits Python/shell job commands, but no pyproject/lock/pytest/wheel/coverage package provider.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-04"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-044",
+      "milestone": "NEXT-04",
+      "next04_source_candidate": {
+        "date": "2026-10-21",
+        "qualification": "NOT_QUALIFIED",
+        "remaining": [
+          "real pinned consumer",
+          "authenticated hosted run/attempt",
+          "substantive tests",
+          "native/platform/release gates"
+        ],
+        "source": "docs/DEVTOOL_NEXT04_DISTRIBUTION_PROVIDERS.md",
+        "state": "PARTIAL_SOURCE"
+      },
+      "priority": "P0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": ".NET provider: solution graph, restore/build/test/publish, TRX, Windows-only and NuGet constraints",
+      "current_source_assessment": {
+        "audit_evidence": "Local dotnet runner exists, but Actions adoption expressly excludes dotnet host jobs (`actions_adoption.py:101–110`).",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-07"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-045",
+      "milestone": "NEXT-07",
+      "priority": "P0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Rust provider: Cargo workspace, fmt, Clippy, tests, locked toolchains, target triples",
+      "current_source_assessment": {
+        "audit_evidence": "G5 Rust fixture exists, no Cargo Actions project builder/adoption.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-08"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-046",
+      "milestone": "NEXT-08",
+      "priority": "P1",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "JS/TS provider: package-manager lockfile detection, Node matrix, lint/typecheck/test, web/package artifacts",
+      "current_source_assessment": {
+        "audit_evidence": "Node local runner exists; A03 rejects Node as hosted CI toolchain; no lock-aware JS/TS Actions provider.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-08"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-047",
+      "milestone": "NEXT-08",
+      "priority": "P1",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Non-Android JVM provider: Maven/Gradle, JDK matrix, JUnit, JAR outputs",
+      "current_source_assessment": {
+        "audit_evidence": "JVM/Gradle local runner exists; A03 declines Gradle/JDK project CI host admission.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-08"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-048",
+      "milestone": "NEXT-08",
+      "priority": "P1",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "C/C++ provider: CMake/Meson, compiler/ABI, CTest, sanitizers",
+      "current_source_assessment": {
+        "audit_evidence": "CMake/Meson local runners exist; no general Actions C/C++ builder or sanitizer/ABI verification.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-08"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-049",
+      "milestone": "NEXT-08",
+      "priority": "P2",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Shell provider: ShellCheck/shfmt/Bats, Bash/Zsh, Termux-only constraints",
+      "current_source_assessment": {
+        "audit_evidence": "Shell is accepted for A03 source-only jobs, but no ShellCheck/shfmt/Bats dedicated language provider.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-08"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-050",
+      "milestone": "NEXT-08",
+      "priority": "P2",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Host/target/toolchain eligibility as DAG metadata",
+      "current_source_assessment": {
+        "audit_evidence": "A09 has hard host eligibility and explicit refusals; no typed eligibility metadata integrated into *all* DAG/CI jobs.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-02"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-051",
+      "milestone": "NEXT-02",
+      "next02_source_candidate": {
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "formal_release_qualified": false,
+        "hosted_accepted": false,
+        "native_accepted": false,
+        "phase": "NEXT-02"
+      },
+      "priority": "P0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Unified typed receipts for test, binary/package, SBOM, coverage, GitHub provenance verification",
+      "current_source_assessment": {
+        "audit_evidence": "G5/Android Actions receipts bind source/run/attempt and digests; no unified test/package/SBOM/provenance schema.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-02"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-052",
+      "milestone": "NEXT-02",
+      "next02_source_candidate": {
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "formal_release_qualified": false,
+        "hosted_accepted": false,
+        "native_accepted": false,
+        "phase": "NEXT-02"
+      },
+      "priority": "P0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Target-derived reusable workflow/matrix generation, lock-aware caching and changed-target selection",
+      "current_source_assessment": {
+        "audit_evidence": "A03/A09 generate restricted GitHub YAML from existing job contract; not target-derived multi-job matrix, change selection, and lockfile cache.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-03"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-053",
+      "milestone": "NEXT-03",
+      "priority": "P1",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Normalize pytest JUnit, Go test, Cargo, TRX, JUnit XML and JS test reports into EXO",
+      "current_source_assessment": {
+        "audit_evidence": "No generic CI test report normalizer across JUnit, TRX, Go, Cargo and JS reporters.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-02"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-054",
+      "milestone": "NEXT-02",
+      "next02_source_candidate": {
+        "consumer_accepted": false,
+        "device_accepted": false,
+        "disposition": "SOURCE_CANDIDATE_NOT_EXTERNALLY_QUALIFIED",
+        "evidence": "docs/DEVTOOL_NEXT02_TYPED_EVIDENCE.md",
+        "formal_release_qualified": false,
+        "hosted_accepted": false,
+        "native_accepted": false,
+        "phase": "NEXT-02"
+      },
+      "priority": "P1",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "category": "Language capability doctor and reproducible toolchain provenance",
+      "current_source_assessment": {
+        "audit_evidence": "`actions adoption-doctor`, `config status/doctor` report some eligibility and migrations; no unified per-language toolchain doctor/provenance.",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "PARTIAL_SOURCE",
+        "target_milestone": "NEXT-03"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)"
+      ],
+      "historical_status": "PROPOSED",
+      "id": "DT-055",
+      "milestone": "NEXT-03",
+      "priority": "P1",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "PARTIAL_SOURCE"
+    },
+    {
+      "category": "Cumulative DT traceability reconciliation",
+      "current_source_assessment": {
+        "audit_evidence": "Canonical docs/DEVTOOL_IMPROVEMENT_INDEX.json includes DT-001–DT-023 only; external cumulative backlog has DT-024–DT-055; docs/DEVTOOL_IMPLEMENTATION_ROADMAP.md legacy DT traceability stops at DT-023.",
+        "next00_progress": "SOURCE_CANDIDATE_TEST_PENDING",
+        "provisional_historical_description": false,
+        "qualification_status": "NOT_REQUALIFIED_ON_CURRENT_SOURCE",
+        "source_commit": "b045f65eb44b9e7b7ca25f55f9a60c7902d60671",
+        "source_reference": "docs/DEVTOOL_NEXT_CAPABILITIES_ROADMAP.md",
+        "source_status_at_baseline": "OPEN_CODE",
+        "target_milestone": "NEXT-00"
+      },
+      "evidence": [
+        "DEVTOOL_IMPROVEMENT_BACKLOG.md (historical external handoff)",
+        "docs/DEVTOOL_IMPROVEMENT_INDEX.json original 23-DT set"
+      ],
+      "historical_status": "NEW",
+      "id": "DT-056",
+      "milestone": "NEXT-00",
+      "priority": "P0",
+      "qualification_status": "NOT_REQUALIFIED",
+      "source_status": "OPEN_CODE"
+    },
+    {
+      "id": "DT-057",
+      "priority": "P1",
+      "category": "Go distribution Go toolchain buildinfo target and CGO contract",
+      "milestone": "NEXT-04-HOTFIX",
+      "historical_status": "NEW_2026_10_21",
+      "source_status": "HOTFIX_CANDIDATE_TESTED",
+      "qualification_status": "NOT_EXTERNALLY_REQUALIFIED",
+      "evidence": [
+        "tests/test_roadmap_hotfix_distribution_integrity.py",
+        "docs/DEVTOOL_POST_NEXT06_ROADMAP_AUDIT.md"
+      ],
+      "current_source_assessment": {
+        "reviewed_source_commit": "cef18fa68828ad683483b7bc117626bd3fd85ac8",
+        "reviewed_tree": "536b90c02049b45f651fbe1bd2a4df03b361b782",
+        "local_test_expected": "NEGATIVE_CASES_PASS",
+        "native_hosted_consumer_device_release_accepted": false
+      }
+    },
+    {
+      "id": "DT-058",
+      "priority": "P1",
+      "category": "Wheel compatibility tags and console script target integrity",
+      "milestone": "NEXT-04-HOTFIX",
+      "historical_status": "NEW_2026_10_21",
+      "source_status": "HOTFIX_CANDIDATE_TESTED",
+      "qualification_status": "NOT_EXTERNALLY_REQUALIFIED",
+      "evidence": [
+        "tests/test_roadmap_hotfix_distribution_integrity.py",
+        "docs/DEVTOOL_POST_NEXT06_ROADMAP_AUDIT.md"
+      ],
+      "current_source_assessment": {
+        "reviewed_source_commit": "cef18fa68828ad683483b7bc117626bd3fd85ac8",
+        "reviewed_tree": "536b90c02049b45f651fbe1bd2a4df03b361b782",
+        "local_test_expected": "NEGATIVE_CASES_PASS",
+        "native_hosted_consumer_device_release_accepted": false
+      }
+    }
+  ],
+  "kind": "devtool.improvement-traceability",
+  "next02_incremental_acceptance": {
+    "affected_ids": [
+      "DT-006",
+      "DT-010",
+      "DT-017",
+      "DT-023",
+      "DT-051",
+      "DT-052",
+      "DT-054"
+    ],
+    "authority": "none beyond disposable source tests",
+    "consumer_pass": false,
+    "device_pass": false,
+    "formal_release_qualified": false,
+    "hosted_pass": false,
+    "kind": "source_candidate",
+    "native_pass": false,
+    "phase": "NEXT-02",
+    "source_tests": "tests/test_next02_evidence_kernel.py"
+  },
+  "r06_incremental_acceptance": {
+    "R06A": {
+      "hosted": "NOT_QUALIFIED",
+      "native_termux": "PENDING",
+      "release": "NOT_QUALIFIED",
+      "remaining": [
+        "DT-008 source-bound overlay recovery",
+        "review-only adoption doctor",
+        "cross-consumer DAG acceptance"
+      ],
+      "scope": "DAG plan ASCII/Mermaid/static blockers, canonical existing scheduler",
+      "source_status": "IMPLEMENTED_SOURCE_PENDING_DISPOSABLE"
+    },
+    "R06C": {
+      "native_termux": "PENDING",
+      "real_consumers": "NOT_QUALIFIED",
+      "release": "NOT_QUALIFIED",
+      "scope": "Read-only FRX producer/consumer contract projection and strict-local frozen source-lock gate",
+      "source_status": "DONE_SOURCE"
+    },
+    "R06D": {
+      "hosted": "NOT_QUALIFIED",
+      "life_cleanup": "PENDING",
+      "native_termux": "PENDING",
+      "original_native_run": "ba1c2342b39444e6a8fc7eee993aba75",
+      "original_native_status": "FAILED_55_PASS_1_FAIL",
+      "release": "NOT_QUALIFIED",
+      "replacement_status": "REMEDIATION_CANDIDATE",
+      "scope": "Read-only recovery inspection plus native rollback-result logging and async log-retention reaping"
+    }
+  },
+  "r07_incremental_acceptance": {
+    "R07A_CONSOLIDATED_BCD": {
+      "disposable": "PASS_197_TESTS_APPLY_COMMIT_CLEANUP",
+      "fs03": "NOT_QUALIFIED",
+      "independent_worker": "NOT_QUALIFIED",
+      "native_termux": "PENDING",
+      "notifications": "NOT_QUALIFIED",
+      "release": "NOT_QUALIFIED",
+      "replaces": "DEVTOOL_SSH_RETURN_EVIDENCE_R07A.zip",
+      "scope": "R07A return integrity + R07B stage evidence + R07C substrate safety + R07D measured performance projection",
+      "scope_limitations": [
+        "Physical worker run required for source sync/return and cold-warm benchmarking",
+        "Not proof of PRoot guest session",
+        "Notifications not sent or qualified",
+        "No automated recovery mutations",
+        "No hosted/release or Android qualification"
+      ],
+      "separate_r07_overlays_planned": false,
+      "source_status": "DONE_SOURCE"
+    }
+  },
+  "r08_acceptance": {
+    "external_substrates": "BLOCKED_EXTERNAL",
+    "formal_h1_closed": false,
+    "formal_h2_closed": false,
+    "native_current_source_report": {
+      "formally_qualified": false,
+      "overall": "PASS_R08_SOURCE_INVENTORY_EXTERNAL_GATES_OPEN",
+      "receipt_type": "user-provided-assessment-output",
+      "selected_tests_passed": 103,
+      "source_commit": "6620bd553277020a91ab0495dcbcf94239760f6a",
+      "source_tree": "82edc9467365060832415027994edef9b16590a7"
+    },
+    "phase4_historical_receipt": "OPTIONAL_UNVERIFIED_IN_THIS_OVERLAY",
+    "release_qualified": false,
+    "source_inventory": "IMPLEMENTED_PENDING_NATIVE",
+    "source_parent_tree": "479c448fdd6e21874bcadb37005d0aa064171f18"
+  },
+  "r09_acceptance": {
+    "assessment_module": "devtool.rmp_r09_campaign",
+    "consumer": "BLOCKED_EXTERNAL",
+    "contract": "docs/actions/DEVTOOL_R09_ACCEPTANCE_CONTRACT_20261021.json",
+    "device": "BLOCKED_EXTERNAL",
+    "evidence_policy": "untrusted hashed receipt observations only; no automatic promotion",
+    "formal_release_qualified": false,
+    "formal_security": "BLOCKED_EXTERNAL",
+    "hosted": "BLOCKED_EXTERNAL",
+    "native_termux": "PENDING",
+    "source_implementation": "SOURCE_CANDIDATE",
+    "source_parent_tree": "82edc9467365060832415027994edef9b16590a7"
+  },
+  "schema_version": 1,
+  "scoped_milestone_closure": {
+    "R01": "CLOSED_LOCAL_TERMUX",
+    "R02": "CLOSED_LOCAL_TERMUX",
+    "R03": "SOURCE_VERIFIED_NATIVE_APPLY_REPORTED",
+    "campaign": "OPEN",
+    "evidence_path": "docs/actions/DEVTOOL_R01_R03_SCOPED_CLOSURE_20261020.json",
+    "qualification_scope": "per-milestone-only"
+  },
+  "status_model": {
+    "qualification_status": "Independent evidence; never promoted from a source match",
+    "source_status": [
+      "OPEN_CODE",
+      "DONE_SOURCE",
+      "REMEDIATION_CANDIDATE",
+      "PARTIAL_SOURCE",
+      "BLOCKED_EXTERNAL"
+    ]
+  },
+  "next05_incremental_acceptance": {
+    "source_baseline_git_tree": "96a857b791d8caf5050c4d82e2d873b34b579179",
+    "status": "SOURCE_CANDIDATE",
+    "formal_release_qualified": false,
+    "actual_six_consumer_integration": "NOT_RUN",
+    "documentation": "docs/DEVTOOL_NEXT05_MULTI_REPO_ADOPTION.md"
+  },
+  "next06_incremental_acceptance": {
+    "status": "SOURCE_CANDIDATE",
+    "documentation": "docs/DEVTOOL_NEXT06_REPOSITORY_EXTRACTION.md",
+    "live_xbsctl_extraction": "NOT_RUN",
+    "formal_release_qualified": false
+  },
+  "post_next06_reconciliation": {
+    "kind": "source_and_gate_audit",
+    "reviewed_commit": "cef18fa68828ad683483b7bc117626bd3fd85ac8",
+    "reviewed_tree": "536b90c02049b45f651fbe1bd2a4df03b361b782",
+    "hotfix_ids": [
+      "DT-057",
+      "DT-058"
+    ],
+    "phases_document": "docs/DEVTOOL_POST_NEXT06_ROADMAP_AUDIT.md",
+    "formal_release_qualified": false,
+    "independent_authority": "NOT_RUN"
+  }
+}

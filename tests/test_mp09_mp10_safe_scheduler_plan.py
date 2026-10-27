@@ -243,11 +243,30 @@ build = [
 
 class ParallelExecutionTests(unittest.TestCase):
     def test_safe_independent_nodes_really_execute_concurrently(self):
+        """Prove true subprocess overlap via a two-party barrier, not elapsed time.
+
+        Total runtime includes Python/Termux process startup, scheduling and
+        tool overhead. Both workers must start before either can complete;
+        a serialized engine times out/fails the barrier, even on fast hosts.
+        """
+        def handshake(name: str, peer: str) -> str:
+            return (
+                "import pathlib,sys,time\n"
+                "pathlib.Path('out').mkdir(exist_ok=True)\n"
+                f"pathlib.Path('out/started').write_text({name!r})\n"
+                "deadline=time.monotonic()+20\n"
+                f"peer=pathlib.Path('../{peer}/out/started')\n"
+                "while not peer.exists():\n"
+                "    if time.monotonic()>=deadline: sys.exit(93)\n"
+                "    time.sleep(0.02)\n"
+                f"print({name!r})\n"
+            )
+
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / "a").mkdir(); (root / "b").mkdir()
             cfg = Repo(root).config(
-                '''
+                f'''
 [project]
 runner = "command"
 [workspace]
@@ -255,34 +274,34 @@ default_target = "app"
 [jobs.a]
 runner = "command"
 root = "a"
-command = ["sh", "-c", "sleep 0.45; echo a"]
+command = {json.dumps(["python3", "-c", handshake("a", "b")])}
 inputs = ["in"]
 outputs = ["out"]
 [jobs.b]
 runner = "command"
 root = "b"
-command = ["sh", "-c", "sleep 0.45; echo b"]
+command = {json.dumps(["python3", "-c", handshake("b", "a")])}
 inputs = ["in"]
 outputs = ["out"]
 [targets.app]
 runner = "command"
 [targets.app.workflows]
 build = [
- { id="a", ref="job:a", depends_on=[] },
- { id="b", ref="job:b", depends_on=[] },
+ {{ id="a", ref="job:a", depends_on=[] }},
+ {{ id="b", ref="job:b", depends_on=[] }},
 ]
 '''
             )
             specs = build_workspace_specs(cfg, ["app"], "build")
-            started = time.perf_counter()
             results, raw, plan = run_workflow_specs(
                 cfg, specs, verbose=False, dry_run=False, continue_on_error=False,
                 log_path=None, parallel_requested=True, max_parallel_nodes=2,
             )
-            elapsed = time.perf_counter() - started
-            self.assertLess(elapsed, 0.82, f"expected concurrent execution, got {elapsed:.3f}s")
-            self.assertTrue(all(item.returncode == 0 for item in results))
+            self.assertTrue(all(item.returncode == 0 for item in results),
+                            'both processes must reach the peer-start barrier')
             self.assertTrue(plan and plan.parallel_effective)
+            self.assertTrue((root / "a/out/started").exists())
+            self.assertTrue((root / "b/out/started").exists())
             self.assertIn("a", raw); self.assertIn("b", raw)
 
     def test_failed_parallel_root_blocks_dependent_join(self):

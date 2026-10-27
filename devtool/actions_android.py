@@ -28,6 +28,7 @@ _SHA40 = re.compile(r"[0-9a-fA-F]{40}\Z")
 _CERT = re.compile(r"[0-9a-fA-F]{64}\Z")
 _MAX_PACKAGE = 256 * 1024 * 1024
 _WORKFLOW = "devtool-android-build.yml"
+_WORKFLOW_NAME = re.compile(r"(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.ya?ml|\.github/workflows/[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.ya?ml)\Z")
 
 
 def _git(root: Path, *args: str) -> str:
@@ -74,61 +75,21 @@ def _project_root(root: Path, project_dir: str = "") -> tuple[Path, str]:
     return project, project.relative_to(base).as_posix() if project != base else "."
 
 
-def _gradle_modules(root: Path) -> dict[str, dict[str, Any]]:
-    settings = next((root / f for f in ("settings.gradle.kts", "settings.gradle") if (root / f).is_file()), None)
-    if settings is None:
-        raise GitHubActionsError("No settings.gradle(.kts) in selected Android repository")
-    text = settings.read_text(encoding="utf-8")
-    # Accept the literal include forms supported by Gradle Kotlin/Groovy DSL.
-    # Dynamic includes, projectDir relocation and conditional includes require explicit intervention.
-    names = set(re.findall(r"[\"'](:[A-Za-z0-9_:-]+)[\"']", "\n".join(
-        line for line in text.splitlines() if re.search(r"\binclude\s*\(?", line))))
-    result: dict[str, dict[str, Any]] = {}
-    for name in sorted(names):
-        module = name.lstrip(":")
-        if not _MODULE.fullmatch(module):
-            continue
-        directory = root.joinpath(*module.split(":"))
-        if directory.is_symlink() or not directory.resolve().is_relative_to(root.resolve()):
-            continue
-        scripts = [directory / f for f in ("build.gradle.kts", "build.gradle") if (directory / f).is_file()]
-        if not scripts:
-            continue
-        gradle = scripts[0].read_text(encoding="utf-8")
-        manifest = directory / "src/main/AndroidManifest.xml"
-        is_app = bool(re.search(r"com\.android\.application", gradle))
-        if not is_app and "alias(libs.plugins." in gradle:
-            # Resolve catalog alias to its declared id rather than guessing what
-            # a similarly named alias points to.
-            catalog = root / "gradle/libs.versions.toml"
-            if catalog.is_file():
-                try:
-                    import tomllib
-                    plugins = tomllib.loads(catalog.read_text(encoding="utf-8")).get("plugins", {})
-                    for m in re.finditer(r"alias\(libs\.plugins\.([A-Za-z0-9_.]+)\)", gradle):
-                        definition = plugins.get(m.group(1).replace(".", "-"))
-                        plugin_id = definition if isinstance(definition, str) else (definition or {}).get("id")
-                        if plugin_id == "com.android.application":
-                            is_app = True
-                except (OSError, ValueError, TypeError):
-                    pass
-        # Version catalogs may use an alias; require an app manifest, and avoid claiming
-        # certainty about the plugin when the source does not name it literally.
-        if not is_app:
-            continue
-        p = re.search(r"\bapplicationId\s*(?:=|\s)\s*[\"']([A-Za-z_][\w.]*)[\"']", gradle)
-        pkg = p.group(1) if p and _PACKAGE.fullmatch(p.group(1)) else None
-        result[module] = {"module": module, "gradle_file": str(scripts[0].relative_to(root)),
-                          "manifest_present": manifest.is_file(), "application_id": pkg,
-                          "application_id_static": pkg is not None}
-    return result
+def _gradle_modules(root: Path, *, discovery_mode: str = 'static', repository: Path | None = None) -> dict[str, dict[str, Any]]:
+    if discovery_mode == 'static':
+        from .actions_android_model import discover_modules
+        return discover_modules(root)
+    if discovery_mode == 'gradle':
+        from .actions_android_runtime import discover_runtime
+        return discover_runtime(root, repository=repository or root)
+    raise GitHubActionsError('Android discovery mode must be static or explicitly reviewed gradle')
 
 
-def android_discover(root: Path, project_dir: str = "") -> dict[str, Any]:
+def android_discover(root: Path, project_dir: str = "", *, discovery_mode: str = "static") -> dict[str, Any]:
     project, project_relative = _project_root(root, project_dir)
     return {"phase": "ACTIONS-05", "repo_root": str(root.resolve()),
-            "project_dir":project_relative, "modules": list(_gradle_modules(project).values()),
-            "note": "Static Gradle inspection only; dynamic Gradle variants/IDs need runtime verification"}
+            "project_dir":project_relative, "modules": list(_gradle_modules(project, discovery_mode=discovery_mode, repository=root).values()),
+            "discovery_mode":discovery_mode,"note": "Gradle runtime executes explicitly reviewed repository code, never a sandbox" if discovery_mode=="gradle" else "Static Gradle inspection only; use explicit runtime discovery for evaluated convention plugins"}
 
 
 def _gradle_bootstrap(project: Path) -> dict[str, str]:
@@ -169,18 +130,82 @@ def _gradle_bootstrap(project: Path) -> dict[str, str]:
             "checksum": digest.group(1).lower()}
 
 
+def _reviewed_variant_override(root: Path, module: str, variant: str) -> dict[str, str] | None:
+    """Project-owned canonical Android variant profile for static discovery gaps.
+
+    Profile selection is *exact* and never infers an unreviewed Gradle task.
+    The canonical config document and android/variants.py resolver own policy.
+    """
+    from .config import load_repository_document
+    from .models import ProjectConfig
+    from .android.variants import resolve_android_variant
+    path = root / '.devtool.toml'
+    if not path.is_file() or path.is_symlink():
+        return None
+    try:
+        _git(root, 'ls-files', '--error-unmatch', '.devtool.toml')
+    except GitHubActionsError:
+        raise GitHubActionsError('Reviewed Android variant profile must be a tracked repository document') from None
+    try:
+        doc = load_repository_document(path, required=True)
+    except (ValueError, OSError, SystemExit) as exc:
+        raise GitHubActionsError('Cannot load reviewed Android variant profile') from exc
+    android = doc.get('android', {})
+    if not isinstance(android, dict):
+        raise GitHubActionsError('Android variant profiles must be a TOML table')
+    # The global Android table is the canonical profile namespace. Target-local
+    # variant policy is merged only when the module is the selected target.
+    targets = doc.get('targets', {})
+    target = targets.get(module, {}) if isinstance(targets, dict) else {}
+    if isinstance(target, dict):
+        entry = target.get('variants', {}).get(variant) if isinstance(target.get('variants', {}),dict) else None
+        if isinstance(entry, dict) and isinstance(entry.get('android'), dict):
+            android = {**android, **entry['android']}
+            android['variants'] = {**(android.get('variants', {}) if isinstance(android.get('variants'),dict) else {}), variant:entry['android']}
+    profiles = android.get('variants', android.get('variant_profiles', {}))
+    if not isinstance(profiles, dict) or variant not in profiles or not isinstance(profiles[variant], dict):
+        return None
+    selected = profiles[variant]
+    if not {'build_type', 'flavor', 'module'} <= selected.keys():
+        raise GitHubActionsError('Explicit ACTIONS-05 variant override requires build_type, flavor and module')
+    profile = resolve_android_variant(ProjectConfig(repo_root=root,kind='android',variant=variant,
+                              runner_options={'android':android}), variant)
+    if (profile.module != module or not re.fullmatch(r'[a-z][A-Za-z0-9]{0,40}',profile.build_type) or
+        not re.fullmatch(r'[a-z][A-Za-z0-9]{0,40}',profile.flavor) or
+        variant != profile.flavor + profile.build_type.title()):
+        raise GitHubActionsError('Reviewed variant override mismatches module, flavor or build type')
+    return {'build_type':profile.build_type, 'flavor':profile.flavor}
+
+
 def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: str,
                  variant: str, fmt: str, ref: str, workflow: str = _WORKFLOW,
-                 execute: bool = False, expected_package: str = "", project_dir: str = "") -> dict[str, Any]:
+                 execute: bool = False, expected_package: str = "", project_dir: str = "",
+                 signing_mode: str = "local", discovery_mode: str = "static") -> dict[str, Any]:
     slug = _slug(slug)
-    if not _MODULE.fullmatch(module) or variant not in ("debug", "release") or fmt not in ("apk", "aab"):
+    if not _MODULE.fullmatch(module) or not re.fullmatch(r"[a-z][A-Za-z0-9]{0,60}", variant) or fmt not in ("apk", "aab"):
         raise GitHubActionsError("Android module, variant, or output format is invalid")
     if expected_package and not _PACKAGE.fullmatch(expected_package):
         raise GitHubActionsError("Expected Android application ID is invalid")
+    if signing_mode not in ('local','github'):
+        raise GitHubActionsError('Android signing mode must be local or github')
     project, project_relative = _project_root(root, project_dir)
-    modules = _gradle_modules(project)
+    modules = _gradle_modules(project, discovery_mode=discovery_mode, repository=root)
     if module not in modules:
         raise GitHubActionsError("Requested Android application module is not statically discoverable")
+    declared = modules[module].get('variants', {'debug': {}, 'release': {}})
+    spec = declared.get(variant)
+    source = 'static-gradle'
+    if spec is None:
+        spec = _reviewed_variant_override(root, module, variant)
+        if spec is None:
+            raise GitHubActionsError('Unknown or unreviewed Android variant; register its model/profile')
+        source = 'reviewed-profile'
+    if workflow == _WORKFLOW and (variant not in ('debug', 'release') or
+                                   (spec['build_type'] != 'debug' and signing_mode == 'local')):
+        workflow = 'devtool-android-variants.yml'
+    if (spec['build_type'] != 'debug' and signing_mode == 'local' and
+        workflow != 'devtool-android-variants.yml'):
+        raise GitHubActionsError('Local signing requires unsigned-capable reviewed Android workflow')
     gradle_bootstrap = _gradle_bootstrap(project)
     if not ref:
         raise GitHubActionsError("Android CI requires an explicit --ref branch or tag")
@@ -190,12 +215,18 @@ def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: 
     if _git(root, "status", "--porcelain", "--untracked-files=normal"):
         raise GitHubActionsError("Android CI requires a clean local Git checkout; commit and push changes first")
     inputs = {"module":module, "variant":variant, "format":fmt, "project_dir":project_relative}
+    if workflow == 'devtool-android-variants.yml':
+        inputs['signing_mode'] = signing_mode
+        if spec['build_type'] not in ('debug','release'):
+            inputs['build_type'] = spec['build_type']
     remote_plan = dispatch_workflow(client, slug, workflow, ref, inputs, execute=False)
     if remote_plan.get("pre_dispatch_sha", "").lower() != local_sha:
         raise GitHubActionsError("Local HEAD differs from GitHub selected ref; push the commit or select the correct ref")
     package = expected_package or modules[module]["application_id"]
     result = {"phase":"ACTIONS-05", "repository":slug, "module":module,
-              "variant":variant, "format":fmt,"project_dir":project_relative,"gradle_bootstrap":gradle_bootstrap,"expected_package":package,
+              "variant":variant, "build_type":spec["build_type"], "flavor":spec["flavor"],
+              "variant_source":source if discovery_mode=="static" else "reviewed-gradle-execution", "discovery_mode":discovery_mode, "signing_mode":signing_mode,
+              "signing_state":("unsigned-candidate" if spec["build_type"]!="debug" and signing_mode=="local" else "hosted-signing-requested" if spec["build_type"]!="debug" else "debug"), "format":fmt,"project_dir":project_relative,"gradle_bootstrap":gradle_bootstrap,"expected_package":package,
               "expected_package_source": "explicit" if expected_package else ("static-gradle" if package else "unresolved"),
               "local_head_sha": local_sha, "workflow":workflow,"ref":ref,
               "workflow_plan":remote_plan, "dispatched":False, "qualified_release":False}
@@ -295,20 +326,96 @@ def _fingerprint(text: str, *, source: str = "apksigner") -> str:
     raise GitHubActionsError(f"Signing certificate fingerprint could not be verified ({reason})")
 
 
-def _inspect_apk(package_file: Path) -> dict[str, Any]:
+def _apk_badging_identity(dump: str, *, role: str) -> tuple[str, str, str]:
+    """One unambiguous aapt package declaration; no invented test APK version."""
+    declarations = [line.strip() for line in dump.splitlines()
+                    if re.match(r"^\s*package\s*:", line)]
+    if len(declarations) != 1:
+        raise GitHubActionsError("APK package metadata missing or ambiguous")
+    line = declarations[0]
+    attrs = re.findall(r"\b(name|versionCode|versionName)='([^']*)'", line)
+    values = {}
+    for key, value in attrs:
+        if key in values:
+            raise GitHubActionsError("APK package metadata has duplicate attributes")
+        values[key] = value
+    if (set(values) != {"name", "versionCode", "versionName"} or
+            not _PACKAGE.fullmatch(values["name"])):
+        raise GitHubActionsError("APK package metadata could not be verified")
+    version = values["versionCode"]
+    if role == "application":
+        if not re.fullmatch(r"[0-9]+", version) or int(version) < 1:
+            raise GitHubActionsError("Application APK requires positive numeric versionCode")
+    elif version and (not re.fullmatch(r"[0-9]+", version) or int(version) < 1):
+        raise GitHubActionsError("Instrumentation APK has invalid nonempty versionCode")
+    return values["name"], version, values["versionName"]
+
+
+def _instrumentation_xml(dump: str, *, test_package: str, target_package: str) -> str:
+    """Inspect compiled manifest structure, not the aapt badging display."""
+    lines = dump.splitlines()
+    elements = [(i, len(line) - len(line.lstrip()),
+                 re.match(r"^\s*E:\s*([A-Za-z_][\w:.-]*)\b", line))
+                for i, line in enumerate(lines)]
+    elements = [(i, depth, m.group(1)) for i, depth, m in elements if m]
+    roots = [(i, d) for i, d, name in elements if name == 'manifest']
+    insts = [(i, d) for i, d, name in elements if name == 'instrumentation']
+    if (len(roots) != 1 or len(insts) != 1 or
+            insts[0][0] <= roots[0][0] or insts[0][1] <= roots[0][1]):
+        raise GitHubActionsError("Compiled manifest instrumentation declaration missing or ambiguous")
+    def attrs_at(start: int, depth: int):
+        stop = next((i for i, d, _ in elements if i > start and d <= depth), len(lines))
+        values: dict[str, str] = {}
+        for line in lines[start + 1:stop]:
+            m = re.match(r'^\s*A:\s*([A-Za-z_][\w:]*)\s*(?:\([^)]*\))?\s*=\s*"([^"]*)"', line)
+            if m:
+                key, value = m.groups()
+                if key in values:
+                    raise GitHubActionsError("Compiled manifest has duplicate package or instrumentation attribute")
+                values[key] = value
+        return values
+    manifest = attrs_at(*roots[0])
+    instrumentation = attrs_at(*insts[0])
+    # XML dumps of android manifest report package as unqualified package.
+    if manifest.get('package') != test_package:
+        raise GitHubActionsError("Compiled manifest package differs from signed test APK package")
+    if instrumentation.get('android:targetPackage') != target_package:
+        raise GitHubActionsError("Compiled manifest instrumentation targetPackage differs from expected application")
+    runner = instrumentation.get('android:name', '')
+    if not re.fullmatch(r"[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+", runner):
+        raise GitHubActionsError("Compiled manifest instrumentation runner is missing or invalid")
+    return runner
+
+
+def _inspect_apk(package_file: Path, *, apk_role: str = "application",
+                 expected_target_package: str = "") -> dict[str, Any]:
+    if apk_role not in ('application', 'instrumentation'):
+        raise GitHubActionsError("Unknown APK role")
+    if apk_role == 'instrumentation' and not _PACKAGE.fullmatch(expected_target_package):
+        raise GitHubActionsError("Instrumentation inspection requires expected target application package")
     signer = _run([_tool("apksigner"), "verify", "--print-certs", str(package_file)], purpose="APK signature verification")
     try:
         aapt = _tool("aapt")
+        aapt2 = False
     except GitHubActionsError:
         aapt = _tool("aapt2")
+        aapt2 = True
     dump = _run([aapt, "dump", "badging", str(package_file)], purpose="APK manifest inspection")
-    match = re.search(r"^package:\s+name='([^']+)'\s+versionCode='([^']+)'\s+versionName='([^']*)'", dump, re.M)
-    if not match or not _PACKAGE.fullmatch(match.group(1)):
-        raise GitHubActionsError("APK package metadata could not be verified")
-    return {"package":match.group(1),"version_code":match.group(2),
-            "version_name":match.group(3), "signer_sha256":_fingerprint(signer),
-            "debug_signing": bool(re.search(r"\bCN\s*=\s*Android Debug\b", signer, re.I)),
-            "signature_verified":True, "manifest_verified":True}
+    pkg, code, name = _apk_badging_identity(dump, role=apk_role)
+    result = {"package":pkg,"version_code":code,"version_name":name,
+              "signer_sha256":_fingerprint(signer),
+              "debug_signing":bool(re.search(r"\bCN\s*=\s*Android Debug\b", signer, re.I)),
+              "signature_verified":True,"manifest_verified":True,"apk_role":apk_role}
+    if apk_role == 'instrumentation':
+        if pkg == expected_target_package:
+            raise GitHubActionsError("Instrumentation and application package identities must differ")
+        command = ([aapt, 'dump', 'xmltree', '--file', 'AndroidManifest.xml', str(package_file)]
+                   if aapt2 else [aapt, 'dump', 'xmltree', str(package_file), 'AndroidManifest.xml'])
+        xml = _run(command, purpose='APK compiled instrumentation manifest inspection')
+        result['instrumentation_runner'] = _instrumentation_xml(
+            xml, test_package=pkg, target_package=expected_target_package)
+        result['instrumentation_target_package'] = expected_target_package
+    return result
 
 
 def _verify_aab_jar_signature(package_file: Path) -> None:
@@ -374,14 +481,27 @@ def _inspect_aab(package_file: Path) -> dict[str, Any]:
 
 
 def inspect_android_zip(archive: Path, *, fmt: str, variant: str, expected_package: str = "",
-                        expected_cert: str = "", member: str = "") -> dict[str, Any]:
-    if fmt not in ("apk", "aab") or variant not in ("debug", "release"):
+                        expected_cert: str = "", member: str = "", apk_role: str = "application",
+                        expected_target_package: str = "", expected_source_sha: str = "",
+                        expected_run_attempt: int = 0) -> dict[str, Any]:
+    if fmt not in ("apk", "aab") or not re.fullmatch(r"[a-z][A-Za-z0-9]{0,60}",variant):
         raise GitHubActionsError("Invalid Android output format or variant")
+    if apk_role not in ('application', 'instrumentation'):
+        raise GitHubActionsError("Unknown APK role")
+    if apk_role == 'instrumentation':
+        if fmt != 'apk' or variant != 'debug':
+            raise GitHubActionsError("Instrumentation APK inspection is restricted to debug APKs")
+        if (not expected_package or not _PACKAGE.fullmatch(expected_package) or
+                not _PACKAGE.fullmatch(expected_target_package)):
+            raise GitHubActionsError("Instrumentation inspection requires test package and target package pins")
+    elif expected_target_package:
+        raise GitHubActionsError("Application/AAB inspection cannot accept instrumentation target")
     if expected_cert and not _CERT.fullmatch(expected_cert):
         raise GitHubActionsError("Signing certificate must be a 64-character SHA-256 hex digest")
-    if variant == "release" and not expected_cert:
+    is_release = variant.lower().endswith("release")
+    if is_release and not expected_cert:
         raise GitHubActionsError("Release output requires --expected-cert-sha256 (stable signing identity)")
-    if variant == "release" and not expected_package:
+    if is_release and not expected_package:
         raise GitHubActionsError("Release output requires --expected-package (stable application identity)")
     if expected_package and not _PACKAGE.fullmatch(expected_package):
         raise GitHubActionsError("Expected Android application ID is invalid")
@@ -392,6 +512,33 @@ def inspect_android_zip(archive: Path, *, fmt: str, variant: str, expected_packa
         if len(items) != 1:
             raise GitHubActionsError("Expected exactly one Android output; use --member to select an exact archive path")
         info = items[0]
+        if variant not in ('debug', 'release'):
+            if not expected_source_sha or not _SHA40.fullmatch(expected_source_sha) or expected_run_attempt < 1:
+                raise GitHubActionsError('Custom Android variant requires exact source and run-attempt binding')
+            try:
+                manifest_info = z.getinfo('android-variant-manifest.json')
+                if manifest_info.file_size > 8192 or manifest_info.file_size <= 0:
+                    raise ValueError()
+                identity = json.loads(z.read(manifest_info).decode('utf-8'))
+            except (KeyError, ValueError, UnicodeError):
+                raise GitHubActionsError('Custom variant requires signed-run-bound artifact identity manifest') from None
+            required = {'schema_version':1, 'variant':variant, 'format':fmt,
+                        'apk_file':info.filename, 'head_sha':expected_source_sha.lower(),
+                        'run_attempt':expected_run_attempt}
+            if not isinstance(identity, dict) or any(type(identity.get(k)) is not type(v) or identity[k] != v for k,v in required.items()):
+                raise GitHubActionsError('Custom Android variant artifact identity mismatch')
+            if not re.fullmatch(r'[0-9a-f]{64}', str(identity.get('sha256',''))):
+                raise GitHubActionsError('Missing custom Android variant member hash')
+            if hashlib.sha256(z.read(info)).hexdigest() != identity['sha256']:
+                raise GitHubActionsError('Custom Android variant artifact bytes differ from identity manifest')
+            if not variant.lower().endswith('release'):
+                declared_build_type=identity.get('build_type')
+                if not isinstance(declared_build_type,str) or not re.fullmatch(r'[a-z][A-Za-z0-9]{0,40}',declared_build_type) or not (variant==declared_build_type or variant.endswith(declared_build_type.title())):
+                    raise GitHubActionsError('Custom Android variant requires an exact reviewed build-type manifest')
+                if declared_build_type != 'debug' and not expected_cert:
+                    raise GitHubActionsError('Non-debug Android output requires stable expected signing certificate')
+                if declared_build_type != 'debug' and not expected_package:
+                    raise GitHubActionsError('Non-debug Android output requires expected application identity')
         if info.file_size <= 0 or info.file_size > _MAX_PACKAGE:
             raise GitHubActionsError("Android package size is invalid or exceeds 256 MiB")
         with tempfile.TemporaryDirectory(prefix="devtool-android-inspect-") as folder:
@@ -406,26 +553,45 @@ def inspect_android_zip(archive: Path, *, fmt: str, variant: str, expected_packa
                         raise GitHubActionsError("Android package exceeds extraction limit")
                     dst.write(data); digest.update(data)
                 dst.flush(); os.fsync(dst.fileno())
-            details = _inspect_apk(package_file) if fmt == "apk" else _inspect_aab(package_file)
+            details = (_inspect_apk(package_file, apk_role=apk_role,
+                                    expected_target_package=expected_target_package)
+                       if apk_role == 'instrumentation' else
+                       _inspect_apk(package_file)) if fmt == "apk" else _inspect_aab(package_file)
             if expected_package and details["package"] != expected_package:
                 raise GitHubActionsError("Android package ID differs from the expected application ID")
             if expected_cert and details["signer_sha256"] != expected_cert.lower():
                 raise GitHubActionsError("Android signing certificate does not match expected stable identity")
             return {"member":info.filename,"sha256":digest.hexdigest(),"size":size,
                     "format":fmt,"variant":variant,**details,
-                    "certificate_expected":bool(expected_cert),"qualified_release":False}
+                    "certificate_expected":bool(expected_cert),"qualified_release":False,
+                    "signing_state":"signed-verified" if details.get("signature_verified") else "unverified"}
 
 
 def android_collect(client: GitHubActionsClient, slug: str, root: Path, *, run_id: int,
                     artifact_id: int, fmt: str, variant: str, expected_package: str = "",
-                    expected_cert: str = "", member: str = "", download: bool = False, materialize: bool = True) -> dict[str, Any]:
+                    expected_cert: str = "", member: str = "", download: bool = False, materialize: bool = True,
+                    workflow: str = _WORKFLOW, expected_source_sha: str = "",
+                    expected_run_attempt: int = 0, apk_role: str = "application",
+                    expected_target_package: str = "") -> dict[str, Any]:
     slug = _slug(slug)
+    if not isinstance(workflow, str) or not _WORKFLOW_NAME.fullmatch(workflow):
+        raise GitHubActionsError("Android workflow must be one exact safe YAML filename/path")
+    if expected_source_sha and not _SHA40.fullmatch(expected_source_sha):
+        raise GitHubActionsError("Expected Android source SHA must be exactly 40 hexadecimal characters")
+    if type(expected_run_attempt) is not int or expected_run_attempt < 0:
+        raise GitHubActionsError("Expected Android run attempt must be a nonnegative integer")
+    if workflow != _WORKFLOW and (not expected_source_sha or expected_run_attempt < 1):
+        raise GitHubActionsError("Custom Android workflow requires --expected-source-sha and --expected-run-attempt")
     remote = _normalize_run(client.get_run(slug, run_id), slug, run_id)
+    if expected_source_sha and str(remote.get('head_sha') or '').lower() != expected_source_sha.lower():
+        raise GitHubActionsError("Remote Android run source SHA differs from explicitly pinned source")
+    if expected_run_attempt and remote.get('run_attempt') != expected_run_attempt:
+        raise GitHubActionsError("Remote Android run attempt differs from explicitly pinned attempt")
     if not remote["completed"] or remote["conclusion"] != "success":
         raise GitHubActionsError("Android collection requires a completed successful GitHub run")
     if remote.get("event") != "workflow_dispatch":
         raise GitHubActionsError("Remote Android build must originate from workflow_dispatch")
-    selected_workflow = client.workflow(slug, _WORKFLOW)
+    selected_workflow = client.workflow(slug, workflow)
     if remote.get("workflow_id") != selected_workflow["id"]:
         raise GitHubActionsError("Remote run is not the selected Devtool Android workflow")
     if download:
@@ -435,12 +601,17 @@ def android_collect(client: GitHubActionsClient, slug: str, root: Path, *, run_i
         downloaded = None
         verified = verify_download(client, slug, run_id, artifact_id, root)
     details = inspect_android_zip(Path(verified["file"]), fmt=fmt, variant=variant,
-                                  expected_package=expected_package,expected_cert=expected_cert,member=member)
+                                  expected_package=expected_package,expected_cert=expected_cert,
+                                  member=member, apk_role=apk_role,
+                                  expected_target_package=expected_target_package,
+                                  expected_source_sha=str(remote['head_sha']),
+                                  expected_run_attempt=remote['run_attempt'])
     # Only materialize Android outputs after ZIP, remote-run and signing checks succeed.
     if not materialize:
         return {"phase":"ACTIONS-05", "repository":slug, "run_id":run_id,
                 "artifact_id":artifact_id,"remote_head_sha":remote["head_sha"],
-                "android":details,"archive_verified":True,"qualified_release":False}
+                "remote_attempt":remote["run_attempt"],"remote_workflow_id":remote["workflow_id"],
+                "workflow":workflow,"android":details,"archive_verified":True,"qualified_release":False}
     storage = root.resolve() / ".devtool" / "artifacts" / "android-verified"
     for parent in (root.resolve() / ".devtool", root.resolve() / ".devtool" / "artifacts", storage):
         if parent.is_symlink():
@@ -470,7 +641,9 @@ def android_collect(client: GitHubActionsClient, slug: str, root: Path, *, run_i
     metadata = {"producer":"github-actions", "state":"android-inspected-unqualified",
                 "remote_repository":slug,"remote_run_id":run_id,"remote_run_attempt":remote["run_attempt"],
                 "remote_workflow_id":remote["workflow_id"],"remote_head_sha":remote["head_sha"],
-                "remote_artifact_id":artifact_id,"package":details["package"],
+                "remote_artifact_id":artifact_id,"workflow":workflow,"apk_role":apk_role,
+                "instrumentation_target_package":expected_target_package if apk_role == 'instrumentation' else "",
+                "package":details["package"],
                 "format":fmt,"variant":variant,"signer_sha256":details["signer_sha256"],
                 "package_sha256":details["sha256"],"signature_verified":True,
                 "qualified_release":False, "release_gate":"not-implemented"}
@@ -479,8 +652,8 @@ def android_collect(client: GitHubActionsClient, slug: str, root: Path, *, run_i
         raise GitHubActionsError("Android package materialized but artifact registry did not accept it")
     payload = {"phase":"ACTIONS-05","repository":slug,"run_id":run_id,
                "artifact_id":artifact_id,"remote_head_sha":remote["head_sha"],
-               "remote_attempt":remote["run_attempt"],"archive_verified":True,
-               "android":details, "package_file":str(destination), "registry_id":records[0]["id"],
+               "remote_attempt":remote["run_attempt"],"remote_workflow_id":remote["workflow_id"],
+               "workflow":workflow,"archive_verified":True,"android":details, "package_file":str(destination), "registry_id":records[0]["id"],
                "qualified_release":False,"release_gate":"not-implemented"}
     if downloaded:
         payload["download"] = downloaded

@@ -158,8 +158,10 @@ def _nested_git_roots(repo: Path) -> tuple[str, ...]:
 
 def source_stats(repo_root: str | Path, excludes: Iterable[str]) -> SSHSourceStats:
     repo = Path(repo_root).expanduser().resolve()
-    nested = _nested_git_roots(repo)
-    all_excludes = tuple(excludes) + nested
+    # Fuse the nested Git-boundary survey with the source-size/symlink scan.
+    # Excluded subtrees cannot contribute source or require a Git boundary.
+    configured_excludes = tuple(excludes)
+    nested_roots: list[str] = []
     files = 0
     total = 0
     unsafe_symlinks: list[str] = []
@@ -168,10 +170,15 @@ def source_stats(repo_root: str | Path, excludes: Iterable[str]) -> SSHSourceSta
         rel_root = current.relative_to(repo).as_posix()
         if rel_root == ".":
             rel_root = ""
+        elif (current / ".git").is_dir() or (current / ".git").is_file():
+            nested_roots.append(rel_root + "/***")
+            dirs[:] = []
+            continue
+        all_excludes = configured_excludes
         kept: list[str] = []
         for name in dirs:
             rel = f"{rel_root}/{name}".strip("/")
-            if not _excluded(rel, all_excludes):
+            if name != ".devtool-ssh-seed-tmp" and not _excluded(rel, all_excludes):
                 kept.append(name)
         dirs[:] = kept
         for name in names:
@@ -194,7 +201,7 @@ def source_stats(repo_root: str | Path, excludes: Iterable[str]) -> SSHSourceSta
             if path.is_file():
                 files += 1
                 total += max(0, int(stat.st_size))
-    return SSHSourceStats(files=files, bytes=total, nested_git_excludes=nested, unsafe_symlinks=tuple(sorted(unsafe_symlinks)))
+    return SSHSourceStats(files=files, bytes=total, nested_git_excludes=tuple(sorted(set(nested_roots))), unsafe_symlinks=tuple(sorted(unsafe_symlinks)))
 
 
 
@@ -265,8 +272,9 @@ def seed_plan(
     worker: "SSHWorkerProbe",
     *,
     remote_bytes: int = 0,
+    stats: SSHSourceStats | None = None,
 ) -> SSHSeedPlan:
-    stats = source_stats(spec.repo_root, spec.excludes)
+    stats = stats if stats is not None else source_stats(spec.repo_root, spec.excludes)
     local_tar = _local_tool("tar")
     local_zstd = _local_tool("zstd")
     remote_tar = str(worker.tools.get("tar") or "")

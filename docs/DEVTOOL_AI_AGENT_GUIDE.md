@@ -1911,7 +1911,7 @@ Agent note: machine-friendly controls on this command include `--json`, `--machi
 
 Inspect, preflight, and rebase overlay artifacts
 
-**Subcommands:** `check`, `status`, `rebase`
+**Subcommands:** `check`, `plan`, `rebase`, `recovery-plan`, `status`
 
 ### `devtool overlay check`
 
@@ -1928,14 +1928,14 @@ Preflight an overlay against the current repository
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool overlay status`
+### `devtool overlay plan`
 
-Classify overlay patch equivalence against the current repository
+Review overlay source, patch presence, and safe lifecycle next step (read-only)
 
 | Argument / option | Meaning |
 | --- | --- |
 | `ARTIFACT` | Accepted by this command. |
-| `--json` | Emit structured patch-equivalence JSON |
+| `--json` | Emit read-only overlay plan JSON |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -1948,6 +1948,29 @@ Three-way rebase an overlay against the current repository
 | `ARTIFACT` | Accepted by this command. |
 | `-o, --output OUTPUT` | Output archive; defaults to <name>.rebased.<ext> |
 | `--json` | Emit structured rebase JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool overlay recovery-plan`
+
+Read-only transaction rollback and LIFE cleanup recovery evidence
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit read-only recovery evidence JSON |
+| `--transaction TRANSACTION` | Inspect only this exact active transaction ID |
+| `--limit LIMIT` | Maximum recent RUN-V3 LIFE failures to show (1-50) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool overlay status`
+
+Classify overlay patch equivalence against the current repository
+
+| Argument / option | Meaning |
+| --- | --- |
+| `ARTIFACT` | Accepted by this command. |
+| `--json` | Emit structured patch-equivalence JSON |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -2902,7 +2925,7 @@ Inspect explicitly enrolled federated repositories
 
 **Aliases:** `devtool fed`
 
-**Subcommands:** `list`, `inspect`, `preflight`, `gate2`, `final-seal`, `doctor`, `status`, `capabilities`, `diff`, `artifacts`, `logs`, `failures`, `interfaces`, `conformance`, `affected`, `why`, `plan`, `lock`, `bisect`, `run`, `resume`, `retry`, `recover`, `rollback`, `integrate`, `bootstrap`, `sync`, `exec`
+**Subcommands:** `list`, `inspect`, `preflight`, `gate2`, `final-seal`, `doctor`, `status`, `capabilities`, `diff`, `artifacts`, `logs`, `failures`, `interfaces`, `conformance`, `affected`, `why`, `dag-contract`, `plan`, `lock`, `bisect`, `run`, `resume`, `retry`, `recover`, `rollback`, `integrate`, `bootstrap`, `sync`, `exec`
 
 ### `devtool federation list`
 
@@ -3093,6 +3116,19 @@ Explain why a federation repository/node/workflow/group is affected
 | `--since SINCE` | Detect direct repository changes since this Git revision |
 | `--repository REPOSITORY` | Seed one directly changed federation repository; repeatable |
 | `--json` | Emit machine-readable reason evidence |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool federation dag-contract`
+
+Read-only cross-repository producer/consumer DAG contract
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[WORKFLOW]` | Federation workflow name |
+| `--group GROUP` | Executable federation group from [federation.groups] |
+| `--json` | Emit the machine-readable federated plan graph |
+| `--require-frozen` | Require a matching persisted strict-local federation source lock |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -4728,6 +4764,8 @@ Plan the expanded workflow DAG, safe scheduling waves, scopes, and commands with
 | `--dot` | Emit Graphviz DOT instead of the human plan |
 | `--explain` | Show read/write scope and serialization reasons for every node |
 | `--show-commands` | Include resolved command argv/cwd in the human plan |
+| `--ascii` | Emit 40-column lossless ASCII dependency and safe-wave plan |
+| `--mermaid` | Emit Mermaid dependency graph; resource waves are not edges |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -4838,259 +4876,31 @@ Run or start the local Control Center IPC broker
 
 GitHub Actions API: inspect, dispatch, monitor and explicitly control runs
 
-**Subcommands:** `baseline`, `plan`, `run`, `status`, `workflow`, `workflows`, `cancel`, `diagnose`, `jobs`, `logs`, `rerun`, `resume`, `runs`, `view`, `watch`, `artifacts`, `download`, `verify`, `android`, `pipeline`, `release`, `ci`, `extensions`, `qualification`
+**Subcommands:** `adopt`, `adoption-doctor`, `android`, `artifacts`, `baseline`, `cancel`, `ci`, `collect`, `detail`, `diagnose`, `download`, `extensions`, `jobs`, `lineage`, `logs`, `pipeline`, `plan`, `provider-distributions`, `provider-doctor`, `provider-export`, `provider-plan`, `qualification`, `recent`, `release`, `rerun`, `resume`, `review`, `run`, `runs`, `status`, `ui`, `verify`, `view`, `watch`, `workflow`, `workflows`, `overview`
 
-### `devtool actions baseline`
+### `devtool actions adopt`
 
-Print read-only ACTIONS-00/01 capability baseline
+Review/generate source-pinned GitHub Actions adoption
 
 | Argument / option | Meaning |
 | --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
+| `--target ADOPT_TARGET` | Target with native target-local jobs Required. |
+| `--workflow ADOPT_WORKFLOW` | Workflow under the target Required. |
+| `--devtool-sha DEVTOOL_SHA` | Immutable Devtool runtime Git SHA Required. |
+| `--yes` | Approve local generation of workflow and wrapper alias |
+| `--verify` | Verify already generated adoption files |
+| `--json` | Emit result as JSON |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions plan`
+### `devtool actions adoption-doctor`
 
-Validate workflow ref and inputs without dispatching
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--input INPUT` | Workflow input KEY=VALUE (repeatable) |
-| `--inputs-json INPUTS_JSON` | Path to JSON object of workflow inputs |
-| `--json` | Emit Actions response as JSON |
-| `--ref REF` | GitHub branch or tag to dispatch (required) Required. |
-| `WORKFLOW_ID` | Workflow ID or YAML filename |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions run`
-
-Dispatch workflow only with explicit --yes; return run ID if available
+Review A09 host eligibility for configured workflows without changing files
 
 | Argument / option | Meaning |
 | --- | --- |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--input INPUT` | Workflow input KEY=VALUE (repeatable) |
-| `--inputs-json INPUTS_JSON` | Path to JSON object of workflow inputs |
-| `--json` | Emit Actions response as JSON |
-| `--ref REF` | GitHub branch or tag to dispatch (required) Required. |
-| `--yes` | Explicitly authorize remote workflow dispatch |
-| `WORKFLOW_ID` | Workflow ID or YAML filename |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions status`
-
-Read repository and authenticated viewer metadata
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions workflow`
-
-Inspect a workflow by numeric ID or YAML filename
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `WORKFLOW_ID` | Workflow ID or YAML filename |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions workflows`
-
-List workflows without dispatching them
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions cancel`
-
-Request cancellation of a remote workflow run (explicit confirmation)
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
-| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
-| `--yes` | Confirm remote run cancellation |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions diagnose`
-
-Diagnose GitHub repository identity, access and workflow discovery without mutation
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions jobs`
-
-Inspect run and job/step states
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
-| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions logs`
-
-Download remote workflow run logs as a bounded unextracted ZIP to private state
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
-| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions rerun`
-
-Request a new remote workflow attempt (explicit confirmation)
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
-| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
-| `--failed-only` | Rerun failed jobs only |
-| `--yes` | Confirm remote run retry |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions resume`
-
-Resume a recorded dispatch by its exact request ID
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
-| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions runs`
-
-List recent remote workflow runs from selected GitHub repository
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--limit LIMIT` | Maximum workflow runs (1..100) |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions view`
-
-Inspect one remote workflow run
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
-| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions watch`
-
-Poll a remote run in the foreground with finite limits (no daemon)
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
-| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
-| `--max-checks MAX_CHECKS` | Maximum status reads (1..120) |
-| `--interval INTERVAL` | Seconds between status reads (1..300) |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions artifacts`
-
-List artifacts associated with a specific GitHub workflow run
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
-| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions download`
-
-Download, SHA-256 verify and register an unextracted Actions ZIP
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
-| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
-| `--artifact-id ARTIFACT_ID` | Exact GitHub Actions artifact ID Required. |
-
-Agent note: machine-friendly controls on this command include `--json`.
-
-### `devtool actions verify`
-
-Verify a previously downloaded registered GitHub artifact
-
-| Argument / option | Meaning |
-| --- | --- |
-| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
-| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
-| `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
-| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
-| `--artifact-id ARTIFACT_ID` | Exact GitHub Actions artifact ID Required. |
+| `--target ADOPT_TARGET` | Limit to a configured target |
+| `--json` | Emit review-only JSON |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -5098,7 +4908,7 @@ Agent note: machine-friendly controls on this command include `--json`.
 
 Android builds on GitHub Actions and verified APK/AAB acquisition
 
-**Subcommands:** `discover`, `plan`, `run`, `collect`, `verify`, `unsigned-plan`, `unsigned-run`, `unsigned-check`, `unsigned-import`, `unsigned-sign`, `aab-plan`, `aab-run`, `aab-check`, `aab-import`, `aab-sign`
+**Subcommands:** `discover`, `plan`, `run`, `collect`, `verify`, `unsigned-plan`, `unsigned-run`, `unsigned-check`, `unsigned-import`, `unsigned-sign`, `aab-plan`, `aab-run`, `aab-check`, `aab-import`, `aab-sign`, `options-repair`, `release-plan`, `release-run`, `release-import`, `release-sign`, `release-batch-plan`, `release-batch-run`, `release-batch-check`, `release-batch-import`, `release-batch-sign`
 
 ### `devtool actions android discover`
 
@@ -5110,6 +4920,7 @@ Discover statically declared Android app modules
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
 | `--project-dir PROJECT_DIR` | Gradle project directory; auto-discovered if omitted |
+| `--discovery-mode DISCOVERY_MODE` | Static read-only model or explicit execution of reviewed Gradle project code Choices: static, gradle |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -5124,11 +4935,13 @@ Validate source parity and Android workflow inputs without dispatch
 | `--json` | Emit Actions response as JSON |
 | `--project-dir PROJECT_DIR` | Gradle project directory; auto-discovered if omitted |
 | `--module MODULE` | Gradle application module, e.g. app |
-| `--variant VARIANT` | Android build variant Choices: debug, release |
+| `--variant VARIANT` | Reviewed Android variant, including registered flavorRelease |
 | `--format FORMAT` | Android output format Choices: apk, aab |
+| `--signing-mode SIGNING_MODE` | Release signing route: local unsigned LIFE (default) or explicit protected GitHub signing Choices: local, github |
 | `--ref REF` | Exact GitHub branch/tag to dispatch Required. |
 | `--workflow WORKFLOW` | Selected Android workflow YAML filename |
 | `--expected-package EXPECTED_PACKAGE` | Expected package/application ID, if dynamic Gradle sources |
+| `--discovery-mode DISCOVERY_MODE` | Static read-only model or explicit execution of reviewed Gradle project code Choices: static, gradle |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -5143,12 +4956,14 @@ Dispatch an Android build only with explicit --yes
 | `--json` | Emit Actions response as JSON |
 | `--project-dir PROJECT_DIR` | Gradle project directory; auto-discovered if omitted |
 | `--module MODULE` | Gradle application module, e.g. app |
-| `--variant VARIANT` | Android build variant Choices: debug, release |
+| `--variant VARIANT` | Reviewed Android variant, including registered flavorRelease |
 | `--format FORMAT` | Android output format Choices: apk, aab |
+| `--signing-mode SIGNING_MODE` | Release signing route: local unsigned LIFE (default) or explicit protected GitHub signing Choices: local, github |
 | `--ref REF` | Exact GitHub branch/tag to dispatch Required. |
 | `--workflow WORKFLOW` | Selected Android workflow YAML filename |
 | `--expected-package EXPECTED_PACKAGE` | Expected package/application ID, if dynamic Gradle sources |
 | `--yes` | Explicitly authorize remote workflow dispatch |
+| `--discovery-mode DISCOVERY_MODE` | Static read-only model or explicit execution of reviewed Gradle project code Choices: static, gradle |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -5169,6 +4984,11 @@ Fetch or verify and inspect an APK/AAB, registering output as unqualified
 | `--expected-cert-sha256 EXPECTED_CERT_SHA256` | Expected SHA-256 signing certificate (mandatory for release) |
 | `--member MEMBER` | Exact APK/AAB member in ZIP if multiple |
 | `--download` | Download the archive first, instead of verifying an existing archive |
+| `--workflow WORKFLOW` | Exact authenticated GitHub Android workflow YAML name/path |
+| `--apk-role APK_ROLE` | Explicit Android APK role; test APKs require target and test package pins Choices: application, instrumentation |
+| `--expected-target-package EXPECTED_TARGET_PACKAGE` | Expected application package targeted by instrumentation APK |
+| `--expected-source-sha EXPECTED_SOURCE_SHA` | Expected exact 40-hex GitHub source commit (required for custom workflow) |
+| `--expected-run-attempt EXPECTED_RUN_ATTEMPT` | Expected GitHub run attempt (required for custom workflow) |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -5188,6 +5008,11 @@ Verify a downloaded Android archive and inspect its package
 | `--expected-package EXPECTED_PACKAGE` | Expected package/application ID |
 | `--expected-cert-sha256 EXPECTED_CERT_SHA256` | Expected SHA-256 signing certificate (mandatory for release) |
 | `--member MEMBER` | Exact APK/AAB member in ZIP if multiple |
+| `--workflow WORKFLOW` | Exact authenticated GitHub Android workflow YAML name/path |
+| `--apk-role APK_ROLE` | Explicit Android APK role; test APKs require target and test package pins Choices: application, instrumentation |
+| `--expected-target-package EXPECTED_TARGET_PACKAGE` | Expected application package targeted by instrumentation APK |
+| `--expected-source-sha EXPECTED_SOURCE_SHA` | Expected exact 40-hex GitHub source commit (required for custom workflow) |
+| `--expected-run-attempt EXPECTED_RUN_ATTEMPT` | Expected GitHub run attempt (required for custom workflow) |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -5201,6 +5026,7 @@ Preview source-bound, unsigned GitHub release candidate
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
 | `--ref REF` | Exact branch or tag to dispatch; source must match local HEAD Required. |
+| `--consumer CONSUMER` | Exact registered Android consumer ID (required if repository has multiple variants) |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -5215,6 +5041,7 @@ Dispatch dedicated unsigned candidate workflow (requires --yes)
 | `--json` | Emit Actions response as JSON |
 | `--ref REF` | Exact branch or tag to dispatch; source must match local HEAD Required. |
 | `--yes` | Explicitly authorize remote workflow dispatch |
+| `--consumer CONSUMER` | Exact registered Android consumer ID (required if repository has multiple variants) |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -5230,6 +5057,7 @@ Verify exact GitHub unsigned archive and APK (read-only)
 | `--run-id RUN_ID` | Exact GitHub Actions run ID |
 | `--artifact-id ARTIFACT_ID` | Exact GitHub artifact ID |
 | `--expected-sha EXPECTED_SHA` | Expected GitHub commit SHA (40 hex characters) |
+| `--consumer CONSUMER` | Exact registered Android consumer ID (required if repository has multiple variants) |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -5246,6 +5074,7 @@ Download, validate and register unsigned GitHub APK
 | `--artifact-id ARTIFACT_ID` | Exact GitHub artifact ID |
 | `--expected-sha EXPECTED_SHA` | Expected GitHub commit SHA (40 hex characters) |
 | `--download` | Download the archive first, instead of verifying an existing archive |
+| `--consumer CONSUMER` | Exact registered Android consumer ID (required if repository has multiple variants) |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -5339,6 +5168,466 @@ Locally sign imported AAB using LIFE (requires --yes)
 
 Agent note: machine-friendly controls on this command include `--json`.
 
+### `devtool actions android options-repair`
+
+Preview/apply exact protected Gradle JVM property migration
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--project-dir PROJECT_DIR` | Gradle project root, repository relative |
+| `--policy-target POLICY_TARGET` | Canonical Devtool target owning the protected JVM policy |
+| `--expected-sha256 EXPECTED_SHA256` | Exact preview SHA-256, required for apply |
+| `--json` | Emit JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android release-plan`
+
+Validate source parity and Android workflow inputs without dispatch
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--project-dir PROJECT_DIR` | Gradle project directory; auto-discovered if omitted |
+| `--module MODULE` | Gradle application module, e.g. app |
+| `--variant VARIANT` | Reviewed Android variant, including registered flavorRelease |
+| `--format FORMAT` | Android output format Choices: apk, aab |
+| `--ref REF` | Exact GitHub branch/tag to dispatch Required. |
+| `--expected-package EXPECTED_PACKAGE` | Expected package/application ID, if dynamic Gradle sources |
+| `--discovery-mode DISCOVERY_MODE` | Static read-only model or explicit execution of reviewed Gradle project code Choices: static, gradle |
+| `--consumer CONSUMER` | Registered Android consumer (required to advance through LIFE) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android release-run`
+
+Dispatch an Android build only with explicit --yes
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--project-dir PROJECT_DIR` | Gradle project directory; auto-discovered if omitted |
+| `--module MODULE` | Gradle application module, e.g. app |
+| `--variant VARIANT` | Reviewed Android variant, including registered flavorRelease |
+| `--format FORMAT` | Android output format Choices: apk, aab |
+| `--ref REF` | Exact GitHub branch/tag to dispatch Required. |
+| `--expected-package EXPECTED_PACKAGE` | Expected package/application ID, if dynamic Gradle sources |
+| `--yes` | Explicitly authorize remote workflow dispatch |
+| `--discovery-mode DISCOVERY_MODE` | Static read-only model or explicit execution of reviewed Gradle project code Choices: static, gradle |
+| `--consumer CONSUMER` | Registered Android consumer (required to advance through LIFE) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android release-import`
+
+Download, validate and register unsigned GitHub APK
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub Actions run ID |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub artifact ID |
+| `--expected-sha EXPECTED_SHA` | Expected GitHub commit SHA (40 hex characters) |
+| `--download` | Download the archive first, instead of verifying an existing archive |
+| `--consumer CONSUMER` | Exact registered Android consumer ID (required if repository has multiple variants) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android release-sign`
+
+Locally align, LIFE-sign and verify imported candidate (requires --yes)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--registry-id REGISTRY_ID` | Exact imported unsigned registry ID |
+| `--signing-identity SIGNING_IDENTITY` | Canonical registered LIFE signing identity (optional) |
+| `--signing-target SIGNING_TARGET` | Devtool Android signing target |
+| `--yes` | Explicitly authorize remote workflow dispatch |
+| `--consumer CONSUMER` | Exact imported consumer identity |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android release-batch-plan`
+
+One hosted unsigned build; verified per-variant local LIFE: release-batch-plan
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Source-locked Android batch github_repo; no GitHub signing keys |
+| `--auth AUTH` | Source-locked Android batch auth; no GitHub signing keys |
+| `--json` | Source-locked Android batch json; no GitHub signing keys |
+| `--consumers CONSUMERS` | Source-locked Android batch consumers; no GitHub signing keys |
+| `--ref REF` | Source-locked Android batch ref; no GitHub signing keys |
+| `--source-root SOURCE_ROOT` | Source-locked Android batch source_root; no GitHub signing keys |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android release-batch-run`
+
+One hosted unsigned build; verified per-variant local LIFE: release-batch-run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Source-locked Android batch github_repo; no GitHub signing keys |
+| `--auth AUTH` | Source-locked Android batch auth; no GitHub signing keys |
+| `--json` | Source-locked Android batch json; no GitHub signing keys |
+| `--consumers CONSUMERS` | Source-locked Android batch consumers; no GitHub signing keys |
+| `--ref REF` | Source-locked Android batch ref; no GitHub signing keys |
+| `--source-root SOURCE_ROOT` | Source-locked Android batch source_root; no GitHub signing keys |
+| `--yes` | Source-locked Android batch yes; no GitHub signing keys |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android release-batch-check`
+
+One hosted unsigned build; verified per-variant local LIFE: release-batch-check
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Source-locked Android batch github_repo; no GitHub signing keys |
+| `--auth AUTH` | Source-locked Android batch auth; no GitHub signing keys |
+| `--json` | Source-locked Android batch json; no GitHub signing keys |
+| `--consumers CONSUMERS` | Source-locked Android batch consumers; no GitHub signing keys |
+| `--run-id RUN_ID` | Source-locked Android batch run_id; no GitHub signing keys |
+| `--expected-sha EXPECTED_SHA` | Source-locked Android batch expected_sha; no GitHub signing keys |
+| `--artifact ARTIFACT` | Source-locked Android batch artifact; no GitHub signing keys |
+| `--download` | Source-locked Android batch download; no GitHub signing keys |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android release-batch-import`
+
+One hosted unsigned build; verified per-variant local LIFE: release-batch-import
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Source-locked Android batch github_repo; no GitHub signing keys |
+| `--auth AUTH` | Source-locked Android batch auth; no GitHub signing keys |
+| `--json` | Source-locked Android batch json; no GitHub signing keys |
+| `--consumers CONSUMERS` | Source-locked Android batch consumers; no GitHub signing keys |
+| `--run-id RUN_ID` | Source-locked Android batch run_id; no GitHub signing keys |
+| `--expected-sha EXPECTED_SHA` | Source-locked Android batch expected_sha; no GitHub signing keys |
+| `--artifact ARTIFACT` | Source-locked Android batch artifact; no GitHub signing keys |
+| `--download` | Source-locked Android batch download; no GitHub signing keys |
+| `--yes` | Source-locked Android batch yes; no GitHub signing keys |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions android release-batch-sign`
+
+One hosted unsigned build; verified per-variant local LIFE: release-batch-sign
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Source-locked Android batch github_repo; no GitHub signing keys |
+| `--auth AUTH` | Source-locked Android batch auth; no GitHub signing keys |
+| `--json` | Source-locked Android batch json; no GitHub signing keys |
+| `--consumers CONSUMERS` | Source-locked Android batch consumers; no GitHub signing keys |
+| `--registry REGISTRY` | Source-locked Android batch registry; no GitHub signing keys |
+| `--yes` | Source-locked Android batch yes; no GitHub signing keys |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions artifacts`
+
+List artifacts associated with a specific GitHub workflow run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions baseline`
+
+Print read-only ACTIONS-00/01 capability baseline
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions cancel`
+
+Request cancellation of a remote workflow run (explicit confirmation)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+| `--yes` | Confirm remote run cancellation |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions ci`
+
+Advanced polyglot GitHub CI: plan, run, check and collect
+
+**Subcommands:** `plan`, `run`, `check`, `collect`
+
+### `devtool actions ci plan`
+
+G5 polyglot matrix plan
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | Branch or tag; remote must match local HEAD Required. |
+| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
+| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions ci run`
+
+G5 polyglot matrix run
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | Branch or tag; remote must match local HEAD Required. |
+| `--yes` | Explicitly dispatch matrix workflow |
+| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
+| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions ci check`
+
+G5 polyglot matrix check
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub workflow run ID Required. |
+| `--expected-sha EXPECTED_SHA` | Exact 40-hex GitHub source commit Required. |
+| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
+| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions ci collect`
+
+G5 polyglot matrix collect
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact GitHub workflow run ID Required. |
+| `--expected-sha EXPECTED_SHA` | Exact 40-hex GitHub source commit Required. |
+| `--download` | Download canonical GitHub artifact archives |
+| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
+| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions collect`
+
+Collect a uniquely named SHA-256 archive from verified exact dispatch
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--request-id REQUEST_ID` | Exact existing dispatch request ID (no guessing) Required. |
+| `--artifact-name ARTIFACT_NAME` | Exact artifact name; never select first or latest Required. |
+| `--yes` | Approve local verified artifact download |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions detail`
+
+Inspect exact local dispatch/pipeline identity
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--json` | Emit Actions response as JSON |
+| `--kind KIND` | Inspect exact local dispatch/pipeline identity Choices: dispatch, pipeline |
+| `--identity IDENTITY` | Inspect exact local dispatch/pipeline identity Required. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions diagnose`
+
+Diagnose GitHub repository identity, access and workflow discovery without mutation
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions download`
+
+Download, SHA-256 verify and register an unextracted Actions ZIP
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub Actions artifact ID Required. |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions extensions`
+
+Optional runner, metrics, GitLab and draft publishing capabilities
+
+**Subcommands:** `metrics`, `runners`, `gitlab-pipelines`, `publish-plan`, `publish`
+
+### `devtool actions extensions metrics`
+
+G7 optional metrics
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--limit LIMIT` | Recent runs, maximum 100 |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions extensions runners`
+
+G7 optional runners
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--trust-file TRUST_FILE` | Optional local JSON trusted runner profiles |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions extensions gitlab-pipelines`
+
+G7 optional gitlab-pipelines
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--gitlab-project-id GITLAB_PROJECT_ID` | Numeric GitLab.com project ID Required. |
+| `--limit LIMIT` | Max 50 pipelines |
+| `--enable-gitlab` | Explicitly opt in to independent GitLab read-only provider |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions extensions publish-plan`
+
+G7 optional publish-plan
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--registry-id REGISTRY_ID` | Required. |
+| `--tag TAG` | Required. |
+| `--asset-name ASSET_NAME` | Required. |
+| `--expected-sha EXPECTED_SHA` | Required. |
+| `--format FORMAT` | APK or AAB format Choices: apk, aab |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions extensions publish`
+
+G7 optional publish
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--registry-id REGISTRY_ID` | Required. |
+| `--tag TAG` | Required. |
+| `--asset-name ASSET_NAME` | Required. |
+| `--expected-sha EXPECTED_SHA` | Required. |
+| `--format FORMAT` | APK or AAB format Choices: apk, aab |
+| `--allow-unqualified-upload` | Consent to upload signed-but-unqualified artifact |
+| `--yes` | Explicit remote asset upload approval |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions jobs`
+
+Inspect run and job/step states
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions lineage`
+
+R04 read-only source/run/artifact lineage (offline; no remote qualification)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--json` | Emit Actions lineage as JSON |
+| `--pipeline-id PIPELINE_ID` | Exact local ACTIONS-06 pipeline ID (required) Required. |
+| `--live` | Opt in to credentialed read-only GitHub run GET; no mutations or qualification |
+| `--auth AUTH` | GitHub read credential source for --live: auto, env, gh, none Choices: auto, env, gh, none |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions logs`
+
+Download remote workflow run logs as a bounded unextracted ZIP to private state
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--json` | Emit Actions response as JSON |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
 ### `devtool actions pipeline`
 
 Cross-boundary local/remote DAG with frozen source and durable resume
@@ -5411,11 +5700,128 @@ Continue waiting pipeline nodes, never repeat uncertain dispatch
 
 Agent note: machine-friendly controls on this command include `--json`.
 
+### `devtool actions plan`
+
+Validate workflow ref and inputs without dispatching
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--input INPUT` | Workflow input KEY=VALUE (repeatable) |
+| `--inputs-json INPUTS_JSON` | Path to JSON object of workflow inputs |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | GitHub branch or tag to dispatch (required) Required. |
+| `WORKFLOW_ID` | Workflow ID or YAML filename |
+| `--resume-if-existing` | Safely reuse an exact unresolved dispatch request; never POST twice |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions provider-distributions`
+
+Review or verify typed Go/Python distribution outputs (read-only)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--target ADOPT_TARGET` | Target declaring ci/devtool-distributions.json Required. |
+| `--workflow ADOPT_WORKFLOW` | Workflow owning selected distribution outputs Required. |
+| `--json` | Emit result as JSON |
+| `--plan` | Review manifest and source policy without requiring produced output bytes |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions provider-doctor`
+
+Inspect allowlisted hosted language providers per workflow
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--target ADOPT_TARGET` | Optional configured target filter |
+| `--json` | Emit review-only JSON |
+| `--all` | Include all reviewed hosted/local profiles and installed toolchain status |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions provider-export`
+
+Review, write or verify source-bound provider-hosted workflow
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--affected` | Conservatively select all affected configured targets (multi-job only) |
+| `--affected-base PROVIDER_AFFECTED_BASE` | Explicit Git merge base for affected source ownership |
+| `--affected-head PROVIDER_AFFECTED_HEAD` | Git head for affected selection; with no base use head^..head |
+| `--cache-locks` | Opt in to pinned cache of trusted Go compiler outputs only; multi-job only |
+| `--devtool-sha DEVTOOL_SHA` | Immutable Devtool runtime Git SHA Required. |
+| `--host-profiles PROVIDER_HOST_PROFILES` | Comma-separated reviewed hosted profile IDs (bounded fanout; multi-job only) |
+| `--json` | Emit result as JSON |
+| `--mode PROVIDER_MODE` | Export mode: native single-job fallback or source-bound per-node multi-job Choices: single-job, multi-job |
+| `--plan` | Read-only reviewed export plan; incompatible with write/verify |
+| `--target ADOPT_TARGET` | Required for one target; omit with --affected for workspace selection |
+| `--verify` | Verify already generated adoption files |
+| `--workflow ADOPT_WORKFLOW` | Workflow under the target Required. |
+| `--yes` | Write new reviewed hosted workflow (no commit/dispatch) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions provider-plan`
+
+Review exact source-bound native DAG provider plan (never dispatches)
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--target ADOPT_TARGET` | Target with native target-local jobs Required. |
+| `--workflow ADOPT_WORKFLOW` | Workflow under the target Required. |
+| `--devtool-sha DEVTOOL_SHA` | Immutable Devtool runtime Git SHA Required. |
+| `--json` | Emit result as JSON |
+| `--expect-plan-sha EXPECT_PLAN_SHA` | Require exact reviewed DAG/provider SHA-256 |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions qualification`
+
+G8 Actions qualification and historical evidence reconciliation
+
+**Subcommands:** `report`, `check`
+
+### `devtool actions qualification report`
+
+G8 read-only qualification report
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit Actions response as JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions qualification check`
+
+G8 read-only qualification check
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit Actions response as JSON |
+| `--require-complete` | Fail if any required live/historical qualification is pending |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions recent`
+
+Read-only local dispatch and pipeline history
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--json` | Emit Actions response as JSON |
+| `--limit LIMIT` | Read-only local dispatch and pipeline history |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
 ### `devtool actions release`
 
 Independent-policy Android release attestation and qualification
 
-**Subcommands:** `verify`, `setup`, `readiness`, `local-build`, `local-verify`, `local-evidence`
+**Subcommands:** `verify`, `setup`, `readiness`, `local-build`, `local-verify`, `local-evidence`, `local-handoff`
 
 ### `devtool actions release verify`
 
@@ -5523,183 +5929,400 @@ Verify offline signed→unsigned registry lineage and LIFE identity without rele
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions ci`
+### `devtool actions release local-handoff`
 
-Advanced polyglot GitHub CI: plan, run, check and collect
+Read-only preview or explicitly authorized private APK/AAB export and APK install
 
-**Subcommands:** `plan`, `run`, `check`, `collect`
+| Argument / option | Meaning |
+| --- | --- |
+| `--registry-id REGISTRY_ID` | Exact registered locally signed artifact (12 hex) Required. |
+| `--format FORMAT` | Local package format Choices: apk, aab |
+| `--signing-identity SIGNING_IDENTITY` | Existing registered LIFE signing identity ID |
+| `--signing-target SIGNING_TARGET` | Devtool Android signing target |
+| `--json` | Print machine-readable JSON |
+| `--expected-sha EXPECTED_SHA` | Mandatory independent exact 40-hex source SHA pin Required. |
+| `--operation OPERATION` | Local handoff: export to a new file, or install APK on explicitly named device Choices: export, install Required. |
+| `--destination DESTINATION` | Absolute new file path for export; existing files never overwritten |
+| `--serial SERIAL` | Exact adb device serial required for install |
+| `--allow-unqualified` | Explicitly accept signed-but-unqualified artifact for this local action |
+| `--yes` | Execute local file/device mutation after verification and consent; otherwise preview |
 
-### `devtool actions ci plan`
+Agent note: machine-friendly controls on this command include `--json`.
 
-G5 polyglot matrix plan
+### `devtool actions rerun`
+
+Request a new remote workflow attempt (explicit confirmation)
 
 | Argument / option | Meaning |
 | --- | --- |
 | `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
-| `--ref REF` | Branch or tag; remote must match local HEAD Required. |
-| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
-| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+| `--failed-only` | Rerun failed jobs only |
+| `--yes` | Confirm remote run retry |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions ci run`
+### `devtool actions resume`
 
-G5 polyglot matrix run
+Resume a recorded dispatch by its exact request ID
 
 | Argument / option | Meaning |
 | --- | --- |
 | `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
-| `--ref REF` | Branch or tag; remote must match local HEAD Required. |
-| `--yes` | Explicitly dispatch matrix workflow |
-| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
-| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions ci check`
+### `devtool actions review`
 
-G5 polyglot matrix check
+Review exact dispatch remote source, attempt and jobs (read-only)
 
 | Argument / option | Meaning |
 | --- | --- |
 | `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact GitHub workflow run ID Required. |
-| `--expected-sha EXPECTED_SHA` | Exact 40-hex GitHub source commit Required. |
-| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
-| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+| `--request-id REQUEST_ID` | Exact existing dispatch request ID (no guessing) Required. |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions ci collect`
+### `devtool actions run`
 
-G5 polyglot matrix collect
+Dispatch workflow only with explicit --yes; return run ID if available
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--input INPUT` | Workflow input KEY=VALUE (repeatable) |
+| `--inputs-json INPUTS_JSON` | Path to JSON object of workflow inputs |
+| `--json` | Emit Actions response as JSON |
+| `--ref REF` | GitHub branch or tag to dispatch (required) Required. |
+| `--yes` | Explicitly authorize remote workflow dispatch |
+| `WORKFLOW_ID` | Workflow ID or YAML filename |
+| `--resume-if-existing` | Safely reuse an exact unresolved dispatch request; never POST twice |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions runs`
+
+List recent remote workflow runs from selected GitHub repository
 
 | Argument / option | Meaning |
 | --- | --- |
 | `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
-| `--run-id RUN_ID` | Exact GitHub workflow run ID Required. |
-| `--expected-sha EXPECTED_SHA` | Exact 40-hex GitHub source commit Required. |
-| `--download` | Download canonical GitHub artifact archives |
-| `--languages LANGUAGES` | Comma-separated subset: python,go,rust,java |
-| `--systems SYSTEMS` | Comma-separated subset of ubuntu-latest,windows-latest |
+| `--limit LIMIT` | Maximum workflow runs (1..100) |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions extensions`
+### `devtool actions status`
 
-Optional runner, metrics, GitLab and draft publishing capabilities
-
-**Subcommands:** `metrics`, `runners`, `gitlab-pipelines`, `publish-plan`, `publish`
-
-### `devtool actions extensions metrics`
-
-G7 optional metrics
+Read repository and authenticated viewer metadata
 
 | Argument / option | Meaning |
 | --- | --- |
 | `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
-| `--limit LIMIT` | Recent runs, maximum 100 |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions extensions runners`
+### `devtool actions ui`
 
-G7 optional runners
+Read-only Termux Textual GitHub Actions workspace
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--json` | Emit Actions response as JSON |
+| `--limit LIMIT` | Read-only Termux Textual GitHub Actions workspace |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool actions verify`
+
+Verify a previously downloaded registered GitHub artifact
 
 | Argument / option | Meaning |
 | --- | --- |
 | `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
-| `--trust-file TRUST_FILE` | Optional local JSON trusted runner profiles |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+| `--artifact-id ARTIFACT_ID` | Exact GitHub Actions artifact ID Required. |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions extensions gitlab-pipelines`
+### `devtool actions view`
 
-G7 optional gitlab-pipelines
+Inspect one remote workflow run
 
 | Argument / option | Meaning |
 | --- | --- |
 | `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
-| `--gitlab-project-id GITLAB_PROJECT_ID` | Numeric GitLab.com project ID Required. |
-| `--limit LIMIT` | Max 50 pipelines |
-| `--enable-gitlab` | Explicitly opt in to independent GitLab read-only provider |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Exact existing dispatch request ID (no guessing) Required. |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions extensions publish-plan`
+### `devtool actions watch`
 
-G7 optional publish-plan
+Poll a remote run in the foreground with finite limits (no daemon)
 
 | Argument / option | Meaning |
 | --- | --- |
 | `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
-| `--registry-id REGISTRY_ID` | Required. |
-| `--tag TAG` | Required. |
-| `--asset-name ASSET_NAME` | Required. |
-| `--expected-sha EXPECTED_SHA` | Required. |
-| `--format FORMAT` | APK or AAB format Choices: apk, aab |
+| `--run-id RUN_ID` | Exact remote GitHub workflow run ID |
+| `--request-id REQUEST_ID` | Local ACTIONS-02 dispatch request ID (pinned to one repository and run) |
+| `--max-checks MAX_CHECKS` | Maximum status reads (1..120) |
+| `--interval INTERVAL` | Seconds between status reads (1..300) |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions extensions publish`
+### `devtool actions workflow`
 
-G7 optional publish
+Inspect a workflow by numeric ID or YAML filename
 
 | Argument / option | Meaning |
 | --- | --- |
 | `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
 | `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
-| `--registry-id REGISTRY_ID` | Required. |
-| `--tag TAG` | Required. |
-| `--asset-name ASSET_NAME` | Required. |
-| `--expected-sha EXPECTED_SHA` | Required. |
-| `--format FORMAT` | APK or AAB format Choices: apk, aab |
-| `--allow-unqualified-upload` | Consent to upload signed-but-unqualified artifact |
-| `--yes` | Explicit remote asset upload approval |
+| `WORKFLOW_ID` | Workflow ID or YAML filename |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions qualification`
+### `devtool actions workflows`
 
-G8 Actions qualification and historical evidence reconciliation
-
-**Subcommands:** `report`, `check`
-
-### `devtool actions qualification report`
-
-G8 read-only qualification report
+List workflows without dispatching them
 
 | Argument / option | Meaning |
 | --- | --- |
+| `--github-repo GITHUB_REPO` | Explicit GitHub owner/repository slug |
+| `--auth AUTH` | Credentials source: auto, env, gh, or none Choices: auto, env, gh, none |
 | `--json` | Emit Actions response as JSON |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
-### `devtool actions qualification check`
+### `devtool actions overview`
 
-G8 read-only qualification check
+Read-only Actions control center and safe next step
 
 | Argument / option | Meaning |
 | --- | --- |
-| `--json` | Emit Actions response as JSON |
-| `--require-complete` | Fail if any required live/historical qualification is pending |
+| `--github-repo GITHUB_REPO` | Explicit GitHub repository |
+| `--live` | Opt in to credentialed read-only GitHub queries |
+| `--width WIDTH` | Terminal width, minimum 40 |
+| `--json` | Machine-readable state |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool transaction`
+
+Inspect or explicitly escrow historic failed transaction markers
+
+**Subcommands:** `inspect`, `retire`, `unretire`
+
+### `devtool transaction inspect`
+
+Read-only historical transaction retirement eligibility
+
+| Argument / option | Meaning |
+| --- | --- |
+| `TRANSACTION_ID` | Exact transaction ID |
+| `--json` | JSON result |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool transaction retire`
+
+Escrow verified historic active markers; never roll back
+
+| Argument / option | Meaning |
+| --- | --- |
+| `TRANSACTION_ID` | Exact transaction ID |
+| `--preserve-current` | Explicitly preserve HEAD, index, worktree and backups |
+| `--dry-run` | Preview only (default unless --yes) |
+| `--yes` | Approve marker escrow after current-source checks |
+| `--json` | JSON result |
+
+Agent note: machine-friendly controls on this command include `--dry-run`, `--json`.
+
+### `devtool transaction unretire`
+
+Restore exact escrowed active markers, without checkout mutation
+
+| Argument / option | Meaning |
+| --- | --- |
+| `TRANSACTION_ID` | Exact transaction ID |
+| `--yes` | Explicitly approve marker restoration |
+| `--json` | JSON result |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool evidence`
+
+Typed evidence and report validation (read-only)
+
+**Subcommands:** `validate`, `normalize`, `lineage`, `merge-tests`
+
+### `devtool evidence validate`
+
+Check version, exact identity and untrusted reported gates
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RECEIPT` | Accepted by this command. |
+| `--commit COMMIT` | Expected exact source commit |
+| `--run-id RUN_ID` | Expected GitHub run ID |
+| `--attempt ATTEMPT` | Expected run attempt |
+| `--json` | Emit JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool evidence normalize`
+
+Parse an actual test report without claiming hosted authority
+
+| Argument / option | Meaning |
+| --- | --- |
+| `REPORT` | Accepted by this command. |
+| `--format FORMAT` | junit, pytest-junit, trx, go-json, cargo-json, js-junit Required. |
+| `--json` | Emit JSON |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool evidence lineage`
+
+Read-only canonical EXO node and remote evidence lineage
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--run-id RUN_ID` | run id Required. |
+| `--remote-receipt REMOTE_RECEIPT` | remote receipt |
+| `--json` | json |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool evidence merge-tests`
+
+Read-only deterministic test shard merge
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--receipt RECEIPT` | Test-shard manifest file Required. |
+| `--json` | Expected json |
+| `--commit COMMIT` | Expected commit |
+| `--run-id RUN_ID` | Expected run_id |
+| `--attempt ATTEMPT` | Expected attempt |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool artifacts`
+
+Read-only artifact integrity (does not update registry)
+
+**Subcommands:** `verify`
+
+### `devtool artifacts verify`
+
+Rehash an existing registry record and inspect producer identity
+
+| Argument / option | Meaning |
+| --- | --- |
+| `[SELECTOR]` | Accepted by this command. |
+| `--repository REPOSITORY` | Expected remote repository |
+| `--commit COMMIT` | Expected remote commit |
+| `--run-id RUN_ID` | Expected remote run |
+| `--attempt ATTEMPT` | Expected remote run attempt |
+| `--json` | Emit JSON |
+| `--receipt RECEIPT` | ArtifactReceiptV2 file (instead of registry selector) |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool adopt-batch`
+
+Source-locked multi-repository adoption, staged commit publication and guarded recovery
+
+| Argument / option | Meaning |
+| --- | --- |
+| `BATCH_OPERATION` | Operation (legacy plan/apply/resume/status or staged review/prepare/publish/resume-staged/recover/status-staged) Choices: plan, apply, resume, status, review-staged, prepare, publish, resume-staged, recover, status-staged, upgrade-review, recovery-plan |
+| `BATCH_MANIFEST` | Absolute path to source-lock JSON manifest |
+| `--state-dir STATE_DIR` | External durable batch-journal directory |
+| `--yes` | Explicitly permit per-repo adoption commits |
+| `--json` | Emit a stable JSON receipt |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool migration`
+
+Review or execute a source-locked two-repository extraction
+
+| Argument / option | Meaning |
+| --- | --- |
+| `MIGRATION_OPERATION` | Extraction operation Choices: plan, prepare, execute, resume, status |
+| `MIGRATION_MANIFEST` | Absolute reviewed extraction manifest |
+| `--state-dir STATE_DIR` | External durable backup and journal directory |
+| `--yes` | Explicitly allow preparation or per-repository commits |
+| `--json` | Emit JSON report |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool workflow`
+
+Native-node recovery (source-locked and explicit)
+
+**Subcommands:** `retry`
+
+### `devtool workflow retry`
+
+Native-node retry planning and guarded execution
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--run-id RUN_ID` | Original EXO workflow run ID Required. |
+| `--failed` | Retry failed/blocked native workflow nodes |
+| `--plan` | Read-only retry plan (the default) |
+| `--yes` | Explicitly authorize safe local node replay |
+| `--json` | Structured plan/result output |
+| `--resume` | Explicitly resume interrupted safe local-node attempt |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool capabilities`
+
+Read-only repo target/workflow/wrapper/Actions capability inventory
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Machine-readable capability report |
+
+Agent note: machine-friendly controls on this command include `--json`.
+
+### `devtool onboard`
+
+RM20 review-first whole-repository in-place onboarding and ownership inventory
+
+| Argument / option | Meaning |
+| --- | --- |
+| `ONBOARD_OPERATION` | Read-only inventory, reviewed proposal, or guarded in-place application Choices: inventory, plan, apply |
+| `--review-spec REVIEW_SPEC` | Reviewed JSON job/DAG/CI/ownership specification |
+| `--reviewed-sha256 REVIEWED_SHA256` | Source-and-ownership-bound review SHA-256 from plan |
+| `--yes` | Explicitly authorize single-file onboarding commit |
+| `--json` | Emit structured JSON |
 
 Agent note: machine-friendly controls on this command include `--json`.
 

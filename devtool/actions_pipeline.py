@@ -21,7 +21,7 @@ import uuid
 from typing import Any
 
 from .actions_artifacts import artifact_list, download_artifact, verify_download
-from .actions_dispatch import _durable_record, dispatch_workflow
+from .actions_dispatch import _durable_record, dispatch_workflow, GitHubDispatchPreflightError
 from .actions_runs import _normalize_run, run_id
 from .github_actions import GitHubActionsClient, GitHubActionsError, _slug
 
@@ -205,19 +205,53 @@ def pipeline_plan(client: GitHubActionsClient, slug: str, root: Path, filename: 
             'qualified_release':False}
 
 
-def _local_invoke(root: Path, node: dict[str, Any]) -> None:
+def _local_invoke(root: Path, node: dict[str, Any]) -> str:
+    """Launch one native workflow with a one-use immediate-parent RUN capability.
+
+    Never infer the child from timestamps, ambient RUN_ID or latest history.
+    A missing/unfinalized canonical catalog entry blocks lineage correlation.
+    """
+    from .invocation_origin import create_managed_run_handoff
+    from .core_runtime import private_run_root
+    from .run_store import RunCatalog
+
+    child_run_id = uuid.uuid4().hex
     cmd = [sys.executable, '-m', 'devtool', '-r', str(root), '--no-hud', '--no-clipboard',
            'invoke', node['action']]
     if node.get('target'):
         cmd += ['--target', node['target']]
-    # Existing Devtool workflow engine owns the inner DAG and validation.
+    env = os.environ.copy()
+    # Only a fresh immediate-parent capability is valid. Inherited environment
+    # values are deliberately not authority; subprocess does not use shell=True.
+    env['DEVTOOL_MANAGED_RUN_HANDOFF'] = create_managed_run_handoff(child_run_id)
+    handoff = Path(env['DEVTOOL_MANAGED_RUN_HANDOFF'])
     try:
-        proc = subprocess.run(cmd, cwd=root, stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL, timeout=900, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        raise GitHubActionsError('Native Devtool invoke failed or exceeded 900-second bound') from None
+        try:
+            proc = subprocess.run(cmd, cwd=root, env=env, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, timeout=900, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            raise GitHubActionsError('Native Devtool invoke failed or exceeded 900-second bound') from None
+    finally:
+        # Child usually consumes the capability. If it could not start, remove
+        # the orphaned secret file; never reuse the same preallocated identity.
+        try:
+            handoff.unlink(missing_ok=True)
+            handoff.parent.rmdir()
+        except OSError:
+            pass
     if proc.returncode:
         raise GitHubActionsError(f'Native Devtool invoke exited with code {proc.returncode}; inspect Devtool run history')
+    try:
+        catalog = RunCatalog.open(private_run_root(root), create=False)
+        entry = catalog.runs.get(child_run_id)
+    except (OSError, ValueError, TypeError):
+        entry = None
+    if (not isinstance(entry, dict) or entry.get('run_id') != child_run_id
+            or entry.get('command_id') != 'invoke' or entry.get('status') != 'succeeded'
+            or type(entry.get('exit_code')) is not int or entry['exit_code'] != 0
+            or not isinstance(entry.get('finished_at'), str) or not entry['finished_at']):
+        raise GitHubActionsError('Native invoke returned success without finalized exact child RUN-V3 identity')
+    return child_run_id
 
 
 def _execute_node(client: GitHubActionsClient, slug: str, root: Path, node: dict[str, Any],
@@ -229,16 +263,18 @@ def _execute_node(client: GitHubActionsClient, slug: str, root: Path, node: dict
         record['detail'] = 'clean Git HEAD verified'
         return 'success'
     if kind == 'local-invoke':
-        _local_invoke(root, node)
+        child_id = _local_invoke(root, node)
         if _source(root) != head:
             raise GitHubActionsError('Local workflow altered committed source or worktree; remote dispatch blocked')
-        record['detail'] = 'native Devtool workflow completed successfully'
+        record['exo_run_id'] = child_id
+        record['detail'] = 'native Devtool workflow completed with verified RUN-V3 child'
         return 'success'
     dispatch = journal['nodes'][node.get('from', '')] if kind in ('github-result','github-archive') else record
     if kind == 'github-dispatch':
         if _source(root) != head:
             raise GitHubActionsError('Local source changed before remote dispatch')
-        result = dispatch_workflow(client, slug, node['workflow'], node['ref'], node.get('inputs', {}), execute=True)
+        result = dispatch_workflow(client, slug, node['workflow'], node['ref'], node.get('inputs', {}),
+                                   execute=True, expected_source_sha=head)
         # Never dispatch twice if the journal update is lost after an accepted POST.
         if result.get('pre_dispatch_sha', '').lower() != head:
             raise GitHubActionsError('GitHub ref changed during dispatch; outcome needs manual reconciliation')
@@ -299,6 +335,10 @@ def _execute_isolated(client: GitHubActionsClient, slug: str, root: Path,
     private = dict(record)
     try:
         return _execute_node(client, slug, root, node, private, journal, head), private
+    except GitHubDispatchPreflightError as exc:
+        # This is a *definitive* pre-POST refusal, not an ambiguous POST outcome.
+        private['detail'] = str(exc)
+        return 'failure', private
     except GitHubActionsError as exc:
         private['detail'] = str(exc)
         return ('uncertain' if node['kind'] == 'github-dispatch' else 'failure'), private

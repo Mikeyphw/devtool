@@ -45,13 +45,12 @@ class Rem15AndroidHudTargetFinalSealTests(unittest.TestCase):
     def test_repository_wide_final_seal_requires_every_target_overlay(self) -> None:
         payload = final_seal_report(ROOT)
         self.assertEqual(payload["status"], "pass", payload)
-        self.assertEqual(payload["summary"]["target_final_reports"], 2)
         self.assertEqual(payload["summary"]["configured_targets"], 2)
         checks = {item["id"]: item for item in payload["checks"]}
         self.assertEqual(checks["targets.final-seal-overlays"]["status"], "pass")
         self.assertEqual(checks["coverage.final-remediation"]["status"], "pass")
-        self.assertGreaterEqual(payload["summary"]["roadmap_reports"], 33)
         self.assertGreaterEqual(payload["summary"]["roadmap_test_files"], 37)
+        self.assertFalse(payload["formal_release_qualified"])
 
     def test_final_seal_profile_plans_android_target_command(self) -> None:
         config = load_project_config(str(ROOT), str(ROOT / ".devtool.toml"), target_name="android_hud")

@@ -34,6 +34,19 @@ _REGISTRY_DIR = ".registry"
 _DEFAULT_EXCLUDES = (
     ".gradle/",
     "build/",
+    # Source-only synchronization: never mirror mutable/private provider state.
+    "/.devtool/private/",
+    "/.devtool/tmp/",
+    # Generated Python caches are not source and change under normal testing.
+    "__pycache__/",
+    "**/__pycache__/***",
+    "*.py[co]",
+    ".pytest_cache/",
+    "**/.pytest_cache/***",
+    ".mypy_cache/",
+    "**/.mypy_cache/***",
+    ".ruff_cache/",
+    "**/.ruff_cache/***",
     ".devtool/build-artifacts/",
     ".devtool/ssh-stage/",
     ".devtool/ssh-return/",
@@ -404,6 +417,7 @@ def _rsync_argv(
     dry_run: bool,
     destination_override: str = "",
     worker: SSHWorkerProbe | None = None,
+    nested_git_excludes: tuple[str, ...] | None = None,
 ) -> list[str]:
     worker = worker or probe_worker(config)
     remote_rsync = worker.tools.get("rsync", "")
@@ -412,6 +426,9 @@ def _rsync_argv(
     argv = [
         _rsync_executable(),
         "-a",
+        # Managed metadata changes directory mtimes; only content/real changes
+        # should prevent a clean second synchronization fixed point.
+        "--omit-dir-times",
         "--no-owner",
         "--no-group",
         "--no-devices",
@@ -430,7 +447,10 @@ def _rsync_argv(
         argv.append("--delete-delay")
     if dry_run:
         argv.append("--dry-run")
-    nested_git_excludes = source_stats(spec.repo_root, spec.excludes).nested_git_excludes
+    # Reuse the current operation's source inventory when available. rsync still
+    # checks every included source file and performs its ordinary safety checks.
+    if nested_git_excludes is None:
+        nested_git_excludes = source_stats(spec.repo_root, spec.excludes).nested_git_excludes
     for pattern in tuple(spec.excludes) + tuple(nested_git_excludes):
         argv.extend(["--exclude", pattern])
     source = str(Path(spec.repo_root)) + "/"
@@ -549,6 +569,7 @@ def plan_workspace_sync(
     spec: SSHWorkspaceSpec,
     *,
     worker: SSHWorkerProbe | None = None,
+    nested_git_excludes: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     status = workspace_status(config, spec)
     if status.exists and (not status.is_directory or not status.safe):
@@ -566,6 +587,7 @@ def plan_workspace_sync(
             dry_run=True,
             destination_override=f"{config.destination}:{canonical.rstrip('/')}/",
             worker=worker,
+            nested_git_excludes=nested_git_excludes,
         )
         completed = _run_rsync(config, argv, timeout=300)
         rc, stdout, stderr = completed.returncode, completed.stdout, completed.stderr
@@ -865,10 +887,13 @@ def sync_workspace(
             "detail": "plan only; frozen federation source will use verified git-bundle transport",
         }
     if dry_run:
-        payload = plan_workspace_sync(config, spec, worker=worker)
+        # One inventory for rsync's nested-repo boundaries and archive sizing.
+        # Every rsync dry-run still compares live files against the remote.
+        stats = source_stats(spec.repo_root, spec.excludes)
+        payload = plan_workspace_sync(config, spec, worker=worker, nested_git_excludes=stats.nested_git_excludes)
         status = SSHWorkspaceStatus(**payload["status"])
         remote_bytes = _remote_workspace_bytes(config, spec, status)
-        transport_plan = seed_plan(spec, status, worker, remote_bytes=remote_bytes)
+        transport_plan = seed_plan(spec, status, worker, remote_bytes=remote_bytes, stats=stats)
         payload["transport"] = {
             "plan": transport_plan.as_dict(), "source_transport": source_plan.as_dict(),
             "federation_transport_identity": federation,
@@ -934,6 +959,7 @@ def sync_workspace(
             dry_run=False,
             destination_override=f"{config.destination}:{canonical.rstrip('/')}/",
             worker=worker,
+            nested_git_excludes=transport_plan.nested_git_excludes,
         )
         started = time.monotonic()
         telemetry = SSHTransferTelemetry(
