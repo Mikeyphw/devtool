@@ -36,8 +36,12 @@ def decode_file(row:dict)->bytes:
     return base64.b64decode(row['content'],validate=True)
 
 def validate_host(run:dict,jobs:list,arts:list,sha:str,attempt:int=1)->dict:
-    if run.get('head_sha')!=sha or run.get('run_attempt')!=attempt or run.get('status')!='completed' or run.get('conclusion')!='success' or run.get('head_branch')!=BRANCH or not (str(run.get('path','')).split('@')[0].lstrip('/')==WF or str(run.get('path','')).split('@')[0].endswith('/'+WF)):
-        raise ValueError('WRONG_SOURCE_BRANCH_OR_RUN_RESULT')
+    if run.get('head_sha')!=sha or run.get('run_attempt')!=attempt or run.get('head_branch')!=BRANCH or not (str(run.get('path','')).split('@')[0].lstrip('/')==WF or str(run.get('path','')).split('@')[0].endswith('/'+WF)):
+        raise ValueError('WRONG_SOURCE_BRANCH_OR_RUN_IDENTITY')
+    if run.get('status')!='completed':
+        raise ValueError('HOSTED_WORKLOAD_RUN_NOT_COMPLETED')
+    if run.get('conclusion')!='success':
+        raise ValueError('HOSTED_WORKLOAD_RUN_FAILED_NOT_QUALIFIED')
     expected={'FC08 real github-actions-dag','FC08 real linux-polyglot','FC08 real windows-dotnet-msvc','FC08 real macos-native','FC08 fail-closed four-lane evidence inventory'}
     if len(jobs)!=5 or {z.get('name') for z in jobs}!=expected or any(z.get('conclusion')!='success' for z in jobs):
         raise ValueError('BAD_INCOMPLETE_OR_DUPLICATE_GITHUB_JOBS')

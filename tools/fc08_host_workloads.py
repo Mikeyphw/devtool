@@ -66,19 +66,34 @@ def identity(env: dict[str,str], *, allow_evidence_dirs: bool = False) -> dict[s
             'attempt':int(env['GITHUB_RUN_ATTEMPT']),'ref':env['GITHUB_REF']}
 
 
+def _public_diagnostic(data: bytes, *, limit: int = 1900) -> str:
+    """Only bounded, redacted subprocess diagnostics may enter public CI receipts."""
+    lines = data.decode('utf-8', errors='replace')[-max(1, limit):]
+    lines = re.sub(r'(?i)(bearer\s+|authorization[=:]\s*|token[=:]\s*|password[=:]\s*|secret[=:]\s*)[^\s]+',
+                   r'\1[REDACTED]', lines)
+    lines = re.sub(r'(?i)(https?://)[^/\s:@]+:[^@/\s]+@', r'\1[REDACTED]@', lines)
+    return lines
+
+
 def run(argv: list[str],cwd: Path,*,timeout: int=240,extra_env:dict[str,str]|None=None)->dict[str,Any]:
     env=os.environ.copy();env.update(extra_env or {})
     p=subprocess.run(argv,cwd=cwd,capture_output=True,timeout=timeout,env=env)
-    # Do not dump stdout, secrets, or environment variables into receipts.
+    # Only failed commands disclose bounded, sanitized diagnostic tails. Never
+    # include the process environment, raw payload or bearer tokens in receipts.
     return {'argv':argv,'code':p.returncode,'stdout_sha256':sha_bytes(p.stdout),
-            'stderr_sha256':sha_bytes(p.stderr),'stdout_tail':p.stdout.decode(errors='replace')[-450:] if p.returncode else '',
-            'stderr_tail':p.stderr.decode(errors='replace')[-750:] if p.returncode else ''}
+            'stderr_sha256':sha_bytes(p.stderr),'stdout_tail':_public_diagnostic(p.stdout) if p.returncode else '',
+            'stderr_tail':_public_diagnostic(p.stderr) if p.returncode else ''}
 
 
 def must(argv:list[str], cwd:Path,*,timeout:int=240, env:dict[str,str]|None=None)->dict[str,Any]:
     row=run(argv,cwd,timeout=timeout,extra_env=env)
     if row['code']:
-        raise RuntimeError('NATIVE_WORKLOAD_FAILED '+str(argv[:4])+' '+str(row['stderr_tail'])[-300:])
+        # Console-rich Devtool diagnostics are often on stdout, not stderr.
+        # Reporting only stderr previously hid the actual native failures.
+        raise RuntimeError('NATIVE_WORKLOAD_FAILED code='+str(row['code'])+
+            ' command='+str([Path(argv[0]).name,*argv[1:2]])+
+            ' stdout_sha256='+row['stdout_sha256']+' stderr_sha256='+row['stderr_sha256']+
+            ' stdout_tail='+row['stdout_tail'][-1400:]+ ' stderr_tail='+row['stderr_tail'][-1400:])
     return row
 
 
@@ -95,14 +110,43 @@ def fixture(base:Path, name:str, runner:str, files:dict[str,str],config:str|None
     return folder
 
 
+def _fixture_termux_environment(*, python_executable: str | None = None,
+                                python_prefix: str | None = None) -> dict[str,str]:
+    """Restore *observed* Termux identity for nested Devtool fixture commands.
+
+    The outer artifact validator may sanitize HOME/PREFIX before spawning its
+    Python tests. On physical Android this yields diagnostic ``host-android``
+    rather than native-termux. We must not change production normalization or
+    forge a platform selector: only the *actual interpreter* installed under
+    the canonical Termux Python prefix can justify restoring that PREFIX to
+    the subprocess. Never do so for arbitrary user-supplied interpreters,
+    desktop Linux or a guest chroot Python.
+    """
+    termux_prefix = Path('/data/data/com.termux/files/usr')
+    canonical_prefix = termux_prefix.resolve()
+    observed = Path(python_prefix if python_prefix is not None else sys.prefix)
+    executable = python_executable if python_executable is not None else sys.executable
+    resolved = shutil.which(executable) if executable else None
+    if not resolved:
+        return {}
+    try:
+        if observed.resolve() == canonical_prefix and Path(resolved).resolve().is_relative_to(canonical_prefix):
+            return {'PREFIX':str(termux_prefix)}
+    except (OSError, RuntimeError):
+        return {}
+    return {}
+
+
 def devtool(root:Path,action:str,*,timeout:int=420)->dict[str,Any]:
-    return must([sys.executable,'-m','devtool','--repo',str(root),'--target','app',action],SOURCE,timeout=timeout)
+    return must([sys.executable,'-m','devtool','--repo',str(root),'--target','app',action],
+                SOURCE,timeout=timeout,env=_fixture_termux_environment())
 
 
 def fail_negative(root:Path)->dict[str,Any]:
     broken=fixture(root,'negative','command',{'sentinel.txt':'refusal\n'},
         '[project]\nrunner="command"\nplatform="server"\nbuild_command="python -c \'import sys;print(987654321);sys.exit(37)\'"\n[workspace]\ndefault_target="app"\n[targets.app]\nrunner="command"\nroot="."\n')
-    row=run([sys.executable,'-m','devtool','--repo',str(broken),'--target','app','build'],SOURCE,timeout=180)
+    row=run([sys.executable,'-m','devtool','--repo',str(broken),'--target','app','build'],
+            SOURCE,timeout=180,extra_env=_fixture_termux_environment())
     if row['code']==0 or '987654321' not in row['stdout_tail'] or 'exit 37' not in row['stdout_tail']:
         raise RuntimeError('REFUSED_NEGATIVE_COMMAND_DID_NOT_EXECUTE_AND_FAIL_AS_EXPECTED')
     return {'rejection_exit':row['code'],'checked':'executed sentinel and true native exit 37'}
@@ -135,10 +179,13 @@ def build_meson(root:Path)->dict[str,Any]:
 def linux(base:Path)->dict[str,Any]:
     if platform.system()!='Linux':raise RuntimeError('WRONG_LINUX_HOST')
     data={}
+    # The Python provider's explicit unittest adapter is genuine execution.
+    # No packaging frontend should be inferred from a synthetic pyproject.toml;
+    # independent uv/Poetry/PDM lock+run checks remain mandatory below.
+    python_cfg='[project]\nrunner="python"\nplatform="server"\ntest_command="python -m unittest discover -v"\n[workspace]\ndefault_target="app"\n[targets.app]\nrunner="python"\nroot="."\n'
     py=fixture(base,'python','python',{
-        'pyproject.toml':'[build-system]\nrequires=["setuptools>=68", "wheel"]\nbuild-backend="setuptools.build_meta"\n[project]\nname="fc08-local-test"\nversion="0.1.0"\n',
         'fc08.py':'def plus(a,b):return a+b\n',
-        'test_fc08.py':'import unittest\nfrom fc08 import plus\nclass Smoke(unittest.TestCase):\n def test_plus(self):self.assertEqual(plus(3,4),7)\n'})
+        'test_fc08.py':'import unittest\nfrom fc08 import plus\nclass Smoke(unittest.TestCase):\n def test_plus(self):self.assertEqual(plus(3,4),7)\n'}, config=python_cfg)
     data['python']={'runner':'python','test':devtool(py,'test',timeout=300)['stdout_sha256']}
     # Real manager work on a fresh, zero-external-dependency local project.
     # The managers are not treated as equivalent to full locked restore/offline qualification.
@@ -290,8 +337,32 @@ def main(argv:list[str]|None=None)->int:
     print(f'PASS_FC08_REAL_HOST_WORKLOAD_EXECUTED lane={a.lane} checks={len(checks)} receipt_sha256={sha_file(out)} qualified=false',flush=True)
     return 0
 
+def emit_failure_diagnostic(argv:list[str], exc:Exception)->Path|None:
+    # A failed workload must leave an attributable, source-bound diagnostic
+    # artifact; it must never be mistaken for the successful lane receipt.
+    try:
+        lane=argv[argv.index('--lane')+1];out=Path(argv[argv.index('--out')+1])
+        if lane not in LANES: return None
+        ident={'sha':os.environ.get('GITHUB_SHA',''),'tree':'',
+               'run_id':os.environ.get('GITHUB_RUN_ID',''),
+               'attempt':os.environ.get('GITHUB_RUN_ATTEMPT',''),
+               'ref':os.environ.get('GITHUB_REF','')}
+        try: ident['tree']=git(SOURCE,'rev-parse','HEAD^{tree}')
+        except Exception: pass
+        body={'schema':'devtool.fc08.host-real-failure.v1','lane':lane,'identity':ident,
+              'status':'FAILED_NOT_QUALIFIED','release_qualified':False,
+              'category':type(exc).__name__,'diagnostic':_public_diagnostic(str(exc).encode(),limit=2300)}
+        dest=out  # CI publishes this FAILED receipt at the usual artifact path; never a PASS record
+        dest.parent.mkdir(parents=True,exist_ok=True)
+        dest.write_text(json.dumps(body,indent=2,sort_keys=True)+'\n')
+        return dest
+    except (ValueError,IndexError,OSError): return None
+
+
 if __name__=='__main__':
     try:raise SystemExit(main())
     except (RuntimeError,ValueError,TypeError,subprocess.SubprocessError,TimeoutError,OSError) as exc:
-        print('BLOCKED_FC08_REAL_HOST_WORKLOAD:'+type(exc).__name__+':'+str(exc)[:350],file=sys.stderr)
+        dest=emit_failure_diagnostic(sys.argv[1:],exc)
+        print('BLOCKED_FC08_REAL_HOST_WORKLOAD:'+type(exc).__name__+':'+_public_diagnostic(str(exc).encode())+
+              (' diagnostic='+str(dest) if dest else ''),file=sys.stderr)
         raise SystemExit(2)

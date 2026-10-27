@@ -147,3 +147,100 @@ class CaptureContract(TestCase):
         self.assertIn('if not a.register_default:',txt)
         self.assertIn('REFUSED_MAIN_FEATURE_WORKFLOW_BYTES_DIFFER',txt)
         self.assertNotIn('git push --force',txt)
+
+class HostR1R3FailureEvidence(TestCase):
+    def test_bounded_redaction_and_native_stdout_are_not_dropped(self):
+        diagnostics=h._public_diagnostic(b'build error with token=abc123 password=hidden bearer secret123\n')
+        self.assertIn('build error',diagnostics)
+        self.assertNotIn('abc123',diagnostics)
+        self.assertNotIn('hidden',diagnostics)
+        self.assertNotIn('secret123',diagnostics)
+        result={'code':17,'stdout_sha256':'a'*64,'stderr_sha256':'b'*64,
+                'stdout_tail':'real failure output from stdout','stderr_tail':''}
+        with mock.patch.object(h,'run',return_value=result):
+            with self.assertRaisesRegex(RuntimeError,'real failure output from stdout'):
+                h.must(['python','-m','devtool','test'],Path.cwd())
+
+    def test_failed_lane_still_uploadable_but_not_a_success_receipt(self):
+        with tempfile.TemporaryDirectory() as d:
+            report=Path(d)/'out'/'fc08'/'linux-polyglot.json'
+            env={'GITHUB_SHA':'a'*40,'GITHUB_RUN_ID':'40444483038',
+                 'GITHUB_RUN_ATTEMPT':'1','GITHUB_REF':'refs/heads/feature/rmp01-security-remediation'}
+            with mock.patch.dict('os.environ',env),mock.patch.object(h,'git',return_value='b'*40):
+                got=h.emit_failure_diagnostic(['--lane','linux-polyglot','--out',str(report)],RuntimeError('test failure'))
+            self.assertEqual(got,report)
+            payload=json.loads(report.read_text())
+            self.assertEqual(payload['status'],'FAILED_NOT_QUALIFIED')
+            self.assertFalse(payload['release_qualified'])
+            self.assertEqual(payload['identity']['sha'],'a'*40)
+            with self.assertRaises((ValueError,KeyError)):
+                h.validate_receipt(payload,'linux-polyglot',identity())
+
+    def test_failed_run_status_is_not_misclassified_as_source_drift(self):
+        jobs=[{'name':n,'conclusion':'success'} for n in (
+            'FC08 real github-actions-dag','FC08 real linux-polyglot',
+            'FC08 real windows-dotnet-msvc','FC08 real macos-native',
+            'FC08 fail-closed four-lane evidence inventory')]
+        arts=[{'name':'fc08-real-'+l+'-attempt1','expired':False,'digest':'sha256:'+'a'*64} for l in h.LANES]
+        arts.append({'name':'fc08-real-host-summary-attempt1','expired':False,'digest':'sha256:'+'a'*64})
+        run={'head_sha':'a'*40,'run_attempt':1,'status':'completed','conclusion':'failure',
+             'head_branch':c.BRANCH,'path':c.WF}
+        with self.assertRaisesRegex(ValueError,'HOSTED_WORKLOAD_RUN_FAILED_NOT_QUALIFIED'):
+            c.validate_host(run,jobs,arts,'a'*40)
+        with self.assertRaisesRegex(ValueError,'WRONG_SOURCE_BRANCH'):
+            c.validate_host({**run,'head_sha':'b'*40},jobs,arts,'a'*40)
+
+    def test_python_fixture_uses_real_devtool_provider_with_no_distribution_install(self):
+        # Do not weaken the separate uv/Poetry/PDM real manager checks.
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            cfg='[project]\nrunner="python"\nplatform="server"\ntest_command="python -m unittest discover -v"\n[workspace]\ndefault_target="app"\n[targets.app]\nrunner="python"\nroot="."\n'
+            repo=h.fixture(root,'python','python',{'fc08.py':'def value():return 8\n',
+                'test_fc08.py':'import unittest\nfrom fc08 import value\nclass Check(unittest.TestCase):\n def test_value(self):self.assertEqual(value(),8)\n'},config=cfg)
+            result=h.devtool(repo,'test')
+            self.assertEqual(result['code'],0)
+            self.assertTrue('test_command' in (repo/'.devtool.toml').read_text())
+
+
+class HostR1R4SanitizedTermuxIdentity(TestCase):
+    """The native test harness must not accidentally select host-android."""
+
+    def test_actual_termux_python_prefix_restored_without_fake_host_selector(self):
+        prefix='/data/data/com.termux/files/usr'
+        with mock.patch.object(h.shutil,'which',return_value=prefix+'/bin/python3.14'):
+            self.assertEqual(h._fixture_termux_environment(
+                python_executable='python3', python_prefix=prefix),{'PREFIX':prefix})
+        # Do not add DEVTOOL_HOST_OS, TERMUX_VERSION or any fake platform.
+        self.assertNotIn('DEVTOOL_HOST_OS',h._fixture_termux_environment(python_prefix='/usr'))
+
+    def test_desktop_and_foreign_python_cannot_acquire_termux_identity(self):
+        prefix='/data/data/com.termux/files/usr'
+        with mock.patch.object(h.shutil,'which',return_value='/usr/bin/python3'):
+            self.assertEqual(h._fixture_termux_environment(python_prefix=prefix),{})
+        with mock.patch.object(h.shutil,'which',return_value=prefix+'/bin/python3'):
+            self.assertEqual(h._fixture_termux_environment(python_prefix='/usr'),{})
+        with mock.patch.object(h.shutil,'which',return_value=None):
+            self.assertEqual(h._fixture_termux_environment(python_prefix=prefix),{})
+
+    def test_fixture_devtool_forwards_scoped_identity_not_environment_override(self):
+        marker={'PREFIX':'/data/data/com.termux/files/usr'}
+        with mock.patch.object(h,'_fixture_termux_environment',return_value=marker), \
+             mock.patch.object(h,'must',return_value={'code':0}) as call:
+            h.devtool(Path('/tmp/fc08-python'),'test')
+        self.assertEqual(call.call_args.kwargs['env'],marker)
+        args=call.call_args.args[0]
+        self.assertNotIn('--execution-environment',args)
+        self.assertEqual(args[-1],'test')
+
+    def test_negative_path_forwards_same_scoped_identity_and_remains_a_real_failure(self):
+        marker={'PREFIX':'/data/data/com.termux/files/usr'}
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(h,'_fixture_termux_environment',return_value=marker), \
+                 mock.patch.object(h,'fixture',return_value=Path(d)), \
+                 mock.patch.object(h,'run',return_value={
+                   'code':1,'stdout_tail':'987654321 exit 37',
+                   'stderr_tail':'','stdout_sha256':'a'*64,'stderr_sha256':'b'*64}) as call:
+                out=h.fail_negative(Path(d))
+        self.assertIn('true native exit 37',out['checked'])
+        self.assertEqual(call.call_args.kwargs['extra_env'],marker)
+        self.assertEqual(call.call_args.args[0][-1],'build')
