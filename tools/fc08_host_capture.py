@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Operator-side FC08-HOST-R1 GitHub dispatch, source-pin and raw evidence capture.
+"""Operator-side FC08-HOST-R1R7 GitHub dispatch, source-pin and raw evidence capture.
 
 Only --register-default may add one reviewed workflow file to main; never
-merge or mutate the feature branch. A capture never grants device/release status.
+create or mutate the retired feature branch. A capture never grants device/release status.
 """
 from __future__ import annotations
 import argparse,base64,hashlib,json,os
@@ -10,15 +10,14 @@ from pathlib import Path
 import re,subprocess,sys,time
 from typing import Any
 
-try:
-    from tools.fc08_host_workloads import LANES,validate_receipt,sha_bytes
-except ModuleNotFoundError:
-    from fc08_host_workloads import LANES,validate_receipt,sha_bytes
+# This script is executed from tools/, so import the sibling directly.
+# A foreign installed top-level `tools` package must never become authority.
+from fc08_host_workloads import LANES,validate_receipt,sha_bytes
 
 REPO='Mikeyphw/devtool'
-BRANCH='feature/rmp01-security-remediation'
-BASE='e09057529dc9016bc514ccfb43e45b0b978625b7'
-EXPECTED_MAIN='f0f7bd70322cb82b231102cf99fbea30718048d5'
+BRANCH='main'
+BASE='dc23352e8f9d3ce3370ce82b88e067bd6b10deae'
+EXPECTED_MAIN='8f31ce44e0f0021a7060f430a0cd527c2bf5a1bf'
 WF='.github/workflows/devtool-fc08-host-workloads.yml'
 
 
@@ -60,8 +59,15 @@ def main()->int:
     a=ap.parse_args()
     root=Path(a.repo_dir).resolve()
     sha=git(root,'rev-parse','HEAD');tree=git(root,'rev-parse','HEAD^{tree}')
-    if git(root,'rev-parse','HEAD^')!=BASE or git(root,'status','--porcelain','--untracked-files=all') or git(root,'symbolic-ref','-q','--short','HEAD')!=BRANCH:
+    if git(root,'status','--porcelain','--untracked-files=all') or git(root,'symbolic-ref','-q','--short','HEAD')!=BRANCH:
         raise ValueError('REFUSED_LOCAL_HEAD_PARENT_BRANCH_OR_WORKTREE')
+    # The reviewed G1 R1R4 commit must remain an actual ancestor, not the
+    # *immediate* parent. Subsequent exact-source HOST remediation commits are
+    # valid only when ancestry, remote SHA/tree and clean branch all agree.
+    try:
+        git(root,'merge-base','--is-ancestor',BASE,sha)
+    except subprocess.CalledProcessError as exc:
+        raise ValueError('REFUSED_REQUIRED_G1_ANCESTRY') from exc
     branch=api('branches/'+BRANCH)
     if branch['commit']['sha']!=sha:raise ValueError('REFUSED_LOCAL_BRANCH_NOT_PUSHED_TO_GITHUB')
     commit=api('commits/'+sha)

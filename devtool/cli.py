@@ -13,7 +13,10 @@ import sys
 import tarfile
 import time
 import traceback
-import resource
+try:
+    import resource
+except ImportError:  # Windows has no POSIX resource module.
+    resource = None
 import tempfile
 import zipfile
 from contextlib import contextmanager, redirect_stdout
@@ -12787,8 +12790,10 @@ def _write_performance_report(
 ) -> Path | None:
     if not bool(getattr(args, "performance", False) or os.environ.get("DEVTOOL_PERFORMANCE")):
         return None
-    usage_self = resource.getrusage(resource.RUSAGE_SELF)
-    usage_children = resource.getrusage(resource.RUSAGE_CHILDREN)
+    # Missing POSIX resource observations are explicitly unavailable on native
+    # Windows; do not invent peak RSS or treat it as release evidence.
+    usage_self = resource.getrusage(resource.RUSAGE_SELF) if resource is not None else None
+    usage_children = resource.getrusage(resource.RUSAGE_CHILDREN) if resource is not None else None
     phases = [
         {
             "name": result.name,
@@ -12810,8 +12815,8 @@ def _write_performance_report(
         "operation_seconds": round(sum(float(result.duration_seconds or 0.0) for result in results), 6),
         "operation_count": len(results),
         "spawned_process_estimate": sum(1 for result in results if result.argv),
-        "peak_rss_kib": int(usage_self.ru_maxrss),
-        "child_peak_rss_kib": int(usage_children.ru_maxrss),
+        "peak_rss_kib": int(usage_self.ru_maxrss) if usage_self is not None else None,
+        "child_peak_rss_kib": int(usage_children.ru_maxrss) if usage_children is not None else None,
         "phases": phases,
     }
     requested = str(getattr(args, "performance_file", "") or "").strip()

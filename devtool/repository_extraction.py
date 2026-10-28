@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-import fcntl
+from . import host_file_lock as fcntl
 import hashlib
 import json
 import os

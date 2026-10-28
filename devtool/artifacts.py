@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
+from . import host_file_lock as fcntl
 import difflib
 import hashlib
 import json

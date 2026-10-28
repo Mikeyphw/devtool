@@ -3650,6 +3650,10 @@ def run_specs(
 
         diagnostic_ids: list[str] = []
         if execution_adapter is not None:
+            # A successful child command is not sufficient for semantic success:
+            # close pending npm child nodes after result processing and before
+            # the parent execution terminal event. An incomplete run still fails.
+            execution_adapter.finish(returncode)
             try:
                 execution_adapter.process_exited(
                     exit_code=returncode,

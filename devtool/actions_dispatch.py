@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import fcntl
+from . import host_file_lock as fcntl
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json

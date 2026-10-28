@@ -12,7 +12,7 @@ Android kills Termux, the chroot, or Gradle.
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from contextlib import contextmanager
-import fcntl
+from . import host_file_lock as fcntl
 import hashlib
 import json
 import math

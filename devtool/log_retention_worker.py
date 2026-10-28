@@ -5,7 +5,7 @@ Only the existing logstore._rotate_log_root -> LIFE path can delete logs.
 """
 from __future__ import annotations
 
-import fcntl
+from . import host_file_lock as fcntl
 import json
 import os
 from pathlib import Path

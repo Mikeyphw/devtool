@@ -543,6 +543,32 @@ def resolve_build_policy(config: ProjectConfig, kind: str) -> BuildResourcePolic
     )
 
 
+def _verified_termux_npm_script_shell(
+    raw_prefix: str,
+    *,
+    canonical_prefix: Path = Path("/data/data/com.termux/files/usr"),
+) -> str | None:
+    """Trust only an executable shell inside the actual, canonical Termux prefix.
+
+    The canonical_prefix injection exists for deterministic unit tests; callers
+    always use the real fixed Android prefix. Do not infer Termux from Android
+    platform alone or from a user-configured execution target.
+    """
+    if not raw_prefix or not Path(raw_prefix).is_absolute():
+        return None
+    try:
+        declared = Path(raw_prefix).resolve(strict=True)
+        canonical = canonical_prefix.resolve(strict=True)
+        if declared != canonical:
+            return None
+        shell = canonical / "bin/sh"
+        if not shell.is_file() or not os.access(shell, os.X_OK):
+            return None
+        return str(shell)
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
 def optimized_build_env(
     config: ProjectConfig,
     kind: str,
@@ -581,6 +607,28 @@ def optimized_build_env(
         env.setdefault("npm_config_cache", str(policy.cache_root / "npm"))
         env.setdefault("npm_config_audit", "false")
         env.setdefault("npm_config_fund", "false")
+        # Native Termux npm 11/Node 26 can fail before a valid package script
+        # starts when the update notifier is enabled.  This was reproduced by
+        # the exact FC08 npm fixture: the real Devtool CLI failed at exit 1,
+        # while the same CLI succeeded with npm_config_update_notifier=false.
+        # Scope the safe default to an independently detected native host and
+        # preserve every explicit project/ambient operator npm setting.
+        if (policy.environment == NATIVE_TERMUX
+                and detect_current_environment() == NATIVE_TERMUX
+                and not any(k in env or k in os.environ for k in
+                            ("npm_config_update_notifier", "NPM_CONFIG_UPDATE_NOTIFIER"))):
+            env["npm_config_update_notifier"] = "false"
+        # npm's POSIX default is /bin/sh. On physical Termux that path does
+        # not name the Termux shell. Only use the observed, executable Termux
+        # prefix path, never a fabricated Android/desktop host identity.
+        # Operator-configured shell always wins, including ambient npm config.
+        if (policy.environment == NATIVE_TERMUX
+                and detect_current_environment() == NATIVE_TERMUX
+                and not any(k in env or k in os.environ for k in
+                            ("npm_config_script_shell", "NPM_CONFIG_SCRIPT_SHELL"))):
+            shell = _verified_termux_npm_script_shell(os.environ.get("PREFIX", ""))
+            if shell is not None:
+                env["npm_config_script_shell"] = shell
         env.setdefault("YARN_CACHE_FOLDER", str(policy.cache_root / "yarn"))
         env.setdefault("BUN_INSTALL_CACHE_DIR", str(policy.cache_root / "bun"))
     elif kind == "rust":
