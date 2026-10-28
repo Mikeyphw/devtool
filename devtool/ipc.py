@@ -20,6 +20,19 @@ from .ui_core.machine import IPC_PROTOCOL_VERSION, MACHINE_SCHEMA_VERSION, machi
 from .xdg import state_dir
 
 
+def unix_socket_available() -> bool:
+    """Whether the current Python runtime exposes Unix-domain sockets.
+
+    Windows GitHub runners may omit AF_UNIX. This is a capability check,
+    not an emulated IPC channel or evidence of a connected UI subscriber.
+    """
+    return getattr(socket, "AF_UNIX", None) is not None
+
+
+def _unavailable_reason() -> str:
+    return "Unix-domain IPC unavailable: this Python runtime has no socket.AF_UNIX"
+
+
 def default_ipc_socket_path() -> Path:
     override = os.environ.get("DEVTOOL_IPC_SOCKET", "").strip()
     if override:
@@ -207,6 +220,8 @@ class IpcBroker:
                 self.runs[run_id] = _with_machine_state(current)
 
     def start(self) -> None:
+        if not unix_socket_available():
+            raise RuntimeError(_unavailable_reason())
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self.socket_path.exists():
             try:
@@ -455,6 +470,8 @@ class IpcPublisher:
     def connect(self, state: dict[str, Any] | None = None) -> bool:
         if self.sock is not None:
             return True
+        if not unix_socket_available():
+            return False
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(0.12)
         try:
@@ -542,6 +559,8 @@ def request_run_action(run_id: str, action_id: str, *, payload: dict[str, Any] |
     action_id = str(action_id or "").strip()
     if not run_id or not action_id:
         return False, "A run identity and action ID are required."
+    if not unix_socket_available():
+        return False, _unavailable_reason()
     path = socket_path or default_ipc_socket_path()
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(timeout)
@@ -577,6 +596,8 @@ def request_run_cancel(run_id: str, *, reason: str = "UI request", socket_path: 
     run_id = str(run_id or "").strip()
     if not run_id:
         return False, "No active run identity is available for cancellation."
+    if not unix_socket_available():
+        return False, _unavailable_reason()
     path = socket_path or default_ipc_socket_path()
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(timeout)
@@ -602,6 +623,8 @@ def request_run_cancel(run_id: str, *, reason: str = "UI request", socket_path: 
             sock.close()
 
 def broker_is_running(socket_path: Path | None = None) -> bool:
+    if not unix_socket_available():
+        return False
     path = socket_path or default_ipc_socket_path()
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(0.2)
@@ -629,6 +652,8 @@ def broker_is_running(socket_path: Path | None = None) -> bool:
 
 
 def ensure_ipc_server(*, socket_path: Path | None = None, state_dir: Path | None = None) -> bool:
+    if not unix_socket_available():
+        return False
     path = socket_path or default_ipc_socket_path()
     if broker_is_running(path):
         return True
@@ -648,6 +673,9 @@ def ensure_ipc_server(*, socket_path: Path | None = None, state_dir: Path | None
 
 
 def run_ipc_server(args: argparse.Namespace) -> int:
+    if not unix_socket_available():
+        print(_unavailable_reason(), file=sys.stderr)
+        return 1
     path = Path(args.socket).expanduser() if args.socket else default_ipc_socket_path()
     state_dir = Path(args.state_dir).expanduser() if args.state_dir else None
     if not args.foreground:

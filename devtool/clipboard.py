@@ -38,6 +38,8 @@ def _copy_via_socket(text: str) -> ClipboardResult:
     path = _socket_clipboard_path()
     if path is None:
         return ClipboardResult(False, backend="socket", reason="DEVTOOL_CLIPBOARD_SOCKET is not set.")
+    if getattr(socket, "AF_UNIX", None) is None:
+        return ClipboardResult(False, backend="socket", reason="Unix-domain clipboard socket unsupported on this runtime")
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(2.0)

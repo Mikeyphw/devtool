@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -401,9 +402,15 @@ def test_direct_termux_android_bridge_autostarts_native_renderer() -> None:
         runtime = root / "runtime"
         registry = root / "registry"
         completed = Mock(returncode=0, stdout="4321\n")
+        # This is a positive launcher contract. The outer Devtool artifact
+        # validator may intentionally disable its own HUD; that ambient policy
+        # must not short-circuit the explicit, mocked positive fixture.
         with patch.dict("os.environ", {
             "DEVTOOL_HUD_REGISTRY_DIR": str(registry),
             "DEVTOOL_HUD_SINGLETON": "kill",
+            "DEVTOOL_NO_HUD": "0",
+            "DEVTOOL_NO_AUTO_HUD": "0",
+            "DEVTOOL_AUTO_HUD_CHILD": "0",
         }, clear=False), patch("devtool.hud.choose_hud_mode", return_value="android-bridge"), patch(
             "devtool.hud._is_termux_android", return_value=True
         ), patch("devtool.android_live_hud.AndroidLiveHudBridge.available", return_value=True), patch(
@@ -421,6 +428,10 @@ def test_direct_termux_android_bridge_reports_unavailable_companion(tmp_path, ca
     with patch.dict("os.environ", {
         "DEVTOOL_HUD_REGISTRY_DIR": str(registry),
         "DEVTOOL_HUD_SINGLETON": "kill",
+        # A disabled outer HUD must not make unavailable-companion case green.
+        "DEVTOOL_NO_HUD": "0",
+        "DEVTOOL_NO_AUTO_HUD": "0",
+        "DEVTOOL_AUTO_HUD_CHILD": "0",
     }, clear=False), patch("devtool.hud.choose_hud_mode", return_value="android-bridge"), patch(
         "devtool.hud._is_termux_android", return_value=True
     ), patch("devtool.android_live_hud.AndroidLiveHudBridge.available", return_value=False), patch(
@@ -430,6 +441,20 @@ def test_direct_termux_android_bridge_reports_unavailable_companion(tmp_path, ca
         assert start_auto_hud(tmp_path / "runtime", mode="android-bridge") is False
     run.assert_not_called()
     assert capsys.readouterr().err == "warning: Devtool Live HUD app not found.\n"
+
+def test_direct_termux_bridge_positive_case_is_isolated_from_parent_hud_policy(monkeypatch) -> None:
+    """Production's hard-disable policy survives; a positive test owns its setup.
+
+    In particular, this simulates a nested Devtool overlay validator started
+    with HUD disabled, which must not cause a false regression in mocked
+    Android renderer launch tests.
+    """
+    for name in ("DEVTOOL_NO_HUD", "DEVTOOL_NO_AUTO_HUD", "DEVTOOL_AUTO_HUD_CHILD"):
+        monkeypatch.setenv(name, "1")
+    test_direct_termux_android_bridge_autostarts_native_renderer()
+    for name in ("DEVTOOL_NO_HUD", "DEVTOOL_NO_AUTO_HUD", "DEVTOOL_AUTO_HUD_CHILD"):
+        assert os.environ[name] == "1"
+
 
 def test_devtool_no_hud_hard_disables_auto_hud(tmp_path) -> None:
     with patch.dict("os.environ", {"DEVTOOL_NO_HUD": "1"}, clear=False), patch(

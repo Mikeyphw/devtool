@@ -22,6 +22,8 @@ class DesktopIpcClient:
 
     def snapshot(self) -> dict[str, Any]:
         path = self.socket()
+        if getattr(socket, "AF_UNIX", None) is None:
+            return {"ok": False, "runs": [], "socket": str(path), "error": "Unix-domain IPC unsupported on this runtime"}
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
                 sock.settimeout(self.timeout_s)
