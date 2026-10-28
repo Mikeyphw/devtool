@@ -235,11 +235,21 @@ def linux(base:Path)->dict[str,Any]:
     return data
 
 
+def windows_dotnet_fixture_config() -> str:
+    # --target app resolves [targets.app] BEFORE top-level --solution overrides.
+    # The reviewed solution must therefore be declared on the selected target,
+    # not merely passed to the CLI: otherwise DotnetRunner gets an empty target.
+    return ('[project]\nrunner="dotnet"\nplatform="server"\n'
+            '[workspace]\ndefault_target="app"\n'
+            '[targets.app]\nrunner="dotnet"\nroot="."\n'
+            'solution="FC08.sln"\n')
+
+
 def windows(base:Path)->dict[str,Any]:
     if os.name!='nt' or platform.system()!='Windows':raise RuntimeError('WRONG_WINDOWS_HOST')
     # GHA installs .NET and initializes MSVC in a separate dedicated job step.
     # Create actual .NET reference graph, NuGet lock, and test/coverage artifacts.
-    cfg='[project]\nrunner="dotnet"\nplatform="server"\n[workspace]\ndefault_target="app"\n[targets.app]\nrunner="dotnet"\nroot="."\n'
+    cfg=windows_dotnet_fixture_config()
     repo=fixture(base,'dotnet','dotnet',{
         'Lib/Lib.csproj':'<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable></PropertyGroup></Project>\n',
         'Lib/Calc.cs':'namespace FC08; public static class Calc { public static int Add(int a,int b) => a+b; }\n',

@@ -98,3 +98,58 @@ def test_rm13_symbol_inspection_distinguishes_timeout_from_missing_tool(tmp_path
     monkeypatch.setattr(subprocess, 'run', missing)
     with pytest.raises(CppError, match='tool unavailable'):
         verify_binary(artifact, abi='elf-x86_64', symbols=['reviewed_symbol'])
+
+
+
+def test_windows_real_named_target_resolves_tracked_solution_to_dotnet_build(tmp_path):
+    """Regression for 40725311281: --solution did not override --target app.
+
+    This executes the real config loader + dotnet runner planner against the
+    exact TOML emitted by the hosted Windows workload, not a mocked CLI argv.
+    """
+    from devtool.config import load_project_config
+    from devtool.project_runners import DotnetRunner
+
+    repo = fc08.fixture(
+        tmp_path, 'windows-dotnet-real-target', 'dotnet',
+        {'FC08.sln': 'Microsoft Visual Studio Solution File, Format Version 12.00\n',
+         'Lib/Lib.csproj': '<Project Sdk="Microsoft.NET.Sdk"/>\n',
+         'Checks/Checks.csproj': '<Project Sdk="Microsoft.NET.Sdk"/>\n'},
+        config=fc08.windows_dotnet_fixture_config(),
+    )
+    solution = (repo / 'FC08.sln').resolve()
+    assert fc08.git(repo, 'ls-files', '--error-unmatch', 'FC08.sln') == 'FC08.sln'
+    assert 'solution="FC08.sln"' in (repo / '.devtool.toml').read_text()
+
+    config = load_project_config(str(repo), None, target_name='app',
+                                 solution_override='FC08.sln')
+    assert config.selected_target == 'app'
+    assert config.kind == 'dotnet'
+    assert Path(config.restore_target).resolve() == solution
+    assert Path(config.build_target).resolve() == solution
+    assert Path(config.test_target).resolve() == solution
+    planner = DotnetRunner()
+    for action, verb in [('restore', 'restore'), ('build', 'build'), ('test', 'test')]:
+        specs = planner.build_specs(config, action)
+        assert len(specs) == 1
+        assert specs[0].argv[:2] == ['dotnet', verb]
+        assert Path(specs[0].argv[2]).resolve() == solution
+
+
+def test_windows_selected_target_rejects_undeclared_dotnet_solution_even_with_cli_flag(tmp_path):
+    """Protect against returning to an argv-only regression that CI cannot run."""
+    from devtool.config import load_project_config
+    from devtool.project_runners import DotnetRunner
+
+    config_text = fc08.windows_dotnet_fixture_config()
+    assert config_text.count('solution="FC08.sln"') == 1
+    repo = fc08.fixture(
+        tmp_path, 'windows-dotnet-missing-target-declaration', 'dotnet',
+        {'FC08.sln': 'Microsoft Visual Studio Solution File, Format Version 12.00\n'},
+        config=config_text.replace('solution="FC08.sln"\n', ''),
+    )
+    config = load_project_config(str(repo), None, target_name='app',
+                                 solution_override='FC08.sln')
+    assert config.selected_target == 'app'
+    with pytest.raises(SystemExit, match='No dotnet target resolved'):
+        DotnetRunner().build_specs(config, 'build')
