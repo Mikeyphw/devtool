@@ -137,9 +137,16 @@ def _fixture_termux_environment(*, python_executable: str | None = None,
     return {}
 
 
-def devtool(root:Path,action:str,*,timeout:int=420)->dict[str,Any]:
-    return must([sys.executable,'-m','devtool','--repo',str(root),'--target','app',action],
-                SOURCE,timeout=timeout,env=_fixture_termux_environment())
+def devtool(root:Path,action:str,*,timeout:int=420,solution:str|None=None)->dict[str,Any]:
+    argv=[sys.executable,'-m','devtool','--repo',str(root),'--target','app']
+    if solution is not None:
+        # FC08 creates the Windows solution after fixture initialization.  The
+        # real CLI must receive an explicit reviewed target, never guess one.
+        if solution != 'FC08.sln' or not (root/solution).is_file() or git(root,'ls-files','--error-unmatch',solution)!=solution:
+            raise RuntimeError('REFUSED_MISSING_OR_UNTRACKED_DOTNET_SOLUTION')
+        argv.extend(['--solution',solution])
+    argv.append(action)
+    return must(argv,SOURCE,timeout=timeout,env=_fixture_termux_environment())
 
 
 def fail_negative(root:Path)->dict[str,Any]:
@@ -254,7 +261,7 @@ def windows(base:Path)->dict[str,Any]:
     data={}
     data['dotnet-cold-restore']={'result':must(['dotnet','restore','FC08.sln','--locked-mode','--force'],repo,timeout=900,env=env)['stdout_sha256'],'locks':[sha_file(x) for x in locks]}
     data['dotnet-warm-restore']={'result':must(['dotnet','restore','FC08.sln','--locked-mode'],repo,timeout=900,env=env)['stdout_sha256']}
-    data['dotnet-build']={'result':devtool(repo,'build',timeout=900)['stdout_sha256']}
+    data['dotnet-build']={'result':devtool(repo,'build',timeout=900,solution='FC08.sln')['stdout_sha256']}
     test=must(['dotnet','test','Checks/Checks.csproj','-c','Release','--logger','trx;LogFileName=fc08.trx',
         '--collect','XPlat Code Coverage','--results-directory',str(base/'test-results')],repo,timeout=900,env=env)
     trx=list((base/'test-results').rglob('*.trx'));cov=list((base/'test-results').rglob('coverage.cobertura.xml'))

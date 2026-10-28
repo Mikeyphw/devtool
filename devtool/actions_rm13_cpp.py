@@ -244,8 +244,11 @@ def verify_binary(path:Path, *, abi:str, symbols:list[str]|None=None)->dict:
     if symbols:
         if abi.startswith('pe-'):
             raise CppError('RM-13 PE symbol verification requires pre-reviewed PDB tooling')
-        try:r=subprocess.run(['nm','-g','--defined-only',str(path)],capture_output=True,text=True,timeout=10)
-        except (OSError,subprocess.TimeoutExpired):raise CppError('RM-13 symbol inspection tool unavailable') from None
+        try:r=subprocess.run(['nm','-g','--defined-only',str(path)],capture_output=True,text=True,timeout=30)
+        except subprocess.TimeoutExpired:
+            raise CppError('RM-13 symbol inspection timed out after 30s') from None
+        except OSError:
+            raise CppError('RM-13 symbol inspection tool unavailable') from None
         if r.returncode:raise CppError('RM-13 uninspectable symbols')
         found=sorted(set(re.findall(r'(?m)^[0-9a-fA-F]*\s+[A-Za-z]\s+(\S+)\s*$',r.stdout)))
         if not set(symbols).issubset(found):raise CppError('RM-13 declared symbol absent from binary')
