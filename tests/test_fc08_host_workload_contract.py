@@ -69,7 +69,14 @@ class Contract(TestCase):
         with tempfile.TemporaryDirectory() as d:
             env={'FC08_NEEDS_JSON':json.dumps({'dag':{'result':'failure'},'linux':{'result':'success'},'windows':{'result':'success'},'macos':{'result':'success'}})}
             with mock.patch.object(s,'identity',return_value=identity()):
-                with self.assertRaisesRegex(ValueError,'GITHUB_DAG'):s.summarize(Path(d),env)
+                with self.assertRaisesRegex(ValueError, 'FAILED_OR_MISSING_GITHUB_HOST_JOB:dag'):
+                    s.summarize(Path(d),env)
+                # A Windows failure must never be mislabeled as a DAG failure.
+                needs = json.loads(env['FC08_NEEDS_JSON'])
+                needs['dag']['result'] = 'success'
+                needs['windows']['result'] = 'failure'
+                with self.assertRaisesRegex(ValueError, 'FAILED_OR_MISSING_GITHUB_HOST_JOB:windows'):
+                    s.summarize(Path(d), {'FC08_NEEDS_JSON': json.dumps(needs)})
 
     def test_all_four_raw_receipts_required_and_source_bound(self):
         with tempfile.TemporaryDirectory() as d:
