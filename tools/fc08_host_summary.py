@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
 """Fail-closed hosted FC08 evidence bundle verifier (NOT a release seal)."""
 from __future__ import annotations
-import argparse,json,os,pathlib,sys
-try:
-    from tools.fc08_host_workloads import LANES, validate_receipt, identity, sha_file
-except ModuleNotFoundError:
-    from fc08_host_workloads import LANES, validate_receipt, identity, sha_file
+import argparse,importlib.util,json,os,pathlib,sys
+
+# Load the sibling reviewed workload source, never a third-party `tools` package
+# (Hermes Agent on native Termux has a package with the same top-level name).
+_WORKLOAD_SOURCE = pathlib.Path(__file__).resolve().with_name('fc08_host_workloads.py')
+_spec = importlib.util.spec_from_file_location('_fc08_host_summary_workloads', _WORKLOAD_SOURCE)
+if _spec is None or _spec.loader is None:
+    raise RuntimeError('FC08_REVIEWED_WORKLOAD_IMPORT_UNAVAILABLE')
+_workloads = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_workloads)
+LANES = _workloads.LANES
+validate_receipt = _workloads.validate_receipt
+identity = _workloads.identity
+sha_file = _workloads.sha_file
 
 def summarize(source:pathlib.Path,env:dict[str,str])->dict:
     ident=identity(env,allow_evidence_dirs=True)
     needs=json.loads(env.get('FC08_NEEDS_JSON','{}'))
-    if set(needs)!={'dag','linux','windows','macos'} or any(x.get('result')!='success' for x in needs.values()):
-        raise ValueError('FAILED_OR_MISSING_GITHUB_DAG_JOB')
+    expected=('dag','linux','windows','macos')
+    if not isinstance(needs,dict) or set(needs)!=set(expected):
+        raise ValueError('MISSING_OR_UNEXPECTED_GITHUB_HOST_JOBS')
+    failed=[name for name in expected if not isinstance(needs[name],dict) or needs[name].get('result')!='success']
+    if failed:
+        raise ValueError('FAILED_OR_MISSING_GITHUB_HOST_JOB:'+','.join(failed))
     entries=[p for p in source.glob('*/') if p.is_dir()]
     if len(entries)!=4 or len(set(p.name for p in entries))!=4:raise ValueError('MISSING_OR_DUPLICATED_ARTIFACT')
     verified={}

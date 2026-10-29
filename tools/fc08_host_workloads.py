@@ -137,6 +137,20 @@ def _fixture_termux_environment(*, python_executable: str | None = None,
     return {}
 
 
+def _devtool_child_environment() -> dict[str, str]:
+    """Keep real Windows Devtool CLI pipes UTF-8 without changing .NET/MSVC.
+
+    GHA Windows Python may inherit a locale-specific charmap (e.g. cp1252).
+    Rich emits Unicode success glyphs, which can otherwise turn a genuinely
+    successful native compilation into a Python encoding exception. Only the
+    Devtool CLI child receives this override; no global encoding is changed.
+    """
+    env = _fixture_termux_environment()
+    if platform.system() == 'Windows':
+        env.update({'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'})
+    return env
+
+
 def devtool(root:Path,action:str,*,timeout:int=420,solution:str|None=None)->dict[str,Any]:
     argv=[sys.executable,'-m','devtool','--repo',str(root),'--target','app']
     if solution is not None:
@@ -146,14 +160,14 @@ def devtool(root:Path,action:str,*,timeout:int=420,solution:str|None=None)->dict
             raise RuntimeError('REFUSED_MISSING_OR_UNTRACKED_DOTNET_SOLUTION')
         argv.extend(['--solution',solution])
     argv.append(action)
-    return must(argv,SOURCE,timeout=timeout,env=_fixture_termux_environment())
+    return must(argv,SOURCE,timeout=timeout,env=_devtool_child_environment())
 
 
 def fail_negative(root:Path)->dict[str,Any]:
     broken=fixture(root,'negative','command',{'sentinel.txt':'refusal\n'},
         '[project]\nrunner="command"\nplatform="server"\nbuild_command="python -c \'import sys;print(987654321);sys.exit(37)\'"\n[workspace]\ndefault_target="app"\n[targets.app]\nrunner="command"\nroot="."\n')
     row=run([sys.executable,'-m','devtool','--repo',str(broken),'--target','app','build'],
-            SOURCE,timeout=180,extra_env=_fixture_termux_environment())
+            SOURCE,timeout=180,extra_env=_devtool_child_environment())
     if row['code']==0 or '987654321' not in row['stdout_tail'] or 'exit 37' not in row['stdout_tail']:
         raise RuntimeError('REFUSED_NEGATIVE_COMMAND_DID_NOT_EXECUTE_AND_FAIL_AS_EXPECTED')
     return {'rejection_exit':row['code'],'checked':'executed sentinel and true native exit 37'}
