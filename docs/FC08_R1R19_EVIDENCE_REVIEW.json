@@ -1,0 +1,54 @@
+{
+  "fc08_overall_qualified": false,
+  "formal_release_qualified": false,
+  "g1_run": {
+    "conclusion": "success",
+    "errors": 0,
+    "failures": 0,
+    "id": 41068356185,
+    "modules": 600,
+    "sha_identical_to_host": true,
+    "shards": 24,
+    "skipped": 0,
+    "subtests": 75,
+    "tests": 6855,
+    "verified_junit_and_log_checksums": true,
+    "verified_shard_zip_digests": 24
+  },
+  "host_run": {
+    "conclusion": "success",
+    "coverage_candidate_count": 2,
+    "coverage_candidates_have_identical_sha256": true,
+    "id": 41068348030,
+    "identity_and_checks_verified": true,
+    "job_results": {
+      "github-actions-dag": "success",
+      "host-summary": "success",
+      "linux-polyglot": "success",
+      "macos-native": "success",
+      "windows-dotnet-msvc": "success"
+    },
+    "receipt_count": 4,
+    "verified_receipt_zip_digests": 5,
+    "windows_checks": 8
+  },
+  "limitations": [
+    "Hosted FC08 artifacts contain JSON receipts, not the raw TRX, Cobertura, compiled MSVC outputs or NuGet package; hash fields do not independently verify their runtime semantics or signed origin.",
+    "Only same-SHA observed run and exact archive provenance reviewed; adversarial GitHub permission/dispatch repeats and native device/signer/consumer execution were not performed."
+  ],
+  "repository": "Mikeyphw/devtool",
+  "review_disposition": {
+    "android_signing_installed_device": "OPEN",
+    "fc09_promise_matrix_and_formal_seal": "OPEN",
+    "g1_full_source_regression": "PASS_CURRENT_SHA_JUNIT_RECALCULATED",
+    "github_dag_repeat_failure_permission_negatives": "OPEN",
+    "hosted_workload_capture": "PASS_INDEPENDENT_METADATA_AND_RECEIPT_INTEGRITY_REVIEW",
+    "linux_lock_abi_adversarial": "OPEN",
+    "native_termux_arm64": "OPEN",
+    "real_consumer_adoption_rollback": "OPEN",
+    "windows_signed_authority_and_raw_trx_provenance": "OPEN"
+  },
+  "schema": "devtool.fc08.independent-evidence-review.v1",
+  "source_sha": "641009b8859e00a9c10cc264e2a0a41492b68d0c",
+  "source_tree": "01dd82e57eebb61aaabd0f937edc365a1dcaf8b3"
+}
