@@ -77,8 +77,16 @@ def _public_diagnostic(data: bytes, *, limit: int = 1900) -> str:
 
 
 def run(argv: list[str],cwd: Path,*,timeout: int=240,extra_env:dict[str,str]|None=None,
-        capture_success_tail:bool=False)->dict[str,Any]:
+        capture_success_tail:bool=False,drop_msbuild_env:bool=False)->dict[str,Any]:
     env=os.environ.copy();env.update(extra_env or {})
+    if drop_msbuild_env:
+        # ilammy/msvc-dev-cmd sets Platform=x64 for native cl.exe. A newly
+        # generated SDK .sln only has Debug/Release | Any CPU; passing x64 to
+        # MSBuild makes even dotnet restore fail with MSB4126. Keep all other
+        # native compiler variables intact. Windows env names are insensitive.
+        for key in list(env):
+            if key.casefold() in ('platform','configuration'):
+                del env[key]
     p=subprocess.run(argv,cwd=cwd,capture_output=True,timeout=timeout,env=env)
     # Only failed commands disclose bounded, sanitized diagnostic tails. Never
     # include the process environment, raw payload or bearer tokens in receipts.
@@ -88,8 +96,9 @@ def run(argv: list[str],cwd: Path,*,timeout: int=240,extra_env:dict[str,str]|Non
 
 
 def must(argv:list[str], cwd:Path,*,timeout:int=240, env:dict[str,str]|None=None,
-         capture_success_tail:bool=False)->dict[str,Any]:
-    row=run(argv,cwd,timeout=timeout,extra_env=env,capture_success_tail=capture_success_tail)
+         capture_success_tail:bool=False,drop_msbuild_env:bool=False)->dict[str,Any]:
+    row=run(argv,cwd,timeout=timeout,extra_env=env,capture_success_tail=capture_success_tail,
+            drop_msbuild_env=drop_msbuild_env)
     if row['code']:
         # Console-rich Devtool diagnostics are often on stdout, not stderr.
         # Reporting only stderr previously hid the actual native failures.
@@ -99,6 +108,14 @@ def must(argv:list[str], cwd:Path,*,timeout:int=240, env:dict[str,str]|None=None
             ' stdout_tail='+row['stdout_tail'][-1400:]+ ' stderr_tail='+row['stderr_tail'][-1400:])
     return row
 
+
+def dotnet_must(argv:list[str],cwd:Path,*,timeout:int=240,env:dict[str,str]|None=None,
+                capture_success_tail:bool=False)->dict[str,Any]:
+    """One entry point for Windows .NET subprocesses in the real-host fixture."""
+    if not argv or argv[0]!='dotnet':
+        raise RuntimeError('REFUSED_NON_DOTNET_SUBPROCESS')
+    return must(argv,cwd,timeout=timeout,env=env,capture_success_tail=capture_success_tail,
+                drop_msbuild_env=True)
 
 def fixture(base:Path, name:str, runner:str, files:dict[str,str],config:str|None=None)->Path:
     folder=base/name;folder.mkdir()
@@ -163,7 +180,8 @@ def devtool(root:Path,action:str,*,timeout:int=420,solution:str|None=None)->dict
             raise RuntimeError('REFUSED_MISSING_OR_UNTRACKED_DOTNET_SOLUTION')
         argv.extend(['--solution',solution])
     argv.append(action)
-    return must(argv,SOURCE,timeout=timeout,env=_devtool_child_environment())
+    return must(argv,SOURCE,timeout=timeout,env=_devtool_child_environment(),
+                drop_msbuild_env=(solution is not None))
 
 
 def fail_negative(root:Path)->dict[str,Any]:
@@ -316,11 +334,11 @@ def windows(base:Path)->dict[str,Any]:
     },config=cfg)
     lib=repo/'Lib/Lib.csproj'; checks=repo/'Checks/Checks.csproj'
     # .NET 8 generates .sln by default; --format is only supported by SDK 9.0.200+.
-    must(['dotnet','new','sln','-n','FC08'],repo,timeout=120)
-    must(['dotnet','sln','FC08.sln','add',str(lib),str(checks)],repo,timeout=90)
+    dotnet_must(['dotnet','new','sln','-n','FC08'],repo,timeout=120)
+    dotnet_must(['dotnet','sln','FC08.sln','add',str(lib),str(checks)],repo,timeout=90)
     # Initially generate committed lockfiles in disposable fixture before
     # requiring locked restore. Real cold and warm restores share one cache path.
-    must(['dotnet','restore','FC08.sln','--use-lock-file'],repo,timeout=900)
+    dotnet_must(['dotnet','restore','FC08.sln','--use-lock-file'],repo,timeout=900)
     locks=list(repo.rglob('packages.lock.json'))
     if len(locks)!=2:raise RuntimeError('MISSING_DOTNET_LOCKFILES')
     must(['git','add','.'],repo)
@@ -328,21 +346,21 @@ def windows(base:Path)->dict[str,Any]:
     pkg=base/'cold-nuget-cache'
     env={'NUGET_PACKAGES':str(pkg),'DOTNET_CLI_TELEMETRY_OPTOUT':'1'}
     data={}
-    data['dotnet-cold-restore']={'result':must(['dotnet','restore','FC08.sln','--locked-mode','--force'],repo,timeout=900,env=env)['stdout_sha256'],'locks':[sha_file(x) for x in locks]}
-    data['dotnet-warm-restore']={'result':must(['dotnet','restore','FC08.sln','--locked-mode'],repo,timeout=900,env=env)['stdout_sha256']}
+    data['dotnet-cold-restore']={'result':dotnet_must(['dotnet','restore','FC08.sln','--locked-mode','--force'],repo,timeout=900,env=env)['stdout_sha256'],'locks':[sha_file(x) for x in locks]}
+    data['dotnet-warm-restore']={'result':dotnet_must(['dotnet','restore','FC08.sln','--locked-mode'],repo,timeout=900,env=env)['stdout_sha256']}
     data['dotnet-build']={'result':devtool(repo,'build',timeout=900,solution='FC08.sln')['stdout_sha256']}
-    test=must(['dotnet','test','Checks/Checks.csproj','-c','Release',
+    test=dotnet_must(['dotnet','test','Checks/Checks.csproj','-c','Release',
         '--settings','fc08.runsettings','--logger','trx;LogFileName=fc08.trx',
         '--collect','XPlat Code Coverage','--results-directory',str(base/'test-results')],
         repo,timeout=900,env=env,capture_success_tail=True)
     data['dotnet-trx-coverage']=validate_dotnet_test_evidence(base/'test-results',test)
     packdir=base/'packs'
-    must(['dotnet','pack',str(lib),'-c','Release','--no-restore','-o',str(packdir)],repo,timeout=600,env=env)
+    dotnet_must(['dotnet','pack',str(lib),'-c','Release','--no-restore','-o',str(packdir)],repo,timeout=600,env=env)
     packages=list(packdir.glob('*.nupkg'))
     if len(packages)!=1:raise RuntimeError('NO_REAL_NUPKG')
     data['dotnet-pack']={'sha256':sha_file(packages[0])}
     publ=base/'publish'
-    must(['dotnet','publish',str(lib),'-c','Release','--no-restore','-o',str(publ)],repo,timeout=600,env=env)
+    dotnet_must(['dotnet','publish',str(lib),'-c','Release','--no-restore','-o',str(publ)],repo,timeout=600,env=env)
     if not list(publ.glob('Lib.dll')):raise RuntimeError('NO_REAL_DOTNET_PUBLISH')
     data['dotnet-publish']={'artifact_sha256':sha_file(publ/'Lib.dll')}
     data['msvc-cmake']=build_cmake(base,'msvc',expected_compiler='MSVC')

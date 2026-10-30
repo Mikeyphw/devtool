@@ -40,16 +40,18 @@ def test_dotnet_fixture_explicitly_selects_tracked_real_solution(tmp_path, monke
     root.mkdir()
     (root / 'FC08.sln').write_text('fixture solution')
     seen = []
-    def fake_must(argv, cwd, *, timeout, env):
-        seen.append((argv, cwd, timeout))
+    def fake_must(argv, cwd, *, timeout, env, drop_msbuild_env=False):
+        seen.append((argv, cwd, timeout, drop_msbuild_env))
         return {'code': 0, 'stdout_sha256': '0' * 64}
     monkeypatch.setattr(fc08, 'must', fake_must)
     monkeypatch.setattr(fc08, 'git', lambda path, *args: 'FC08.sln')
     assert fc08.devtool(root, 'build', timeout=900, solution='FC08.sln')['code'] == 0
     assert seen[0][0][-3:] == ['--solution', 'FC08.sln', 'build']
     assert seen[0][1] == fc08.SOURCE and seen[0][2] == 900
+    assert seen[0][3] is True  # Only the selected .NET child isolates MSBuild globals.
     assert fc08.devtool(root, 'test')['code'] == 0
     assert '--solution' not in seen[1][0]
+    assert seen[1][3] is False
 
 
 def test_dotnet_fixture_refuses_untracked_missing_or_ambiguous_solution(tmp_path, monkeypatch):
