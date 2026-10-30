@@ -1,0 +1,46 @@
+name: Devtool FC-08 opt-in real dispatch cycle (non-release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      authorize_real_dispatch:
+        description: Explicitly authorize two bounded no-op probe dispatches
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: fc08-opt-in-dispatch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bounded-real-dispatch:
+    name: Real success/failure and repeat-without-redispatch evidence
+    if: inputs.authorize_real_dispatch == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install reviewed Devtool dispatch runtime
+        run: python -m pip install -e . PyYAML
+      - name: Real dispatch with bounded journal reuse and remote proof
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FC08_DISPATCH_AUTHORIZED: ${{ inputs.authorize_real_dispatch }}
+        run: python tools/fc08_dispatch_cycle.py --out out/fc08/real-dispatch-cycle.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fc08-real-dispatch-cycle-attempt${{ github.run_attempt }}
+          path: out/fc08/real-dispatch-cycle.json
+          if-no-files-found: error
+          retention-days: 14

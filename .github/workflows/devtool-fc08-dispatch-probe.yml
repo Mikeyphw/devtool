@@ -1,0 +1,43 @@
+name: Devtool FC-08 dispatch probe (non-release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Bounded success or deliberate failure
+        type: choice
+        required: true
+        options: [success, failure]
+      correlation:
+        description: Source-bound FC08 test correlation
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Controlled no-op dispatch result
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify owned source and produce bounded result
+        shell: bash
+        env:
+          FC08_SCENARIO: ${{ inputs.scenario }}
+          FC08_CORRELATION: ${{ inputs.correlation }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Mikeyphw/devtool'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          [[ "$FC08_CORRELATION" =~ ^fc08-[0-9]+-[1-9][0-9]*$ ]]
+          case "$FC08_SCENARIO" in
+            success) echo 'PASS_FC08_PROBE_CONTROLLED_SUCCESS_NON_RELEASE' ;;
+            failure) echo 'EXPECTED_FC08_PROBE_INTENTIONAL_FAILURE_NON_RELEASE'; exit 37 ;;
+            *) echo 'BLOCKED_FC08_PROBE_INVALID_SCENARIO' >&2; exit 2 ;;
+          esac

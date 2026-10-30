@@ -1,0 +1,29 @@
+{
+  "schema": "devtool.fc08.hosted-evidence-scoped-summary.v1",
+  "subject_source_sha": "191d6ee8c96accef4358db096b82b1db6a7f7ce5",
+  "subject_tree_sha": "165949ea399864ccff6e293829ff2a5caa0ea994",
+  "host_run_id": 41122945028,
+  "host_attempt": 1,
+  "host_run_conclusion": "success",
+  "host_jobs": 5,
+  "host_artifacts": {
+    "linux": {"id": 13009022987, "sha256": "cbb41dd6955f0a59ca4ab75222497e3585884aec02c3355815a5b473ce24d8ad", "zip_independently_inspected": true, "checks": 15},
+    "dag": {"id": 13009497209, "sha256": "cfb37ac2c5912254abbf5b034d5287160b17fe7da784c0bb9dc31de582ddb8d3", "zip_independently_inspected": false, "checks": 5},
+    "windows": {"id": 13009711004, "sha256": "d591eb7c6cbc7d8a6cdf2f47126a15223dafd08d465e7e039b6a77b6ff058389", "zip_independently_inspected": false, "checks": 8},
+    "macos": {"id": 13008684017, "sha256": "325ca85b79cfc7bc07df1d9b7c9ec0f97942a25380e2602b386de6d57041c4f3", "zip_independently_inspected": false, "checks": 3},
+    "summary": {"id": 13009336928, "sha256": "780c3b7fd998a8f5d75fd655e6cc38311a4c77fe2e3c005684ae55a97c0e85af", "zip_independently_inspected": true}
+  },
+  "g1_run_id": 41122952245,
+  "g1_conclusion": "success",
+  "g1_jobs": 25,
+  "g1_shards": 24,
+  "g1_modules": 605,
+  "g1_tests": 6915,
+  "g1_failed": 0,
+  "g1_errors": 0,
+  "g1_skipped": 0,
+  "g1_all_shard_zip_independent_review": false,
+  "next_source_hosted_execution_qualified": false,
+  "fc08_overall_qualified": false,
+  "release_qualified": false
+}
