@@ -19,13 +19,16 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 SOURCE = Path(__file__).resolve().parents[1]
 LANES = ('github-actions-dag','linux-polyglot','windows-dotnet-msvc','macos-native')
 EXPECTED = {'linux-polyglot': 'Linux', 'windows-dotnet-msvc': 'Windows', 'macos-native': 'Darwin'}
 EXPECTED_CHECKS = {
-    'github-actions-dag': ('immutable-source','negative-exit-propagation','dag-fanout','dag-verifier-adversarial'),
-    'linux-polyglot': ('python','python-uv','python-poetry','python-pdm','go','node','rust','maven','cmake','meson','negative-exit-propagation','linux-lock-drift-refusal','linux-native-abi-refusal'),
+    'github-actions-dag': ('immutable-source','negative-exit-propagation','dag-fanout','dag-verifier-adversarial','github-live-restricted-dispatch-refusal'),
+    'linux-polyglot': ('python','python-uv','python-poetry','python-pdm','go','node','rust','maven','cmake','meson','negative-exit-propagation','linux-lock-drift-refusal','linux-native-abi-refusal','linux-cargo-frozen-lock-refusal'),
     'windows-dotnet-msvc': ('dotnet-cold-restore','dotnet-warm-restore','dotnet-build','dotnet-trx-coverage','dotnet-pack','dotnet-publish','msvc-cmake','negative-exit-propagation'),
     'macos-native': ('native-cmake','unsupported-host-refusal','negative-exit-propagation'),
 }
@@ -251,6 +254,91 @@ def linux_lock_drift_refusal(uv_repo:Path)->dict[str,Any]:
             'restored_check_sha256':restored['stdout_sha256']}
 
 
+def linux_cargo_frozen_lock_refusal(rust_repo:Path)->dict[str,Any]:
+    """Real Cargo --frozen refuses stale offline lock without modifying source.
+
+    Only owned disposable fixtures; never mutate a consumer checkout. A
+    nonzero exit alone cannot qualify if Cargo changed the committed lock.
+    """
+    manifest=rust_repo/'Cargo.toml'
+    lock=rust_repo/'Cargo.lock'
+    original=manifest.read_bytes()
+    if original.count(b'version="0.1.0"')!=1 or not lock.is_file():
+        raise RuntimeError('FC08_CARGO_MANIFEST_OR_LOCK_BASE_UNEXPECTED')
+    baseline_lock=sha_file(lock)
+    baseline=must(['cargo','metadata','--no-deps','--format-version','1','--frozen'],rust_repo,timeout=90)
+    try:
+        manifest.write_bytes(original.replace(b'version="0.1.0"',b'version="0.2.0"',1))
+        changed_sha=sha_file(manifest)
+        refused=run(['cargo','metadata','--no-deps','--format-version','1','--frozen'],rust_repo,timeout=90)
+        if refused['code']==0:
+            raise RuntimeError('FC08_CARGO_STALE_FROZEN_LOCK_ACCEPTED')
+        if sha_file(lock)!=baseline_lock:
+            raise RuntimeError('FC08_CARGO_FROZEN_REFUSAL_CHANGED_LOCK')
+    finally:
+        manifest.write_bytes(original)
+    restored=must(['cargo','metadata','--no-deps','--format-version','1','--frozen'],rust_repo,timeout=90)
+    if sha_file(lock)!=baseline_lock or manifest.read_bytes()!=original:
+        raise RuntimeError('FC08_CARGO_RESTORATION_MODIFIED_SOURCE')
+    return {'native':'cargo metadata --frozen on real locked Rust fixture',
+            'original_lock_sha256':baseline_lock,'drift_manifest_sha256':changed_sha,
+            'refusal_exit':refused['code'],'refusal_stderr_sha256':refused['stderr_sha256'],
+            'baseline_sha256':baseline['stdout_sha256'],
+            'restored_sha256':restored['stdout_sha256']}
+
+
+def github_live_restricted_dispatch_refusal(ident:dict[str,Any], *, token:str|None=None)->dict[str,Any]:
+    """One real GitHub dispatch refusal under the *read-only* workflow token.
+
+    The separate observation workflow is used to avoid recursive fanout if
+    permissions regress. Refuse a 200/204 result or ambiguous 404, never
+    print a bearer token, HTTP response body, or request headers. This is
+    NOT evidence of a successful dispatch/retry/deduplication lifecycle.
+    """
+    if os.environ.get('GITHUB_ACTIONS')!='true' or ident.get('repository')!='Mikeyphw/devtool':
+        raise RuntimeError('FC08_RESTRICTED_API_ONLY_REAL_GITHUB_RUN')
+    sha=str(ident.get('sha',''))
+    if not re.fullmatch(r'[a-f0-9]{40}',sha) or ident.get('ref')!='refs/heads/main':
+        raise RuntimeError('FC08_RESTRICTED_API_INVALID_SOURCE_REF')
+    secret=token if token is not None else os.environ.get('GITHUB_TOKEN','')
+    if not secret or not secret.strip():
+        raise RuntimeError('FC08_RESTRICTED_GITHUB_TOKEN_MISSING')
+    # Read-only workflow policy explicitly denies all unspecified scopes,
+    # including Actions write. No operator/user PAT or external token is used.
+    base='https://api.github.com/repos/Mikeyphw/devtool'
+    workflow='devtool-fc08-host-evidence.yml'
+    headers={'Accept':'application/vnd.github+json',
+             'Authorization':'Bearer '+secret,
+             'X-GitHub-Api-Version':'2022-11-28',
+             'User-Agent':'devtool-fc08-readonly-refusal'}
+    get=Request(base+'/contents/.github/workflows/'+workflow+'?ref='+quote(sha),headers=headers,method='GET')
+    try:
+        with urlopen(get,timeout=20) as response:
+            if response.status!=200:
+                raise RuntimeError('FC08_RESTRICTED_API_SOURCE_NOT_READABLE')
+            data=json.loads(response.read(65536))
+    except (HTTPError,URLError,TimeoutError,OSError,ValueError) as exc:
+        raise RuntimeError('FC08_RESTRICTED_API_SOURCE_READ_FAILED') from exc
+    if (data.get('type')!='file' or data.get('path')!='.github/workflows/'+workflow):
+        raise RuntimeError('FC08_RESTRICTED_API_WRONG_WORKFLOW_IDENTITY')
+    payload=json.dumps({'ref':'main'},sort_keys=True,separators=(',',':')).encode()
+    post=Request(base+'/actions/workflows/'+workflow+'/dispatches',headers={**headers,
+                 'Content-Type':'application/json'},data=payload,method='POST')
+    try:
+        with urlopen(post,timeout=20) as response:
+            status=response.status
+    except HTTPError as exc:
+        status=exc.code
+    except (URLError,TimeoutError,OSError) as exc:
+        raise RuntimeError('FC08_RESTRICTED_API_DISPATCH_TRANSPORT_UNVERIFIED') from exc
+    if status!=403:
+        raise RuntimeError('FC08_RESTRICTED_DISPATCH_NOT_PROVEN_DENIED http_status='+str(status))
+    return {'source_workflow_read_http_status':200,'dispatch_http_status':403,
+            'scope':'real GitHub API refusal with contents:read/actions:none',
+            'dispatch_target':workflow,'request_sha256':sha_bytes(payload),
+            'live_success_retry_or_dedup_qualified':False,'release_qualified':False}
+
+
 def linux_native_abi_refusal(cmake_repo:Path)->dict[str,Any]:
     """Run the production RM-13 ABI verifier on the actual compiled ELF."""
     from devtool.actions_rm13_cpp import CppError,verify_binary
@@ -375,6 +463,7 @@ def linux(base:Path)->dict[str,Any]:
     rust=fixture(base,'rust','rust',{'Cargo.toml':'[package]\nname="fc08_rust"\nversion="0.1.0"\nedition="2021"\n','src/lib.rs':'pub fn value()->i32{8}\n#[cfg(test)] mod tests{#[test] fn work(){assert_eq!(super::value(),8);}}\n'})
     must(['cargo','generate-lockfile','--offline'],rust,timeout=100)
     data['rust']={'runner':'rust','build':devtool(rust,'build',timeout=400)['stdout_sha256'],'test':devtool(rust,'test',timeout=400)['stdout_sha256']}
+    data['linux-cargo-frozen-lock-refusal']=linux_cargo_frozen_lock_refusal(rust)
     maven=fixture(base,'maven','maven',{'pom.xml':'''<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd"><modelVersion>4.0.0</modelVersion><groupId>org.fc08</groupId><artifactId>fc08</artifactId><version>1.0.0</version><properties><maven.compiler.release>17</maven.compiler.release></properties><build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version></plugin><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.2</version></plugin></plugins></build><dependencies><dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.11.4</version><scope>test</scope></dependency></dependencies></project>''',
        'src/main/java/org/fc08/Smoke.java':'package org.fc08; public class Smoke { public static int value(){return 8;} }\n',
        'src/test/java/org/fc08/SmokeTest.java':'package org.fc08; import org.junit.jupiter.api.Test; import static org.junit.jupiter.api.Assertions.assertEquals; public class SmokeTest { @Test public void test() { assertEquals(8,Smoke.value()); }}\n'})
@@ -564,7 +653,8 @@ def dag(base:Path)->dict[str,Any]:
     return {'immutable-source':{'source_verified':True},'negative-exit-propagation':fail_negative(base),
             'dag-fanout':{'required_jobs':['github-actions-dag','linux-polyglot','windows-dotnet-msvc','macos-native'],
                           'status':'FANOUT_SCHEDULED_NOT_YET_AUTHENTICATED'},
-            'dag-verifier-adversarial':dag_verifier_adversarial(base,ident)}
+            'dag-verifier-adversarial':dag_verifier_adversarial(base,ident),
+            'github-live-restricted-dispatch-refusal':github_live_restricted_dispatch_refusal(ident)}
 
 
 def validate_receipt(record:dict[str,Any],lane:str,identity_expected:dict[str,Any])->None:

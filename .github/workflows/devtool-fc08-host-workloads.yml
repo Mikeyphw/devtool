@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: none
 
 concurrency:
   group: fc08-host-real-${{ github.ref }}
@@ -25,7 +26,9 @@ jobs:
           python-version: '3.13'
       - name: Install reviewed source runtime
         run: python -m pip install -e . pytest
-      - name: Run real Devtool DAG identity and rejection cases
+      - name: Run real Devtool DAG identity, denial and rejection cases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python tools/fc08_host_workloads.py --lane github-actions-dag --out out/fc08/github-actions-dag.json
       - uses: actions/upload-artifact@v4
         if: always()
