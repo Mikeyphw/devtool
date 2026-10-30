@@ -1,0 +1,46 @@
+name: Devtool FC-08 opt-in lost dispatch response experiment (non-release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      authorize_real_dispatch:
+        description: Authorize ONE real no-op GitHub dispatch and INJECTED loss of its response
+        type: boolean
+        required: true
+        default: false
+
+concurrency:
+  group: fc08-lost-response-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  unknown-response:
+    name: Real probe POST with injected lost-response and fail-closed journal proof
+    if: inputs.authorize_real_dispatch == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install reviewed Devtool dispatch runtime
+        run: python -m pip install -e . PyYAML
+      - name: Real POST with controlled injection after response and unknown journal checks
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FC08_DISPATCH_AUTHORIZED: ${{ inputs.authorize_real_dispatch }}
+        run: python tools/fc08_dispatch_uncertain_outcome.py --out out/fc08/lost-response.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fc08-lost-response-attempt${{ github.run_attempt }}
+          path: out/fc08/lost-response.json
+          if-no-files-found: error
+          retention-days: 14
