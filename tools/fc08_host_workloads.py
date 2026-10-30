@@ -24,8 +24,8 @@ SOURCE = Path(__file__).resolve().parents[1]
 LANES = ('github-actions-dag','linux-polyglot','windows-dotnet-msvc','macos-native')
 EXPECTED = {'linux-polyglot': 'Linux', 'windows-dotnet-msvc': 'Windows', 'macos-native': 'Darwin'}
 EXPECTED_CHECKS = {
-    'github-actions-dag': ('immutable-source','negative-exit-propagation','dag-fanout'),
-    'linux-polyglot': ('python','python-uv','python-poetry','python-pdm','go','node','rust','maven','cmake','meson','negative-exit-propagation'),
+    'github-actions-dag': ('immutable-source','negative-exit-propagation','dag-fanout','dag-verifier-adversarial'),
+    'linux-polyglot': ('python','python-uv','python-poetry','python-pdm','go','node','rust','maven','cmake','meson','negative-exit-propagation','linux-lock-drift-refusal','linux-native-abi-refusal'),
     'windows-dotnet-msvc': ('dotnet-cold-restore','dotnet-warm-restore','dotnet-build','dotnet-trx-coverage','dotnet-pack','dotnet-publish','msvc-cmake','negative-exit-propagation'),
     'macos-native': ('native-cmake','unsupported-host-refusal','negative-exit-propagation'),
 }
@@ -218,6 +218,123 @@ def build_meson(root:Path)->dict[str,Any]:
     return {'runner':'meson','operations':['build','test'],'meson_log_sha256':sha_file(logs[0]),'command_hashes':[a['stdout_sha256'] for a in x]}
 
 
+def linux_lock_drift_refusal(uv_repo:Path)->dict[str,Any]:
+    """Prove real uv locked/offline execution refuses a changed manifest.
+
+    Never mutate a user's project. The disposable uv fixture must already have
+    completed its real lock and run. A stale lock must not silently resolve
+    online, update itself, or qualify as a valid locked invocation.
+    """
+    manifest=uv_repo/'pyproject.toml'
+    lock=uv_repo/'uv.lock'
+    before=manifest.read_bytes()
+    lock_before=sha_file(lock)
+    if b'version="0.1.0"' not in before:
+        raise RuntimeError('FC08_UV_MANIFEST_BASE_UNEXPECTED')
+    try:
+        manifest.write_bytes(before.replace(b'version="0.1.0"',b'version="0.2.0"',1))
+        drift_sha=sha_file(manifest)
+        attempt=run(['uv','lock','--check','--offline'],uv_repo,timeout=120)
+        if attempt['code']==0:
+            raise RuntimeError('FC08_UV_STALE_LOCK_ACCEPTED')
+        if sha_file(lock)!=lock_before:
+            raise RuntimeError('FC08_UV_LOCK_MUTATED_BY_REFUSAL')
+    finally:
+        manifest.write_bytes(before)
+    restored=must(['uv','lock','--check','--offline'],uv_repo,timeout=120)
+    if sha_file(lock)!=lock_before:
+        raise RuntimeError('FC08_UV_LOCK_CHANGED_AFTER_RESTORE')
+    return {'native':'real uv offline lock check','drift_manifest_sha256':drift_sha,
+            'lock_sha256':lock_before,'refusal_exit':attempt['code'],
+            'refusal_stdout_sha256':attempt['stdout_sha256'],
+            'refusal_stderr_sha256':attempt['stderr_sha256'],
+            'restored_check_sha256':restored['stdout_sha256']}
+
+
+def linux_native_abi_refusal(cmake_repo:Path)->dict[str,Any]:
+    """Run the production RM-13 ABI verifier on the actual compiled ELF."""
+    from devtool.actions_rm13_cpp import CppError,verify_binary
+    if platform.machine().lower() not in ('x86_64','amd64'):
+        raise RuntimeError('FC08_LINUX_ABI_HOST_UNSUPPORTED_FOR_EXACT_NEGATIVE')
+    binaries=[p for p in cmake_repo.rglob('fc08main') if p.is_file() and not p.is_symlink()]
+    if len(binaries)!=1:
+        raise RuntimeError('FC08_REAL_CMAKE_BINARY_MISSING_OR_AMBIGUOUS')
+    binary=binaries[0]
+    accepted=verify_binary(binary,abi='elf-x86_64')
+    if (accepted.get('abi')!='elf-x86_64' or accepted.get('verified_local_bytes') is not True or accepted.get('release_qualified') is not False):
+        raise RuntimeError('FC08_LINUX_REAL_BINARY_NOT_ELF_X86_64')
+    try:
+        verify_binary(binary,abi='elf-aarch64')
+    except CppError as exc:
+        if 'wrong native architecture/ABI' not in str(exc):
+            raise RuntimeError('FC08_LINUX_ABI_REFUSAL_WRONG_REASON') from exc
+    else:
+        raise RuntimeError('FC08_LINUX_WRONG_ABI_ACCEPTED')
+    return {'native':'real CMake ELF through reviewed RM-13 verifier',
+            'binary_sha256':sha_file(binary),'accepted_abi':'elf-x86_64',
+            'refused_abi':'elf-aarch64','refusal':'wrong native architecture/ABI'}
+
+
+def dag_verifier_adversarial(base:Path,ident:dict[str,Any])->dict[str,Any]:
+    """Exercise actual hosted summary executable with synthetic hostile needs.
+
+    These are *verifier* negative cases, not real GitHub dispatch, token
+    permissions, runner access or consumer qualification. Those remain OPEN.
+    """
+    raw=base/'adversarial-host-receipts'
+    raw.mkdir()
+    for lane in LANES:
+        folder=raw/('fc08-real-'+lane+'-attempt'+str(ident['attempt']))
+        folder.mkdir()
+        checks={name:{'synthetic_verifier_fixture':True} for name in EXPECTED_CHECKS[lane]}
+        payload={'schema':'devtool.fc08.host-real-workload.v1','lane':lane,'identity':ident,
+                 'checks':checks,'checks_sha256':sha_bytes(json.dumps(checks,sort_keys=True,separators=(',',':')).encode()),
+                 'status':'WORKLOAD_COMPLETED_NEEDS_INDEPENDENT_REVIEW',
+                 'release_qualified':False,'device_qualified':False}
+        (folder/(lane+'.json')).write_text(json.dumps(payload,sort_keys=True))
+    command=[sys.executable,str(SOURCE/'tools/fc08_host_summary.py'),
+             '--input',str(raw),'--out',str(base/'adversarial-host-summary.json')]
+    needs={key:{'result':'success'} for key in ('dag','linux','windows','macos')}
+    def call(case_needs:dict[str,Any])->dict[str,Any]:
+        env={'FC08_NEEDS_JSON':json.dumps(case_needs)}
+        return run(command,SOURCE,timeout=80,extra_env=env)
+    baseline=call(needs)
+    out=base/'adversarial-host-summary.json'
+    if baseline['code'] or not out.is_file():
+        raise RuntimeError('FC08_HOST_VERIFIER_VALID_CONTROL_FAILED '+baseline['stderr_tail'])
+    content=json.loads(out.read_text())
+    if content.get('release_qualified') is not False or content.get('fc08_overall_qualified') is not False:
+        raise RuntimeError('FC08_ADVERSARIAL_VERIFIER_FALSE_PROMOTION')
+    baseline_hash=sha_file(out)
+    out.unlink()
+    rejected={}
+    for key,broken,reason in (
+        ('failed-dag',{**needs,'dag':{'result':'failure'}},'FAILED_OR_MISSING_GITHUB_HOST_JOB:dag'),
+        ('failed-windows',{**needs,'windows':{'result':'failure'}},'FAILED_OR_MISSING_GITHUB_HOST_JOB:windows'),
+        ('missing-needs',{'dag':{'result':'success'}},'MISSING_OR_UNEXPECTED_GITHUB_HOST_JOBS'),
+    ):
+        attempt=call(broken)
+        if attempt['code']==0 or reason not in attempt['stderr_tail'] or out.exists():
+            raise RuntimeError('FC08_HOST_VERIFIER_NEGATIVE_NOT_REFUSED:'+key)
+        rejected[key]={'exit':attempt['code'],'stderr_sha256':attempt['stderr_sha256']}
+    lane='linux-polyglot'
+    receipt=raw/('fc08-real-'+lane+'-attempt'+str(ident['attempt']))/(lane+'.json')
+    original=receipt.read_bytes()
+    try:
+        body=json.loads(original)
+        body['identity']['attempt']=ident['attempt']+1
+        receipt.write_text(json.dumps(body,sort_keys=True))
+        attempt=call(needs)
+        if attempt['code']==0 or 'WRONG_LANE_OR_SOURCE_IDENTITY' not in attempt['stderr_tail'] or out.exists():
+            raise RuntimeError('FC08_HOST_VERIFIER_REPLAY_ACCEPTED')
+        rejected['replayed-attempt']={'exit':attempt['code'],'stderr_sha256':attempt['stderr_sha256']}
+    finally:
+        receipt.write_bytes(original)
+    return {'scope':'hosted real verifier with synthetic negative inputs only',
+            'valid_control_sha256':baseline_hash,'negative_cases':rejected,
+            'live_dispatch_denial_qualified':False,'token_permissions_qualified':False}
+
+
 def linux(base:Path)->dict[str,Any]:
     if platform.system()!='Linux':raise RuntimeError('WRONG_LINUX_HOST')
     data={}
@@ -250,6 +367,7 @@ def linux(base:Path)->dict[str,Any]:
         lockfile=pkg/lf
         if not lockfile.is_file():raise RuntimeError('MISSING_REAL_MANAGER_LOCK_'+name)
         data['python-'+name]={'native':'lock+run','lock_sha256':sha_file(lockfile),'run_sha256':row['stdout_sha256']}
+    data['linux-lock-drift-refusal']=linux_lock_drift_refusal(base/'manager-uv')
     go=fixture(base,'go','go',{'go.mod':'module example.org/fc08\n\ngo 1.23\n','sample.go':'package fc08\nfunc V() int {return 8}\n','sample_test.go':'package fc08\nimport "testing"\nfunc TestV(t *testing.T){if V()!=8 {t.Fatal("incorrect")}}\n'})
     data['go']={'runner':'go','build':devtool(go,'build',timeout=360)['stdout_sha256'],'test':devtool(go,'test',timeout=360)['stdout_sha256']}
     node=fixture(base,'node','node',{'package.json':'{"name":"fc08-native","private":true,"version":"1.0.0","scripts":{"build":"node build.cjs","test":"node test.cjs"}}\n','build.cjs':"require('fs').writeFileSync('build.txt','real-build\\n');\n",'test.cjs':"const fs=require('fs');if(fs.readFileSync('build.txt','utf8')!=='real-build\\n')process.exit(8);\n"})
@@ -265,6 +383,7 @@ def linux(base:Path)->dict[str,Any]:
     if not reports:raise RuntimeError('NO_REAL_MAVEN_SUREFIRE_XML')
     data['maven']['report_sha256']=sha_file(reports[0])
     data['cmake']=build_cmake(base,'cmake')
+    data['linux-native-abi-refusal']=linux_native_abi_refusal(base/'cmake')
     data['meson']=build_meson(base)
     data['negative-exit-propagation']=fail_negative(base)
     return data
@@ -441,9 +560,11 @@ def macos(base:Path)->dict[str,Any]:
 
 def dag(base:Path)->dict[str,Any]:
     if not os.environ.get('GITHUB_ACTIONS')=='true':raise RuntimeError('NOT_REAL_GITHUB_ACTIONS')
+    ident=identity(dict(os.environ))
     return {'immutable-source':{'source_verified':True},'negative-exit-propagation':fail_negative(base),
             'dag-fanout':{'required_jobs':['github-actions-dag','linux-polyglot','windows-dotnet-msvc','macos-native'],
-                          'status':'FANOUT_SCHEDULED_NOT_YET_AUTHENTICATED'}}
+                          'status':'FANOUT_SCHEDULED_NOT_YET_AUTHENTICATED'},
+            'dag-verifier-adversarial':dag_verifier_adversarial(base,ident)}
 
 
 def validate_receipt(record:dict[str,Any],lane:str,identity_expected:dict[str,Any])->None:
