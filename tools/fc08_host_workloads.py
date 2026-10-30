@@ -281,16 +281,52 @@ def windows_dotnet_fixture_config() -> str:
 
 
 
-def validate_dotnet_test_evidence(results:Path, test:dict[str,Any])->dict[str,str]:
-    """Require actual executed passing VSTest tests and genuine Coverlet XML.
+def _validate_cobertura_document(path:Path, *, require_lines:bool)->None:
+    try:
+        coverage=ET.parse(path).getroot()
+        if coverage.tag!='coverage':
+            raise ValueError('unexpected coverage XML root')
+        if require_lines and int(coverage.get('lines-valid','0'))<1:
+            raise ValueError('missing real covered source')
+    except (OSError,ET.ParseError,ValueError) as exc:
+        raise RuntimeError('INVALID_OR_EMPTY_COVERAGE') from exc
 
-    A zero-test ``dotnet test`` can return 0 and create no artifacts. Never
-    regard that exit code alone as qualification; on failure include only the
-    bounded, sanitized diagnostics saved specifically for this command.
+
+def _reported_vstest_coverage(results:Path, candidates:list[Path], test:dict[str,Any])->Path:
+    """Bind VSTest's single reported Coverlet attachment to a file in results.
+
+    The collector can leave multiple coverage.cobertura.xml files in its results
+    root. Accepting an arbitrary first match is unsafe; the successful VSTest
+    process must identify the qualifying attachment itself. Never infer its
+    identity from filesystem ordering, identical basenames or timestamps.
+    """
+    tail=str(test.get('stdout_tail',''))
+    mentions=[line.strip().strip('"') for line in tail.splitlines()
+              if line.strip().strip('"').replace('\\','/').lower().endswith('/coverage.cobertura.xml')]
+    if len(mentions)!=1:
+        raise RuntimeError('AMBIGUOUS_OR_MISSING_VSTEST_COVERAGE_ATTACHMENT count='+str(len(mentions)))
+    try:
+        reported=Path(mentions[0]).resolve(strict=True)
+        root=results.resolve(strict=True)
+        if not reported.is_relative_to(root):
+            raise ValueError('outside results root')
+    except (OSError,ValueError,RuntimeError) as exc:
+        raise RuntimeError('REFUSED_VSTEST_COVERAGE_ATTACHMENT_OUTSIDE_RESULTS') from exc
+    if reported not in {p.resolve(strict=True) for p in candidates}:
+        raise RuntimeError('REFUSED_UNEXPECTED_VSTEST_COVERAGE_ATTACHMENT')
+    return reported
+
+
+def validate_dotnet_test_evidence(results:Path, test:dict[str,Any])->dict[str,Any]:
+    """Require a positive TRX and a genuine VSTest-attached Coverlet XML.
+
+    With a single coverage file, the older strict behavior remains. When the
+    collector writes extras, VSTest must name exactly one positive attachment;
+    independently discovered extras are parsed but cannot qualify as coverage.
     """
     trx=sorted(results.rglob('*.trx')) if results.is_dir() else []
     cov=sorted(results.rglob('coverage.cobertura.xml')) if results.is_dir() else []
-    if len(trx)!=1 or len(cov)!=1:
+    if len(trx)!=1 or not cov:
         raise RuntimeError('MISSING_TRX_OR_COVERAGE trx_count='+str(len(trx))+
             ' coverage_count='+str(len(cov))+
             ' stdout_tail='+_public_diagnostic(str(test.get('stdout_tail','')).encode(),limit=1250)+
@@ -309,13 +345,27 @@ def validate_dotnet_test_evidence(results:Path, test:dict[str,Any])->dict[str,st
             raise ValueError('test execution not fully passed')
     except (OSError,ET.ParseError,ValueError) as exc:
         raise RuntimeError('INVALID_OR_ZERO_TEST_TRX') from exc
-    try:
-        coverage=ET.parse(cov[0]).getroot()
-        if coverage.tag!='coverage' or int(coverage.get('lines-valid','0'))<1:
-            raise ValueError('missing real covered source')
-    except (OSError,ET.ParseError,ValueError) as exc:
-        raise RuntimeError('INVALID_OR_EMPTY_COVERAGE') from exc
-    return {'result':test['stdout_sha256'],'trx':sha_file(trx[0]),'coverage':sha_file(cov[0])}
+
+    if len(cov)==1:
+        selected=cov[0]
+        # When the subprocess explicitly reports an attachment, enforce that
+        # identity even in the single-file case (missing/stale attachments
+        # must not be silently replaced by an unrelated filesystem hit).
+        if any(line.strip().strip('"').replace('\\','/').lower().endswith('/coverage.cobertura.xml')
+               for line in str(test.get('stdout_tail','')).splitlines()):
+            selected=_reported_vstest_coverage(results,cov,test)
+    else:
+        selected=_reported_vstest_coverage(results,cov,test)
+        for extra in cov:
+            if extra.resolve()!=selected.resolve():
+                _validate_cobertura_document(extra,require_lines=False)
+    _validate_cobertura_document(selected,require_lines=True)
+    receipt={'result':test['stdout_sha256'],'trx':sha_file(trx[0]),'coverage':sha_file(selected)}
+    if len(cov)>1:
+        # Preserve full evidence inventory without claiming extra XML qualified.
+        receipt['coverage_candidates_sha256']=sorted(sha_file(p) for p in cov)
+        receipt['coverage_candidate_count']=len(cov)
+    return receipt
 
 def windows(base:Path)->dict[str,Any]:
     if os.name!='nt' or platform.system()!='Windows':raise RuntimeError('WRONG_WINDOWS_HOST')
