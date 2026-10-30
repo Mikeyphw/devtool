@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from typing import Any
 
 SOURCE = Path(__file__).resolve().parents[1]
@@ -75,18 +76,20 @@ def _public_diagnostic(data: bytes, *, limit: int = 1900) -> str:
     return lines
 
 
-def run(argv: list[str],cwd: Path,*,timeout: int=240,extra_env:dict[str,str]|None=None)->dict[str,Any]:
+def run(argv: list[str],cwd: Path,*,timeout: int=240,extra_env:dict[str,str]|None=None,
+        capture_success_tail:bool=False)->dict[str,Any]:
     env=os.environ.copy();env.update(extra_env or {})
     p=subprocess.run(argv,cwd=cwd,capture_output=True,timeout=timeout,env=env)
     # Only failed commands disclose bounded, sanitized diagnostic tails. Never
     # include the process environment, raw payload or bearer tokens in receipts.
     return {'argv':argv,'code':p.returncode,'stdout_sha256':sha_bytes(p.stdout),
-            'stderr_sha256':sha_bytes(p.stderr),'stdout_tail':_public_diagnostic(p.stdout) if p.returncode else '',
-            'stderr_tail':_public_diagnostic(p.stderr) if p.returncode else ''}
+            'stderr_sha256':sha_bytes(p.stderr),'stdout_tail':_public_diagnostic(p.stdout) if p.returncode or capture_success_tail else '',
+            'stderr_tail':_public_diagnostic(p.stderr) if p.returncode or capture_success_tail else ''}
 
 
-def must(argv:list[str], cwd:Path,*,timeout:int=240, env:dict[str,str]|None=None)->dict[str,Any]:
-    row=run(argv,cwd,timeout=timeout,extra_env=env)
+def must(argv:list[str], cwd:Path,*,timeout:int=240, env:dict[str,str]|None=None,
+         capture_success_tail:bool=False)->dict[str,Any]:
+    row=run(argv,cwd,timeout=timeout,extra_env=env,capture_success_tail=capture_success_tail)
     if row['code']:
         # Console-rich Devtool diagnostics are often on stdout, not stderr.
         # Reporting only stderr previously hid the actual native failures.
@@ -259,19 +262,61 @@ def windows_dotnet_fixture_config() -> str:
             'solution="FC08.sln"\n')
 
 
+
+def validate_dotnet_test_evidence(results:Path, test:dict[str,Any])->dict[str,str]:
+    """Require actual executed passing VSTest tests and genuine Coverlet XML.
+
+    A zero-test ``dotnet test`` can return 0 and create no artifacts. Never
+    regard that exit code alone as qualification; on failure include only the
+    bounded, sanitized diagnostics saved specifically for this command.
+    """
+    trx=sorted(results.rglob('*.trx')) if results.is_dir() else []
+    cov=sorted(results.rglob('coverage.cobertura.xml')) if results.is_dir() else []
+    if len(trx)!=1 or len(cov)!=1:
+        raise RuntimeError('MISSING_TRX_OR_COVERAGE trx_count='+str(len(trx))+
+            ' coverage_count='+str(len(cov))+
+            ' stdout_tail='+_public_diagnostic(str(test.get('stdout_tail','')).encode(),limit=1250)+
+            ' stderr_tail='+_public_diagnostic(str(test.get('stderr_tail','')).encode(),limit=450))
+    try:
+        root=ET.parse(trx[0]).getroot()
+        summary=root.find('.//{*}ResultSummary')
+        counters=root.find('.//{*}Counters')
+        if summary is None or summary.get('outcome')!='Completed' or counters is None:
+            raise ValueError('missing TRX counters')
+        total=int(counters.get('total','0'))
+        executed=int(counters.get('executed','0'))
+        passed=int(counters.get('passed','0'))
+        failed=int(counters.get('failed','0'))
+        if total<1 or executed!=total or passed!=total or failed!=0:
+            raise ValueError('test execution not fully passed')
+    except (OSError,ET.ParseError,ValueError) as exc:
+        raise RuntimeError('INVALID_OR_ZERO_TEST_TRX') from exc
+    try:
+        coverage=ET.parse(cov[0]).getroot()
+        if coverage.tag!='coverage' or int(coverage.get('lines-valid','0'))<1:
+            raise ValueError('missing real covered source')
+    except (OSError,ET.ParseError,ValueError) as exc:
+        raise RuntimeError('INVALID_OR_EMPTY_COVERAGE') from exc
+    return {'result':test['stdout_sha256'],'trx':sha_file(trx[0]),'coverage':sha_file(cov[0])}
+
 def windows(base:Path)->dict[str,Any]:
     if os.name!='nt' or platform.system()!='Windows':raise RuntimeError('WRONG_WINDOWS_HOST')
     # GHA installs .NET and initializes MSVC in a separate dedicated job step.
     # Create actual .NET reference graph, NuGet lock, and test/coverage artifacts.
     cfg=windows_dotnet_fixture_config()
     repo=fixture(base,'dotnet','dotnet',{
+        # Force the VSTest-compatible .NET 8 SDK even when newer SDKs are
+        # preinstalled on the GitHub runner. setup-dotnet supplies .NET 8.
+        'global.json':'{"sdk":{"version":"8.0.100","rollForward":"latestFeature"}}\n',
+        'fc08.runsettings':'<RunSettings><RunConfiguration><TreatNoTestsAsError>true</TreatNoTestsAsError></RunConfiguration></RunSettings>\n',
         'Lib/Lib.csproj':'<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable></PropertyGroup></Project>\n',
         'Lib/Calc.cs':'namespace FC08; public static class Calc { public static int Add(int a,int b) => a+b; }\n',
         'Checks/Checks.csproj':'<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework><IsTestProject>true</IsTestProject><IsPackable>false</IsPackable></PropertyGroup><ItemGroup><ProjectReference Include="../Lib/Lib.csproj"/><PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0"/><PackageReference Include="xunit" Version="2.9.2"/><PackageReference Include="xunit.runner.visualstudio" Version="3.0.1"/><PackageReference Include="coverlet.collector" Version="6.0.2"/></ItemGroup></Project>\n',
         'Checks/CalcTests.cs':'using Xunit;using FC08;public class CalcTests {[Fact]public void Adds() {Assert.Equal(7,Calc.Add(3,4));}}\n',
     },config=cfg)
     lib=repo/'Lib/Lib.csproj'; checks=repo/'Checks/Checks.csproj'
-    must(['dotnet','new','sln','-n','FC08','--format','sln'],repo,timeout=120)
+    # .NET 8 generates .sln by default; --format is only supported by SDK 9.0.200+.
+    must(['dotnet','new','sln','-n','FC08'],repo,timeout=120)
     must(['dotnet','sln','FC08.sln','add',str(lib),str(checks)],repo,timeout=90)
     # Initially generate committed lockfiles in disposable fixture before
     # requiring locked restore. Real cold and warm restores share one cache path.
@@ -286,12 +331,11 @@ def windows(base:Path)->dict[str,Any]:
     data['dotnet-cold-restore']={'result':must(['dotnet','restore','FC08.sln','--locked-mode','--force'],repo,timeout=900,env=env)['stdout_sha256'],'locks':[sha_file(x) for x in locks]}
     data['dotnet-warm-restore']={'result':must(['dotnet','restore','FC08.sln','--locked-mode'],repo,timeout=900,env=env)['stdout_sha256']}
     data['dotnet-build']={'result':devtool(repo,'build',timeout=900,solution='FC08.sln')['stdout_sha256']}
-    test=must(['dotnet','test','Checks/Checks.csproj','-c','Release','--logger','trx;LogFileName=fc08.trx',
-        '--collect','XPlat Code Coverage','--results-directory',str(base/'test-results')],repo,timeout=900,env=env)
-    trx=list((base/'test-results').rglob('*.trx'));cov=list((base/'test-results').rglob('coverage.cobertura.xml'))
-    if len(trx)!=1 or len(cov)!=1:raise RuntimeError('MISSING_TRX_OR_COVERAGE')
-    if not b'Passed' in trx[0].read_bytes():raise RuntimeError('TRX_WITHOUT_PASS')
-    data['dotnet-trx-coverage']={'result':test['stdout_sha256'],'trx':sha_file(trx[0]),'coverage':sha_file(cov[0])}
+    test=must(['dotnet','test','Checks/Checks.csproj','-c','Release',
+        '--settings','fc08.runsettings','--logger','trx;LogFileName=fc08.trx',
+        '--collect','XPlat Code Coverage','--results-directory',str(base/'test-results')],
+        repo,timeout=900,env=env,capture_success_tail=True)
+    data['dotnet-trx-coverage']=validate_dotnet_test_evidence(base/'test-results',test)
     packdir=base/'packs'
     must(['dotnet','pack',str(lib),'-c','Release','--no-restore','-o',str(packdir)],repo,timeout=600,env=env)
     packages=list(packdir.glob('*.nupkg'))
