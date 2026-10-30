@@ -254,6 +254,46 @@ def linux_lock_drift_refusal(uv_repo:Path)->dict[str,Any]:
             'restored_check_sha256':restored['stdout_sha256']}
 
 
+def _cargo_frozen_refusal_diagnostic(refused:dict[str,Any])->dict[str,str]:
+    """Classify Cargo's *primary error*, never an unrelated nonzero exit.
+
+    Cargo <=0.93 said "needs to be updated" and >=0.94 says "cannot
+    update the lock file". Both must explicitly attribute the refusal to
+    --locked/--frozen. Only bounded, already-redacted tails are examined.
+    No raw diagnostic, temporary file path, or credentials enter PASS receipts.
+    """
+    raw=(str(refused.get('stderr_tail',''))+'\n'+str(refused.get('stdout_tail','')))
+    plain=re.sub(r'\x1b\[[0-9;]*[A-Za-z]','',raw)
+    errors=[line.strip() for line in plain.splitlines()
+            if re.match(r'^\s*error\s*:',line,re.IGNORECASE)]
+    patterns={
+        'CARGO_LOCKFILE_UPDATE_BLOCKED_LEGACY':
+            r'^error\s*:\s*the lock file\s+(?:.+?\s+)?needs to be updated\s+but\s+--(?:locked|frozen)\s+was passed to prevent this\.?$',
+        'CARGO_LOCKFILE_UPDATE_BLOCKED_MODERN':
+            r'^error\s*:\s*cannot update the lock file\s+(?:.+?\s+)?because\s+--(?:locked|frozen)\s+was passed to prevent this\.?$',
+    }
+    kinds=[key for line in errors for key,regex in patterns.items()
+           if re.fullmatch(regex,line,re.IGNORECASE)]
+    category=kinds[0] if len(errors)==1 and len(kinds)==1 else (
+        'MISSING_CARGO_ERROR_LINE' if not errors else 'NON_LOCKFILE_CARGO_ERROR')
+    if errors:
+        # These are public only on failure. Redact environment-specific paths
+        # and access credentials again; avoid echoing arbitrary cargo stdout.
+        safe_line=re.sub(r'(?i)\bauthorization\s*[=:]\s*bearer\s+[^\s;]+',
+                         'authorization=[REDACTED]',errors[0])
+        excerpt=_public_diagnostic(safe_line.encode('utf-8'),limit=220)
+        # Some programs spell `Authorization=Bearer <secret>` as two tokens;
+        # generic `authorization=` redaction covers only the first. Scrub
+        # bearer payloads independently before writing public failure output.
+        excerpt=re.sub(r'(?i)\bbearer\s+[^\s;]+','Bearer [REDACTED]',excerpt)
+        excerpt=re.sub(r'(?:[A-Za-z]:[\\/]|/)[^\s\x60\"\']+','[PATH]',excerpt)
+        excerpt=re.sub(r'[\r\n\t]+',' ',excerpt)[:220]
+    else:
+        excerpt='[NO_CARGO_ERROR_LINE]'
+    return {'category':category,'error_excerpt':excerpt,
+            'diagnostic_sha256':sha_bytes(raw.encode('utf-8'))}
+
+
 def linux_cargo_frozen_lock_refusal(rust_repo:Path)->dict[str,Any]:
     """Force a *dependency graph* lock drift and require real frozen build refusal.
 
@@ -289,9 +329,16 @@ def linux_cargo_frozen_lock_refusal(rust_repo:Path)->dict[str,Any]:
             raise RuntimeError('FC08_CARGO_FROZEN_REFUSAL_CHANGED_LOCK')
         # A nonzero exit alone is insufficient: require Cargo's lockfile error,
         # not a compiler, manifest parse, permission, or network failure.
-        diagnostic=(refused.get('stderr_tail','')+'\n'+refused.get('stdout_tail','')).lower()
-        if not ('lock file' in diagnostic and 'needs to be updated' in diagnostic):
-            raise RuntimeError('FC08_CARGO_REFUSAL_NOT_LOCKFILE_DRIFT')
+        cargo_diagnostic=_cargo_frozen_refusal_diagnostic(refused)
+        if cargo_diagnostic['category'] not in (
+            'CARGO_LOCKFILE_UPDATE_BLOCKED_LEGACY',
+            'CARGO_LOCKFILE_UPDATE_BLOCKED_MODERN'):
+            raise RuntimeError('FC08_CARGO_REFUSAL_NOT_LOCKFILE_DRIFT'+
+                ' category='+cargo_diagnostic['category']+
+                ' exit='+str(refused['code'])+
+                ' stderr_sha256='+str(refused.get('stderr_sha256',''))+
+                ' diagnostic_sha256='+cargo_diagnostic['diagnostic_sha256']+
+                ' excerpt='+cargo_diagnostic['error_excerpt'])
     finally:
         manifest.write_bytes(original)
         if probe.is_dir() and not probe.is_symlink():
@@ -302,6 +349,8 @@ def linux_cargo_frozen_lock_refusal(rust_repo:Path)->dict[str,Any]:
     return {'native':'cargo build --frozen real local path dependency lock drift',
             'original_lock_sha256':baseline_lock,'drift_manifest_sha256':changed_sha,
             'refusal_exit':refused['code'],'refusal_stderr_sha256':refused['stderr_sha256'],
+            'refusal_diagnostic_category':cargo_diagnostic['category'],
+            'refusal_diagnostic_sha256':cargo_diagnostic['diagnostic_sha256'],
             'baseline_sha256':baseline['stdout_sha256'],
             'restored_sha256':restored['stdout_sha256']}
 
