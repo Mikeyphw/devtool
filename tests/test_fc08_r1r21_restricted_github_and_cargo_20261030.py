@@ -111,13 +111,14 @@ def test_cargo_lock_drift_real_subprocess_protocol_success_mock(tmp_path,monkeyp
     original_lock=h.sha_file(folder/'Cargo.lock')
     run_calls=[]
     def must(argv,cwd,**kwargs):
-        assert argv==['cargo','metadata','--no-deps','--format-version','1','--frozen']
+        assert argv==['cargo','build','--frozen']
         assert cwd==folder
         return {'stdout_sha256':'a'*64}
     def run(argv,cwd,**kwargs):
         run_calls.append((argv,cwd))
-        assert b'version="0.2.0"' in (folder/'Cargo.toml').read_bytes()
-        return {'code':101,'stderr_sha256':'f'*64}
+        assert b'fc08_lock_probe = { path = "fc08_lock_probe" }' in (folder/'Cargo.toml').read_bytes()
+        assert (folder/'fc08_lock_probe/src/lib.rs').is_file()
+        return {'code':101,'stderr_sha256':'f'*64, 'stderr_tail':'error: the lock file needs to be updated but --locked was passed to prevent this'}
     monkeypatch.setattr(h,'must',must)
     monkeypatch.setattr(h,'run',run)
     receipt=h.linux_cargo_frozen_lock_refusal(folder)
@@ -125,6 +126,7 @@ def test_cargo_lock_drift_real_subprocess_protocol_success_mock(tmp_path,monkeyp
     assert receipt['original_lock_sha256']==original_lock
     assert receipt['baseline_sha256']==receipt['restored_sha256']=='a'*64
     assert (folder/'Cargo.toml').read_bytes()==original
+    assert not (folder/'fc08_lock_probe').exists()
     assert h.sha_file(folder/'Cargo.lock')==original_lock
     assert len(run_calls)==1
 
@@ -136,6 +138,7 @@ def test_cargo_refuses_exit_zero_and_restores_manifest(tmp_path,monkeypatch):
     with pytest.raises(RuntimeError,match='STALE_FROZEN_LOCK_ACCEPTED'):
         h.linux_cargo_frozen_lock_refusal(folder)
     assert (folder/'Cargo.toml').read_bytes()==original
+    assert not (folder/'fc08_lock_probe').exists()
 
 
 def test_cargo_refuses_mutated_lock_and_restores_manifest(tmp_path,monkeypatch):
@@ -143,11 +146,12 @@ def test_cargo_refuses_mutated_lock_and_restores_manifest(tmp_path,monkeypatch):
     monkeypatch.setattr(h,'must',lambda *a,**k:{'stdout_sha256':'a'*64})
     def tamper(*a,**k):
         (folder/'Cargo.lock').write_text('changed')
-        return {'code':101,'stderr_sha256':'b'*64}
+        return {'code':101,'stderr_sha256':'b'*64, 'stderr_tail':'error: the lock file needs to be updated but --locked was passed to prevent this'}
     monkeypatch.setattr(h,'run',tamper)
     with pytest.raises(RuntimeError,match='REFUSAL_CHANGED_LOCK'):
         h.linux_cargo_frozen_lock_refusal(folder)
     assert (folder/'Cargo.toml').read_bytes()==original
+    assert not (folder/'fc08_lock_probe').exists()
 
 
 def test_cargo_refuses_missing_unexpected_baseline(tmp_path):

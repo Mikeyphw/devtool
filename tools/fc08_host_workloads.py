@@ -255,32 +255,51 @@ def linux_lock_drift_refusal(uv_repo:Path)->dict[str,Any]:
 
 
 def linux_cargo_frozen_lock_refusal(rust_repo:Path)->dict[str,Any]:
-    """Real Cargo --frozen refuses stale offline lock without modifying source.
+    """Force a *dependency graph* lock drift and require real frozen build refusal.
 
-    Only owned disposable fixtures; never mutate a consumer checkout. A
-    nonzero exit alone cannot qualify if Cargo changed the committed lock.
+    `cargo metadata --no-deps` may accept a stale Cargo.lock without resolving
+    the dependency graph. A fresh LOCAL PATH dependency changes the lock graph,
+    does not use a registry or network, and `cargo build --frozen` must refuse
+    to update the existing lock. Run only on owned disposable FC08 fixtures.
     """
     manifest=rust_repo/'Cargo.toml'
     lock=rust_repo/'Cargo.lock'
     original=manifest.read_bytes()
-    if original.count(b'version="0.1.0"')!=1 or not lock.is_file():
+    probe=rust_repo/'fc08_lock_probe'
+    if (original.count(b'version="0.1.0"')!=1 or not lock.is_file() or
+        b'[dependencies]' in original or probe.exists() or probe.is_symlink()):
         raise RuntimeError('FC08_CARGO_MANIFEST_OR_LOCK_BASE_UNEXPECTED')
     baseline_lock=sha_file(lock)
-    baseline=must(['cargo','metadata','--no-deps','--format-version','1','--frozen'],rust_repo,timeout=90)
+    command=['cargo','build','--frozen']
+    baseline=must(command,rust_repo,timeout=150)
+    if sha_file(lock)!=baseline_lock:
+        raise RuntimeError('FC08_CARGO_BASELINE_MUTATED_LOCK')
+    changed_sha=''
+    refused=None
     try:
-        manifest.write_bytes(original.replace(b'version="0.1.0"',b'version="0.2.0"',1))
+        (probe/'src').mkdir(parents=True)
+        (probe/'Cargo.toml').write_text('[package]\nname="fc08_lock_probe"\nversion="0.1.0"\nedition="2021"\n')
+        (probe/'src/lib.rs').write_text('pub fn marker() -> u8 { 8 }\n')
+        manifest.write_bytes(original+b'\n[dependencies]\nfc08_lock_probe = { path = "fc08_lock_probe" }\n')
         changed_sha=sha_file(manifest)
-        refused=run(['cargo','metadata','--no-deps','--format-version','1','--frozen'],rust_repo,timeout=90)
+        refused=run(command,rust_repo,timeout=150)
         if refused['code']==0:
             raise RuntimeError('FC08_CARGO_STALE_FROZEN_LOCK_ACCEPTED')
         if sha_file(lock)!=baseline_lock:
             raise RuntimeError('FC08_CARGO_FROZEN_REFUSAL_CHANGED_LOCK')
+        # A nonzero exit alone is insufficient: require Cargo's lockfile error,
+        # not a compiler, manifest parse, permission, or network failure.
+        diagnostic=(refused.get('stderr_tail','')+'\n'+refused.get('stdout_tail','')).lower()
+        if not ('lock file' in diagnostic and 'needs to be updated' in diagnostic):
+            raise RuntimeError('FC08_CARGO_REFUSAL_NOT_LOCKFILE_DRIFT')
     finally:
         manifest.write_bytes(original)
-    restored=must(['cargo','metadata','--no-deps','--format-version','1','--frozen'],rust_repo,timeout=90)
-    if sha_file(lock)!=baseline_lock or manifest.read_bytes()!=original:
+        if probe.is_dir() and not probe.is_symlink():
+            shutil.rmtree(probe)
+    restored=must(command,rust_repo,timeout=150)
+    if sha_file(lock)!=baseline_lock or manifest.read_bytes()!=original or probe.exists():
         raise RuntimeError('FC08_CARGO_RESTORATION_MODIFIED_SOURCE')
-    return {'native':'cargo metadata --frozen on real locked Rust fixture',
+    return {'native':'cargo build --frozen real local path dependency lock drift',
             'original_lock_sha256':baseline_lock,'drift_manifest_sha256':changed_sha,
             'refusal_exit':refused['code'],'refusal_stderr_sha256':refused['stderr_sha256'],
             'baseline_sha256':baseline['stdout_sha256'],
