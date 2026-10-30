@@ -28,7 +28,7 @@ LANES = ('github-actions-dag','linux-polyglot','windows-dotnet-msvc','macos-nati
 EXPECTED = {'linux-polyglot': 'Linux', 'windows-dotnet-msvc': 'Windows', 'macos-native': 'Darwin'}
 EXPECTED_CHECKS = {
     'github-actions-dag': ('immutable-source','negative-exit-propagation','dag-fanout','dag-verifier-adversarial','github-live-restricted-dispatch-refusal'),
-    'linux-polyglot': ('python','python-uv','python-poetry','python-pdm','go','node','rust','maven','cmake','meson','negative-exit-propagation','linux-lock-drift-refusal','linux-native-abi-refusal','linux-cargo-frozen-lock-refusal'),
+    'linux-polyglot': ('python','python-uv','python-poetry','python-pdm','go','node','rust','maven','cmake','meson','negative-exit-propagation','linux-lock-drift-refusal','linux-native-abi-refusal','linux-native-abi-malformed-refusal','linux-cargo-frozen-lock-refusal'),
     'windows-dotnet-msvc': ('dotnet-cold-restore','dotnet-warm-restore','dotnet-build','dotnet-trx-coverage','dotnet-pack','dotnet-publish','msvc-cmake','negative-exit-propagation'),
     'macos-native': ('native-cmake','unsupported-host-refusal','negative-exit-propagation'),
 }
@@ -431,6 +431,56 @@ def linux_native_abi_refusal(cmake_repo:Path)->dict[str,Any]:
             'refused_abi':'elf-aarch64','refusal':'wrong native architecture/ABI'}
 
 
+
+def linux_native_abi_malformed_refusal(cmake_repo:Path)->dict[str,Any]:
+    """Exercise RM-13 against malformed copies of an actually compiled ELF.
+
+    Only write into an owned temporary directory. A malformed header, a foreign
+    machine ID and a symlink must each fail for their specific reason; the
+    original executable remains byte-for-byte unchanged. This proves Linux
+    parser refusals, NOT any cross-compiled or signed artifact qualification.
+    """
+    from devtool.actions_rm13_cpp import CppError, verify_binary
+    if platform.machine().lower() not in ('x86_64','amd64'):
+        raise RuntimeError('FC08_LINUX_MALFORMED_ABI_UNSUPPORTED_HOST')
+    binaries=[p for p in cmake_repo.rglob('fc08main') if p.is_file() and not p.is_symlink()]
+    if len(binaries)!=1:
+        raise RuntimeError('FC08_LINUX_MALFORMED_ABI_BINARY_AMBIGUOUS')
+    binary=binaries[0]
+    original=binary.read_bytes()
+    if len(original)<64 or original[:4]!=b'\x7fELF' or original[4]!=2 or original[5]!=1 or original[18:20]!=b'>\x00':
+        raise RuntimeError('FC08_LINUX_MALFORMED_ABI_NOT_REAL_X86_64_ELF')
+    original_sha=sha_bytes(original)
+    with tempfile.TemporaryDirectory(prefix='fc08-abi-refusal-') as temporary:
+        root=Path(temporary)
+        bad_class=root/'malformed-class'
+        bad_class.write_bytes(original[:4]+b'\x01'+original[5:])
+        bad_machine=root/'malformed-machine'
+        bad_machine.write_bytes(original[:18]+b'\x00\x00'+original[20:])
+        linked=root/'symlink-artifact'
+        linked.symlink_to(binary)
+        cases=(
+            ('ELF-class',bad_class,'ELF class/endianness mismatch'),
+            ('unknown-machine',bad_machine,'wrong native architecture/ABI'),
+            ('symlink',linked,'missing, symlink or unbounded native artifact'),
+        )
+        for case, path, reason in cases:
+            try:
+                verify_binary(path,abi='elf-x86_64')
+            except CppError as exc:
+                if reason not in str(exc):
+                    raise RuntimeError('FC08_LINUX_MALFORMED_ABI_WRONG_REFUSAL_REASON:'+case) from exc
+            else:
+                raise RuntimeError('FC08_LINUX_MALFORMED_ABI_ACCEPTED:'+case)
+        hashes={'ELF-class':sha_file(bad_class),'unknown-machine':sha_file(bad_machine)}
+    if binary.read_bytes()!=original or sha_file(binary)!=original_sha:
+        raise RuntimeError('FC08_LINUX_MALFORMED_ABI_MUTATED_REAL_BINARY')
+    return {'native':'RM-13 on real CMake ELF with owned malformed copies',
+            'original_elf_sha256':original_sha,'rejected_cases':['ELF-class','unknown-machine','symlink'],
+            'malformed_sha256':hashes,'original_binary_unchanged':True,
+            'release_qualified':False}
+
+
 def dag_verifier_adversarial(base:Path,ident:dict[str,Any])->dict[str,Any]:
     """Exercise actual hosted summary executable with synthetic hostile needs.
 
@@ -541,6 +591,7 @@ def linux(base:Path)->dict[str,Any]:
     data['maven']['report_sha256']=sha_file(reports[0])
     data['cmake']=build_cmake(base,'cmake')
     data['linux-native-abi-refusal']=linux_native_abi_refusal(base/'cmake')
+    data['linux-native-abi-malformed-refusal']=linux_native_abi_malformed_refusal(base/'cmake')
     data['meson']=build_meson(base)
     data['negative-exit-propagation']=fail_negative(base)
     return data

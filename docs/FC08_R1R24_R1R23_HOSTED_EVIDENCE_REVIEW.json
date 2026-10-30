@@ -1,0 +1,53 @@
+{
+  "archives": {
+    "dag": {
+      "archive_sha256": "a68a5010e2efeabbe075d524f548de09e63c5ae8aa23ecc21d1b2abc1ae3b5a6",
+      "check_count": 5,
+      "github_artifact_id": 13008306380,
+      "json_member": "github-actions-dag.json",
+      "receipt_sha256": "f5ead73646bdf13386a39ec220a4718360c27b4b17a30367823cf1ad07b68b88"
+    },
+    "g1-summary": {
+      "archive_sha256": "4ddab56cbae5588dda222c159018f84387449eba2056e836d2f8fe55f9836ccd",
+      "github_artifact_id": 13008291975,
+      "json_member": "summary.json"
+    },
+    "host-summary": {
+      "archive_sha256": "7db87c8773a5121a9a694e543ce03ce6eec1f117656eab8d6705f53c2b81c43c",
+      "github_artifact_id": 13007602228,
+      "json_member": "host-summary.json"
+    },
+    "linux": {
+      "archive_sha256": "6e0ba97226bea0948786afc4ec840f51957f28c38cbb6ca41a866f11a04a00b9",
+      "check_count": 14,
+      "github_artifact_id": 13007009278,
+      "json_member": "linux-polyglot.json",
+      "receipt_sha256": "f909fd75a7c17afd1cc430f6f844940705f573a233f302de2eaba41eb36f189c"
+    },
+    "macos": {
+      "archive_sha256": "02dd1982ed9dcb5bf3348bb8bc9a334648f4f5255a537d35b83e9404a2561de7",
+      "check_count": 3,
+      "github_artifact_id": 13008346369,
+      "json_member": "macos-native.json",
+      "receipt_sha256": "011526682d9535cd488bfbf8f79b26037618994629da844bd64146b7fb419c70"
+    },
+    "windows": {
+      "archive_sha256": "094c916526b1c10f42b5c292b9f49bb233b7b0341170261612e3d2d35816de41",
+      "check_count": 8,
+      "github_artifact_id": 13008636315,
+      "json_member": "windows-dotnet-msvc.json",
+      "receipt_sha256": "b464c1aaaed2859fb960e7c7a88f0e05982460dc492910d3f330f78b0c6ccfdb"
+    }
+  },
+  "fc08_hosted_evidence_collected": true,
+  "fc08_overall_qualified": false,
+  "fc08_run_id": 41119773037,
+  "fc08_source_and_check_counts_verified": true,
+  "g1_hosted_24_shard_summary_pass": true,
+  "g1_run_id": 41119781440,
+  "release_qualified": false,
+  "review_scope": "Original five hosted FC08 artifact archives plus hosted G1 consolidated summary; individual G1 shard artifacts not independently rechecked",
+  "schema_version": 1,
+  "source_sha": "ac815e2fb293329b776671eefbc92c8e7277fa9b",
+  "source_tree": "4a2d1cfb202e76250a918714a5f7ece5c51a9a4e"
+}

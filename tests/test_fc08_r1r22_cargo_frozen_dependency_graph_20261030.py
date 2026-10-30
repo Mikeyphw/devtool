@@ -103,5 +103,6 @@ def test_source_does_not_use_metadata_no_deps_as_lock_gate():
     assert "['cargo','metadata','--no-deps'" not in portion
     assert 'FC08_CARGO_REFUSAL_NOT_LOCKFILE_DRIFT' in portion
     assert h.EXPECTED_CHECKS['linux-polyglot'][-1]=='linux-cargo-frozen-lock-refusal'
-    assert len(h.EXPECTED_CHECKS['linux-polyglot'])==14
+    # R1R24 adds a separate real compiled-ELF malformed-input refusal.
+    assert len(h.EXPECTED_CHECKS['linux-polyglot'])==15
     assert len(h.EXPECTED_CHECKS['github-actions-dag'])==5
