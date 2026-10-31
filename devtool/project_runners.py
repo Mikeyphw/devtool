@@ -2269,6 +2269,23 @@ class PythonRunner(ProjectRunner):
         coverage = options.get("coverage", {})
         coverage = dict(coverage) if isinstance(coverage, dict) else {}
         argv = self._module(config, "pytest", "--tb=short", "-ra", f"--junitxml={report}")
+        # A project may pin its test-only dependencies in a separate uv
+        # requirements lock, without making pytest a runtime dependency or
+        # silently depending on the operator's ambient Python packages.
+        requirements_name = options.get("test_requirements")
+        if requirements_name is not None:
+            if (not isinstance(requirements_name, str)
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./-]*\.(?:txt|lock)", requirements_name)
+                    or ".." in Path(requirements_name).parts
+                    or Path(requirements_name).is_absolute()):
+                raise SystemExit("Python test_requirements must name a repository-relative .txt/.lock file")
+            requirements = root / requirements_name
+            if (not requirements.is_file() or requirements.is_symlink()
+                    or not requirements.resolve().is_relative_to(root)):
+                raise SystemExit("Python test_requirements must be an existing regular in-repository file")
+            if self._info(config).manager != "uv" or argv[:2] != ["uv", "run"]:
+                raise SystemExit("Python test_requirements currently requires the uv Python manager")
+            argv = [*argv[:2], "--with-requirements", str(requirements), *argv[2:]]
         selection = resolve_test_selection(config)
         target_values = list(dict.fromkeys(str(item) for item in targets if str(item)))
         defaults_suppressed = bool(selection.exact_pytest() and not selection.pytest_include_defaults)

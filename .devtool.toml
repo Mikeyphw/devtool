@@ -464,6 +464,7 @@ chroot_name = "androidos"
 [python]
 manager = "auto"
 test_framework = "pytest"
+test_requirements = "devtool-test-requirements.lock"
 locked = true
 install_project = true
 isolation = true

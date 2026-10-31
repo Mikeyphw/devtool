@@ -3356,6 +3356,16 @@ def audit_source_tree(root: Path, info: PythonProjectInfo, *, dependency_scope: 
         for imported, nodes in sorted(imports.items()):
             if imported in stdlib_imports or imported in local_imports or imported == "__future__":
                 continue
+            # Directly invoked scripts under tools/ and scripts/ have their own
+            # directory on sys.path. A sibling .py is therefore local, not a
+            # PyPI dependency. Restrict this exception to audited regular
+            # files: package imports and symlinked lookalikes stay governed
+            # by normal project dependency declarations.
+            if relative.split("/", 1)[0] in {"tools", "scripts"}:
+                sibling = path.parent / (imported + ".py")
+                if (sibling in audited_files and sibling.is_file()
+                        and not sibling.is_symlink()):
+                    continue
             # System/desktop bindings may deliberately be supplied outside
             # Python packaging.  An explicit import-not-found suppression is a
             # strong declaration of that intent and avoids false dependency
