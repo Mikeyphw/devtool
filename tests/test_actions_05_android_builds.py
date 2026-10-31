@@ -52,7 +52,7 @@ def test_build_plan_pins_local_head_and_rejects_mismatch(tmp_path,monkeypatch):
     calls=[]
     def dispatch(client,slug,workflow,ref,inputs,*,execute):
         calls.append((execute,inputs))
-        return {'pre_dispatch_sha':local,'repository':slug,'state':'validated-plan'}
+        return {'pre_dispatch_sha':local,'repository':slug,'state':'validated-plan','dispatched':execute,'resume_existing':False}
     monkeypatch.setattr('devtool.actions_android.dispatch_workflow',dispatch)
     out=android_plan(object(),'Owner/repo',tmp_path,module='app',variant='debug',fmt='apk',ref='main')
     assert not out['dispatched'] and out['project_dir']=='android'

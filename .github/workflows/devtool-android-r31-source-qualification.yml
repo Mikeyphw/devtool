@@ -1,0 +1,58 @@
+name: Devtool ANDROID-R31 source-bound consumer handoff (non-release)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: none
+concurrency:
+  group: android-r31-source-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  guarded-consumer-handoff:
+    name: R31 exact-source Android dispatch and artifact handoff contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install reviewed Python runtime
+        run: python -m pip install -e . pytest
+      - name: Read-only source/consumer handoff contract tests
+        run: |
+          python -m pytest -q \
+            tests/test_android_r31_consumer_handoff.py \
+            tests/test_actions_05_android_builds.py \
+            tests/test_actions_g01_artifact_attempt_safety.py \
+            tests/test_wave_d_hosted_dispatch_receipts.py \
+            --junitxml "$RUNNER_TEMP/android-r31-tests.xml"
+      - name: Require canonical source and no release promotion
+        run: |
+          python tools/android_r31_source_audit.py \
+            --repo "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/android-r31-source.json"
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          p=pathlib.Path(os.environ['RUNNER_TEMP'])/'android-r31-source.json'
+          doc=json.loads(p.read_text())
+          assert doc['source']['sha']==os.environ['GITHUB_SHA']
+          assert doc['source']['tree']==subprocess.check_output(
+              ['git','rev-parse','HEAD^{tree}'],text=True).strip()
+          assert doc['status']=='PASS'
+          assert doc['real_consumer_hosted_build_executed'] is False
+          assert doc['real_apk_signature_independently_verified'] is False
+          assert doc['release_qualified'] is False
+          print('PASS_ANDROID_R31_HOSTED_SOURCE_AND_RECEIPT_CONTRACT_NON_RELEASE')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-r31-source-contract-attempt${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/android-r31-source.json
+            ${{ runner.temp }}/android-r31-tests.xml
+          if-no-files-found: error
+          retention-days: 14

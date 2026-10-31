@@ -1,4 +1,14 @@
 {
+  "android_r31_addendum": {
+    "base_sha": "343331d6a1a5b863588b6b025347039149604953",
+    "consumer_device_and_rollback": "OPEN",
+    "dispatch_reuse_accounting": "SOURCE_FIXED_NEEDS_R31_HOST_ACCEPTANCE",
+    "fc09_formal_qualified": false,
+    "relatorio_github_consumer": "OPEN",
+    "release_qualified": false,
+    "signed_package_registry_handoff": "SOURCE_IMPLEMENTED_NEEDS_REAL_SIGNER_AND_CONSUMER",
+    "telegram_github_consumer": "OPEN"
+  },
   "caveat": "This is an intake map of evidence gaps, not proof that FC09's 168 promises were independently validated.",
   "core_r30_addendum": {
     "fc09_formal_qualified": false,

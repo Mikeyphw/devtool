@@ -235,7 +235,10 @@ def android_plan(client: GitHubActionsClient, slug: str, root: Path, *, module: 
     # The ACTIONS-02 dispatch journal is created before the mutating POST.
     dispatched = dispatch_workflow(client, slug, workflow, ref, inputs, execute=True)
     result["dispatch"] = dispatched
-    result["dispatched"] = True
+    # RM-16 can safely resume a correlated request without sending a new POST.
+    # Report what actually happened, not merely that execute=True was requested.
+    result["dispatched"] = dispatched.get("dispatched") is True
+    result["resumed_existing"] = dispatched.get("resume_existing") is True
     if dispatched["pre_dispatch_sha"].lower() != local_sha:
         result["warning"] = "Remote Git ref moved between validation and dispatch; build source is not confirmed"
     return result
