@@ -3,6 +3,7 @@
 from __future__ import annotations
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -148,6 +149,7 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--root',type=Path,default=Path.cwd());ap.add_argument('--host-run',type=int,required=True)
     ap.add_argument('--g1-run',type=int,required=True);ap.add_argument('--archive-dir',type=Path,required=True)
     ap.add_argument('--out',type=Path,required=True);ap.add_argument('--fetch-archives',action='store_true')
+    ap.add_argument('--recount-g1',action='store_true',help='Strictly reparse 24 original JUnit/log shard archives')
     args=ap.parse_args()
     try:
         token=os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
@@ -157,6 +159,18 @@ def main():
         client=Client(token)
         result=review(client,args.host_run,args.g1_run,local_source(args.root),args.archive_dir,
                       fetch_archives=args.fetch_archives)
+        if args.recount_g1:
+            reviewed=Path(__file__).resolve().with_name('fc08_r1r29_g1_recount.py')
+            spec=importlib.util.spec_from_file_location('devtool_fc08_r1r29_junit_recount_reviewed',reviewed)
+            if spec is None or spec.loader is None:
+                raise ValueError('REVIEWED_G1_RECOUNT_SOURCE_MISSING')
+            module=importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            if Path(module.__file__).resolve()!=reviewed:
+                raise ValueError('G1_RECOUNT_WRONG_SOURCE')
+            recount=module.recount(args.archive_dir,result)
+            result['g1_junit_independently_recounted']=True
+            result['g1_recount']={k:v for k,v in recount.items() if k!='shard_proofs'}
         if args.out.is_symlink():raise ValueError('UNSAFE_OUTPUT')
         args.out.parent.mkdir(parents=True,exist_ok=True)
         args.out.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')

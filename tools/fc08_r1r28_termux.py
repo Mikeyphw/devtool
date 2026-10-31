@@ -47,6 +47,8 @@ def native_accept(root: Path, *, temp_root: Path | None = None, verify_host: boo
     if verify_host: environment()
     root = root.resolve(strict=True)
     src = source(root)
+    if subprocess.check_output(['git','-C',str(root),'status','--porcelain','--untracked-files=all'], text=True, timeout=20).strip():
+        raise RuntimeError('NATIVE_SOURCE_WORKTREE_DIRTY')
     with tempfile.TemporaryDirectory(prefix='fc08-r1r28-native-', dir=temp_root) as folder:
         path = Path(folder)
         if path.is_symlink() or path.stat().st_uid != os.getuid():
@@ -84,9 +86,30 @@ def native_accept(root: Path, *, temp_root: Path | None = None, verify_host: boo
         if victim.read_bytes()!=b'keep':
             raise RuntimeError('SYMLINK_VICTIM_MODIFIED')
         steps['owned_temp_and_symlink_refusal']='PASS'
+        # Actual native file-identity drift and controlled cleanup. The target
+        # is an exclusively owned disposable fixture, never a user artifact.
+        from devtool.artifact_cleanup_worker import _unlink_owned_source
+        owned = path/'owned-source.zip';owned.write_bytes(b'original')
+        previous = cleanup_source_snapshot(owned)
+        owned.write_bytes(b'replacement-different-size')
+        try:
+            _unlink_owned_source(owned, previous)
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError('NATIVE_REPLACED_SOURCE_DELETED')
+        if owned.read_bytes()!=b'replacement-different-size':
+            raise RuntimeError('NATIVE_REPLACEMENT_MODIFIED')
+        current=cleanup_source_snapshot(owned)
+        _unlink_owned_source(owned,current)
+        if owned.exists():raise RuntimeError('NATIVE_OWNED_CLEANUP_INCOMPLETE')
+        steps['owned_source_drift_refusal_and_exact_unlink']='PASS'
+    if subprocess.check_output(['git','-C',str(root),'status','--porcelain','--untracked-files=all'], text=True, timeout=20).strip():
+        raise RuntimeError('NATIVE_SOURCE_DIRTY_AFTER_TEST')
     return {'schema': SCHEMA, 'source':src,'host':'native-termux-arm64',
             'observed_at':datetime.now(timezone.utc).isoformat(),
             'checks':steps, 'native_arm64_compilation_passed':True,
+            'owned_source_drift_and_cleanup_tested':True,
             'device_signing_qualified':False,'installed_android_qualified':False,
             'consumer_qualified':False,'fc08_overall_qualified':False,'release_qualified':False,
             'transaction_rollback_integration_qualified':False}

@@ -1,24 +1,39 @@
 {
+  "caveat": "This is an intake map of evidence gaps, not proof that FC09's 168 promises were independently validated.",
+  "fc08_overall_qualified": false,
+  "independent_evidence_required": true,
+  "r1r29_addendum": {
+    "actual_shared_storage_artifact_cleanup_root_cause": "OPEN",
+    "fc08_overall_qualified": false,
+    "formal_release_qualified": false,
+    "g1_original_junit_recount": "IMPLEMENTED_H1_REPLAY_PASS_NEW_SOURCE_OPEN",
+    "historical_H1_original_g1_recount": "PASS_30_GITHUB_ZIPS_24_SHARDS_609_MODULES_7005_PRIMARY_JUNIT_CASES",
+    "hosted_fc08_at_base": "PASS_5_JOBS",
+    "hosted_g1_at_base": "PASS_7005_TESTS_609_MODULES_24_SHARDS",
+    "native_termux_arm64": "IMPLEMENTED_REQUIRE_ACTUAL_PHONE",
+    "new_source_g1_and_fc08": "OPEN_NEEDS_NEW_SHA_RUNS",
+    "resilience_matrix_at_base": "PASS_THREE_SCENARIOS",
+    "reviewed_base_sha": "0935fc77c5c6b4ea86e3a3a5b1b0501854f18a51",
+    "reviewed_base_tree": "1c5ff34a79a42465596a1cb2cb0c73ca3d962637",
+    "shared_storage_canary": "IMPLEMENTED_OPT_IN_NEVER_USER_ZIP"
+  },
+  "release_qualified": false,
   "schema": "devtool.fc08.r1r28.fc09-qualification-crosswalk.v1",
   "source_base_sha": "eba6658e7d98f730d92294dcced654e58fab2d58",
   "source_base_tree": "0cd2cecab0de9457b436f9f843dc676752eb3533",
-  "fc08_overall_qualified": false,
-  "release_qualified": false,
-  "independent_evidence_required": true,
   "workstreams": {
+    "android_signer_installed_instrumentation": "OPEN",
     "dispatch_journal_lock": "IMPLEMENTED_PENDING_R1R28_HOSTED",
-    "uncertain_dispatch_manual_review": "IMPLEMENTED_READ_ONLY_NO_ATTRIBUTION",
+    "fc09_168_promise_crosswalk_independent_review": "OPEN",
+    "formal_release_seal": "OPEN",
+    "g1_junit_semantic_recount": "OPEN",
+    "github_raw_archive_integrity": "IMPLEMENTED_PENDING_R1R28_SOURCE_REVIEW",
+    "native_termux_arm64": "IMPLEMENTED_PENDING_PHONE_RUN",
     "real_5xx_timeout_transport": "OPEN_UNOBSERVED",
     "resilience_matrix": "IMPLEMENTED_PENDING_OPT_IN_REAL_RUN",
-    "github_raw_archive_integrity": "IMPLEMENTED_PENDING_R1R28_SOURCE_REVIEW",
-    "g1_junit_semantic_recount": "OPEN",
-    "windows_raw_signed_artifact_provenance": "OPEN",
-    "native_termux_arm64": "IMPLEMENTED_PENDING_PHONE_RUN",
-    "termux_shared_storage_cleanup_root_cause": "OPEN_DIAGNOSTIC_ONLY",
-    "android_signer_installed_instrumentation": "OPEN",
     "telegram_studyflow_bkx_r3_adoption_and_rollback": "OPEN",
-    "fc09_168_promise_crosswalk_independent_review": "OPEN",
-    "formal_release_seal": "OPEN"
-  },
-  "caveat": "This is an intake map of evidence gaps, not proof that FC09's 168 promises were independently validated."
+    "termux_shared_storage_cleanup_root_cause": "OPEN_DIAGNOSTIC_ONLY",
+    "uncertain_dispatch_manual_review": "IMPLEMENTED_READ_ONLY_NO_ATTRIBUTION",
+    "windows_raw_signed_artifact_provenance": "OPEN"
+  }
 }
