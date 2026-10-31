@@ -282,6 +282,20 @@ def register(fixture: Path, receipt: Path, out: Path, apk_out: Path) -> dict:
                  fixture/'.devtool/artifacts/registry.json'):
         if path.is_symlink():
             raise LabError('R34 registry parent path is a symlink')
+    # Publication must succeed *before* committing a canonical registry record.
+    # Use exclusive creation rather than an exists()/copyfile() check-and-open:
+    # another process cannot turn an intended new file into an overwrite.
+    # A mismatched private output is deliberately retained as failed evidence;
+    # never unlink a possibly replaced pathname during error handling.
+    apk_out.parent.mkdir(parents=True,exist_ok=True)
+    if apk_out.exists() or apk_out.is_symlink():
+        raise LabError('R34 published APK path already exists')
+    with apk.open('rb') as source, apk_out.open('xb') as destination:
+        shutil.copyfileobj(source,destination,1024*1024)
+        destination.flush()
+        os.fsync(destination.fileno())
+    if sha(apk_out)!=info['sha256'] or sha(apk)!=info['sha256']:
+        raise LabError('R34 standalone publication changed bytes; private failed output retained')
     records=register_paths(fixture,[apk],metadata={'producer':'devtool-r34-hosted-native',
         'state':'android-debug-inspected-unqualified','target':'r33','variant':'debug',
         'run_id':ctx['github_run_id'],
@@ -298,13 +312,6 @@ def register(fixture: Path, receipt: Path, out: Path, apk_out: Path) -> dict:
     local_registry=load_registry(fixture)
     if not any(x['id']==records[0]['id'] for x in local_registry['items']):
         raise LabError('R34 canonical registry missing new record')
-    apk_out.parent.mkdir(parents=True,exist_ok=True)
-    if apk_out.exists() or apk_out.is_symlink():
-        raise LabError('R34 published APK path already exists')
-    shutil.copyfile(apk,apk_out)
-    if sha(apk_out)!=info['sha256']:
-        apk_out.unlink(missing_ok=True)
-        raise LabError('R34 standalone publication changed bytes')
     out.parent.mkdir(parents=True,exist_ok=True)
     report={'schema':'devtool.r34.hosted-registry.v1','status':'PASS_LOCAL_REGISTRY_VERIFIED',
             'record_id':records[0]['id'],'registry_sha256':sha(fixture/'.devtool/artifacts/registry.json'),

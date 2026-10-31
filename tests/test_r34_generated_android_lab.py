@@ -145,3 +145,26 @@ def test_tampered_apk_fails_before_registration(tmp_path,monkeypatch):
     p=fixture/APK;p.write_bytes(p.read_bytes()+b'tamper')
     with pytest.raises(LabError):register(fixture,receipt,out,apk_out)
     assert not (fixture/'.devtool/artifacts/registry.json').exists()
+
+
+def test_publication_corruption_fails_before_registry_and_preserves_private_evidence(tmp_path,monkeypatch):
+    fixture,receipt,out,apk_out,_=prepare_receipts(tmp_path,monkeypatch)
+    from devtool import actions_android_lab_export as lab
+    def corrupt_copy(source,destination,length):
+        destination.write(b'corrupted-private-publication-for-diagnostics')
+    monkeypatch.setattr(lab.shutil,'copyfileobj',corrupt_copy)
+    with pytest.raises(LabError,match='standalone publication changed bytes'):
+        register(fixture,receipt,out,apk_out)
+    assert apk_out.read_bytes()==b'corrupted-private-publication-for-diagnostics'
+    assert not (fixture/'.devtool/artifacts/registry.json').exists()
+    assert not out.exists()
+
+
+def test_existing_publication_is_never_overwritten_or_registered(tmp_path,monkeypatch):
+    fixture,receipt,out,apk_out,_=prepare_receipts(tmp_path,monkeypatch)
+    apk_out.parent.mkdir(parents=True,exist_ok=True)
+    apk_out.write_bytes(b'original-user-owned-bytes')
+    with pytest.raises(LabError,match='already exists'):
+        register(fixture,receipt,out,apk_out)
+    assert apk_out.read_bytes()==b'original-user-owned-bytes'
+    assert not (fixture/'.devtool/artifacts/registry.json').exists()
