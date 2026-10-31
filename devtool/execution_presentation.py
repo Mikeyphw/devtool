@@ -21,6 +21,8 @@ from typing import Any, Callable, Mapping
 
 from rich.console import Console
 
+from .job_ui import styled_job_line
+
 from .textual_ux import TEXTUAL_SHARED_CSS, fit_middle, normalized_status, progress_counter, progress_percent, responsive_class_names, status_label
 
 
@@ -232,7 +234,7 @@ def build_textual_execution_app(source: Any) -> Any:
                     continue
                 if kind == "line":
                     if self._logs_visible:
-                        self.query_one("#execution-log", RichLog).write(str(payload))
+                        self.query_one("#execution-log", RichLog).write(styled_job_line(payload))
                     continue
                 if kind == "snapshot" and isinstance(payload, Mapping):
                     self._apply_snapshot(payload)
@@ -245,11 +247,11 @@ def build_textual_execution_app(source: Any) -> Any:
             title = command if not phase or phase == command else f"{command} · {phase}"
             if target:
                 title += f" · {target}"
-            self.query_one("#execution-status", Static).update(fit_middle(title, max(24, self.size.width - 2)))
+            self.query_one("#execution-status", Static).update(styled_job_line(fit_middle(title, max(24, self.size.width - 2))))
             raw_completion = snapshot.get("completion_status") or "running"
             completion = status_label(raw_completion)
             meta = f"{completion} · canonical RUN/EXO projection"
-            self.query_one("#execution-meta", Static).update(meta)
+            self.query_one("#execution-meta", Static).update(styled_job_line(meta))
             normalized = normalized_status(raw_completion)
             if normalized in {"completed", "failed", "cancelled"}:
                 self._finished = True
@@ -261,14 +263,14 @@ def build_textual_execution_app(source: Any) -> Any:
                     f"{symbol} {completion} · press q or Enter to close"
                 )
             detail = str(snapshot.get("detail") or snapshot.get("completion_status") or "Working…")
-            self.query_one("#execution-detail", Static).update(fit_middle(detail, max(24, self.size.width - 2)))
+            self.query_one("#execution-detail", Static).update(styled_job_line(fit_middle(detail, max(24, self.size.width - 2))))
             percent = progress_percent(snapshot)
             counter = progress_counter(snapshot)
             progress = self.query_one("#execution-progress", ProgressBar)
             progress.display = percent is not None
             if percent is not None:
                 progress.update(progress=percent)
-            self.query_one("#execution-progress-meta", Static).update(counter or "working")
+            self.query_one("#execution-progress-meta", Static).update(styled_job_line(counter or "working"))
 
         def action_toggle_logs(self) -> None:
             log = self.query_one("#execution-log", RichLog)

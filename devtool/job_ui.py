@@ -84,6 +84,55 @@ def safe_ansi_line(value: object, *, max_chars: int = 2048) -> str:
     return safe[: max_chars * 2]
 
 
+# A reviewed, strictly bounded subset of Rich inline styles. This handles the
+# actual Devtool CLI's markup (when a child emits it literally), without allowing
+# arbitrary subprocess content to become Textual markup. In particular,
+# [/etc/passwd], [pytest], incomplete tags, and bracketed file names are text.
+_DISPLAY_STYLES = frozenset({
+    "bold", "dim", "italic", "underline", "red", "green", "yellow", "blue",
+    "cyan", "magenta", "white", "bright_red", "bright_green",
+    "bright_yellow", "bright_blue", "bright_cyan", "bright_magenta",
+})
+_DISPLAY_TAG = re.compile(r"\[(/?)([a-z_]+(?: [a-z_]+)?)?\]")
+
+
+def _reviewed_markup_text(value: str):
+    """Render only balanced, known Rich style tags; otherwise return None.
+
+    This is a presentation convenience, *not* a claim that subprocess output
+    is trusted. No link, console control, arbitrary Rich tag, or path is parsed.
+    """
+    from rich.text import Text
+
+    tokens = list(_DISPLAY_TAG.finditer(value))
+    if not tokens or not any(not m.group(1) and m.group(2) and
+                              all(part in _DISPLAY_STYLES for part in m.group(2).split())
+                              for m in tokens):
+        return None
+    out = Text()
+    scopes: list[str] = []
+    start = 0
+    for match in tokens:
+        tag = match.group(2) or ""
+        is_closing = bool(match.group(1))
+        if (tag and not all(part in _DISPLAY_STYLES for part in tag.split())) or (not is_closing and not tag):
+            # An unknown [name] tag may be an ordinary filename.
+            continue
+        if is_closing and (not scopes or (tag and scopes[-1] != tag)):
+            # No partial styling from malformed or unmatched Rich markup.
+            return None
+        out.append(value[start:match.start()], style=" ".join(scopes))
+        if is_closing:
+            scopes.pop()
+        else:
+            scopes.append(tag)
+        start = match.end()
+    if scopes:
+        return None
+    out.append(value[start:], style=" ".join(scopes))
+    return out
+
+
 def styled_job_line(value: object, *, no_color: bool | None = None):
     """Preserve Rich/ANSI color and emphasis without terminal side effects.
 
@@ -95,11 +144,14 @@ def styled_job_line(value: object, *, no_color: bool | None = None):
     if no_color is None:
         no_color = "NO_COLOR" in os.environ
     plain = readable_job_line(value)
-    if no_color:
-        return Text(plain)
     colored = safe_ansi_line(value)
-    result = Text.from_ansi(colored)
-    if not _SGR.search(colored):
+    # Textual's Static and RichLog accept Rich Text directly. This prevents
+    # Static's default string markup parser from crashing on [/etc/passwd].
+    markup = _reviewed_markup_text(plain) if not _SGR.search(colored) else None
+    if no_color:
+        return Text(markup.plain if markup is not None else plain)
+    result = markup if markup is not None else Text.from_ansi(colored)
+    if markup is None and not _SGR.search(colored):
         low = plain.lower()
         if any(token in low for token in ("failed", "error:", "traceback", "fatal")):
             result.stylize("bold red")
@@ -318,9 +370,9 @@ def build_compact_execution_app(source: Any, *, run_id: str = "", remote: bool =
             # must never change the final result or re-enable cancellation.
             if self._finished:
                 return
-            self.query_one("#job-title", Static).update(view["title"])
+                self.query_one("#job-title", Static).update(styled_job_line(view["title"]))
             self._last_status = view["status"]
-            self.query_one("#job-detail", Static).update(view["detail"])
+            self.query_one("#job-detail", Static).update(styled_job_line(view["detail"]))
             widget = self.query_one("#job-progress", ProgressBar)
             # Textual supports a real indeterminate bar (total=None). Never
             # replace unknown Gradle progress with a synthetic percentage.
@@ -330,7 +382,7 @@ def build_compact_execution_app(source: Any, *, run_id: str = "", remote: bool =
             else:
                 widget.update(total=100, progress=view["percent"])
                 widget.display = True
-            self.query_one("#job-count", Static).update(view["counter"])
+            self.query_one("#job-count", Static).update(styled_job_line(view["counter"]))
             stages = state.get("stages")
             if isinstance(stages, list):
                 rows = []
@@ -345,7 +397,7 @@ def build_compact_execution_app(source: Any, *, run_id: str = "", remote: bool =
                              else icons["pending"])
                     rows.append(f"{glyph} {name} · {state_name}")
                 if rows:
-                    self.query_one("#job-stages", Static).update("\n".join(rows))
+                    self.query_one("#job-stages", Static).update(styled_job_line("\n".join(rows)))
             else:
                 # Generic jobs expose canonical phase transitions rather than
                 # individual verified GitHub steps. A previously SEEN phase is
@@ -357,13 +409,13 @@ def build_compact_execution_app(source: Any, *, run_id: str = "", remote: bool =
                     rows = [f"{icons['pending']} {name} · observed" for name in list(self._phase_history)[:-1]]
                     status_icon = icons["done"] if view["normalized_status"] == "completed" else (icons["failed"] if view["finished"] else icons["active"])
                     rows.append(f"{status_icon} {self._phase_history[-1]} · {view['status']}")
-                    self.query_one("#job-stages", Static).update("\n".join(rows[-5:]))
+                    self.query_one("#job-stages", Static).update(styled_job_line("\n".join(rows[-5:])))
             if view["finished"]:
                 self._finished = True
                 self._outcome = view["normalized_status"]
                 self.screen.add_class("finished" if self._outcome == "completed" else self._outcome)
                 symbol = icons["done"] if self._outcome == "completed" else icons["failed"]
-                self.query_one("#job-title", Static).update(f"{symbol}  {view['title']}")
+                self.query_one("#job-title", Static).update(styled_job_line(f"{symbol}  {view['title']}"))
                 self.query_one("#job-help", Static).update(
                     f"{self._outcome.upper()} · r raw · l logs · q/Enter close"
                 )

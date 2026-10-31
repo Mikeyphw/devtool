@@ -480,7 +480,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             with Vertical(id="apply-confirm-box"):
                 yield Static("Apply this artifact?", id="apply-confirm-title", classes="ux-title")
                 with VerticalScroll(id="apply-confirm-body"):
-                    yield Static(artifact_review_text(source.review))
+                    yield Static(styled_job_line(artifact_review_text(source.review)))
                 with Horizontal(id="apply-confirm-actions"):
                     yield Button("Cancel", id="apply-confirm-no")
                     yield Button("Apply", variant="warning", id="apply-confirm-yes")
@@ -610,9 +610,9 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             with Vertical(id="apply-root"):
                 with Vertical(id="apply-context", classes="ux-context"):
                     yield Static(f"{icons['brand']}  DEVTOOL / ARTIFACT APPLY", classes="ux-kicker")
-                    yield Static(str(review.get("artifact") or review.get("path") or "Artifact"), id="apply-status", classes="ux-title")
+                    yield Static(styled_job_line(str(review.get("artifact") or review.get("path") or "Artifact")), id="apply-status", classes="ux-title")
                     yield Static("Review canonical artifact contract", id="apply-meta")
-                yield Static(artifact_review_text(review), id="apply-review", classes="ux-card")
+                yield Static(styled_job_line(artifact_review_text(review)), id="apply-review", classes="ux-card")
                 yield Static(artifact_stage_line({}), id="apply-stage")
                 yield Static(horizontal_apply_stage_strip(self._stage_tracker), id="apply-stages")
                 with Horizontal(id="apply-progress-row"):
@@ -674,7 +674,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                 return
             width = max(24, self.size.width - 2)
             self.query_one("#apply-status", Static).update(
-                artifact_running_summary(source.review, width=width)
+                styled_job_line(artifact_running_summary(source.review, width=width))
             )
 
         def _refresh_stage_line(self) -> None:
@@ -704,7 +704,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                     max_lines=max_lines,
                     width=max(28, self.size.width - 2),
                 )
-                self.query_one("#apply-activity", Static).update(text)
+                self.query_one("#apply-activity", Static).update(styled_job_line(text))
                 mode = "raw log" if self._show_raw else "activity log"
                 self.query_one("#apply-log-title", Static).update(
                     f"{mode} · {len(self._raw_lines)} lines · l hide · r {'activity' if self._show_raw else 'raw'} · d details"
@@ -748,7 +748,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                 self._finish_seen_at = time.monotonic()
                 self.screen.add_class("result-failed")
                 self.query_one("#apply-meta", Static).update("FAILED · could not start canonical child")
-                self.query_one("#apply-phase", Static).update(f"{type(exc).__name__}: {exc}")
+                self.query_one("#apply-phase", Static).update(styled_job_line(f"{type(exc).__name__}: {exc}"))
                 self.query_one("#apply-log", RichLog).write(styled_job_line(f"{type(exc).__name__}: {exc}"))
                 self.query_one("#apply-notice", Static).update("✕ FAILED · press q or Enter to close")
                 self._stop_polling()
@@ -765,7 +765,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             if phase_line is not None:
                 self._last_semantic_phase = str(phase_line)
                 width = max(24, self.size.width - 2)
-                self.query_one("#apply-phase", Static).update(fit_middle(phase_line, width))
+                self.query_one("#apply-phase", Static).update(styled_job_line(fit_middle(phase_line, width)))
             progress_widget = self.query_one("#apply-progress", ProgressBar)
             if percent is None:
                 progress_widget.update(total=None)
@@ -773,10 +773,10 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
             else:
                 progress_widget.update(total=100, progress=percent)
                 progress_widget.display = True
-            self.query_one("#apply-progress-meta", Static).update(counter)
+            self.query_one("#apply-progress-meta", Static).update(styled_job_line(counter))
             self._refresh_stage_line()
             if message and message not in {phase_line, status}:
-                self.query_one("#apply-notice", Static).update(fit_middle(message, max(24, self.size.width - 2)))
+                self.query_one("#apply-notice", Static).update(styled_job_line(fit_middle(message, max(24, self.size.width - 2))))
             self._refresh_activity()
 
         def _stop_polling(self) -> None:
@@ -826,7 +826,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                     else:
                         progress_widget.update(total=100, progress=percent)
                         progress_widget.display = True
-                    self.query_one("#apply-progress-meta", Static).update(counter)
+                    self.query_one("#apply-progress-meta", Static).update(styled_job_line(counter))
                     self._refresh_activity()
                 rc = source.returncode
                 if rc is None:
@@ -847,7 +847,7 @@ def build_apply_textual_app(source: ArtifactApplyHostSource, *, confirm_required
                     # can still see what completed after the child exits.
                     if self._last_semantic_phase:
                         self.query_one("#apply-phase", Static).update(
-                            fit_middle(self._last_semantic_phase, max(24, self.size.width - 2))
+                            styled_job_line(fit_middle(self._last_semantic_phase, max(24, self.size.width - 2)))
                         )
                     else:
                         self.query_one("#apply-phase", Static).update(f"Devtool {label}")

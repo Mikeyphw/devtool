@@ -139,6 +139,10 @@ def test_hosted_semantic_boundary_is_host_only_and_exact_tasks(tmp_path,monkeypa
     root=project(tmp_path,mode='semantic')
     review=plan(root)['nodes'][0]['provider']
     native=load_wrapper_project_config(str(root),None).targets['app'].jobs['verify']
+    # This negative must remain valid when executed *inside* GitHub Actions.
+    # The runner's inherited CI identity is never evidence of the local path.
+    for key in ('GITHUB_ACTIONS', 'RUNNER_OS', 'RUNNER_ARCH'):
+        monkeypatch.delenv(key, raising=False)
     with pytest.raises(AndroidProviderError,match='GitHub Actions runner'):
         hosted_semantic_spec(root,native,review)
     monkeypatch.setenv('GITHUB_ACTIONS','true')
