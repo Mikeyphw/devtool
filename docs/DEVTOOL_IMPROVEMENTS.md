@@ -1536,3 +1536,18 @@ historical failures or treat selected local tests as hosted authority.
 - **R32-DIAG (implemented):** `provider-doctor` now reports distinct A09, strict provider plan/export and unverified hosted/release states, preventing accidental promotion from eligibility to CI evidence.
 - **R32-ACTIONS-MAINT (open):** Existing deprecated Node.js 20 based actions should be upgraded to reviewed SHA-pinned versions separately, without weakening immutable action references.
 - **R32-RELEASE (open):** No consumer APK/AAB builds, signer identity, device tests, rollback or FC-09 release assertions. All real-host and release flags remain false/pending.
+
+### ANDROID-R33 — native hosted Android live-fixture qualification (source-side)
+
+- Added a Devtool-owned minimal Android fixture in source, with independently
+  checksum-pinned official Gradle wrapper and Gradle distribution.
+- Added a manually dispatched two-job Ubuntu Actions harness that calls the
+  actual R32 RM-06 `run-node` entrypoint for `lintDebug` then `assembleDebug`,
+  not direct `gradlew` shell steps. The immutable native graph is checked first.
+- Added fail-closed provenance separation (Devtool commit vs ephemeral fixture
+  commit), run/attempt checking, real APK hash/package/debug-signature evidence,
+  and explicit non-release boundaries.
+- Added source-only adversarial tests and included them in the existing R32
+  source qualification workflow.
+- Live hosted outcome and formal release qualification stay OPEN until real
+  GitHub execution evidence is received; consumers are untouched.

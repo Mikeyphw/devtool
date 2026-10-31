@@ -1,0 +1,24 @@
+[project]
+runner = "command"
+[workspace]
+default_target = "r33"
+[targets.r33]
+runner = "command"
+root = "."
+
+[targets.r33.jobs.lint]
+runner = "command"
+command = ["./gradlew", "--no-daemon", ":app:lintDebug"]
+metadata = { ci_toolchain="android-gradle", ci_android_java_version="17", ci_android_wrapper_jar_sha256="2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046", ci_android_sdk_packages=["platforms;android-35", "build-tools;35.0.0", "platform-tools"] }
+
+[targets.r33.jobs.build]
+runner = "command"
+command = ["./gradlew", "--no-daemon", ":app:assembleDebug"]
+outputs = ["app/build/outputs/apk/debug/app-debug.apk"]
+metadata = { ci_toolchain="android-gradle", ci_android_java_version="17", ci_android_wrapper_jar_sha256="2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046", ci_android_sdk_packages=["platforms;android-35", "build-tools;35.0.0", "platform-tools"] }
+
+[targets.r33.workflows]
+ci = [
+ {id="lint", ref="job:lint", depends_on=[]},
+ {id="build", ref="job:build", depends_on=["lint"]}
+]

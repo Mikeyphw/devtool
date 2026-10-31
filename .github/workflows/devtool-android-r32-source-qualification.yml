@@ -29,6 +29,7 @@ jobs:
           set -euo pipefail
           python -m pytest -q \
             tests/test_android_r32_hosted_provider.py \
+            tests/test_r33_live_hosted_android_fixture.py \
             tests/test_r32_python_go_contracts.py \
             tests/test_actions_a09_ci_host_contract.py \
             tests/test_rm01_output_scopes.py \

@@ -1,0 +1,4 @@
+#!/bin/sh
+# R33 pinned minimal GradleWrapperMain launcher. No downloaded shell is executed.
+set -eu
+exec java -cp "$(dirname "$0")/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"

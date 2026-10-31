@@ -1,0 +1,163 @@
+# ANDROID-R33: live non-release Devtool-native Android DAG; no Termux Gradle.
+name: Devtool ANDROID-R33 live hosted Android native DAG (not release)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: devtool-android-r33-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact Devtool source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - name: Install Devtool native runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python -m pip install --disable-pip-version-check -e .
+      - name: Setup Java 17 for reviewed Android toolchain
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Android 35 and build tools 35.0.0
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+        with:
+          cmdline-tools-version: 15859902
+          packages: "platforms;android-35 build-tools;35.0.0 platform-tools"
+      - name: Setup Gradle from signed, hash-pinned wrapper
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          cache-disabled: true
+      - name: Download and hash-verify official Gradle 8.11.1 wrapper JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://services.gradle.org/distributions/gradle-8.11.1-wrapper.jar \
+            --output "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar"
+          printf '%s  %s\n' \
+            '2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046' \
+            "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar" | sha256sum --check --status
+      - name: Build deterministic Devtool-owned temporary Android fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/r33-evidence"
+          python tools/r33_hosted_android_evidence.py prepare \
+            --repo "$GITHUB_WORKSPACE" \
+            --fixture "$RUNNER_TEMP/r33-fixture" \
+            --jar "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar" \
+            --out "$RUNNER_TEMP/r33-evidence/fixture-source.json"
+          python tools/r33_hosted_android_evidence.py plan \
+            --repo "$GITHUB_WORKSPACE" \
+            --fixture "$RUNNER_TEMP/r33-fixture" \
+            --out "$RUNNER_TEMP/r33-evidence/frozen-plan.json"
+      - name: Execute real Android lint task via Devtool RM-06 native runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/r33_hosted_android_evidence.py execute \
+            --repo "$GITHUB_WORKSPACE" \
+            --fixture "$RUNNER_TEMP/r33-fixture" \
+            --job lint \
+            --out "$RUNNER_TEMP/r33-evidence/result.json"
+      - name: Upload source-bound fixture evidence (non-release)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: devtool-r33-lint-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r33-evidence/
+          if-no-files-found: error
+          retention-days: 7
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    needs: [lint]
+    steps:
+      - name: Checkout exact Devtool source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - name: Install Devtool native runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python -m pip install --disable-pip-version-check -e .
+      - name: Setup Java 17 for reviewed Android toolchain
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Android 35 and build tools 35.0.0
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+        with:
+          cmdline-tools-version: 15859902
+          packages: "platforms;android-35 build-tools;35.0.0 platform-tools"
+      - name: Setup Gradle from signed, hash-pinned wrapper
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          cache-disabled: true
+      - name: Download and hash-verify official Gradle 8.11.1 wrapper JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://services.gradle.org/distributions/gradle-8.11.1-wrapper.jar \
+            --output "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar"
+          printf '%s  %s\n' \
+            '2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046' \
+            "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar" | sha256sum --check --status
+      - name: Build deterministic Devtool-owned temporary Android fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/r33-evidence"
+          python tools/r33_hosted_android_evidence.py prepare \
+            --repo "$GITHUB_WORKSPACE" \
+            --fixture "$RUNNER_TEMP/r33-fixture" \
+            --jar "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar" \
+            --out "$RUNNER_TEMP/r33-evidence/fixture-source.json"
+          python tools/r33_hosted_android_evidence.py plan \
+            --repo "$GITHUB_WORKSPACE" \
+            --fixture "$RUNNER_TEMP/r33-fixture" \
+            --out "$RUNNER_TEMP/r33-evidence/frozen-plan.json"
+      - name: Fetch upstream native lint node evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: devtool-r33-lint-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r33-upstream/
+      - name: Execute real Android build task via Devtool RM-06 native runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/r33_hosted_android_evidence.py execute \
+            --repo "$GITHUB_WORKSPACE" \
+            --fixture "$RUNNER_TEMP/r33-fixture" \
+            --job build \
+            --out "$RUNNER_TEMP/r33-evidence/result.json" \
+            --prior "$RUNNER_TEMP/r33-upstream/result.json"
+      - name: Upload source-bound fixture evidence (non-release)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: devtool-r33-build-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r33-evidence/
+          if-no-files-found: error
+          retention-days: 7
