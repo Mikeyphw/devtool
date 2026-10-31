@@ -1,5 +1,16 @@
 {
   "caveat": "This is an intake map of evidence gaps, not proof that FC09's 168 promises were independently validated.",
+  "core_r30_addendum": {
+    "fc09_formal_qualified": false,
+    "native_termux_evidence_at_0103419": "USER_RECEIPT_PASS_HISTORICAL",
+    "oci_embedded_bytes_and_guides": "READONLY_GATE_IMPLEMENTED_PENDING_NEW_HOST_CI",
+    "original_real_artifact_cleanup": "OPEN",
+    "release_qualified": false,
+    "shared_storage_canary_at_0103419": "USER_RECEIPT_PASS_HISTORICAL",
+    "source_base_sha": "eb7e9ed2e24a19ac2aa89a13676e3d56b287c9d8",
+    "source_base_tree": "cd2a61ca43afa08bfc83ba5459e82aa80a32a071",
+    "synthetic_full_worker_cleanup": "SOURCE_IMPLEMENTED_PENDING_DEVICE"
+  },
   "fc08_overall_qualified": false,
   "independent_evidence_required": true,
   "r1r29_addendum": {

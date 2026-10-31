@@ -38,6 +38,26 @@ def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
 
+def _safe_cleanup_error_label(exc: BaseException) -> str:
+    """Return only fixed, reviewed labels, never arbitrary exception bodies.
+
+    Preserve legacy refusal families required by callers/tests while refusing
+    to echo path fragments and untrusted payloads from OS/library errors.
+    """
+    if not isinstance(exc, ValueError):
+        return "filesystem or worker failure" if isinstance(exc, OSError) else "worker refusal"
+    message = str(exc).lower()
+    for fragment, label in (
+        ("durable execution provenance", "durable execution provenance unavailable"),
+        ("durable consumed-source inventory", "durable consumed-source inventory mismatch"),
+        ("attachment integrity", "attachment integrity mismatch"),
+        ("authority", "apply authority refused"),
+    ):
+        if fragment in message:
+            return label
+    return "source identity or provenance refused"
+
+
 def _literal_path(value: str | Path) -> Path:
     """Keep the exact file name: resolving the leaf follows symlinks to victims."""
     return Path(os.path.abspath(os.path.expanduser(str(value))))
@@ -362,9 +382,14 @@ def _cleanup_external_apply_sources(
         }
         plan_id = external_apply_cleanup_plan_id(root, existing, reason=reason, source_snapshots=snapshots)
     except (OSError, ValueError) as exc:
-        return {"returncode": 1, "output": "Refused consumed source cleanup: " + str(exc),
+        # The exception may contain a user ZIP name or sensitive directory.
+        # Keep the machine classification, never echo raw exception text.
+        return {"returncode": 1,
+                "output": "Refused consumed source cleanup; authorization or source identity invalid.",
                 "failure_kind": "artifact_cleanup_authority_missing",
-                "metadata": {"cleanup_status": "protected"}}
+                "metadata": {"cleanup_status": "protected",
+                             "error_category": "SOURCE_AUTHORITY_REFUSED",
+                             "exception_type": type(exc).__name__}}
     rows: list[CleanupActionResult] = []
     reclaimed = 0
     failed = False
@@ -567,11 +592,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             authorized_sources=authority,
         )
     except BaseException as exc:
+        # Never echo exception strings: injected errors, OS errors and malformed
+        # authority JSON can contain arbitrary user paths or secret values.
+        # Keep the refusal observable without laundering it into qualification.
+        category = (
+            "APPLY_AUTHORITY_REFUSED" if isinstance(exc, (ValueError, TypeError, KeyError, json.JSONDecodeError))
+            else "FILESYSTEM_ERROR" if isinstance(exc, OSError)
+            else "UNEXPECTED_WORKER_FAILURE"
+        )
         payload = {
             "returncode": 1,
-            "output": f"Failed canonical LIFE cleanup of original artifact(s) {args.reason}.\n{type(exc).__name__}: {exc}",
+            "output": "Canonical LIFE cleanup refused: " + _safe_cleanup_error_label(exc) + ".",
             "failure_kind": "artifact_cleanup_failure",
-            "metadata": {"cleanup_worker": "fresh-process"},
+            "metadata": {"cleanup_worker": "fresh-process", "cleanup_status": "protected",
+                         "error_category": category, "release_qualified": False,
+                         "safe_to_retry_unlink": False},
         }
     print(json.dumps(payload, sort_keys=True))
     return int(payload.get("returncode") or 0)
