@@ -11,7 +11,8 @@ AGP 8.9 compatibility requirements.
 - The fixture template is tracked under `tests/fixtures/r33_hosted_android/`.
 - GitHub Actions checks out the exact triggering Devtool commit and verifies
   every template file still equals its corresponding Git blob.
-- Hosted runners download only the official `gradle-8.11.1-wrapper.jar` binary,
+- Hosted runners provision Gradle 8.11.1 via the pinned `setup-gradle` action
+  and generate a wrapper JAR with its `:wrapper` task in a temporary project,
   enforcing SHA-256 `2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046`.
 - `distributionSha256Sum` pins the Gradle 8.11.1 binary ZIP:
   `f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6`.
@@ -69,3 +70,29 @@ gh run list --repo Mikeyphw/devtool --limit 8
 CI runtime is on GitHub, not on Termux. Analyze the `lint` and `build` job logs,
 JSON evidence, APK receipt, artifact digest, and signer certificate after the
 workflow has completed. Never infer real success from local source tests.
+
+## R33-R1: live wrapper provisioning correction (2026-10-31)
+
+R33 run `41223093703` failed before starting native Devtool execution. Its
+`lint` job attempted to download `gradle-8.11.1-wrapper.jar` from
+`services.gradle.org/distributions`, which returned HTTP 404; `build` was
+skipped, and the early failure produced no artifact. This was an error in the
+hosted harness, **not evidence of an Android compiler or Devtool DAG failure**.
+
+R33-R1 installs Gradle 8.11.1 via the pinned `gradle/actions/setup-gradle`
+action in **GitHub Actions only**, generates the wrapper JAR using Gradle's
+`:wrapper` task in a throwaway generator project, and checks its SHA-256 against
+`2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046`.
+The wrapper project's distribution SHA-256 must also match the reviewed
+Gradle 8.11.1 binary distribution digest. No wrapper is downloaded from a
+nonexistent standalone distribution URL.
+
+Each hosted job now initializes `hosted-bootstrap.json` immediately after
+checkout, before toolchain setup, and writes `hosted-failure.json` on failure.
+Both are explicitly unqualified and bound to the GitHub SHA/run/attempt.
+These records do not fake a Gradle receipt or successful APK verification.
+The build continues to require the preceding lint node's success receipt.
+
+**Qualification boundary:** this hotfix is source-validated only until a new
+GitHub R33 live run completes both native Gradle nodes and uploads verified
+APK evidence. The source-only matrix cannot substitute for that run.

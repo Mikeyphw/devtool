@@ -81,3 +81,19 @@ def test_live_workflow_uses_two_hosted_jobs_and_non_release_immutability():
     assert 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' in content
     assert 'secrets.' not in content
     assert 'assembleRelease' not in content
+
+
+def test_live_workflow_generates_official_wrapper_in_hosted_isolated_project():
+    text=(ROOT/'.github/workflows/devtool-android-r33-live-hosted-dag.yml').read_text()
+    assert text.count("gradle-version: '8.11.1'")==2
+    assert text.count('gradle --offline --no-daemon :wrapper')==2
+    assert text.count('--gradle-distribution-sha256-sum '+DISTRIBUTION_SHA256)==2
+    assert text.count("'"+JAR_SHA256+"'")==2
+    assert 'curl --fail' not in text
+    assert 'https://services.gradle.org/distributions/gradle-8.11.1-wrapper.jar' not in text
+    assert text.count('hosted-bootstrap.json')==2
+    assert text.count('hosted-failure.json')==2
+    assert text.count('R33_WRAPPER_OUTCOME: ${{ steps.generate_wrapper.outcome }}')==2
+    assert text.count('if: always()')==2
+    assert "'release_qualified':False" in text
+    assert 'needs: [lint]' in text

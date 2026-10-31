@@ -16,6 +16,30 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Initialize source-bound non-release diagnostics before provisioning
+        id: init_evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/r33-evidence"
+          python3 - <<'PYR33BOOT'
+          import json, os, pathlib
+          p = pathlib.Path(os.environ['RUNNER_TEMP'])/'r33-evidence'/'hosted-bootstrap.json'
+          p.write_text(json.dumps({
+              'schema':'devtool.r33.hosted-bootstrap.v1',
+              'source_sha':os.environ['GITHUB_SHA'],
+              'run_id':os.environ['GITHUB_RUN_ID'],
+              'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'job':os.environ['R33_JOB'],
+              'state':'PROVISIONING_NOT_YET_QUALIFIED',
+              'real_gradle_executed':False,
+              'apk_verified':False,
+              'release_qualified':False,
+          },sort_keys=True,indent=2)+'\n')
+          PYR33BOOT
+        env:
+          R33_JOB: lint
       - name: Python 3.13
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
@@ -36,20 +60,39 @@ jobs:
         with:
           cmdline-tools-version: 15859902
           packages: "platforms;android-35 build-tools;35.0.0 platform-tools"
-      - name: Setup Gradle from signed, hash-pinned wrapper
+      - name: Provision pinned Gradle 8.11.1 on hosted Ubuntu
+        id: setup_gradle
         uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with:
+          gradle-version: '8.11.1'
           cache-disabled: true
-      - name: Download and hash-verify official Gradle 8.11.1 wrapper JAR
+      - name: Generate and verify Gradle 8.11.1 wrapper JAR (hosted only)
+        id: generate_wrapper
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
-            https://services.gradle.org/distributions/gradle-8.11.1-wrapper.jar \
-            --output "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar"
+          # Gradle does not publish a standalone wrapper.jar at the distribution URL.
+          # Generate it through the *installed* pinned Gradle in an isolated scratch project.
+          GENERATOR="$RUNNER_TEMP/r33-wrapper-generator"
+          test ! -e "$GENERATOR"
+          mkdir -p "$GENERATOR"
+          printf '%s\n' "rootProject.name = 'r33-wrapper-generator'" > "$GENERATOR/settings.gradle"
+          (
+            cd "$GENERATOR"
+            gradle --offline --no-daemon :wrapper \
+              --gradle-version 8.11.1 \
+              --distribution-type bin \
+              --gradle-distribution-sha256-sum f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6
+          )
+          JAR="$GENERATOR/gradle/wrapper/gradle-wrapper.jar"
+          test -f "$JAR"
           printf '%s  %s\n' \
             '2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046' \
-            "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar" | sha256sum --check --status
+            "$JAR" | sha256sum --check
+          grep -Fq 'distributionSha256Sum=f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6' \
+            "$GENERATOR/gradle/wrapper/gradle-wrapper.properties"
+          cp -- "$JAR" "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar"
+          printf '%s\n' 'PASS_R33R1_OFFICIAL_WRAPPER_GENERATED_AND_SHA256_VERIFIED'
       - name: Build deterministic Devtool-owned temporary Android fixture
         shell: bash
         run: |
@@ -73,6 +116,32 @@ jobs:
             --fixture "$RUNNER_TEMP/r33-fixture" \
             --job lint \
             --out "$RUNNER_TEMP/r33-evidence/result.json"
+      - name: Capture failed hosted stage as non-release evidence
+        if: failure()
+        shell: bash
+        env:
+          R33_JOB: lint
+          R33_SETUP_OUTCOME: ${{ steps.setup_gradle.outcome }}
+          R33_WRAPPER_OUTCOME: ${{ steps.generate_wrapper.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/r33-evidence"
+          python3 - <<'PYR33FAIL'
+          import json, os, pathlib
+          p=pathlib.Path(os.environ['RUNNER_TEMP'])/'r33-evidence'/'hosted-failure.json'
+          p.write_text(json.dumps({
+              'schema':'devtool.r33.hosted-failure.v1',
+              'status':'FAILED_OR_INCOMPLETE',
+              'source_sha':os.environ.get('GITHUB_SHA'),
+              'run_id':os.environ.get('GITHUB_RUN_ID'),
+              'run_attempt':int(os.environ.get('GITHUB_RUN_ATTEMPT','0')),
+              'job':os.environ['R33_JOB'],
+              'setup_gradle_outcome':os.environ['R33_SETUP_OUTCOME'],
+              'generate_wrapper_outcome':os.environ['R33_WRAPPER_OUTCOME'],
+              'release_qualified':False,
+              'apk_verified':False,
+          },sort_keys=True,indent=2)+'\n')
+          PYR33FAIL
       - name: Upload source-bound fixture evidence (non-release)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -90,6 +159,30 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Initialize source-bound non-release diagnostics before provisioning
+        id: init_evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/r33-evidence"
+          python3 - <<'PYR33BOOT'
+          import json, os, pathlib
+          p = pathlib.Path(os.environ['RUNNER_TEMP'])/'r33-evidence'/'hosted-bootstrap.json'
+          p.write_text(json.dumps({
+              'schema':'devtool.r33.hosted-bootstrap.v1',
+              'source_sha':os.environ['GITHUB_SHA'],
+              'run_id':os.environ['GITHUB_RUN_ID'],
+              'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'job':os.environ['R33_JOB'],
+              'state':'PROVISIONING_NOT_YET_QUALIFIED',
+              'real_gradle_executed':False,
+              'apk_verified':False,
+              'release_qualified':False,
+          },sort_keys=True,indent=2)+'\n')
+          PYR33BOOT
+        env:
+          R33_JOB: build
       - name: Python 3.13
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
@@ -110,20 +203,39 @@ jobs:
         with:
           cmdline-tools-version: 15859902
           packages: "platforms;android-35 build-tools;35.0.0 platform-tools"
-      - name: Setup Gradle from signed, hash-pinned wrapper
+      - name: Provision pinned Gradle 8.11.1 on hosted Ubuntu
+        id: setup_gradle
         uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with:
+          gradle-version: '8.11.1'
           cache-disabled: true
-      - name: Download and hash-verify official Gradle 8.11.1 wrapper JAR
+      - name: Generate and verify Gradle 8.11.1 wrapper JAR (hosted only)
+        id: generate_wrapper
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
-            https://services.gradle.org/distributions/gradle-8.11.1-wrapper.jar \
-            --output "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar"
+          # Gradle does not publish a standalone wrapper.jar at the distribution URL.
+          # Generate it through the *installed* pinned Gradle in an isolated scratch project.
+          GENERATOR="$RUNNER_TEMP/r33-wrapper-generator"
+          test ! -e "$GENERATOR"
+          mkdir -p "$GENERATOR"
+          printf '%s\n' "rootProject.name = 'r33-wrapper-generator'" > "$GENERATOR/settings.gradle"
+          (
+            cd "$GENERATOR"
+            gradle --offline --no-daemon :wrapper \
+              --gradle-version 8.11.1 \
+              --distribution-type bin \
+              --gradle-distribution-sha256-sum f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6
+          )
+          JAR="$GENERATOR/gradle/wrapper/gradle-wrapper.jar"
+          test -f "$JAR"
           printf '%s  %s\n' \
             '2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046' \
-            "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar" | sha256sum --check --status
+            "$JAR" | sha256sum --check
+          grep -Fq 'distributionSha256Sum=f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6' \
+            "$GENERATOR/gradle/wrapper/gradle-wrapper.properties"
+          cp -- "$JAR" "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar"
+          printf '%s\n' 'PASS_R33R1_OFFICIAL_WRAPPER_GENERATED_AND_SHA256_VERIFIED'
       - name: Build deterministic Devtool-owned temporary Android fixture
         shell: bash
         run: |
@@ -153,6 +265,32 @@ jobs:
             --job build \
             --out "$RUNNER_TEMP/r33-evidence/result.json" \
             --prior "$RUNNER_TEMP/r33-upstream/result.json"
+      - name: Capture failed hosted stage as non-release evidence
+        if: failure()
+        shell: bash
+        env:
+          R33_JOB: build
+          R33_SETUP_OUTCOME: ${{ steps.setup_gradle.outcome }}
+          R33_WRAPPER_OUTCOME: ${{ steps.generate_wrapper.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/r33-evidence"
+          python3 - <<'PYR33FAIL'
+          import json, os, pathlib
+          p=pathlib.Path(os.environ['RUNNER_TEMP'])/'r33-evidence'/'hosted-failure.json'
+          p.write_text(json.dumps({
+              'schema':'devtool.r33.hosted-failure.v1',
+              'status':'FAILED_OR_INCOMPLETE',
+              'source_sha':os.environ.get('GITHUB_SHA'),
+              'run_id':os.environ.get('GITHUB_RUN_ID'),
+              'run_attempt':int(os.environ.get('GITHUB_RUN_ATTEMPT','0')),
+              'job':os.environ['R33_JOB'],
+              'setup_gradle_outcome':os.environ['R33_SETUP_OUTCOME'],
+              'generate_wrapper_outcome':os.environ['R33_WRAPPER_OUTCOME'],
+              'release_qualified':False,
+              'apk_verified':False,
+          },sort_keys=True,indent=2)+'\n')
+          PYR33FAIL
       - name: Upload source-bound fixture evidence (non-release)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
