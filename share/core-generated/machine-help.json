@@ -5418,6 +5418,18 @@
           "spellings": [
             "--resume-if-existing"
           ]
+        },
+        {
+          "choices": [],
+          "dest": "require_local_head",
+          "help": "Require a clean local HEAD matching the selected remote ref before dispatch",
+          "hidden": false,
+          "id": "cli.option.actions.plan.require_local_head",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--require-local-head"
+          ]
         }
       ],
       "path": [
@@ -7425,6 +7437,18 @@
           "required": false,
           "spellings": [
             "--resume-if-existing"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "require_local_head",
+          "help": "Require a clean local HEAD matching the selected remote ref before dispatch",
+          "hidden": false,
+          "id": "cli.option.actions.run.require_local_head",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--require-local-head"
           ]
         }
       ],
@@ -39589,7 +39613,7 @@
       "summary": "In-place whole-repository review, ownership and source-bound onboarding"
     }
   ],
-  "digest": "3d4fe5736552634257b5fd18d0b5251a2dc112bc6595dff701be0c83ac2dc99a",
+  "digest": "28242821cf1552b9f637a52f6862219074669459dede7fdd8698fd6a51fe1939",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -40124,7 +40148,7 @@
     "registry_command_count": 392
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "63c4b8571a885a6075efec1aef6c6d73cdbcb65f227f9b36662dd897b82bc368",
+  "registry_digest": "585b4c0e9a98cb966757d1b74f393a611c9ce9de75092db92796524492f3d407",
   "registry_schema_version": 1,
   "schema_version": 1
 }

@@ -66192,6 +66192,48 @@
       "sensitive": false,
       "stable_id": "cli.option.onboard.help",
       "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--require-local-head",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "require_local_head",
+        "help": "Require a clean local HEAD matching the selected remote ref before dispatch",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "actions plan",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.plan.require_local_head",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--require-local-head",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "require_local_head",
+        "help": "Require a clean local HEAD matching the selected remote ref before dispatch",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "actions",
+          "run"
+        ],
+        "required": false
+      },
+      "scope": "actions run",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.run.require_local_head",
+      "value_kind": "_StoreTrueAction"
     }
   ],
   "parser": {
@@ -120497,6 +120539,23 @@
                         ],
                         "required": false,
                         "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "require_local_head",
+                        "group": null,
+                        "help": "Require a clean local HEAD matching the selected remote ref before dispatch",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--require-local-head"
+                        ],
+                        "required": false,
+                        "type": null
                       }
                     ],
                     "add_help": true,
@@ -122982,6 +123041,23 @@
                         "nargs": 0,
                         "option_strings": [
                           "--resume-if-existing"
+                        ],
+                        "required": false,
+                        "type": null
+                      },
+                      {
+                        "action": "store_true",
+                        "choices": null,
+                        "const": true,
+                        "default": false,
+                        "dest": "require_local_head",
+                        "group": null,
+                        "help": "Require a clean local HEAD matching the selected remote ref before dispatch",
+                        "metavar": null,
+                        "mutex": null,
+                        "nargs": 0,
+                        "option_strings": [
+                          "--require-local-head"
                         ],
                         "required": false,
                         "type": null

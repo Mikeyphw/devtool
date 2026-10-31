@@ -585,6 +585,10 @@ def resolve_wrapper_argv(
                 fixed_args.extend([str(spec['workflow_id']),'--ref',str(spec['ref'])])
                 if op=='dispatch':fixed_args.append('--resume-if-existing')
                 elif op=='plan':fixed_args.append('--resume-if-existing')
+                # Typed repository wrappers are source-bound by default. The
+                # runtime reads Git HEAD and checks worktree cleanliness; no
+                # Git query is performed during pure resolution or sealing.
+                fixed_args.append('--require-local-head')
                 for key,value in sorted(spec.get('inputs',{}).items()):
                     fixed_args.extend(['--input',str(key)+'='+str(value)])
     else:

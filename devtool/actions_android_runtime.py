@@ -56,6 +56,11 @@ def discover_runtime(project: Path, *, repository: Path, timeout: int = 120) -> 
     if not project.is_relative_to(repository):
         raise GitHubActionsError('Runtime Gradle project must be within the repository')
     from .actions_android import _gradle_bootstrap, _git
+    from .android._standalone import enforce_hosted_gradle_only
+    try:
+        enforce_hosted_gradle_only(repository)
+    except Exception as exc:
+        raise GitHubActionsError(str(exc)) from exc
     _gradle_bootstrap(project)
     if _git(repository,'status','--porcelain','--untracked-files=normal'):
         raise GitHubActionsError('Runtime Gradle discovery requires clean reviewed source')

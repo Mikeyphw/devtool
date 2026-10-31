@@ -8974,12 +8974,48 @@ def apply_low_priority(args: argparse.Namespace) -> None:
         pass
 
 
+def hosted_gradle_only(project_root: Path) -> bool:
+    """Honor opt-in project execution policy before any chroot or Gradle process.
+
+    This standalone builder is staged into chroot verbatim, so keep its policy
+    reader self-contained. Never trust a policy coming from an environment
+    variable (the repository configuration is the authority).
+    """
+    import tomllib
+    config = project_root / ".devtool.toml"
+    if not config.exists():
+        return False
+    try:
+        raw = tomllib.loads(config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise BuildError(f"Cannot read hosted Gradle policy: {exc}") from exc
+    execution = raw.get("execution", {})
+    if not isinstance(execution, dict):
+        raise BuildError("Invalid [execution] Gradle policy")
+    mode = execution.get("gradle_execution", "local-allowed")
+    if mode not in ("local-allowed", "github-actions-only"):
+        raise BuildError("Unsupported [execution].gradle_execution value")
+    return mode == "github-actions-only"
+
+
+def enforce_hosted_gradle_only(project_root: Path, *, bootstrap_only: bool = False) -> None:
+    if hosted_gradle_only(project_root) and not bootstrap_only:
+        raise BuildError(
+            "LOCAL_GRADLE_FORBIDDEN: [execution].gradle_execution=github-actions-only; "
+            "run Gradle through GitHub Actions using the typed Devtool wrapper"
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
+    args = parse_args(raw_args)
+    project_root = resolve_project_root(args.project)
+    # Fail before chroot, toolchain provisioning or local Gradle. Bootstrap-only
+    # does not execute Gradle and remains available when explicitly requested.
+    enforce_hosted_gradle_only(project_root, bootstrap_only=bool(args.bootstrap_only))
     delegated = maybe_reexec_in_chroot(raw_args)
     if delegated is not None:
         return delegated
-    args = parse_args(raw_args)
     if args.toolchain_downloads == "force":
         args.force_setup = True
     provisioning_allowed = bootstrap_provisioning_allowed(

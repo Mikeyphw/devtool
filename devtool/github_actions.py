@@ -955,8 +955,12 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
         if action == "run" and not bool(getattr(args,"yes",False)):
             raise GitHubActionsError("Explicit --yes required to dispatch a workflow")
         values = _input_values(list(getattr(args,"input",[]) or []),str(getattr(args,"inputs_json","") or ""))
+        from .actions_dispatch import local_head_for_dispatch
+        expected_sha = (local_head_for_dispatch(local_root)
+                        if bool(getattr(args, "require_local_head", False)) else None)
         payload = dispatch_workflow(client,slug,str(args.workflow_id),str(args.ref),values,
-            execute=action=="run",resume_if_existing=bool(getattr(args,"resume_if_existing",False)))
+            execute=action=="run",resume_if_existing=bool(getattr(args,"resume_if_existing",False)),
+            expected_source_sha=expected_sha)
         return {"authentication": authentication, **payload}
     raise GitHubActionsError("Unknown GitHub Actions operation")
 

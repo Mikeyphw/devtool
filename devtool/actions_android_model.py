@@ -37,6 +37,11 @@ def _include_names(text: str) -> set[str]:
             raise GitHubActionsError('Unclosed or dynamic Gradle module include')
         payload = text[match.end():end-1]
         parts = re.split(r'\s*,\s*', payload.strip())
+        # Kotlin/Groovy permit a terminal comma in include(":app", ":lib",).
+        # Ignore exactly one terminal separator; interior/leading empties and
+        # dynamic expressions still fail closed below.
+        if len(parts) > 1 and parts[-1] == '':
+            parts.pop()
         if not parts or any(not re.fullmatch(r'''["'](:[A-Za-z0-9_:-]+)["']''', p.strip()) for p in parts):
             raise GitHubActionsError('Dynamic Gradle include requires explicit reviewed override')
         found.update(p.strip()[1:-1] for p in parts)

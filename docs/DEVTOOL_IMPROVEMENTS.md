@@ -1461,3 +1461,17 @@ historical failures or treat selected local tests as hosted authority.
 - **Real original H1 archive proof:** All 30 original R1R28-H1 ZIPs (5 host, 24 G1 shard, 1 G1 summary) downloaded, each original ZIP SHA-256 checked against GitHub artifact API; new independent parser checked all 609 original JUnit XML files and 609 logs against module hashes and recounted **7,005 primary cases in 609 modules across all 24 shards**, matching the H1 summary. `docs/FC08_R1R29_H1_ORIGINAL_G1_JUNIT_RECOUNT_EVIDENCE_20261031.json` preserves 30 provider digest links and all shard counts. **PASS historical H1 evidence only; new R1R29 SHA hosted and native evidence OPEN.**
 - **Safety / unresolved:** No actual user ZIP is deleted, no relaxed cleanup policy, no automatic dispatch retry. Android FUSE canary success does not explain/fix the original real `/sdcard/Download` cleanup failure; native actual phone, new-source hosted FC08/G1 and 30-ZIP audit still require execution. Original Python 3.14 mock HTTPError ResourceWarnings, genuine 5xx/timeout, Windows signed native artifact, Android signer/installed instrumentation, Telegram/Studyflow/BKX R3 adoption and rollback, FC09 full independent promises and formal release all OPEN. Always preserve `fc08_overall_qualified=false` and `release_qualified=false`.
 - **Promise audit:** `docs/FC08_R1R29_NATIVE_STORAGE_G1_RECOUNT_PROMISE_AUDIT_20261031.md`; crosswalk: `docs/FC08_R1R28_FC09_QUALIFICATION_CROSSWALK.json`.
+
+
+### 2026-10-30 — Wave B: Android module include trailing comma (DT-CONS-P1-03)
+
+- **Evidence:** `actions_android_model._include_names()` treated a valid final comma in multiline Kotlin Gradle `include(...)` as a dynamic/empty module. `relatorio-android/settings.gradle.kts` demonstrates the case; no Gradle evaluation is required.
+- **Fix (source-ready, acceptance pending):** Permit exactly one terminal delimiter after at least one quoted literal module name, preserving fail-closed rejection of empty interior tokens, dynamic expressions, unclosed calls, invalid module names, and symlink/path rules.
+- **Tests:** `tests/test_wave_b_android_includes.py` covers positive and adversarial cases plus app discovery. Consumer integration and GitHub dispatch remain separate acceptance gates.
+- **Affected:** Devtool module discovery / typed Android Actions planning; consumers can use the parser after deploying updated Devtool.
+- **Status:** IMPLEMENTED IN OVERLAY; NOT YET APPLIED TO USER'S INSTALLED DEVTOOL.
+
+## Wave D — hosted-only execution and exact-HEAD dispatch (2026-10-30)
+- **Delivered in patch**: optional `[execution].gradle_execution="github-actions-only"` rejects native Android standalone builder and explicitly reviewed local Gradle runtime discovery before subprocess/chroot; bootstrap-only setup remains allowed. Consumer projects adopt the policy. This does not intercept arbitrary `./gradlew` or unrelated custom shell jobs.
+- **Delivered in patch**: typed Actions wrapper plan/dispatch requires clean local HEAD, compares selected remote ref SHA before any POST/journal, preserving existing RM-16 deduplication and its mutable-ref-after-check limitation. Direct `devtool actions` remains opt-in via `--require-local-head`.
+- **Open**: cryptographically qualified APK provenance and trusted import into canonical artifact registry; live GitHub build/emulator acceptance; enterprise policy against external shell Gradle execution; true immutable ref dispatch (GitHub workflow_dispatch accepts a branch/tag and can race).

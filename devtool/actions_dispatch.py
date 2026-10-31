@@ -230,6 +230,25 @@ def _dispatch_lock(folder: Path):
         os.close(fd)
 
 
+def local_head_for_dispatch(root: Path) -> str:
+    """Require one committed source tree, before any non-idempotent API call."""
+    import subprocess
+    root = root.resolve()
+    try:
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
+                              capture_output=True, text=True, timeout=8, check=False)
+        dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=normal"],
+                               capture_output=True, text=True, timeout=8, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GitHubDispatchPreflightError("Cannot inspect local Git source; no dispatch attempted") from exc
+    sha = head.stdout.strip().lower()
+    if head.returncode or not _SHA.fullmatch(sha) or dirty.returncode or dirty.stdout.strip():
+        raise GitHubDispatchPreflightError(
+            "Source-bound dispatch requires a clean committed local HEAD; commit and push first; no dispatch attempted"
+        )
+    return sha
+
+
 def dispatch_workflow(client: GitHubActionsClient, slug: str, workflow_id: str, ref: str,
                        inputs: dict[str,str], *, execute: bool, state_root: Path | None=None,
                        expected_source_sha: str | None = None,

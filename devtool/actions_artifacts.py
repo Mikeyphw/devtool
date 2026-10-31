@@ -139,6 +139,70 @@ def check_zip(path: Path) -> dict[str, int]:
         raise GitHubActionsError("Downloaded artifact is not a valid safe ZIP archive") from None
 
 
+def verify_embedded_debug_receipt(archive: Path, *, slug: str, remote: dict[str, Any]) -> dict[str, Any]:
+    """Check a Wave C APK+receipt ZIP against independently queried GitHub run identity.
+
+    Unlike a ZIP hash, this checks the embedded APK and its producer *claims*.
+    It does not independently verify Android signing, trust the package name,
+    prove provenance of the GitHub runner, or qualify a release/device build.
+    Diagnostic ZIPs without build-evidence.json remain archive-only.
+    """
+    with zipfile.ZipFile(archive) as z:
+        names = z.namelist()
+        if 'build-evidence.json' not in names:
+            return {'receipt_status': 'absent', 'receipt_integrity_verified': False}
+        if len(names) != 2:
+            raise GitHubActionsError('Build receipt archive must contain exactly an APK and build-evidence.json')
+        try:
+            entry = z.getinfo('build-evidence.json')
+            if not 0 < entry.file_size <= 32768:
+                raise ValueError('receipt size')
+            receipt = json.loads(z.read(entry))
+        except (KeyError, ValueError, UnicodeError, TypeError):
+            raise GitHubActionsError('Invalid embedded Android build receipt') from None
+        if not isinstance(receipt, dict) or receipt.get('schema_version') != 2:
+            raise GitHubActionsError('Unsupported embedded Android build receipt schema')
+        member = receipt.get('artifact_member')
+        if (not isinstance(member, str) or not re.fullmatch(r'[A-Za-z0-9._-]+\.apk', member)
+                or set(names) != {member, 'build-evidence.json'}):
+            raise GitHubActionsError('Embedded build receipt does not identify exactly one APK')
+        apk = z.getinfo(member)
+        if apk.file_size <= 0 or apk.file_size > 150*1024*1024:
+            raise GitHubActionsError('Embedded APK exceeds bounded size')
+        sha = str(remote.get('head_sha') or '').lower()
+        rid = remote.get('id');attempt = remote.get('run_attempt')
+        if (receipt.get('repository', '').lower() != slug.lower()
+                or receipt.get('source_sha') != sha
+                or type(rid) is not int or type(attempt) is not int
+                or receipt.get('github_run_id') != rid
+                or receipt.get('github_run_attempt') != attempt
+                or receipt.get('workflow_run_url') != f'https://github.com/{slug}/actions/runs/{rid}'):
+            raise GitHubActionsError('Embedded build receipt does not match the selected GitHub run')
+        for name in ('run_id', 'run_attempt'):
+            if name in receipt and receipt[name] != (rid if name == 'run_id' else attempt):
+                raise GitHubActionsError('Embedded build receipt has conflicting run identity')
+        if (receipt.get('format') != 'apk' or receipt.get('variant') != 'debug'
+                or receipt.get('apk_size_bytes') != apk.file_size
+                or receipt.get('apk_signature_verified') is not True
+                or receipt.get('apk_manifest_verified') is not True
+                or receipt.get('unit_tests_and_lint_passed') is not True
+                or receipt.get('device_qualified') is not False
+                or receipt.get('qualified_release', receipt.get('release_qualified')) is not False
+                or not re.fullmatch('[a-f0-9]{64}', str(receipt.get('signing_certificate_sha256', '')).lower())):
+            raise GitHubActionsError('Embedded build verification claims are incomplete or unsafe')
+        h = hashlib.sha256()
+        with z.open(apk) as stream:
+            for chunk in iter(lambda: stream.read(1024*1024), b''):
+                h.update(chunk)
+        if h.hexdigest() != receipt.get('apk_sha256'):
+            raise GitHubActionsError('Embedded APK bytes do not match build receipt sha256')
+        return {'receipt_status': 'integrity-verified', 'receipt_integrity_verified': True,
+                'apk_member': member, 'apk_sha256': h.hexdigest(),
+                'apk_size_bytes': apk.file_size, 'package_claimed': receipt.get('package'),
+                'apk_signature_independently_verified': False,
+                'device_qualified': False, 'qualified_release': False}
+
+
 def _storage(repo_root: Path) -> Path:
     root = repo_root.resolve()
     folder = root / ".devtool" / "artifacts" / "github-downloads"
@@ -196,6 +260,7 @@ def download_artifact(client: GitHubActionsClient, slug: str, identity: int, art
         if actual != expected:
             raise GitHubActionsError("GitHub artifact sha256 mismatch; discarded archive")
         zip_check = check_zip(tmp)
+        embedded = verify_embedded_debug_receipt(tmp, slug=slug, remote=remote)
         target = folder / f"github-{slug.replace('/', '_')}-run{identity}-artifact{artifact_id}-{expected[:16]}.zip"
         if target.is_symlink() or target.exists():
             raise GitHubActionsError("Artifact already downloaded; use actions verify instead of overwriting")
@@ -213,13 +278,14 @@ def download_artifact(client: GitHubActionsClient, slug: str, identity: int, art
             "remote_artifact_id": artifact_id,
             "remote_digest": f"sha256:{expected}", "archive_digest_verified": True,
             "archive_members": zip_check["members"], "qualified_release": False,
+            "embedded_build_receipt": embedded,
             "signing_verified": False, "extracted": False, "verification_status": "archive-sha256-only"}
     records = register_paths(repo_root, [target], metadata=meta)
     if not records:
         raise GitHubActionsError("Archive saved but canonical artifact registry did not accept it")
     return {"phase": "ACTIONS-04", "repository": slug, "run_id": identity,
             "artifact": artifact, "file": str(target), "sha256": expected,
-            "bytes": size, "zip_validation": zip_check,
+            "bytes": size, "zip_validation": zip_check, "embedded_build_receipt": embedded,
             "registry_id": records[0]["id"], "download_verified": True,
             "extracted": False, "qualified_release": False}
 
@@ -250,10 +316,15 @@ def verify_download(client: GitHubActionsClient, slug: str, identity: int, artif
     if h.hexdigest() != expected or record.get("sha256") != expected:
         raise GitHubActionsError("Registered artifact archive integrity check failed")
     zip_check = check_zip(path)
+    embedded = verify_embedded_debug_receipt(path, slug=slug, remote=remote)
+    recorded = record["metadata"].get("embedded_build_receipt")
+    if recorded is not None and recorded.get("receipt_status") != embedded["receipt_status"]:
+        raise GitHubActionsError("Registered embedded receipt evidence differs from current archive")
     if record["metadata"].get("remote_head_sha") != remote.get("head_sha"):
         raise GitHubActionsError("Registered artifact remote source commit changed")
     if record["metadata"].get("remote_run_attempt") != remote.get("run_attempt"):
         raise GitHubActionsError("Registered artifact belongs to a different workflow attempt")
     return {"phase":"ACTIONS-04", "repository":slug,"run_id":identity,
             "artifact_id":artifact_id,"sha256":expected,"file":str(path),
-            "zip_validation":zip_check,"archive_verified":True,"qualified_release":False}
+            "zip_validation":zip_check,"embedded_build_receipt":embedded,
+            "archive_verified":True,"qualified_release":False}
