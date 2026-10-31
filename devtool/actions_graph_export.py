@@ -25,6 +25,7 @@ from .config import load_wrapper_project_config
 _DOWNLOAD_SHA = 'd3f86a106a0bac45b974a628896c90dbdf5c8093'
 _SETUP_BUN_SHA = '0c5077e51419868618aeaa5fe8019c62421857d6' # oven-sh/setup-bun v2
 _SETUP_NODE_SHA = '49933ea5288caeca8642d1e84afbd3f7d6820020' # actions/setup-node v4.4.0
+_SETUP_ANDROID_SHA = 'be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd' # android-actions/setup-android v4.0.4
 _SETUP_GRADLE_SHA = 'ed408507eac070d1f99cc633dbcf757c94c7933a'  # gradle/actions/setup-gradle v4
 _SETUP_JAVA_SHA = 'cf277c60eb25467037889841efdb72551f06f6c3'  # actions/setup-java v4
 _MSVC_ENV_SHA = '0b201ec74fa43914dc39ae48a89fd1d8cb592756' # ilammy/msvc-dev-cmd 1.13.0
@@ -130,7 +131,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     graph=graph_from_workflow(plan['target'],cfg.targets[plan['target']].workflows[plan['workflow']])
     for profile in profiles:
         admission=graph_host_admission(cfg,graph,host_os=profile.os,
-                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp'))
+                                      host_arch=profile.arch,toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp','android-gradle'))
         if not admission['all_eligible']:
             failures=[item['node']+':'+','.join(item['eligibility']['reasons'])
                       for item in admission['nodes'] if not item['eligibility']['eligible']]
@@ -181,6 +182,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'cpp_base_argv':list(row['command']) if row['provider']['provider']=='cpp' else [],
                          'toolchain_version':matrix_version if cpp_only else (version or row['provider']['version']),
                          'go_manifest':row['provider'].get('version_source','go.mod'),
+                         'android_review':row['provider'] if row['provider']['provider']=='android-gradle' else None,
                          'race':('-race' in row['command']),
                          'python_package':row['provider']['provider']=='python-shell' and bool(row['provider'].get('project')),
                          'wheel_smoke':row['wheel_smoke'],'sdist_smoke':row['sdist_smoke'],
@@ -248,7 +250,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 raise ProviderError('RM-06 generated input requires direct producer dependency: '+inp)
         if job['race'] and job['runner']!='ubuntu-24.04':
             raise ProviderError('RM-08 Go race profile requires reviewed Linux amd64 runner')
-        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp'):
+        if job['provider'] not in ('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp','android-gradle'):
             raise ProviderError('RM-06 refuses unreviewed hosted provider')
     immutable = {'schema_version': SCHEMA, 'kind': 'devtool.actions.export-graph',
                  'provider_plan_sha256':plan['plan_sha256'], 'target':plan['target'],
@@ -333,6 +335,17 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
         setup_go=(f'      - name: Pinned Go toolchain\n'
                   f'        uses: actions/setup-go@{_SETUP_GO_SHA}\n'
                   f'        with:\n          {go_selector}\n          cache: false\n') if job['provider']=='go' else ''
+        android_setup=(
+            f'      - name: Pinned hosted Android Java SDK\n'
+            f'        uses: actions/setup-java@{_SETUP_JAVA_SHA}\n'
+            f'        with:\n          distribution: temurin\n          java-version: \"{job["android_review"]["java_version"]}\"\n'
+            f'      - name: Pinned hosted Android SDK tooling\n'
+            f'        uses: android-actions/setup-android@{_SETUP_ANDROID_SHA}\n'
+            f'        with:\n          cmdline-tools-version: 15859902\n'
+            f'          packages: \"{" ".join(job["android_review"]["sdk_packages"])}\"\n'
+            f'      - name: Set up reviewed Gradle execution\n'
+            f'        uses: gradle/actions/setup-gradle@{_SETUP_GRADLE_SHA}\n'
+            ) if job['provider']=='android-gradle' else ''
         dotnet_setup=(f'      - name: Pinned .NET SDK\n'
                       f'        uses: actions/setup-dotnet@{_SETUP_DOTNET_SHA}\n'
                       '        with:\n'
@@ -490,7 +503,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
-               f'{setup_go}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{shell_setup}{cpp_setup}{cache_step}{py_verify}'
+               f'{setup_go}{android_setup}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{shell_setup}{cpp_setup}{cache_step}{py_verify}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -654,6 +667,13 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     if not specs:
         raise ProviderError('RM-06 native job resolver returned no executable specs')
     node_receipts=[]
+    if selected['provider']=='android-gradle':
+        review=selected['android_review']
+        if len(specs)!=1 or specs[0].argv not in (['./gradlew',review['task']],['./gradlew','--no-daemon',review['task']]):
+            raise ProviderError('Android hosted native Gradle command differs from reviewed task')
+        import subprocess as _subprocess
+        if _subprocess.run(['git','-C',str(root),'diff','--quiet','HEAD','--'],check=False).returncode:
+            raise ProviderError('Android source tree differs from reviewed Git commit')
     if selected['provider']=='shell-ci':
         import subprocess as _subprocess
         dialect=selected['shell_review']['dialect']

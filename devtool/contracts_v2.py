@@ -72,6 +72,9 @@ class LanguageProviderV2(Protocol):
 
 # Reviewed built-ins only; extending this mapping requires a source change and review.
 _REVIEWED: Mapping[str, ProviderDescriptor] = MappingProxyType({
+    'android-gradle': ProviderDescriptor('android-gradle', 1, ('debug-build','lint','unit-test'),
+                             ('ubuntu-24.04-x86_64',), 'reviewed-gradle-wrapper-debug-only-v1',
+                             ('local-bytes-only',)),
     'go': ProviderDescriptor('go', 1, ('test', 'vet', 'build'), ('ubuntu-24.04-x86_64',),
                              'bounded-direct-go-argv-v1', ('source-only-unverified',)),
     'python-shell': ProviderDescriptor('python-shell', 1,

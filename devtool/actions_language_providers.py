@@ -126,13 +126,35 @@ class PythonShellProvider:
         _argv(argv)
         if Path(argv[0]).name not in ('python', 'python3'):
             raise ProviderError('Python adapter refuses shell scripts and unreviewed external programs')
-        if len(argv) < 3 or argv[1] != '-m' or argv[2] not in ('pytest', 'unittest', 'compileall', 'ruff', 'build', 'coverage'):
-            raise ProviderError('Python adapter admits only reviewed Python -m commands')
-        if argv[2]=='coverage' and not (argv[3:6]==['run','-m','pytest'] or argv[3:]==['xml','-o','dist/coverage.xml']):
+        meta=job.metadata or {}
+        script_review=None
+        if len(argv)>=2 and argv[1] != '-m':
+            # No shell, -c, -I, dynamic module injection or executable replacement.
+            # A script is explicitly opted in and its tracked bytes are SHA-pinned
+            # independently of the configurable native job command.
+            rel=argv[1]
+            digest=meta.get('ci_python_script_sha256')
+            if (not re.fullmatch(r'(?:scripts|tools|ci)/[A-Za-z0-9_./-]{1,144}\.py',rel)
+                    or any(x in ('.','..','') for x in rel.split('/'))
+                    or not isinstance(digest,str) or not re.fullmatch(r'[a-f0-9]{64}',digest)):
+                raise ProviderError('Python script requires reviewed scripts/tools/ci path and exact ci_python_script_sha256')
+            if argv[2:] and (meta.get('ci_python_script_args') != argv[2:] or len(argv[2:])>16):
+                raise ProviderError('Python script arguments must match explicit ci_python_script_args')
+            from .actions_rm08_projects import _trusted, ProjectReviewError
+            try: content=_trusted(root,rel)
+            except (ProjectReviewError,OSError) as exc:
+                raise ProviderError('Python script is not a regular tracked source file: '+str(exc)) from None
+            observed=hashlib.sha256(content).hexdigest()
+            if observed!=digest:
+                raise ProviderError('Python script digest differs from reviewed ci_python_script_sha256')
+            script_review={'path':rel,'sha256':observed,'args':argv[2:]}
+        elif len(argv)<3 or argv[1]!='-m' or argv[2] not in ('pytest','unittest','compileall','ruff','build','coverage'):
+            raise ProviderError('Python adapter admits only reviewed Python -m commands or SHA-pinned scripts')
+        if not script_review and argv[2]=='coverage' and not (argv[3:6]==['run','-m','pytest'] or argv[3:]==['xml','-o','dist/coverage.xml']):
             raise ProviderError('RM-08 coverage only accepts native pytest instrumentation or XML report')
         if 'pytest' in argv and 'compileall' in argv:
             raise ProviderError('Ambiguous Python module argv')
-        if argv[2] == 'build':
+        if not script_review and argv[2] == 'build':
             # Clean Python distribution production uses pinned tooling and no
             # implicit build-environment downloads; native DAG remains owner.
             if not _tracked(root, 'pyproject.toml') or '--no-isolation' not in argv:
@@ -147,7 +169,6 @@ class PythonShellProvider:
             if '--wheel' not in argv and '--sdist' not in argv:
                 raise ProviderError('Python package build must select --wheel or --sdist')
         from .actions_rm08_projects import python_project_manifest, ProjectReviewError
-        meta=job.metadata or {}
         version=meta.get('ci_python_version','3.12')
         if not isinstance(version,str) or version not in ('3.11','3.12','3.13'):
             raise ProviderError('RM-08 Python version must be a reviewed 3.11/3.12/3.13 pin')
@@ -178,14 +199,15 @@ class PythonShellProvider:
         lockfiles=[name for name in ('uv.lock','poetry.lock','requirements.txt','pdm.lock') if _tracked(root,name)]
         if project and project['project_present']:
             lockfiles=project['source_files']
-        elif argv[2]=='build':
+        elif not script_review and argv[2]=='build':
             # Existing V1 package policies stay operational; they are not
             # silently called an RM-08 strict backend/installer qualification.
             lockfiles=sorted(set(lockfiles+(['pyproject.toml'] if _tracked(root,'pyproject.toml') else [])))
         return {'provider':'python-shell','api_version':self.api_version,
                 'toolchain':'python','version':version,'matrix_versions':variants,
                 'version_source':'native-job-ci_python_version' if 'ci_python_version' in meta else 'bounded-next03-host-profile',
-                'project':project, 'lockfiles':lockfiles,'cache_enabled':False,
+                'project':project, 'lockfiles':sorted(set(lockfiles+([script_review['path']] if script_review else []))),
+                'python_script_review':script_review, 'cache_enabled':False,
                 'native_manager_version':manager_pin if native else '',
                 'report_adapter':'pytest-junit','output_role':'source-only-unverified',
                 'release_qualified':False}
@@ -258,7 +280,9 @@ class NativeCppProvider:
         except CppError as exc:raise ProviderError(str(exc)) from None
 
 
-PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider(), 'node': NodeProvider(), 'jvm': JvmProvider(), 'shell-ci': ShellCIProvider(), 'cpp': NativeCppProvider()})
+from .actions_android_provider import AndroidGradleProvider
+
+PROVIDERS: Mapping[str, LanguageProvider] = MappingProxyType({'android-gradle': AndroidGradleProvider(), 'go': GoProvider(), 'python-shell': PythonShellProvider(), 'dotnet': DotNetProvider(), 'rust-cargo': RustCargoProvider(), 'node': NodeProvider(), 'jvm': JvmProvider(), 'shell-ci': ShellCIProvider(), 'cpp': NativeCppProvider()})
 # V1 adapter behavior is preserved; V2 review metadata must match the exact built-ins.
 for _id, _adapter in PROVIDERS.items():
     resolve_provider(_id, api_version=_adapter.api_version)
@@ -295,6 +319,12 @@ def _provider_for(job: Any) -> LanguageProvider:
     flag = meta.get('ci_toolchain')
     argv = list(job.command or [])
     name = Path(argv[0]).name if argv else ''
+    if flag == 'android-gradle':
+        if name != 'gradlew' or job.runner != 'command':
+            raise ProviderError('Hosted Android provider requires target-local command runner and ./gradlew')
+        return PROVIDERS['android-gradle']
+    if name == 'gradlew':
+        raise ProviderError('Gradle wrapper requires explicit reviewed ci_toolchain=android-gradle')
     if flag == 'shell-ci' or name in ('shellcheck','shfmt','bats','bash','sh','zsh'):
         if name not in ('shellcheck','shfmt','bats','bash','sh','zsh') or flag not in (None,'shell-ci'):
             raise ProviderError('RM-14 shell provider/argv mismatch')
@@ -356,7 +386,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
     if not (1 <= len(graph.nodes) <= MAX_NODES):
         raise ProviderError('NEXT-03 DAG size must be between 1 and 32 nodes')
     admission = graph_host_admission(cfg, graph, host_os=host_os, host_arch=host_arch,
-                                     toolchains=('go', 'python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp'))
+                                     toolchains=('go', 'python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp','android-gradle'))
     if not admission['all_eligible']:
         reasons = [r['node']+':'+','.join(r['eligibility']['reasons']) for r in admission['nodes'] if not r['eligibility']['eligible']]
         raise ProviderError('Hosted node admission blocked: ' + '; '.join(reasons)[:320])
@@ -372,7 +402,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if 'ci_host_requirements' in meta:
             try:
                 host_result = host_eligibility_v2(meta['ci_host_requirements'],
-                    host_os=('windows' if meta.get('ci_toolchain')=='cpp' and meta.get('ci_cpp_compiler')=='msvc' else host_os), host_arch=host_arch, toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp'))
+                    host_os=('windows' if meta.get('ci_toolchain')=='cpp' and meta.get('ci_cpp_compiler')=='msvc' else host_os), host_arch=host_arch, toolchains=('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp','android-gradle'))
             except ContractError as exc:
                 raise ProviderError('Invalid ci_host_requirements: ' + str(exc)) from None
             if not host_result['eligible']:
@@ -388,7 +418,12 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         provider = _provider_for(job)
         if provider.provider_id=='dotnet':
             provider=DotNetProvider(host_os=host_os)
-        declaration = provider.inspect(root, job, argv)
+        try:
+            declaration = provider.inspect(root, job, argv)
+        except ValueError as exc:
+            if isinstance(exc, ProviderError):
+                raise
+            raise ProviderError(str(exc)[:320]) from None
         if job.env:
             if declaration['provider'] != 'go' or set(job.env)-{'GOOS','GOARCH','CGO_ENABLED'}:
                 raise ProviderError('Only reviewed Go cross-target environment variables are admitted')
@@ -913,8 +948,8 @@ def provider_export(root: Path, *, target: str, workflow: str, devtool_sha: str,
         dest = f'.github/workflows/devtool-{target}-{workflow}-providers-multi.yml'
     else:
         plan = provider_plan(root,target=target,workflow=workflow,devtool_sha=devtool_sha)
-        if 'dotnet' in plan['providers'] or 'rust-cargo' in plan['providers'] or 'node' in plan['providers'] or 'jvm' in plan['providers'] or 'shell-ci' in plan['providers']:
-            raise ProviderError('RM-09–RM-12 reviewed .NET/Rust/Node/JVM require native multi-job export with reviewed toolchain preflight')
+        if any(p in plan['providers'] for p in ('dotnet','rust-cargo','node','jvm','shell-ci','android-gradle')):
+            raise ProviderError('Reviewed .NET/Rust/Node/JVM/Android providers require native multi-job export with reviewed toolchain preflight')
         frozen_sha = plan['plan_sha256']
         content = _workflow_yaml(plan).encode()
         dest = f'.github/workflows/devtool-{target}-{workflow}-providers.yml'
@@ -961,31 +996,61 @@ def provider_doctor(root: Path, *, target: str = '', all_profiles: bool = False)
     if target and target not in cfg.targets:
         raise ProviderError('Unknown configured target')
     results=[]
+    from .actions_graph_export import compile_graph
+    from .actions_adoption import _selection, AdoptionError
+    counts={'adoption_locally_eligible':0, 'provider_plan_locally_eligible':0,
+            'provider_export_locally_eligible':0, 'workflows':0}
     for name,t in sorted(cfg.targets.items()):
         if target and target != name: continue
         for wf in sorted(t.workflows):
+            # Four separate states: A09 source admission, provider plan, actual
+            # strict multi-job exporter, then remote and release evidence.
+            # Neither a local plan nor a generated YAML is hosted execution.
+            item={'target':name, 'workflow':wf}
+            counts['workflows']+=1
             try:
-                # Doctor only needs a syntactically valid runtime pin for review.
-                entry = provider_plan(root,target=name,workflow=wf,devtool_sha='0'*40)
+                adoption=_selection(root,name,wf)
+                item['adoption']={'state':'locally_eligible',
+                                  'host_profile':adoption['ci_host_profile']}
+                counts['adoption_locally_eligible']+=1
+            except (AdoptionError,ValueError,KeyError) as exc:
+                item['adoption']={'state':'blocked', 'reason':str(exc)[:280]}
+            try:
+                entry=provider_plan(root,target=name,workflow=wf,devtool_sha='0'*40)
                 requested=[{'node':row['node'], 'provider':row['provider']['provider'],
                             'toolchain':row['provider']['toolchain'],
                             'requested_version':row['provider']['version'],
                             'version_source':row['provider']['version_source'],
                             'lockfiles':row['provider']['lockfiles'],
                             'expected_hosted_runner':'ubuntu-24.04'} for row in entry['nodes']]
-                results.append({'target':name,'workflow':wf,'state':'locally_eligible',
-                                'providers':entry['providers'],'node_count':len(entry['nodes']),
-                                'requested_toolchains':requested,
-                                'next_action':'Review multi-job export; do not infer hosted runner availability'})
-            except (ProviderError, ValueError) as exc:
-                results.append({'target':name,'workflow':wf,'state':'blocked',
-                                'reason':str(exc)[:280],
-                                'next_action':'Review configured native workflow and missing prerequisites; no automatic installation'})
+                item.update({'state':'locally_eligible','providers':entry['providers'],
+                             'node_count':len(entry['nodes']),'requested_toolchains':requested})
+                item['provider_plan']={'state':'locally_eligible','plan_sha256':entry['plan_sha256']}
+                counts['provider_plan_locally_eligible']+=1
+                try:
+                    graph=compile_graph(root,target=name,workflow=wf,devtool_sha='0'*40)
+                    item['provider_export']={'state':'locally_eligible',
+                         'graph_sha256':graph['graph_sha256'],'job_count':len(graph['jobs'])}
+                    counts['provider_export_locally_eligible']+=1
+                except (ProviderError,ValueError) as exc:
+                    item['provider_export']={'state':'blocked','reason':str(exc)[:280]}
+            except (ProviderError,ValueError) as exc:
+                item.update({'state':'blocked','reason':str(exc)[:280]})
+                item['provider_plan']={'state':'blocked','reason':str(exc)[:280]}
+                item['provider_export']={'state':'not_evaluated',
+                    'reason':'Provider plan refused: cannot compile a trusted graph'}
+            item['hosted_execution']={'state':'NOT_VERIFIED','source':'No GitHub API queried by doctor'}
+            item['release_qualification']={'state':'NOT_QUALIFIED',
+                'reason':'Local eligibility and export plans cannot establish release evidence'}
+            item['next_action']=('Review and run the source-pinned multi-job workflow on GitHub; '
+                  'import exact-run artifacts separately' if item['provider_export']['state']=='locally_eligible'
+                  else 'Resolve provider/export refusal before considering hosted execution')
+            results.append(item)
     from .toolchain_profiles import capability_report
     host_report=capability_report(root)
     return {'schema_version':SCHEMA_VERSION, 'kind':IDENTITY+'.doctor',
             'toolchains':host_report, 'all_profiles_requested':bool(all_profiles),
             'read_only':True,'registered_providers':[reviewed_providers()[key].describe()
                              for key in sorted(PROVIDERS)],
-            'workflows':results,'source_attested':False,'host_executed':False,
-            'release_qualified':False}
+            'summary':counts, 'workflows':results,'source_attested':False,
+            'host_executed':False,'release_qualified':False}

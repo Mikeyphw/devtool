@@ -367,8 +367,8 @@ def scope_for_graph_node(config: ProjectConfig, node: WorkflowNode) -> WorkflowN
             unsafe_writes.append(value)
 
     read_only = _coerce_bool(metadata.get("read_only", False), False)
-    if typed and read_only:
-        raise WorkflowScheduleError(f"node {node.key}: read_only=true contradicts typed output scopes")
+    if read_only and (typed or declared_outputs):
+        raise WorkflowScheduleError(f"node {node.key}: read_only=true contradicts declared outputs/output scopes")
     if unsafe_reads or unsafe_writes:
         read_only = False
     writes_known = read_only or (bool(declared_outputs or typed) and not unsafe_writes)

@@ -79,6 +79,7 @@ def _selection(root: Path, target: str, workflow: str) -> dict[str, Any]:
     # provision every selected target-local job. Never infer an Android device,
     # root, SSH worker, container engine or release signer from the CI runner.
     use_go = False
+    go_manifests: set[str] = set()
     selected_jobs: list[dict[str, Any]] = []
     for step in t.workflows[workflow].steps:
         if step.kind != 'job' or step.resolution_scope != 'target':
@@ -121,23 +122,49 @@ def _selection(root: Path, target: str, workflow: str) -> dict[str, Any]:
         # A shell script can call Go internally; a declared go.mod input or an
         # explicit ci_toolchain metadata flag carries the contract, not a guess.
         go_job = (program == 'go' or job.runner == 'go' or
-                  meta.get('ci_toolchain') == 'go' or 'go.mod' in job.inputs)
+                  meta.get('ci_toolchain') == 'go' or
+                  any(p == 'go.mod' or p.endswith('/go.mod') for p in job.inputs))
         if go_job and toolchain == 'python-shell':
             raise AdoptionError('A09 CI host toolchain declaration conflicts with required Go SDK')
         if go_job:
             if meta.get('read_only') is not True:
                 raise AdoptionError('A09 Go adoption requires explicit read_only job metadata')
-            mod = root / 'go.mod'
-            if not mod.is_file() or mod.is_symlink() or mod.stat().st_size > 65536:
-                raise AdoptionError('A09 Go adoption requires a regular, bounded go.mod')
-            if not re.search(r'(?m)^go\s+[0-9]+\.[0-9]+(?:\.[0-9]+)?\s*$', mod.read_text('utf-8')):
-                raise AdoptionError('A09 Go adoption requires a valid go directive')
+            # The native Go provider already reviews nested modules. A09 must
+            # select the *same* tracked manifest, rather than assume root/go.mod.
+            from .actions_rm08_projects import go_workspace_manifest, ProjectReviewError
+            directory='.'
+            source_mods={p for p in job.inputs if p=='go.mod' or p.endswith('/go.mod')}
+            if program=='go' and len(args)>2 and args[1]=='-C':
+                directory=args[2]
+            elif job.root not in ('', '.', str(root), str(root.resolve())):
+                try: directory=Path(job.root).resolve().relative_to(root.resolve()).as_posix()
+                except ValueError: raise AdoptionError('A09 Go job root escapes repository') from None
+            elif len(source_mods)==1:
+                # For reviewed bash source checks, inputs declare the module
+                # identity even when the actual shell command is not `go -C`.
+                directory=next(iter(source_mods)).removesuffix('/go.mod')
+                if directory=='go.mod':directory='.'
+            elif len(source_mods)>1:
+                raise AdoptionError('A09 ambiguous nested Go input manifests; use provider export')
+            try:
+                reviewed=go_workspace_manifest(root,directory=directory)
+            except (ProjectReviewError,OSError,UnicodeError) as exc:
+                raise AdoptionError('A09 Go adoption requires a tracked valid go.mod and go directive: '+str(exc)[:160]) from None
+            manifest=reviewed['selected']['manifest']
+            if source_mods and manifest not in source_mods:
+                raise AdoptionError('A09 selected go.mod conflicts with declared job inputs')
+            # A03 cannot install multiple module SDKs in one job. Refuse rather
+            # than silently bind setup-go to the wrong module/version.
+            go_manifests.add(manifest)
+            if len(go_manifests)>1:
+                raise AdoptionError('A09 multiple Go module manifests require provider multi-job export')
         selected_jobs.append({
             'name': key,
             'runner': job.runner,
             'program': program,
             'declared_read_only': meta.get('read_only') is True,
             'host_toolchain': 'go' if go_job else 'python-shell',
+            'go_manifest': manifest if go_job else None,
             'argv_sha256': hashlib.sha256(json.dumps(args, ensure_ascii=True, separators=(',', ':')).encode()).hexdigest(),
             'inputs_sha256': hashlib.sha256(json.dumps(list(job.inputs or []), ensure_ascii=True, separators=(',', ':')).encode()).hexdigest(),
         })
@@ -145,18 +172,23 @@ def _selection(root: Path, target: str, workflow: str) -> dict[str, Any]:
     return {'report': report, 'workflow': wf,
             'selected_jobs': selected_jobs,
             'target_local_job_count': len(t.jobs),
-            'ci_host_profile': 'go' if use_go else 'python-shell'}
+            'ci_host_profile': 'go' if use_go else 'python-shell',
+            'go_manifest': next(iter(go_manifests)) if go_manifests else ''}
 
 
-def _yaml(target: str, workflow: str, source_sha: str, ci_host_profile: str = 'python-shell') -> str:
+def _yaml(target: str, workflow: str, source_sha: str, ci_host_profile: str = 'python-shell',
+          go_manifest: str = 'go.mod') -> str:
     # Inputs are strictly bounded ASCII identifiers and SHA, not arbitrary YAML.
     name = f'devtool-{target}-{workflow}'
     if ci_host_profile not in ('python-shell', 'go'):
         raise AdoptionError('A09 CI host profile is not supported')
+    if ci_host_profile == 'go' and (not re.fullmatch(r'(?:[A-Za-z0-9_-]+/)*go\.mod',go_manifest)
+                                    or any(x in ('','..','.') for x in go_manifest.split('/'))):
+        raise AdoptionError('A09 unsafe nested Go manifest path')
     go_setup = (f'''      - name: Provision pinned Go SDK for source-only jobs
         uses: actions/setup-go@{_SETUP_GO_SHA}
         with:
-          go-version-file: go.mod
+          go-version-file: {go_manifest}
           cache: false
       - name: Verify Go host toolchain
         shell: bash
@@ -290,7 +322,8 @@ def adopt(root: Path, *, target: str, workflow: str, devtool_sha: str,
         raise AdoptionError('Repository .devtool.toml is required')
     if not wrapper.is_file() or not os.access(wrapper, os.X_OK):
         raise AdoptionError('Repository devtoolw must be installed and executable (devtool wrapper init)')
-    workflow_bytes = _yaml(target, workflow, devtool_sha, selected['ci_host_profile']).encode('utf-8')
+    workflow_bytes = _yaml(target, workflow, devtool_sha, selected['ci_host_profile'],
+                           selected['go_manifest']).encode('utf-8')
     config_bytes = config.read_bytes()
     consumer_head = _git(root, 'rev-parse', 'HEAD')
     consumer_tree = _git(root, 'rev-parse', 'HEAD^{tree}')
@@ -305,6 +338,7 @@ def adopt(root: Path, *, target: str, workflow: str, devtool_sha: str,
         'workflow_sha256': hashlib.sha256(workflow_bytes).hexdigest(),
         'selected_jobs': selected['selected_jobs'],
         'ci_host_profile': selected['ci_host_profile'],
+        'go_manifest': selected['go_manifest'],
         'devtool_source_sha': devtool_sha,
     }
     review_sha = hashlib.sha256(json.dumps(reviewed_source, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -323,7 +357,8 @@ def adopt(root: Path, *, target: str, workflow: str, devtool_sha: str,
         'target': target, 'workflow': workflow, 'source_sha': devtool_sha,
         'workflow_path': relative, 'workflow_sha256': digest,
         'target_local_jobs': selected['workflow']['target_local_job_count'],
-        'ci_host_profile': selected['ci_host_profile'], 'device_qualified': False,
+        'ci_host_profile': selected['ci_host_profile'], 'go_manifest': selected['go_manifest'],
+        'device_qualified': False,
         'source_attested': False,
         'consumer_commit': consumer_head, 'consumer_tree': consumer_tree,
         'consumer_worktree_clean': source_clean,

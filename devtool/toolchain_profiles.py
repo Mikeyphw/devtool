@@ -45,7 +45,7 @@ class ToolchainProfile:
 
 PROFILES = {
     p.identifier: p for p in (
-        ToolchainProfile('ubuntu-24.04-x64','linux','x86_64','ubuntu-24.04',True,('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp'),'3.12',60),
+        ToolchainProfile('ubuntu-24.04-x64','linux','x86_64','ubuntu-24.04',True,('go','python-shell','dotnet','rust-cargo','node','jvm','shell-ci','cpp','android-gradle'),'3.12',60),
         ToolchainProfile('macos-15-intel','macos','x86_64','macos-15-intel',True,('go','python-shell','node','jvm','cpp'),'3.12',60),
         ToolchainProfile('windows-2022-x64','windows','x86_64','windows-2022',True,('dotnet','cpp'),'3.12',60,
                          'Reviewed Bash/Git-for-Windows .NET bridge only; other providers refused'),
@@ -97,6 +97,9 @@ def validate_versions(providers: list[dict[str, Any]], profiles: tuple[Toolchain
                 if version not in ({'gcc':('12','13','14'),'clang':('16','17','18','19')}[compiler]):
                     raise ProfileError('RM-13 invalid compiler version')
             else:raise ProfileError('RM-13 unknown native compiler')
+        elif provider == 'android-gradle':
+            if version not in ('17','21'):
+                raise ProfileError('Hosted Android Gradle requires reviewed JDK 17 or 21')
         elif provider == 'jvm':
             if version not in ('17','21','25'):
                 raise ProfileError('RM-12 JVM requires reviewed JDK 17, 21 or 25')

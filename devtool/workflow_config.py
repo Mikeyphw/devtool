@@ -194,8 +194,8 @@ def load_jobs(
             )
         except OutputScopeError as exc:
             raise SystemExit(str(exc)) from exc
-        if output_scopes and metadata.get("read_only") is True:
-            raise SystemExit(f"{context_prefix}.{name}: read_only=true contradicts declared output_scopes")
+        if metadata.get("read_only") is True and (output_scopes or raw_value.get("outputs")):
+            raise SystemExit(f"{context_prefix}.{name}: read_only=true contradicts declared outputs/output_scopes")
         if output_scopes:
             metadata["output_scopes"] = [scope.as_dict() for scope in output_scopes]
 
