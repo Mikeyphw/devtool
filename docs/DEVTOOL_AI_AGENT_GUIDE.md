@@ -5714,6 +5714,7 @@ Validate workflow ref and inputs without dispatching
 | `--ref REF` | GitHub branch or tag to dispatch (required) Required. |
 | `WORKFLOW_ID` | Workflow ID or YAML filename |
 | `--resume-if-existing` | Safely reuse an exact unresolved dispatch request; never POST twice |
+| `--require-local-head` | Require a clean local HEAD matching the selected remote ref before dispatch |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -6007,6 +6008,7 @@ Dispatch workflow only with explicit --yes; return run ID if available
 | `--yes` | Explicitly authorize remote workflow dispatch |
 | `WORKFLOW_ID` | Workflow ID or YAML filename |
 | `--resume-if-existing` | Safely reuse an exact unresolved dispatch request; never POST twice |
+| `--require-local-head` | Require a clean local HEAD matching the selected remote ref before dispatch |
 
 Agent note: machine-friendly controls on this command include `--json`.
 

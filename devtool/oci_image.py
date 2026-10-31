@@ -139,7 +139,7 @@ def _validate_contract(value: dict[str, Any]) -> dict[str, Any]:
     embedded = runtime.get("embedded_android_builder", {}) if isinstance(runtime, dict) else {}
     expected_embedded = {
         "path": "/usr/local/lib/devtool/build-apk",
-        "sha256": "798773996b037b6f47bf1dfd9e4f366e42e15446ca0a222b01c4750ef5b89017",
+        "sha256": "db73ed326d4d5a774dcb079ea64e0df7325a2d2df43b2f2484216de6418126e8",
         "toolchains_path": "/usr/local/lib/devtool/termux_toolchains.py",
         "toolchains_sha256": "46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe",
         "gradle_events_init_path": "/usr/local/lib/devtool/devtool-events.init.gradle",

@@ -77,7 +77,7 @@ def test_oci05_v2_image_embeds_exact_standard_runtime_bytes() -> None:
     assert definition.contract["definition_id"] == "android-arm64-api36-v2"
     assert definition.reference == "devtool/android-build:arm64-api36-v2"
     expected = {
-        "build-apk": "798773996b037b6f47bf1dfd9e4f366e42e15446ca0a222b01c4750ef5b89017",
+        "build-apk": "db73ed326d4d5a774dcb079ea64e0df7325a2d2df43b2f2484216de6418126e8",
         "termux_toolchains.py": "46bff66338eee52d297b90cbfe6773e979d9a27d0b3c93f7816a139cf0e255fe",
         "devtool-events.init.gradle": "9e0a0aa733ffeb41ce76e4b51b5bda4eadfcf52d01d49b3faf1dd4f33b2e72d8",
         "devtool-events-full.init.gradle": "48529c7e3b7a2a4409aacbf102ffb47048165cd4badf3d73ba82e2b309c05788",

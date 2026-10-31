@@ -1,3 +1,13 @@
+## WAVE-D-CI24-PINNED-RUNTIME-RESEAL-20261031 — Hosted 24-shard acceptance remediation
+
+- **Status:** Source remediation prepared; live exact-new-SHA 24-shard rerun and source-bound acceptance are **OPEN**, not release qualified.
+- **Evidence:** [GitHub Actions run 41163421471](https://github.com/Mikeyphw/devtool/actions/runs/41163421471), commit `7f2f97bcf4fe90f813dbc098ee500d34691cd797`: six failed shards (04/07/11/16/17/20) and the correct fail-closed summary.
+- **Root cause OCI:** Wave D modified the canonical + embedded Android builder to honor the GitHub-only Gradle policy, but the OCI image manifest, canonical/runtime digest checks, validation script, and OCI-05 test continued pinning the old builder digest `79877399...`. This cascaded into multiple OCI-03/05/07/09 tests. **Fix:** update all four production trust anchors and the exact-runtime test to the sha256 of the reviewed bundled builder (`db73ed326d4d5a774dcb079ea64e0df7325a2d2df43b2f2484216de6418126e8`), retaining byte-equality checks and fail-closed behavior. OCI installed-image runtime identity changes intentionally; existing images must be rebuilt and reverified before reuse.
+- **Root cause R01A:** the standalone builder requires a narrow, deny-only policy reader before chroot/native Gradle, but the previous static test categorically rejected all independent TOML reads. **Fix:** document and specifically assert this isolated runtime exception while continuing to reject additional project config re-parsing elsewhere. The exception cannot authorize builds or define target/build options.
+- **Root cause docs:** the two complete operator guides were not regenerated after new Wave D CLI options. **Fix:** regenerate from the current parser and check for fixed-point equality.
+- **Evidence boundary:** local targeted tests passed on reconstructed exact published source files with no real Gradle or CI dispatch; independent, exact-commit 24-shard GitHub acceptance must be performed after commit/push. Re-running the failed old SHA cannot close this gate.
+- **Follow-up:** add pinned resource/provenance checking and generated-guides checks to the mandatory Devtool overlay validation before source publication, so source changes to bundled builder cannot escape the fast acceptance suite again.
+
 ## G1-CURRENT-CONTRACT-REMEDIATION-20261026 — Hosted failures, real apply/rebase cleanup and EXO lineage
 
 - **Status:** Source-bound candidate implemented; targeted local regression passed, disposable overlay installation/forced-rollback acceptance and independent 24-shard GitHub rerun must be recorded separately. G1/FC09 and release qualification **OPEN**.

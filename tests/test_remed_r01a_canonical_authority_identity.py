@@ -232,6 +232,19 @@ def test_r01a_production_config_consumers_do_not_reparse_devtool_toml() -> None:
             # Adoption migration compares untrusted pre/post TOML without using
             # that parse as authority to execute a project command.
             continue
+        if path.relative_to(root) == Path("android/_standalone.py"):
+            # Wave D's exported Android builder runs in isolated images with no
+            # Devtool config package installed. This is a bounded, deny-only
+            # security gate: it can prohibit native Gradle, but cannot define
+            # target identity, task selection, providers or build arguments.
+            # Check that it executes *before* entering the chroot boundary.
+            assert "def hosted_gradle_only(project_root:" in text
+            assert 'mode == "github-actions-only"' in text
+            assert "LOCAL_GRADLE_FORBIDDEN" in text
+            main_start = text.index("def main(argv:")
+            main_code = text[main_start:]
+            assert main_code.index("enforce_hosted_gradle_only(project_root") < main_code.index("maybe_reexec_in_chroot(raw_args)")
+            continue
         if '".devtool.toml"' in text and "tomllib.loads" in text:
             offenders.append(str(path.relative_to(root.parent)))
     assert offenders == [], offenders
