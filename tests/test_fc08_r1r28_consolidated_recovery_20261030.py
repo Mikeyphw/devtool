@@ -236,7 +236,8 @@ def test_two_concurrent_clients_share_atomic_dispatch_lock(tmp_path):
 def test_matrix_artifact_retains_each_individual_scenario_receipt():
     text=(ROOT/'tools/fc08_r1r28_matrix.py').read_text()
     workflow=(ROOT/'.github/workflows/devtool-fc08-resilience-matrix.yml').read_text()
-    assert "saved=out.parent/('r1r28-matrix-'+name+'.json')" in text
+    assert "_stage_bytes(out.parent/('r1r28-matrix-'+name+'.json'),content)" in text
+    assert "staged.append((name,raw))" in text
     assert 'receipt_sha256' in text and 'receipt_name' in text
     assert 'path: out/fc08/r1r28-matrix*.json' in workflow
 
@@ -276,3 +277,104 @@ def test_provider_and_all_thirty_source_bound_zip_integrity_review(tmp_path):
     with pytest.raises(ValueError,match='SHA256_MISMATCH'):
         evidence.review(Provider(),123,456,source,tmp_path,fetch_archives=False)
     g1_art[0]['digest']=altered
+
+
+# R1R28-H1: integration contracts for the matrix's clean-source and failure
+# evidence lifecycle. No GitHub API is contacted by these tests.
+def _matrix_host_env():
+    return {'GITHUB_ACTIONS':'true','GITHUB_REPOSITORY':'Mikeyphw/devtool',
+            'GITHUB_REF':'refs/heads/main','GITHUB_SHA':SHA,
+            'FC08_DISPATCH_AUTHORIZED':'true'}
+
+
+def test_h1_matrix_keeps_checkout_clean_until_last_source_preflight(tmp_path,monkeypatch):
+    """The second and third child must see no untracked output from child one."""
+    out=tmp_path/'out'/'fc08'/'r1r28-matrix.json'
+    calls=[]
+    def child(argv,**kwargs):
+        scenario=Path(argv[1]).name
+        # Every child performs source_identity(), which rejects out/ files.
+        assert not out.parent.exists(), 'intermediate matrix receipts dirtied source'
+        calls.append(scenario)
+        path=Path(argv[argv.index('--out')+1])
+        path.write_text(json.dumps({'release_qualified':False,
+                                    'fc08_overall_qualified':False,'scenario':scenario}))
+        return SimpleNamespace(returncode=0,stdout=b'',stderr=b'')
+    monkeypatch.setattr(matrix.subprocess,'run',child)
+    result=matrix.execute('all',authorized=True,env=_matrix_host_env(),out=out)
+    assert calls==list(matrix.SCRIPTS.values())
+    assert result['status']=='PASS'
+    assert [x['status'] for x in result['scenarios']]==['PASS']*3
+    assert len(list(out.parent.glob('r1r28-matrix*.json')))==4
+    for scenario in matrix.SCRIPTS:
+        data=(out.parent/f'r1r28-matrix-{scenario}.json').read_bytes()
+        assert hashlib.sha256(data).hexdigest()==next(
+            e['receipt_sha256'] for e in result['scenarios'] if e['scenario']==scenario)
+
+
+def test_h1_matrix_preserves_only_allowlisted_failure_diagnostics(tmp_path,monkeypatch):
+    out=tmp_path/'out'/'r1r28-matrix.json'
+    calls=[]
+    def child(argv,**kwargs):
+        scenario=Path(argv[1]).name
+        assert not out.parent.exists()
+        calls.append(scenario)
+        path=Path(argv[argv.index('--out')+1])
+        if 'rejection_retry' in scenario:
+            path.write_text(json.dumps({'release_qualified':False,
+                'fc08_overall_qualified':False,'status':'BLOCKED_UNQUALIFIED',
+                'error_category':'FC08_DISPATCH_DIRTY_REVIEWED_SOURCE',
+                'api_body':'bearer SUPER_SECRET_TOKEN',
+                'credential':'SUPER_SECRET_TOKEN'}))
+            return SimpleNamespace(returncode=2,stdout=b'SUPER_SECRET_TOKEN',
+                                   stderr=b'local private path SUPER_SECRET_TOKEN')
+        path.write_text(json.dumps({'release_qualified':False,'fc08_overall_qualified':False}))
+        return SimpleNamespace(returncode=0,stdout=b'',stderr=b'')
+    monkeypatch.setattr(matrix.subprocess,'run',child)
+    with pytest.raises(RuntimeError,match='SCENARIO_FAILED_REJECTION_RETRY'):
+        matrix.execute('all',authorized=True,env=_matrix_host_env(),out=out)
+    assert len(calls)==2
+    report=json.loads(out.read_text())
+    assert report['status']=='BLOCKED_UNQUALIFIED'
+    assert report['failure']=={'scenario':'rejection-retry','reason':'CHILD_EXIT_NONZERO',
+                                'error_category':'FC08_DISPATCH_DIRTY_REVIEWED_SOURCE'}
+    assert [r['status'] for r in report['scenarios']]==['PASS','BLOCKED_UNQUALIFIED']
+    failure=out.parent/'r1r28-matrix-rejection-retry.json'
+    details=json.loads(failure.read_text())
+    assert details['error_category']=='FC08_DISPATCH_DIRTY_REVIEWED_SOURCE'
+    assert details['release_qualified'] is False
+    assert 'SUPER_SECRET_TOKEN' not in ''.join(p.read_text() for p in out.parent.glob('*.json'))
+    assert not (out.parent/'r1r28-matrix-lost-response.json').exists()
+
+
+def test_h1_matrix_redacts_forged_failure_category(tmp_path,monkeypatch):
+    out=tmp_path/'out'/'r1r28-matrix.json'
+    def child(argv,**kwargs):
+        Path(argv[-1]).write_text(json.dumps({'status':'BLOCKED_UNQUALIFIED',
+                                              'error_category':'FC08_SECRET_CREDENTIAL_ABC123',
+                                              'exception':'secret'}))
+        return SimpleNamespace(returncode=2,stdout=b'',stderr=b'')
+    monkeypatch.setattr(matrix.subprocess,'run',child)
+    with pytest.raises(RuntimeError):matrix.execute('cycle',authorized=True,env=_matrix_host_env(),out=out)
+    text=''.join(p.read_text() for p in out.parent.glob('*.json'))
+    assert 'SECRET' not in text and 'secret' not in text
+    assert 'EXTERNAL_DISPATCH_UNVERIFIED' in text
+
+
+def test_h1_matrix_missing_child_receipt_is_unqualified(tmp_path,monkeypatch):
+    out=tmp_path/'out'/'r1r28-matrix.json'
+    monkeypatch.setattr(matrix.subprocess,'run',lambda *a,**k:SimpleNamespace(returncode=0))
+    with pytest.raises(RuntimeError):matrix.execute('cycle',authorized=True,env=_matrix_host_env(),out=out)
+    result=json.loads(out.read_text())
+    assert result['failure']['reason']=='MISSING_CHILD_RECEIPT'
+    assert result['release_qualified'] is False
+
+
+def test_h1_matrix_child_timeout_has_bounded_failure_receipt(tmp_path,monkeypatch):
+    out=tmp_path/'out'/'r1r28-matrix.json'
+    def timeout(*args,**kwargs):raise matrix.subprocess.TimeoutExpired('offline',1)
+    monkeypatch.setattr(matrix.subprocess,'run',timeout)
+    with pytest.raises(RuntimeError):matrix.execute('cycle',authorized=True,env=_matrix_host_env(),out=out)
+    r=json.loads(out.read_text())
+    assert r['failure']['reason']=='CHILD_TIMEOUT'
+    assert r['status']=='BLOCKED_UNQUALIFIED'

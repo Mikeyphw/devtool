@@ -137,7 +137,19 @@ def test_worker_rejects_replaced_file_before_unlink(tmp_path: Path):
         auth.seek(0)
         proc = _worker(repo, victim, fd=auth.fileno())
     assert proc.returncode != 0
-    assert 'identity changed' in proc.stdout
+    # R1R28 reports redacted, structured identity drift rather than echoing
+    # untrusted filesystem exception text into the worker's public output.
+    result = json.loads(proc.stdout)
+    assert result['failure_kind'] == 'artifact_cleanup_failure'
+    metadata = result['metadata']
+    assert metadata['cleanup_policy_relaxed'] is False
+    assert metadata['cleanup_status'] == 'failed'
+    diagnostics = metadata['source_failure_diagnostics']
+    assert len(diagnostics) == 1
+    assert diagnostics[0]['category'] == 'identity-drift'
+    assert diagnostics[0]['safe_to_retry_unlink'] is False
+    assert diagnostics[0]['source_deleted'] is False
+    assert diagnostics[0]['mismatched_identity_fields']
     assert victim.read_bytes() == b'new archive'
 
 
