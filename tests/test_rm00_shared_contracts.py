@@ -20,7 +20,7 @@ from test_next02_evidence_kernel import receipt
 def test_registry_is_immutable_source_reviewed_and_compatible():
     assert CONTRACT_VERSION == 2
     # RM00 records the source-reviewed registry, not its original two-provider snapshot.
-    expected = {'go', 'python-shell', 'rust-cargo', 'node', 'cpp', 'jvm', 'shell-ci', 'dotnet'}
+    expected = {'go', 'python-shell', 'rust-cargo', 'node', 'cpp', 'jvm', 'shell-ci', 'dotnet', 'android-gradle'}
     assert set(PROVIDERS) == set(reviewed_providers()) == expected
     assert {item.provider_id for item in reviewed_providers().values()} == expected
     assert len({id(provider) for provider in PROVIDERS.values()}) == len(expected)
