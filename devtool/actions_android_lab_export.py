@@ -1,0 +1,367 @@
+"""R34: source-reviewed, graph-derived hosted Android lab; non-release.
+
+This is an intentionally bounded Devtool *fixture* adapter over RM-06's real
+compile_graph, not a replacement for the general provider exporter. Its jobs
+are taken exclusively from the reviewed native DAG. Local registry evidence
+must never be misreported as authenticated remote artifact import.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+
+from .actions_graph_export import compile_graph
+from .artifact_registry import register_paths, verify_record, load_registry
+
+WORKFLOW = '.github/workflows/devtool-android-r34-generated-hosted-dag.yml'
+FIXTURE = 'tests/fixtures/r33_hosted_android'
+JAR_SHA = '2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046'
+DIST_SHA = 'f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6'
+APK = 'app/build/outputs/apk/debug/app-debug.apk'
+PACKAGE = 'org.devtool.r33.fixture'
+CHECKOUT = '11d5960a326750d5838078e36cf38b85af677262'
+PYTHON = 'a26af69be951a213d495a4c3e4e4022e16d87065'
+JAVA = 'cf277c60eb25467037889841efdb72551f06f6c3'
+SDK = 'be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd'
+GRADLE = 'ed408507eac070d1f99cc633dbcf757c94c7933a'
+UPLOAD = 'ea165f8d65b6e75b540449e92b4886f43607fa02'
+DOWNLOAD = 'd3f86a106a0bac45b974a628896c90dbdf5c8093'
+
+
+class LabError(ValueError):
+    pass
+
+
+def git(path: Path, *args: str) -> str:
+    return subprocess.check_output(['git','-C',str(path),*args],text=True,stderr=subprocess.DEVNULL).strip()
+
+
+def sha(path: Path) -> str:
+    h=hashlib.sha256()
+    with path.open('rb') as f:
+        for buf in iter(lambda:f.read(1024*1024),b''):h.update(buf)
+    return h.hexdigest()
+
+
+def reviewed_graph(root: Path) -> dict:
+    """Compile real RM-06 DAG using a source-only disposable reviewed fixture.
+
+    Placeholder JAR is intentionally not runnable; no Gradle occurs locally.
+    Runtime generates and verifies official JAR, then recompiles the real DAG.
+    """
+    source=root/FIXTURE
+    if not source.is_dir() or source.is_symlink():
+        raise LabError('R34 source fixture is missing or symlinked')
+    from tools.r33_hosted_android_evidence import ROOT_ALLOWED
+    names={str(p.relative_to(source)) for p in source.rglob('*') if p.is_file()}
+    if names!=ROOT_ALLOWED or any(p.is_symlink() for p in source.rglob('*')):
+        raise LabError('R34 fixture source inventory changed')
+    with tempfile.TemporaryDirectory(prefix='r34-readonly-graph-') as temp:
+        fixture=Path(temp)/'fixture'
+        shutil.copytree(source,fixture,symlinks=False)
+        stub=b'GradleWrapperMain source-only sentinel; NEVER execute as Gradle wrapper'
+        pin=hashlib.sha256(stub).hexdigest()
+        config=fixture/'.devtool.toml'
+        content=config.read_text()
+        if content.count(JAR_SHA)!=2:
+            raise LabError('R34 reviewed wrapper metadata differs')
+        config.write_text(content.replace(JAR_SHA,pin))
+        jar=fixture/'gradle/wrapper/gradle-wrapper.jar'
+        jar.parent.mkdir(parents=True,exist_ok=True)
+        jar.write_bytes(stub)
+        (fixture/'gradle-wrapper.properties').rename(jar.parent/'gradle-wrapper.properties')
+        subprocess.run(['git','init','-q',str(fixture)],check=True)
+        subprocess.run(['git','-C',str(fixture),'add','-A'],check=True)
+        subprocess.run(['git','-C',str(fixture),'-c','user.name=R34','-c','user.email=r34@example.invalid',
+                        'commit','-qm','source-only-fixture-graph'],check=True)
+        graph=compile_graph(fixture,target='r33',workflow='ci',devtool_sha='f'*40)
+    jobs=graph['jobs']
+    if (len(jobs)!=2 or [j['id'] for j in jobs]!=['node-01','node-02'] or
+            [j['needs'] for j in jobs]!=[[],['node-01']] or
+            [j['provider'] for j in jobs]!=['android-gradle']*2 or
+            [j['android_review']['task'] for j in jobs]!=[':app:lintDebug',':app:assembleDebug'] or
+            [j['outputs'] for j in jobs]!=[[],[APK]] or
+            any(j['runner']!='ubuntu-24.04' or j['android_review']['java_version']!='17'
+                or j['android_review']['sdk_packages']!=['platforms;android-35','build-tools;35.0.0','platform-tools']
+                or j['android_review']['wrapper_version']!='8.11.1' for j in jobs)):
+        raise LabError('R34 refuses native graph drift, signing/device/release or unreviewed host')
+    return graph
+
+
+def _step(lines: list[str]) -> str:
+    return '\n'.join('      '+line if line else '' for line in lines)+'\n'
+
+
+def generate(root: Path) -> str:
+    graph=reviewed_graph(root)
+    from .actions_graph_export import workflow_yaml
+    exported=workflow_yaml(graph)
+    if 'node-02:\n    needs: [node-01]' not in exported or 'android-gradle' not in json.dumps(graph):
+        raise LabError('R34 reviewed RM-06 export refuses node graph')
+    name='Devtool R34 generated hosted native Android DAG (not release)'
+    result=(f'# GENERATED by python -m devtool.actions_android_lab_export export\n'
+            f'# Native source of truth: RM-06 compile_graph; no independent job DAG.\n'
+            f'# Fixture: {FIXTURE}\n'
+            f'name: {name}\non:\n  workflow_dispatch:\n'
+            'permissions:\n  contents: read\n'
+            'concurrency:\n  group: devtool-r34-${{ github.ref }}\n  cancel-in-progress: false\n'
+            'jobs:\n')
+    for j in graph['jobs']:
+        jid=j['id']; stage='lint' if jid=='node-01' else 'build'
+        prefix=f'devtool-r34-{jid}-evidence-attempt${{{{ github.run_attempt }}}}'
+        result+=f'  {jid}:\n'
+        if j['needs']:
+            result+='    needs: ['+', '.join(j['needs'])+']\n'
+        result+=f'    runs-on: {j["runner"]}\n    timeout-minutes: 45\n    steps:\n'
+        result+=_step(['- name: Checkout exact Devtool source',f'  uses: actions/checkout@{CHECKOUT}','  with:','    persist-credentials: false'])
+        # Bootstrap uses stdlib only to preserve diagnostic evidence even when
+        # dependency installation or the reviewed graph verifier fails early.
+        result+=_step(['- name: Initialize bounded source/run evidence', '  shell: bash','  run: |',
+                       '    set -euo pipefail','    test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
+                       '    mkdir -p "$RUNNER_TEMP/r34-evidence"',
+                       "    python3 - <<'PYR34BOOT'",
+                       '    import json,os,pathlib',
+                       "    p=pathlib.Path(os.environ['RUNNER_TEMP'])/'r34-evidence'/'bootstrap.json'",
+                       "    p.write_text(json.dumps({'schema':'devtool.r34.bootstrap.v1','source_sha':os.environ['GITHUB_SHA'],",
+                       "      'run_id':os.environ['GITHUB_RUN_ID'],'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),",
+                       f"      'job':'{stage}','status':'NOT_QUALIFIED','release_qualified':False}})+chr(10))",
+                       '    PYR34BOOT'])
+        result+=_step(['- name: Python 3.13',f'  uses: actions/setup-python@{PYTHON}',
+                       '  with:',"    python-version: '3.13'"])
+        result+=_step(['- name: Install native Devtool runtime','  shell: bash','  run: |',
+                       '    set -euo pipefail','    python3 -m pip install --disable-pip-version-check -e .'])
+        result+=_step(['- name: Verify generated workflow equals reviewed native graph',
+                       '  shell: bash','  run: |','    set -euo pipefail',
+                       f'    python3 -m devtool.actions_android_lab_export verify --repo "$GITHUB_WORKSPACE"'])
+        result+=_step(['- name: Reviewed Java SDK',f'  uses: actions/setup-java@{JAVA}',
+                       '  with:','    distribution: temurin','    java-version: "17"'])
+        result+=_step(['- name: Reviewed Android SDK',f'  uses: android-actions/setup-android@{SDK}',
+                       '  with:','    cmdline-tools-version: 15859902',
+                       '    packages: "platforms;android-35 build-tools;35.0.0 platform-tools"'])
+        result+=_step(['- name: Pinned Gradle',f'  uses: gradle/actions/setup-gradle@{GRADLE}',
+                       '  with:',"    gradle-version: '8.11.1'",'    cache-disabled: true'])
+        result+=_step(['- name: Generate hash-checked Gradle wrapper on hosted runner',
+                       '  shell: bash','  run: |','    set -euo pipefail',
+                       '    GEN="$RUNNER_TEMP/r34-wrapper-generator"',
+                       '    test ! -e "$GEN"','    mkdir -p "$GEN"',
+                       "    printf '%s\\n' 'rootProject.name = \"r34-wrapper\"' > \"$GEN/settings.gradle\"",
+                       '    (cd "$GEN" && gradle --offline --no-daemon :wrapper --gradle-version 8.11.1'+
+                       f' --distribution-type bin --gradle-distribution-sha256-sum {DIST_SHA})',
+                       f'    printf "%s  %s\\n" "{JAR_SHA}" "$GEN/gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -',
+                       f'    grep -Fq "distributionSha256Sum={DIST_SHA}" "$GEN/gradle/wrapper/gradle-wrapper.properties"',
+                       '    cp "$GEN/gradle/wrapper/gradle-wrapper.jar" "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar"'])
+        result+=_step(['- name: Prepare deterministic Devtool fixture and compile native graph',
+                       '  shell: bash','  run: |','    set -euo pipefail',
+                       '    python3 tools/r33_hosted_android_evidence.py prepare --repo "$GITHUB_WORKSPACE"'+
+                       ' --fixture "$RUNNER_TEMP/r34-fixture" --jar "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar"'+
+                       ' --out "$RUNNER_TEMP/r34-evidence/source.json"',
+                       '    python3 tools/r33_hosted_android_evidence.py plan --repo "$GITHUB_WORKSPACE"'+
+                       ' --fixture "$RUNNER_TEMP/r34-fixture" --out "$RUNNER_TEMP/r34-evidence/plan.json"'])
+        if j['needs']:
+            result+=_step(['- name: Download exact upstream lint evidence',
+                           f'  uses: actions/download-artifact@{DOWNLOAD}',
+                           '  with:',f'    name: devtool-r34-{j["needs"][0]}-evidence-attempt${{{{ github.run_attempt }}}}',
+                           '    path: ${{ runner.temp }}/r34-upstream'])
+        result+=_step(['- name: Execute actual reviewed node via Devtool RM-06',
+                       '  shell: bash','  run: |','    set -euo pipefail',
+                       '    python3 tools/r33_hosted_android_evidence.py execute --repo "$GITHUB_WORKSPACE"'+
+                       f' --fixture "$RUNNER_TEMP/r34-fixture" --job {stage}'+
+                       ' --out "$RUNNER_TEMP/r34-evidence/result.json"'+
+                       (' --prior "$RUNNER_TEMP/r34-upstream/result.json"' if j['needs'] else '')])
+        if j['outputs']:
+            result+=_step(['- name: Register verified debug APK in native Devtool registry',
+                           '  shell: bash','  run: |','    set -euo pipefail',
+                           '    python3 -m devtool.actions_android_lab_export register'+
+                           ' --fixture "$RUNNER_TEMP/r34-fixture"'+
+                           ' --receipt "$RUNNER_TEMP/r34-evidence/result.json"'+
+                           ' --out "$RUNNER_TEMP/r34-evidence/registry-evidence.json"'+
+                           ' --apk-out "$RUNNER_TEMP/r34-published/app-debug.apk"'])
+            result+=_step(['- name: Upload standalone debug APK for exact-run remote collection',
+                           '  if: success()',f'  uses: actions/upload-artifact@{UPLOAD}',
+                           '  with:', '    name: devtool-r34-debug-apk-attempt${{ github.run_attempt }}',
+                           '    path: ${{ runner.temp }}/r34-published/app-debug.apk',
+                           '    if-no-files-found: error','    retention-days: 7'])
+        result+=_step(['- name: Record failed non-release stage',
+                       '  if: failure()','  shell: bash','  run: |','    set -euo pipefail',
+                       '    mkdir -p "$RUNNER_TEMP/r34-evidence"',
+                       '    python3 -m devtool.actions_android_lab_export failure'+
+                       f' --job {stage} --out "$RUNNER_TEMP/r34-evidence/failure.json"'])
+        result+=_step(['- name: Upload source-bound node evidence',
+                       '  if: always()',f'  uses: actions/upload-artifact@{UPLOAD}',
+                       '  with:',f'    name: {prefix}',
+                       '    path: ${{ runner.temp }}/r34-evidence/',
+                       '    if-no-files-found: error','    retention-days: 7'])
+    return result
+
+
+def _context() -> dict:
+    source=os.environ.get('GITHUB_SHA','');rid=os.environ.get('GITHUB_RUN_ID','');attempt=os.environ.get('GITHUB_RUN_ATTEMPT','')
+    if (os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_OS')!='Linux' or
+        re.fullmatch('[a-f0-9]{40}',source) is None or not rid.isdecimal() or not attempt.isdecimal() or
+        int(rid)<1 or int(attempt)<1):
+        raise LabError('R34 requires actual GitHub source/run/attempt')
+    return {'devtool_sha':source,'github_run_id':rid,'github_run_attempt':int(attempt)}
+
+
+def register(fixture: Path, receipt: Path, out: Path, apk_out: Path) -> dict:
+    """Bind locally verified APK to Devtool canonical registry; no remote authentication."""
+    ctx=_context()
+    if any(p.is_symlink() for p in (fixture, receipt, out.parent, apk_out.parent)):
+        raise LabError('R34 refuses symlinked evidence path')
+    if not receipt.is_file() or receipt.stat().st_size>1024*1024:
+        raise LabError('R34 missing or oversized execution receipt')
+    data=json.loads(receipt.read_text())
+    expected={'kind':'devtool.r33.live-node.v1','node':'build','status':'PASS',
+              'provider':'android-gradle','actual_gradle_execution':True,'native_dag_executed':True,
+              'release_qualified':False,'device_qualified':False,**ctx}
+    if any(type(data.get(k)) is not type(v) or data[k]!=v for k,v in expected.items()):
+        raise LabError('R34 native job receipt/source/run mismatch')
+    from tools.r33_hosted_android_evidence import graph_plan
+    fixture_sha=git(fixture,'rev-parse','HEAD')
+    graph=graph_plan(fixture,ctx['devtool_sha'])
+    if (data.get('fixture_sha')!=fixture_sha or data.get('graph_sha256')!=graph['graph_sha256'] or
+            git(fixture,'status','--porcelain')!=''):
+        raise LabError('R34 fixture source or graph mismatch')
+    native=data.get('node_result')
+    if not isinstance(native,dict) or any(native.get(k)!=v for k,v in {
+          'status':'LOCAL_JOB_SUCCEEDED','job_id':'node-02',
+          'github_source':fixture_sha,'graph_sha256':graph['graph_sha256'],
+          'run_id':ctx['github_run_id'],'attempt':ctx['github_run_attempt']}.items()):
+        raise LabError('R34 missing or mismatched native RM-06 runner receipt')
+    transfer=receipt.parent/'native-outputs/node-02/receipt.json'
+    if transfer.is_symlink() or not transfer.is_file() or transfer.stat().st_size>1024*1024:
+        raise LabError('R34 missing or unsafe native staging receipt')
+    staged=json.loads(transfer.read_text())
+    if any(staged.get(k)!=v for k,v in {
+          'source_commit':fixture_sha,'graph_sha256':graph['graph_sha256'],
+          'run_id':ctx['github_run_id'],'attempt':ctx['github_run_attempt']}.items()):
+        raise LabError('R34 native staging source/run/attempt mismatch')
+    bootstrap=receipt.parent/'bootstrap.json'
+    if bootstrap.is_symlink() or not bootstrap.is_file():
+        raise LabError('R34 source-bound bootstrap missing')
+    b=json.loads(bootstrap.read_text())
+    if any(b.get(k)!=v for k,v in {
+          'source_sha':ctx['devtool_sha'],'run_id':ctx['github_run_id'],
+          'run_attempt':ctx['github_run_attempt'],'job':'build',
+          'status':'NOT_QUALIFIED'}.items()):
+        raise LabError('R34 bootstrap source/run/attempt mismatch')
+    apk=fixture/APK
+    if apk.is_symlink() or not apk.is_file() or apk.stat().st_size<100:
+        raise LabError('R34 APK missing or unsafe')
+    info=data.get('apk',{})
+    files=staged.get('files')
+    if (not isinstance(files,list) or len(files)!=1 or
+        files[0].get('path')!=APK or files[0].get('sha256')!=sha(apk) or
+        files[0].get('size')!=apk.stat().st_size):
+        raise LabError('R34 stage manifest or APK byte identity mismatch')
+    if (not isinstance(info,dict) or info.get('package')!=PACKAGE or info.get('variant')!='debug' or
+        info.get('path')!=APK or info.get('debug_signed') is not True or
+        info.get('signing_release_authorized') is not False or
+        not re.fullmatch('[a-f0-9]{64}',str(info.get('signer_certificate_sha256',''))) or
+        info.get('sha256')!=sha(apk) or info.get('size')!=apk.stat().st_size):
+        raise LabError('R34 APK/package/debug-signature receipt mismatch')
+    # Independently inspect the same bytes using Android SDK tools already pinned by host.
+    import subprocess as sp
+    sdk=Path(os.environ.get('ANDROID_HOME',''))/'build-tools/35.0.0'
+    aapt,signer=sdk/'aapt',sdk/'apksigner'
+    if not aapt.is_file() or not signer.is_file():
+        raise LabError('R34 Android SDK verification tools missing')
+    badges=sp.run([str(aapt),'dump','badging',str(apk)],capture_output=True,text=True,check=True).stdout
+    signed=sp.run([str(signer),'verify','--verbose','--print-certs',str(apk)],capture_output=True,text=True,check=True).stdout
+    if not re.search(r"^package: name='"+re.escape(PACKAGE)+r"'",badges,re.M) or not re.search(
+          r'Signer #1 certificate SHA-256 digest:\s*'+info['signer_certificate_sha256'],signed,re.I):
+        raise LabError('R34 independent package or signer verification failed')
+    for path in (fixture/'.devtool',fixture/'.devtool/artifacts',
+                 fixture/'.devtool/artifacts/registry.json'):
+        if path.is_symlink():
+            raise LabError('R34 registry parent path is a symlink')
+    records=register_paths(fixture,[apk],metadata={'producer':'devtool-r34-hosted-native',
+        'state':'android-debug-inspected-unqualified','target':'r33','variant':'debug',
+        'run_id':ctx['github_run_id'],
+        'source_commit':fixture_sha,'devtool_source_sha':ctx['devtool_sha'],
+        'github_run_id':ctx['github_run_id'],'github_run_attempt':ctx['github_run_attempt'],
+        'graph_sha256':graph['graph_sha256'],'package':PACKAGE,
+        'signer_sha256':info['signer_certificate_sha256'],'release_qualified':False,
+        'artifact_registry_authenticated':False,'verification_status':'local-debug-inspection-pass'})
+    if len(records)!=1 or records[0]['sha256']!=info['sha256'] or records[0]['commit']!=fixture_sha:
+        raise LabError('R34 canonical artifact registration mismatch')
+    verified=verify_record(fixture,records[0]['id'])
+    if verified.get('valid') is not True or verified.get('current_sha256')!=info['sha256']:
+        raise LabError('R34 canonical artifact record verification failed')
+    local_registry=load_registry(fixture)
+    if not any(x['id']==records[0]['id'] for x in local_registry['items']):
+        raise LabError('R34 canonical registry missing new record')
+    apk_out.parent.mkdir(parents=True,exist_ok=True)
+    if apk_out.exists() or apk_out.is_symlink():
+        raise LabError('R34 published APK path already exists')
+    shutil.copyfile(apk,apk_out)
+    if sha(apk_out)!=info['sha256']:
+        apk_out.unlink(missing_ok=True)
+        raise LabError('R34 standalone publication changed bytes')
+    out.parent.mkdir(parents=True,exist_ok=True)
+    report={'schema':'devtool.r34.hosted-registry.v1','status':'PASS_LOCAL_REGISTRY_VERIFIED',
+            'record_id':records[0]['id'],'registry_sha256':sha(fixture/'.devtool/artifacts/registry.json'),
+            'apk_sha256':info['sha256'],'apk_size':info['size'],'package':PACKAGE,
+            'signer_sha256':info['signer_certificate_sha256'],'fixture_sha':fixture_sha,
+            'graph_sha256':graph['graph_sha256'],**ctx,
+            'local_registry_registered':True,'local_registry_verified':True,
+            'remote_actions_artifact_authenticated':False,'release_qualified':False,'device_qualified':False}
+    out.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n')
+    shutil.copyfile(fixture/'.devtool/artifacts/registry.json',out.parent/'registry-snapshot.json')
+    return report
+
+
+def _write_context(kind: str, out: Path, job: str) -> None:
+    ctx=_context()
+    if job not in ('lint','build'):
+        raise LabError('R34 invalid node')
+    out.parent.mkdir(parents=True,exist_ok=True)
+    out.write_text(json.dumps({'schema':f'devtool.r34.{kind}.v1',**ctx,
+             'job':job,'status':'NOT_QUALIFIED' if kind=='bootstrap' else 'FAILED_OR_INCOMPLETE',
+             'release_qualified':False,'device_qualified':False,'apk_verified':False},sort_keys=True,indent=2)+'\n')
+
+
+def main() -> int:
+    p=argparse.ArgumentParser()
+    p.add_argument('mode',choices=('export','verify','register','bootstrap','failure'))
+    p.add_argument('--repo',type=Path,default=Path.cwd())
+    p.add_argument('--fixture',type=Path)
+    p.add_argument('--receipt',type=Path)
+    p.add_argument('--apk-out',type=Path)
+    p.add_argument('--out',type=Path)
+    p.add_argument('--job')
+    a=p.parse_args()
+    try:
+        if a.mode in ('export','verify'):
+            content=generate(a.repo.resolve());dest=a.repo.resolve()/WORKFLOW
+            if a.mode=='verify':
+                if dest.is_symlink() or not dest.is_file() or dest.read_text()!=content:
+                    raise LabError('generated workflow diverges from source-reviewed RM-06 DAG')
+                print('PASS_R34_EXPORTED_WORKFLOW_MATCHES_NATIVE_DAG')
+            else:
+                if dest.exists() or dest.is_symlink():
+                    raise LabError('R34 export refuses existing output; review/verify instead')
+                dest.parent.mkdir(parents=True,exist_ok=True);dest.write_text(content)
+                print('PASS_R34_EXPORTED_WORKFLOW_WRITTEN')
+        elif a.mode=='register':
+            if not a.fixture or not a.receipt or not a.out or not a.apk_out:raise LabError('register requires exact receipt/fixture/output')
+            result=register(a.fixture.resolve(),a.receipt.resolve(),a.out.resolve(),a.apk_out.absolute())
+            print('PASS_R34_LOCAL_CANONICAL_ARTIFACT_REGISTRY_NON_RELEASE')
+            print(json.dumps(result,sort_keys=True))
+        else:
+            if not a.out or not a.job:raise LabError('bootstrap/failure requires job and output')
+            _write_context(a.mode,a.out.absolute(),a.job)
+    except (LabError,ValueError,OSError,subprocess.SubprocessError) as exc:
+        print('R34_REFUSED: '+str(exc)[:320],file=__import__('sys').stderr)
+        return 2
+    return 0
+
+if __name__=='__main__':
+    raise SystemExit(main())
