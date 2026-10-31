@@ -320,8 +320,10 @@ def _provider_for(job: Any) -> LanguageProvider:
     argv = list(job.command or [])
     name = Path(argv[0]).name if argv else ''
     if flag == 'android-gradle':
-        if name != 'gradlew' or job.runner != 'command':
-            raise ProviderError('Hosted Android provider requires target-local command runner and ./gradlew')
+        semantic = job.runner in ('gradle', 'android') and bool(job.gradle_tasks)
+        if not ((job.runner == 'command' and name == 'gradlew' and not job.gradle_tasks) or
+                (semantic and not job.command and not job.action and not job.shell_command)):
+            raise ProviderError('Hosted Android provider requires direct ./gradlew or reviewed semantic gradle_tasks')
         return PROVIDERS['android-gradle']
     if name == 'gradlew':
         raise ProviderError('Gradle wrapper requires explicit reviewed ci_toolchain=android-gradle')
@@ -408,18 +410,28 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
             if not host_result['eligible']:
                 raise ProviderError('Hosted node requirement blocked: ' +
                                     ', '.join(host_result['reasons'])[:256])
-        if job.runner not in ('command','python','go') or job.shell_command or job.action or job.gradle_tasks:
-            raise ProviderError('Only explicit argv target-local command/python/go jobs are reviewable')
+        semantic_android = (meta.get('ci_toolchain') == 'android-gradle' and
+                            job.runner in ('android','gradle') and bool(job.gradle_tasks) and
+                            not job.command and not job.shell_command and not job.action)
+        if (not semantic_android and (job.runner not in ('command','python','go') or job.gradle_tasks) or
+                job.shell_command or job.action):
+            raise ProviderError('Only explicit argv or reviewed semantic Android debug jobs are reviewable')
         if job.execution_environment not in ('auto', 'native'):
             raise ProviderError('NEXT-03 refuses custom environment variables or native/remote execution selectors')
         if any(meta.get(key) is True for key in ('device_required','root_required','signing_required','release_signed','termux_native_required')):
             raise ProviderError('Device, root, Termux and signing cannot be hosted')
-        argv = list(job.command or [])
+        argv = (['./gradlew','--no-daemon',*job.gradle_tasks] if semantic_android
+                else list(job.command or []))
         provider = _provider_for(job)
         if provider.provider_id=='dotnet':
             provider=DotNetProvider(host_os=host_os)
         try:
             declaration = provider.inspect(root, job, argv)
+            if semantic_android:
+                declaration['semantic_request'] = True
+                # The actual hosted node lowers the reviewed task identities
+                # into a direct wrapper CommandSpec, never the local build-apk
+                # helper. The frozen DAG job remains the sole execution owner.
         except ValueError as exc:
             if isinstance(exc, ProviderError):
                 raise
@@ -436,7 +448,12 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 raise ProviderError('CGO requires independently qualified cross-compiler')
             declaration['distribution_target']={'goos':goos,'goarch':goarch,'cgo_enabled':cgo=='1'}
         if job.root not in ('', '.', str(root), str(root.resolve())):
-            raise ProviderError('NEXT-03 only exports jobs rooted at the repository (subdirectory roots need review)')
+            # R36: only the independently reviewed Android provider may use a
+            # nested Gradle project. The exact cwd is verified again at run-node.
+            expected = root / declaration.get('project_dir', '')
+            if (declaration['provider'] != 'android-gradle' or
+                    Path(job.root).resolve(strict=False) != expected.resolve(strict=False)):
+                raise ProviderError('NEXT-03 subdirectory root requires reviewed Android Gradle project_dir')
         if any(not isinstance(v, str) or v.startswith('/') or '..' in Path(v).parts or '\\' in v for v in job.outputs):
             raise ProviderError('Job output path is not bounded')
         sdist_smoke=meta.get('ci_sdist_smoke',False)

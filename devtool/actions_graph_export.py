@@ -663,14 +663,27 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     cfg=load_wrapper_project_config(str(root),None)
     from .workflow_runtime import build_direct_job_specs
     from .runners import run_specs
-    specs=build_direct_job_specs(cfg, f'{target}:job:{selected["job"]}',target_name=target)
+    android_review=selected.get('android_review') or {}
+    if selected['provider']=='android-gradle' and android_review.get('semantic_request'):
+        from .actions_android_provider import hosted_semantic_spec
+        native=cfg.targets[target].jobs[selected['job']]
+        try:
+            specs=[hosted_semantic_spec(root,native,android_review)]
+        except ValueError as exc:
+            raise ProviderError(str(exc)[:320]) from None
+    else:
+        specs=build_direct_job_specs(cfg, f'{target}:job:{selected["job"]}',target_name=target)
     if not specs:
         raise ProviderError('RM-06 native job resolver returned no executable specs')
     node_receipts=[]
     if selected['provider']=='android-gradle':
         review=selected['android_review']
-        if len(specs)!=1 or specs[0].argv not in (['./gradlew',review['task']],['./gradlew','--no-daemon',review['task']]):
-            raise ProviderError('Android hosted native Gradle command differs from reviewed task')
+        tasks=list(review.get('tasks') or [review['task']])
+        expected=[['./gradlew', *tasks], ['./gradlew','--no-daemon', *tasks]]
+        project=(root/review.get('project_dir','')).resolve(strict=False)
+        if (len(specs)!=1 or specs[0].argv not in expected or
+                Path(specs[0].cwd).resolve(strict=False)!=project):
+            raise ProviderError('Android hosted native Gradle argv/cwd differs from reviewed tasks/project root')
         import subprocess as _subprocess
         if _subprocess.run(['git','-C',str(root),'diff','--quiet','HEAD','--'],check=False).returncode:
             raise ProviderError('Android source tree differs from reviewed Git commit')

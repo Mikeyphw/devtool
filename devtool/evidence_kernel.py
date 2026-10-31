@@ -277,7 +277,11 @@ def host_eligibility(metadata: Mapping[str, Any], *, runner: str, host_os: str,
     declared = metadata.get('ci_toolchain')
     if declared not in (None, *toolchains):
         reasons.append('CI toolchain not provisioned by host')
-    if runner not in ('command','python','go'):
+    semantic_android = (runner in ('android','gradle') and declared == 'android-gradle' and
+                        isinstance(metadata.get('gradle_tasks'), list) and
+                        bool(metadata['gradle_tasks']) and
+                        len(metadata['gradle_tasks']) <= 3)
+    if runner not in ('command','python','go') and not semantic_android:
         reasons.append('runner not allowlisted for hosted DAG export')
     return {'schema_version': 1, 'host': {'os':host_os,'arch':host_arch,'toolchains':list(toolchains)},
             'runner':runner, 'state': 'BLOCKED' if reasons else 'PASS', 'eligible':not reasons,
