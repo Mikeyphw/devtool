@@ -1,0 +1,53 @@
+name: Devtool FC-08 opt-in consolidated dispatch resilience (non-release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      authorize_real_dispatch:
+        description: Explicitly authorize bounded no-op GitHub dispatch experiments
+        type: boolean
+        required: true
+        default: false
+      scenario:
+        description: The controlled experiment to run (all sends up to five no-op requests)
+        type: choice
+        required: true
+        default: cycle
+        options: [cycle, rejection-retry, lost-response, all]
+
+concurrency:
+  group: fc08-r1r28-resilience-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  opt-in-resilience:
+    name: Explicitly authorized source-bound real dispatch matrix
+    if: inputs.authorize_real_dispatch == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install reviewed Devtool dispatch runtime
+        run: python -m pip install -e . PyYAML
+      - name: Execute only the explicitly selected bounded experiments
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FC08_DISPATCH_AUTHORIZED: ${{ inputs.authorize_real_dispatch }}
+          FC08_MATRIX_SCENARIO: ${{ inputs.scenario }}
+        run: python tools/fc08_r1r28_matrix.py --authorized --scenario "$FC08_MATRIX_SCENARIO" --out out/fc08/r1r28-matrix.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fc08-r1r28-resilience-attempt${{ github.run_attempt }}
+          path: out/fc08/r1r28-matrix*.json
+          if-no-files-found: error
+          retention-days: 14

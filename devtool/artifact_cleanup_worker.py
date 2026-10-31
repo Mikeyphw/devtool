@@ -85,6 +85,43 @@ def _unlink_owned_source(path: Path, expected: dict[str, Any] | None) -> int:
         os.close(parent_fd)
 
 
+def cleanup_source_failure_diagnostic(path: Path, expected: dict[str, Any] | None,
+                                      exc: BaseException) -> dict[str, Any]:
+    """Redacted failure classification; never mutate the consumed artifact.
+
+    Android emulated storage may not implement stable inode/ctime or dir-fd
+    unlink semantics. Record which identity fields drifted, not their values,
+    and never downgrade the exact-source deletion authority.
+    """
+    target = _literal_path(path)
+    fields = ('parent_dev', 'parent_ino', 'dev', 'ino', 'size', 'mtime_ns', 'ctime_ns')
+    mismatch: list[str] = []
+    observation = 'unavailable'
+    try:
+        actual = cleanup_source_snapshot(target)
+        observation = 'regular-file-observed'
+        if expected is not None:
+            mismatch = [name for name in fields if expected.get(name) != actual.get(name)]
+            if expected.get('parent') != actual.get('parent'):
+                mismatch.append('parent')
+    except (OSError, ValueError):
+        observation = 'source-snapshot-refused'
+    code = getattr(exc, 'errno', None)
+    return {
+        'category': 'identity-drift' if mismatch else (
+            'filesystem-error' if isinstance(exc, OSError) else 'authority-refusal'),
+        'exception_type': type(exc).__name__ if type(exc) in (OSError, ValueError, PermissionError, FileNotFoundError, NotImplementedError) else 'Other',
+        'errno': int(code) if type(code) is int and 0 < code < 256 else None,
+        'source_name_sha256': hashlib.sha256(str(target).encode()).hexdigest(),
+        'shared_storage_path': str(target).startswith(('/storage/emulated/', '/sdcard/')),
+        'observed': observation,
+        'mismatched_identity_fields': mismatch,
+        'source_deleted': not (target.exists() or target.is_symlink()),
+        'safe_to_retry_unlink': False,
+        'policy_relaxed': False,
+    }
+
+
 def _validate_persisted_apply_evidence(
     root: Path, run_id: str, record_id: str, reason: str,
     requested_sources: dict[str, dict[str, Any]],
@@ -331,6 +368,7 @@ def _cleanup_external_apply_sources(
     rows: list[CleanupActionResult] = []
     reclaimed = 0
     failed = False
+    source_failures: list[dict[str, Any]] = []
     for path in existing:
         descriptor = descriptor_by_path.get(str(path))
         resource_id = descriptor.resource_id if descriptor is not None else f"apply-source:{_digest(str(path))[:24]}"
@@ -346,7 +384,9 @@ def _cleanup_external_apply_sources(
         try:
             size = _unlink_owned_source(path, authorized_sources.get(str(path)) if authorized_sources is not None else None)
         except (OSError, ValueError) as exc:
-            rows.append(CleanupActionResult(action_id, resource_id, str(path), "failed", reason=str(exc)))
+            source_failures.append(cleanup_source_failure_diagnostic(
+                path, authorized_sources.get(str(path)) if authorized_sources is not None else None, exc))
+            rows.append(CleanupActionResult(action_id, resource_id, str(path), "failed", reason=type(exc).__name__))
             failed = True
             continue
         if path.exists() or path.is_symlink():
@@ -381,6 +421,8 @@ def _cleanup_external_apply_sources(
         "cleanup_status": receipt.status,
         "cleanup_worker": "fresh-process",
         "cleanup_mode": "bounded-external-apply-source",
+        "source_failure_diagnostics": source_failures,
+        "cleanup_policy_relaxed": False,
     }
     if failed:
         return {

@@ -1,0 +1,24 @@
+{
+  "schema": "devtool.fc08.r1r28.fc09-qualification-crosswalk.v1",
+  "source_base_sha": "eba6658e7d98f730d92294dcced654e58fab2d58",
+  "source_base_tree": "0cd2cecab0de9457b436f9f843dc676752eb3533",
+  "fc08_overall_qualified": false,
+  "release_qualified": false,
+  "independent_evidence_required": true,
+  "workstreams": {
+    "dispatch_journal_lock": "IMPLEMENTED_PENDING_R1R28_HOSTED",
+    "uncertain_dispatch_manual_review": "IMPLEMENTED_READ_ONLY_NO_ATTRIBUTION",
+    "real_5xx_timeout_transport": "OPEN_UNOBSERVED",
+    "resilience_matrix": "IMPLEMENTED_PENDING_OPT_IN_REAL_RUN",
+    "github_raw_archive_integrity": "IMPLEMENTED_PENDING_R1R28_SOURCE_REVIEW",
+    "g1_junit_semantic_recount": "OPEN",
+    "windows_raw_signed_artifact_provenance": "OPEN",
+    "native_termux_arm64": "IMPLEMENTED_PENDING_PHONE_RUN",
+    "termux_shared_storage_cleanup_root_cause": "OPEN_DIAGNOSTIC_ONLY",
+    "android_signer_installed_instrumentation": "OPEN",
+    "telegram_studyflow_bkx_r3_adoption_and_rollback": "OPEN",
+    "fc09_168_promise_crosswalk_independent_review": "OPEN",
+    "formal_release_seal": "OPEN"
+  },
+  "caveat": "This is an intake map of evidence gaps, not proof that FC09's 168 promises were independently validated."
+}

@@ -291,14 +291,17 @@ def dispatch_workflow(client: GitHubActionsClient, slug: str, workflow_id: str, 
         existing=_existing() if resume_if_existing else None
         return existing or {'phase':'ACTIONS-02','state':'validated-plan','dispatched':False,
                             'resume_if_existing':resume_if_existing,**summary}
-    if resume_if_existing:
-        # Lock spans journal inspection, POST and durable finalization: two local
-        # processes cannot both dispatch the same reviewed source/input tuple.
-        with _dispatch_lock(folder):
-            existing=_existing()
-            if existing:return existing
-            return _dispatch_checked(client,slug,ref,inputs,summary,folder,digest)
-    return _dispatch_checked(client,slug,ref,inputs,summary,folder,digest)
+    # R1R28: EVERY non-idempotent POST acquires the same filesystem lock.
+    # The legacy non-resume path must not silently bypass an existing journal
+    # or race a resumable client into creating a second identical workflow.
+    with _dispatch_lock(folder):
+        existing=_existing()
+        if existing:
+            if resume_if_existing:
+                return existing
+            raise GitHubActionsError(
+                'Matching dispatch receipt already exists; explicitly resume it, no second POST')
+        return _dispatch_checked(client,slug,ref,inputs,summary,folder,digest)
 
 
 def _dispatch_checked(client:GitHubActionsClient,slug:str,ref:str,inputs:dict[str,str],
@@ -383,3 +386,47 @@ def inspect_uncorrelated_dispatch(client: GitHubActionsClient, request_id: str, 
             "safe_to_redispatch":False, "source_attested":False,
             "qualified_release":False,
             "advice":"Candidates are not proof of which run arose from HTTP 204. Inspect an explicit --run-id; do not blindly re-dispatch."}
+
+
+def review_uncertain_dispatch(client: GitHubActionsClient, request_id: str,
+                              explicit_run_id: int, *, state_root: Path | None = None) -> dict[str, Any]:
+    """R1R28: read-only review of an explicitly selected run, not attribution.
+
+    Workflow/ref/SHA/attempt matching cannot prove which request created a run.
+    Do not rewrite the journal, infer authorization, or authorize redispatch.
+    """
+    from .actions_runs import _read_dispatch_receipt, _normalize_run, run_id
+    _, receipt = _read_dispatch_receipt(request_id, state_root)
+    if receipt.get('state') not in ('dispatch-outcome-unknown', 'accepted-uncorrelated') or receipt.get('run_id') is not None:
+        raise GitHubActionsError('Request is not an unresolved dispatch')
+    slug = _slug(receipt['repository'])
+    identity = run_id(explicit_run_id)
+    if type(receipt.get('workflow_id')) is not int or receipt['workflow_id'] <= 0:
+        raise GitHubActionsError('Request workflow identity invalid')
+    ref = _ref(str(receipt.get('ref', '')))
+    sha = receipt.get('pre_dispatch_sha')
+    if not isinstance(sha, str) or not _SHA.fullmatch(sha):
+        raise GitHubActionsError('Request source identity invalid')
+    # One explicit GET, no candidate search and absolutely no journal writes.
+    remote = _normalize_run(client.get_run(slug, identity), slug, identity)
+    if (remote.get('workflow_id') != receipt['workflow_id'] or
+            remote.get('event') != 'workflow_dispatch' or
+            remote.get('head_branch') != ref or
+            str(remote.get('head_sha') or '').lower() != sha.lower() or
+            type(remote.get('run_attempt')) is not int or remote['run_attempt'] < 1):
+        raise GitHubActionsError('Selected remote run is incompatible with the unresolved request')
+    # Revalidate that the same journal remains unresolved even after the GET.
+    _, after = _read_dispatch_receipt(request_id, state_root)
+    if after != receipt:
+        raise GitHubActionsError('Dispatch journal changed during read-only review')
+    return {'schema': 'devtool.fc08.uncertain-dispatch-review.v1',
+            'phase': 'ACTIONS-03', 'request_id': request_id,
+            'repository': slug, 'explicit_observed_run_id': identity,
+            'run_attempt': remote['run_attempt'], 'remote_status': remote['status'],
+            'remote_conclusion': remote['conclusion'],
+            'source_compatible': True, 'journal_unchanged': True,
+            'journal_state': receipt['state'], 'journal_run_id': None,
+            'request_attribution_proven': False,
+            'automatically_reconciled': False, 'safe_to_redispatch': False,
+            'release_qualified': False,
+            'warning': 'Matching a remote run is not proof of dispatch attribution; do not retry or mutate the original receipt.'}
