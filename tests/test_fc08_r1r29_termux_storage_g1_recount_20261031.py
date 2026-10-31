@@ -148,7 +148,13 @@ def test_collector_offers_explicit_real_recount_and_source_binding():
 
 native_accept=tool('fc08_r1r29_native_accept.py')
 
-def test_consolidated_native_acceptance_refuses_non_termux_before_canary(tmp_path):
+def test_consolidated_native_acceptance_refuses_non_termux_before_canary(tmp_path, monkeypatch):
+    # This regression MUST be host-independent. Native validation itself runs
+    # on actual Termux during transactional overlay apply, where platform
+    # checks legitimately pass and the temporary worktree is intentionally dirty.
+    # Force a non-ARM64 host rather than assuming pytest always runs on Ubuntu.
+    import platform
+    monkeypatch.setattr(platform, 'machine', lambda: 'x86_64')
     artifact=tmp_path/'download.zip';artifact.write_bytes(b'keep')
     with pytest.raises(RuntimeError,match='NATIVE_TERMUX_ARM64_REQUIRED'):
         native_accept.accept(ROOT,artifact=artifact)

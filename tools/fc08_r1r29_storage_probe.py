@@ -23,7 +23,9 @@ SCHEMA='devtool.fc08.r1r29.shared-storage-probe.v1'
 
 
 def _native():
-    if (platform.system()!='Linux' or platform.machine().lower() not in ('aarch64','arm64')
+    if (platform.system() not in ('Linux','Android')
+        or os.uname().sysname!='Linux'
+        or platform.machine().lower() not in ('aarch64','arm64')
         or not sys.prefix.startswith('/data/data/com.termux/files/usr')):
         raise ValueError('ACTUAL_NATIVE_TERMUX_REQUIRED')
 
@@ -116,9 +118,11 @@ def main()->int:
     p.add_argument('--yes-create-owned-canary',action='store_true')
     p.add_argument('--out',type=Path,required=True)
     a=p.parse_args()
+    stage='preflight'
     try:
         if a.yes_create_owned_canary != (a.probe_dir is not None):
             raise ValueError('EXPLICIT_CANARY_DIRECTORY_AND_OPTIN_REQUIRED')
+        stage='read-only-artifact-and-optional-canary'
         result=probe(a.artifact,directory=a.probe_dir,approve_canary=a.yes_create_owned_canary)
         if a.out.is_symlink() or (a.out.exists() and not a.out.is_file()):
             raise ValueError('UNSAFE_OUTPUT')
@@ -133,8 +137,33 @@ def main()->int:
         if result['canary'] is not None and result['canary']['status']!='PASS':
             print('BLOCKED_FC08_R1R29_SHARED_STORAGE_CANARY_UNQUALIFIED',file=sys.stderr)
             return 2
-    except (OSError,ValueError,TypeError):
-        print('BLOCKED_FC08_R1R29_STORAGE_PROBE',file=sys.stderr)
+    except (OSError,ValueError,TypeError) as exc:
+        # Never publish the raw exception: it may include a private path or
+        # user-provided value. The allowlist is the only category authority.
+        allow={'ACTUAL_NATIVE_TERMUX_REQUIRED','ARTIFACT_SYMLINK_REFUSED',
+               'INSPECTED_ARTIFACT_NOT_REGULAR_FILE',
+               'EXPLICIT_CANARY_DIRECTORY_AND_OPTIN_REQUIRED',
+               'EXPLICIT_PROBE_DIRECTORY_REQUIRED',
+               'CANARY_DIRECTORY_REQUIRED','EXPLICIT_CANARY_AUTHORIZATION_REQUIRED',
+               'UNSAFE_OUTPUT'}
+        code=str(exc) if type(exc) is ValueError and str(exc) in allow else 'STORAGE_PROBE_UNCLASSIFIED'
+        blocked={'schema':SCHEMA,'status':'BLOCKED_UNQUALIFIED',
+                 'phase':stage,'error_category':code,'artifact_deleted':False,
+                 'actual_shared_storage_cleanup_qualified':False,
+                 'native_termux_qualified':False,'fc08_overall_qualified':False,
+                 'release_qualified':False}
+        try:
+            if not a.out.is_symlink() and (not a.out.exists() or a.out.is_file()):
+                a.out.parent.mkdir(parents=True,exist_ok=True)
+                fd,tmp=tempfile.mkstemp(prefix='.fc08-r1r29-',dir=a.out.parent)
+                try:
+                    with os.fdopen(fd,'w') as f:
+                        json.dump(blocked,f,sort_keys=True,indent=2);f.write('\n');f.flush();os.fsync(f.fileno())
+                    os.replace(tmp,a.out)
+                finally:
+                    if os.path.lexists(tmp):os.unlink(tmp)
+        except OSError:pass
+        print('BLOCKED_FC08_R1R29_STORAGE_PROBE:'+code,file=sys.stderr)
         return 2
     print('PASS_FC08_R1R29_STORAGE_OBSERVATION_NON_RELEASE')
     return 0

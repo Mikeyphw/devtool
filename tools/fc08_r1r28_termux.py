@@ -21,7 +21,9 @@ SCHEMA = 'devtool.fc08.termux-arm64-native-acceptance.v1'
 
 def environment():
     prefix = Path(sys.prefix)
-    if (platform.system() != 'Linux' or platform.machine().lower() not in {'aarch64', 'arm64'}
+    if (platform.system() not in {'Linux', 'Android'}
+            or os.uname().sysname != 'Linux'
+            or platform.machine().lower() not in {'aarch64', 'arm64'}
             or not str(prefix).startswith('/data/data/com.termux/files/usr')):
         raise RuntimeError('NATIVE_TERMUX_ARM64_REQUIRED')
     if not Path('/data/data/com.termux/files/usr').exists():
