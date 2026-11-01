@@ -190,3 +190,74 @@ def test_duplicate_zip_entry_refused(tmp_path,monkeypatch):
             z.writestr(m.TEST_MEMBER,b'replaced')
     with pytest.raises(ValueError,match='unexpected/duplicate'):
         m.validate_chain(plan,archives)
+
+
+def test_import_requests_canonical_roles_and_exact_runner(tmp_path,monkeypatch):
+    """Exercise the real R37 orchestration with mocked ACTIONS-05, no APK signing."""
+    import pytest
+    m=load_module(monkeypatch)
+    plan,archives=make_fixture(tmp_path,m)
+    plan['artifacts']={r:{'id':i} for i,r in enumerate(m.ROLES,1)}
+    monkeypatch.setattr(m,'inspect_local',lambda *_:{'status':'NOT_IMPORTED'})
+    monkeypatch.setattr(m,'_verified_or_download',lambda client,p,role,root: {'file':str(archives[role])})
+    observed=[]
+    def inspect(client,slug,root,**kw):
+        role='app' if kw['apk_role']=='application' else 'test'
+        observed.append((role,dict(kw)))
+        return {'android':{
+            'sha256':plan[role+'_sha256'],
+            'size':len(b'fake APK app') if role=='app' else len(b'fake APK instrumentation'),
+            'package':m.APP_PACKAGE if role=='app' else m.TEST_PACKAGE,
+            'signer_sha256':plan['signer_sha256'],
+            'signature_verified':True,'manifest_verified':True,
+            'apk_role':kw['apk_role'],
+            'instrumentation_runner':m.RUNNER if role=='test' else None,
+            'instrumentation_target_package':m.APP_PACKAGE if role=='test' else None,
+        }}
+    monkeypatch.setattr(m,'android_collect',inspect)
+    def stop_before_mutating_any_records(*_):
+        raise RuntimeError('verified both APKs, begin controlled extraction')
+    monkeypatch.setattr(m,'_extract_member',stop_before_mutating_any_records)
+    with pytest.raises(RuntimeError,match='verified both APKs'):
+        m.import_pair(None,tmp_path,plan)
+    assert [r for r,_ in observed]==['app','test']
+    assert observed[0][1]['apk_role']=='application'
+    assert observed[0][1]['expected_target_package']==''
+    assert observed[1][1]['apk_role']=='instrumentation'
+    assert observed[1][1]['expected_target_package']==m.APP_PACKAGE
+    for role,kw in observed:
+        assert kw['expected_package']==(m.APP_PACKAGE if role=='app' else m.TEST_PACKAGE)
+        assert kw['expected_cert']==plan['signer_sha256']
+        assert kw['expected_source_sha']==plan['source_sha']
+        assert kw['expected_run_attempt']==plan['attempt']
+        assert kw['materialize'] is False and kw['download'] is False
+
+
+def test_import_rejects_instrumentation_wrong_runner_or_target(tmp_path,monkeypatch):
+    """No fallback to weaker ad-hoc package/signature verification."""
+    import pytest
+    m=load_module(monkeypatch)
+    plan,archives=make_fixture(tmp_path,m)
+    plan['artifacts']={r:{'id':i} for i,r in enumerate(m.ROLES,1)}
+    monkeypatch.setattr(m,'inspect_local',lambda *_:{'status':'NOT_IMPORTED'})
+    monkeypatch.setattr(m,'_verified_or_download',lambda client,p,role,root:{'file':str(archives[role])})
+    broken={'instrumentation_runner':'invalid.Runner',
+            'instrumentation_target_package':m.APP_PACKAGE}
+    def inspect(client,slug,root,**kw):
+        role='test' if kw.get('apk_role')=='instrumentation' else 'app'
+        return {'android':{
+            'sha256':plan[role+'_sha256'],
+            'size':len(b'fake APK instrumentation') if role=='test' else len(b'fake APK app'),
+            'package':m.TEST_PACKAGE if role=='test' else m.APP_PACKAGE,
+            'signer_sha256':plan['signer_sha256'],
+            'signature_verified':True,'manifest_verified':True,
+            'apk_role':kw['apk_role'],
+            'instrumentation_runner':broken['instrumentation_runner'] if role=='test' else None,
+            'instrumentation_target_package':broken['instrumentation_target_package'] if role=='test' else None,
+        }}
+    monkeypatch.setattr(m,'android_collect',inspect)
+    with pytest.raises(ValueError,match='R37 independent ACTIONS-05 APK inspection mismatch: test'):
+        m.import_pair(None,tmp_path,plan)
+    broken.update(instrumentation_runner=m.RUNNER,instrumentation_target_package='wrong.pkg')
+    with pytest.raises(ValueError,match='R37 independent ACTIONS-05 APK inspection mismatch: test'):
+        m.import_pair(None,tmp_path,plan)

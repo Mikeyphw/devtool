@@ -275,24 +275,26 @@ def import_pair(client:GitHubActionsClient,root:Path,plan:dict)->dict:
             expected_package=package,expected_cert=plan['signer_sha256'],
             member=member,materialize=False,download=False,
             workflow=WORKFLOW,expected_source_sha=plan['source_sha'],
-            expected_run_attempt=plan['attempt'])['android']
-        if (inspected.get('sha256')!=chain[role+'_sha256']
+            expected_run_attempt=plan['attempt'],
+            # AOPS05 owns both APK roles; AndroidTest normally has an empty
+            # versionCode and must NOT be classified as an application APK.
+            apk_role='instrumentation' if role=='test' else 'application',
+            expected_target_package=APP_PACKAGE if role=='test' else '')['android']
+        if (inspected.get('apk_role')!=('instrumentation' if role=='test' else 'application')
+            or (role=='test' and (
+                inspected.get('instrumentation_runner')!=RUNNER
+                or inspected.get('instrumentation_target_package')!=APP_PACKAGE))
+            or inspected.get('sha256')!=chain[role+'_sha256']
             or inspected.get('size')!=chain[role+'_size']
             or inspected.get('package')!=package
             or inspected.get('signer_sha256')!=plan['signer_sha256']
             or inspected.get('signature_verified') is not True
             or inspected.get('manifest_verified') is not True):
             _deny('R37 independent ACTIONS-05 APK inspection mismatch: '+role)
-    # Independently check instrumentation declaration, not merely its package ID.
-    from .actions_android import _tool, _run
-    with zipfile.ZipFile(archives['test']) as z,tempfile.TemporaryDirectory(prefix='r37-manifest-') as t:
-        apk=Path(t)/'instrumentation.apk'
-        with z.open(TEST_MEMBER) as inp,apk.open('xb') as out:shutil.copyfileobj(inp,out)
-        manifest=_run([_tool('aapt'),'dump','xmltree',str(apk),'AndroidManifest.xml'],purpose='R37 instrumentation target verification')
-        if (not re.search(r'E:\s+instrumentation\b',manifest)
-            or not re.search(r'android:targetPackage[^\n]*="'+re.escape(APP_PACKAGE)+'"',manifest)
-            or not re.search(r'android:name[^\n]*="'+re.escape(RUNNER)+'"',manifest)):
-            _deny('R37 test APK does not declare the reviewed runner/target')
+    # ACTIONS-05 has already parsed the signed instrumentation APK's compiled
+    # manifest independently, including runner and target identity. Its strict
+    # _instrumentation_xml rejects missing, duplicated, or mismatched entries.
+    # Do not maintain a second format-sensitive aapt XML parser here.
     dest=_local_path(root,plan); targets=_apk_targets(root,plan)
     dest.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
     if any(p.exists() or p.is_symlink() for p in (dest,*targets.values())):
