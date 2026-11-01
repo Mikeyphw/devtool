@@ -763,6 +763,7 @@ def run_workflow_specs(
     max_parallel_nodes: int = 0,
     node_observer: Callable[[str, str, Sequence[OperationResult]], None] | None = None,
     write_audit_mode: str | None = None,
+    scratch_isolation_mode: str | None = None,
 ) -> tuple[list[OperationResult], str, WorkflowExecutionPlan | None]:
     """Execute workflow specs with resource-safe dependency-ready admission.
 
@@ -819,22 +820,52 @@ def run_workflow_specs(
         # the live ready queue uses max_parallel_nodes for worker admission.
         plan = replace(plan, max_parallel_nodes=1, parallel_effective=False,
                        notes=(*plan.notes, "R38 audit enforces one native worker at a time"))
-    # RM-01: an execution-scoped root is minted per node, outside the repo.
-    # Only nodes declaring run-temp receive an environment variable.
+    # R38-R2: opt-in environment-routed scratch/cache isolation, backed by the
+    # existing descriptor-owned temporary lifecycle. No directory is created
+    # for default/dry-run execution; no global os.environ mutation occurs.
+    scratch_mode = (scratch_isolation_mode if scratch_isolation_mode is not None
+                    else os.environ.get("DEVTOOL_R38_SCRATCH_ISOLATION", "off")).strip().lower()
+    if scratch_mode not in {"off", "enforce"}:
+        raise WorkflowScheduleError("R38_INVALID_SCRATCH_ISOLATION_MODE")
+    scratch_enabled = scratch_mode == "enforce" and not dry_run
+    if scratch_enabled and plan is None:
+        raise WorkflowScheduleError("R38_SCRATCH_REQUIRES_NATIVE_WORKFLOW_NODES")
+    if scratch_enabled:
+        from .workflow_scratch import reserved_environment_names
+        reserved = reserved_environment_names()
+        # Reject BEFORE provisioning or spawning anything, including a second
+        # command in a node; a project may not silently undo the isolation.
+        for spec in specs:
+            collisions = sorted(key for key in spec.env if key.upper() in reserved)
+            if collisions:
+                raise WorkflowScheduleError("R38_SCRATCH_ENV_OVERRIDE_REFUSED: " + ", ".join(collisions))
+            spec.metadata = {**spec.metadata, "reuse_disabled": True,
+                             "reuse_disabled_reason": "r38-run-scratch-isolation"}
+    # RM-01 run-temp and R38-R2 share ONE ownership journal per node. The
+    # same root is cleaned exactly once even when both modes are enabled.
     owned_tmp: list[tuple[str, Path, tuple[int, int]]] = []
     if plan is not None and not dry_run:
         try:
             for node in plan.nodes:
                 scopes = parse_output_scopes(list(node.output_scopes), context=f"node {node.key}")
-                if not any(scope.kind == "run-temp" for scope in scopes):
+                has_run_temp = any(scope.kind == "run-temp" for scope in scopes)
+                if not has_run_temp and not scratch_enabled:
                     continue
+                for spec_index in node.spec_indexes:
+                    if "DEVTOOL_WORKFLOW_TMPDIR" in specs[spec_index].env:
+                        raise WorkflowScheduleError("DEVTOOL_WORKFLOW_TMPDIR is reserved for owned output scopes")
                 tmp_root, identity = provision_node_temp(config.repo_root, workflow_run_id, node.key)
                 owned_tmp.append((node.key, tmp_root, identity))
+                isolated_env = {}
+                if scratch_enabled:
+                    from .workflow_scratch import create_isolated_environment
+                    try:
+                        isolated_env = create_isolated_environment(tmp_root, identity)
+                    except (OSError, ValueError) as exc:
+                        raise WorkflowScheduleError("R38_SCRATCH_PROVISION_REFUSED") from exc
                 for spec_index in node.spec_indexes:
                     spec = specs[spec_index]
-                    if "DEVTOOL_WORKFLOW_TMPDIR" in spec.env:
-                        raise WorkflowScheduleError("DEVTOOL_WORKFLOW_TMPDIR is reserved for owned output scopes")
-                    spec.env = {**spec.env, "DEVTOOL_WORKFLOW_TMPDIR": str(tmp_root)}
+                    spec.env = {**spec.env, "DEVTOOL_WORKFLOW_TMPDIR": str(tmp_root), **isolated_env}
         except BaseException:
             for _, root_path, identity in reversed(owned_tmp):
                 cleanup_owned_temp(root_path, identity)
@@ -864,7 +895,7 @@ def run_workflow_specs(
                     "reason": "" if cleaned else "ownership_or_concurrent_mutation",
                 }
 
-    if plan is None or (not plan.parallel_requested and node_observer is None and not audit_enabled) or (len(plan.nodes) < 2 and node_observer is None and not audit_enabled) or dry_run:
+    if plan is None or (not plan.parallel_requested and node_observer is None and not audit_enabled and not scratch_enabled) or (len(plan.nodes) < 2 and node_observer is None and not audit_enabled and not scratch_enabled) or dry_run:
         try:
             results, raw = run_specs(
             config,
@@ -889,7 +920,7 @@ def run_workflow_specs(
                     pass  # Recovery metadata cannot change execution authority.
             return results, raw, plan
         finally:
-            _cleanup_tmp({str(item.metadata.get("workflow_node_key") or ""): [item] for item in results} if 'results' in locals() else {})
+            _cleanup_tmp({key: [item for item in results if str(item.metadata.get("workflow_node_key") or "") == key] for key, _, _ in owned_tmp} if 'results' in locals() else {})
 
     by_index = {index: spec for index, spec in enumerate(specs)}
     node_specs = {node.key: [by_index[index] for index in node.spec_indexes] for node in plan.nodes}

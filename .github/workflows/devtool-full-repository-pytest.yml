@@ -23,12 +23,12 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     steps:
       - name: Checkout exact selected commit and historical provenance
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
           fetch-depth: 0  # Phase D SHA-256 proof uses git show <ancestor>:<path>.
       - name: Python 3.13
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       - name: Install Devtool test dependencies
@@ -50,7 +50,7 @@ jobs:
             --out "out/shard-$DT_SHARD"
       - name: Upload diagnostics, JUnit and exact-source receipt
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: devtool-full-shard-${{ matrix.shard }}
           path: out/shard-${{ matrix.shard }}/
@@ -65,16 +65,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout exact selected commit and historical provenance
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
           fetch-depth: 0  # Phase D SHA-256 proof uses git show <ancestor>:<path>.
       - name: Python 3.13
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       - name: Download shard evidence (missing shards remain failures)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         continue-on-error: true
         with:
           pattern: devtool-full-shard-*
@@ -87,7 +87,7 @@ jobs:
             --shards 24 --artifacts artifacts --out out/summary
       - name: Upload consolidated report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: devtool-full-pytest-summary
           path: out/summary/
