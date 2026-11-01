@@ -5925,6 +5925,8 @@ Read-only repo target/workflow/wrapper/Actions capability inventory
 | Argument / option | Meaning |
 | --- | --- |
 | `--json` | Machine-readable capability report |
+| `--format FORMAT` | Output format; default JSON compatible Choices: json, text |
+| `--width WIDTH` | Text width 40..160 columns |
 
 ### `devtool onboard`
 

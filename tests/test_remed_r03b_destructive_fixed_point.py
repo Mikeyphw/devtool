@@ -83,6 +83,7 @@ CLASSIFIED_FILES: dict[str, str] = {
 # lines or resurrecting historical source SHA assertions.
 NEW_REVIEWED_DESTRUCTIVE_CALLS: dict[str, tuple[str, ...]] = {
  'devtool/go_output_spool.py': ('os.unlink(filename)', 'self._path.unlink(missing_ok=True)'),'devtool/actions_adoption.py': ('os.unlink(temp)', 'file.unlink()'),
+ 'devtool/actions_r37_mmrl_device.py': ('path.unlink()',),
  'devtool/actions_graph_export.py': ('item.unlink(missing_ok=True)',),
  'devtool/actions_language_providers.py': ('path.unlink(missing_ok=True)',),
  'devtool/actions_pipeline.py': ('handoff.unlink(missing_ok=True)',),
@@ -114,6 +115,7 @@ NEW_REVIEWED_DESTRUCTIVE_CALLS: dict[str, tuple[str, ...]] = {
 NEW_REVIEWED_RATIONALES: dict[str, str] = {
  'devtool/go_output_spool.py': 'Go test stdout transport owns a private mkstemp file (0600), removes the exclusive pathname if initial setup fails, and unlinks only its own spool after the producer has stopped and both file descriptors close. This does not authorize repository, run, log or consumer-evidence cleanup.','devtool/actions_adoption.py': 'Exclusive atomic staging unlink plus rollback only for workflow bytes just created '
                                 'and verified against the attempted payload; not cleanup by name.',
+ 'devtool/actions_r37_mmrl_device.py': 'R37 MMRL OfficialDebug smoke stages exclusively absent APK output paths and cleans only its own staged files when not symlinks and with matching SHA-256. The check-and-unlink is not inode-atomic: this classification records a reviewed callsite, not authorization for arbitrary deletion or device/release qualification.',
  'devtool/actions_graph_export.py': 'Rollback of verified graph handoff files copied in the current operation after a '
                                     'no-overwrite precheck; no broad evidence collection.',
  'devtool/actions_language_providers.py': 'RM-06 generated-workflow atomic-export rollback after '

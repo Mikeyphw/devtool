@@ -38893,6 +38893,33 @@
           "spellings": [
             "--help"
           ]
+        },
+        {
+          "choices": [
+            "json",
+            "text"
+          ],
+          "dest": "format",
+          "help": "Output format; default JSON compatible",
+          "hidden": false,
+          "id": "cli.option.capabilities.format",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--format"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "width",
+          "help": "Text width 40..160 columns",
+          "hidden": false,
+          "id": "cli.option.capabilities.width",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--width"
+          ]
         }
       ],
       "path": [
@@ -39613,7 +39640,7 @@
       "summary": "In-place whole-repository review, ownership and source-bound onboarding"
     }
   ],
-  "digest": "28242821cf1552b9f637a52f6862219074669459dede7fdd8698fd6a51fe1939",
+  "digest": "2d44bd723104fd9867185262188956a515f65801706d03f35d044dca8a1cea14",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -40148,7 +40175,7 @@
     "registry_command_count": 392
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "585b4c0e9a98cb966757d1b74f393a611c9ce9de75092db92796524492f3d407",
+  "registry_digest": "96d2d8f2368b62ae1e0c17d35f50da1676f4d8b44d09fb0a747e5ee4325b0a3a",
   "registry_schema_version": 1,
   "schema_version": 1
 }
