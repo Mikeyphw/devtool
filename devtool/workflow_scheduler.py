@@ -794,16 +794,29 @@ def run_workflow_specs(
         parallel_requested=parallel_requested,
         max_parallel_nodes=max_parallel_nodes,
     )
-    # R38-R1: tracked source mutation proof is opt-in and serial only.  The
-    # scheduler cannot attribute filesystem writes across concurrent workers.
-    audit_mode = (write_audit_mode if write_audit_mode is not None
-                  else os.environ.get("DEVTOOL_R38_WRITE_AUDIT", "off")).strip().lower()
-    if audit_mode not in {"off", "enforce"}:
-        raise WorkflowScheduleError("R38_INVALID_WRITE_AUDIT_MODE")
-    audit_enabled = audit_mode == "enforce" and not dry_run
+    # R39-R1: one pure preflight owner for R38 execution modes. Validate both
+    # modes and every command environment before touching ANY spec metadata or
+    # provisioning a node temp lease. This avoids partial mutation on refusal.
+    from .workflow_execution_policy import (
+        resolve_workflow_execution_policy, WorkflowExecutionPolicyError,
+    )
+    try:
+        policy = resolve_workflow_execution_policy(
+            write_audit_mode=write_audit_mode,
+            scratch_isolation_mode=scratch_isolation_mode,
+            dry_run=dry_run,
+            plan_exists=plan is not None,
+            parallel_requested=bool(plan.parallel_requested) if plan is not None else False,
+            command_envs=[spec.env for spec in specs],
+        )
+    except WorkflowExecutionPolicyError as exc:
+        raise WorkflowScheduleError(str(exc)) from exc
+
+    audit_enabled = policy.audit_enabled
+    scratch_enabled = policy.scratch_enabled
     if audit_enabled:
-        if plan is None or plan.parallel_requested:
-            raise WorkflowScheduleError("R38_WRITE_AUDIT_REQUIRES_SERIAL_WORKFLOW")
+        # The audit cannot attribute concurrent workers' writes. Snapshot
+        # BEFORE marking any command non-reusable (fail-closed and atomic).
         from .workflow_write_audit import snapshot, WriteAuditError
         try:
             initial_audit = snapshot(config.repo_root)
@@ -811,37 +824,17 @@ def run_workflow_specs(
             raise WorkflowScheduleError(str(exc)) from exc
         if initial_audit.changed:
             raise WorkflowScheduleError("R38_WRITE_AUDIT_REQUIRES_CLEAN_TRACKED_BASELINE")
-        # A skipped/materialized operation bypasses the per-command terminal
-        # hook. Force actual execution so the write audit and canonical EXO
-        # event are always based on the same process result.
-        for spec in specs:
-            spec.metadata = {**spec.metadata, "reuse_disabled": True,
-                             "reuse_disabled_reason": "r38-tracked-write-audit"}
-        # A serial policy on the plan alone is not a concurrency primitive;
-        # the live ready queue uses max_parallel_nodes for worker admission.
+        # A serial plan alone is insufficient: also restrict live admission.
         plan = replace(plan, max_parallel_nodes=1, parallel_effective=False,
                        notes=(*plan.notes, "R38 audit enforces one native worker at a time"))
-    # R38-R2: opt-in environment-routed scratch/cache isolation, backed by the
-    # existing descriptor-owned temporary lifecycle. No directory is created
-    # for default/dry-run execution; no global os.environ mutation occurs.
-    scratch_mode = (scratch_isolation_mode if scratch_isolation_mode is not None
-                    else os.environ.get("DEVTOOL_R38_SCRATCH_ISOLATION", "off")).strip().lower()
-    if scratch_mode not in {"off", "enforce"}:
-        raise WorkflowScheduleError("R38_INVALID_SCRATCH_ISOLATION_MODE")
-    scratch_enabled = scratch_mode == "enforce" and not dry_run
-    if scratch_enabled and plan is None:
-        raise WorkflowScheduleError("R38_SCRATCH_REQUIRES_NATIVE_WORKFLOW_NODES")
-    if scratch_enabled:
-        from .workflow_scratch import reserved_environment_names
-        reserved = reserved_environment_names()
-        # Reject BEFORE provisioning or spawning anything, including a second
-        # command in a node; a project may not silently undo the isolation.
+
+    # Historical-result reuse can bypass an actual process and its audit hook
+    # or private scratch lease. Apply one canonical reason after preflight.
+    if policy.reuse_disabled_reason is not None:
         for spec in specs:
-            collisions = sorted(key for key in spec.env if key.upper() in reserved)
-            if collisions:
-                raise WorkflowScheduleError("R38_SCRATCH_ENV_OVERRIDE_REFUSED: " + ", ".join(collisions))
             spec.metadata = {**spec.metadata, "reuse_disabled": True,
-                             "reuse_disabled_reason": "r38-run-scratch-isolation"}
+                             "reuse_disabled_reason": policy.reuse_disabled_reason}
+
     # RM-01 run-temp and R38-R2 share ONE ownership journal per node. The
     # same root is cleaned exactly once even when both modes are enabled.
     owned_tmp: list[tuple[str, Path, tuple[int, int]]] = []
